@@ -73,6 +73,94 @@ def main() -> None:
     if drawing_errors:
         fail(f"drawing example fails Gate A validator: {drawing_errors[:5]}")
 
+    normalization_fixture = {
+        "features": [
+            {
+                "id": "F1",
+                "feature_type": "threaded_hole",
+                "axis": "y",
+                "position": {"center": [1, 2]},
+                "thread_spec": "M6",
+                "is_through": True,
+                "explicit_centers": [[1, 2], [3, 4]],
+                "members": [{"feature_type": "counterbore", "axis": "x"}],
+            }
+        ],
+        "source_ledger": [
+            {
+                "id": "S1",
+                "semantic": "center_position",
+                "target": "feature:F1.position.center[0]",
+                "value": 1,
+            },
+            {
+                "id": "S_AXIS",
+                "semantic": "axis",
+                "target": "feature:F1.axis",
+                "value": "y",
+            },
+        ],
+        "derived": [
+            {
+                "id": "D1",
+                "target": "feature:F1.explicit_centers[0][0]",
+                "expr": {
+                    "operator": "add",
+                    "operands": ["source:S1", "target:feature:F1.position.center[1]"],
+                },
+            }
+        ],
+    }
+    normalized, changes, normalization_errors = runner.normalize_drawing_json(
+        normalization_fixture
+    )
+    normalized_feature = normalized["features"][0]
+    if normalization_errors or not changes:
+        fail(f"drawing normalizer regression: {normalization_errors}")
+    if normalized_feature.get("type") != "threaded_hole":
+        fail("drawing normalizer does not canonicalize feature_type")
+    if normalized_feature.get("axis") != "Y":
+        fail("drawing normalizer does not canonicalize axis case")
+    if normalized_feature.get("centerline") != {"x": 1, "z": 2}:
+        fail("drawing normalizer does not apply axis-aware 2D center mapping")
+    if normalized_feature.get("explicit_centers") != [
+        {"x": 1, "z": 2},
+        {"x": 3, "z": 4},
+    ]:
+        fail("drawing normalizer does not name explicit center coordinates")
+    if normalized["source_ledger"][0]["target"] != "feature:F1.centerline.x":
+        fail("drawing normalizer does not rewrite source target paths")
+    if normalized["source_ledger"][1]["value"] != "Y":
+        fail("drawing normalizer does not keep source values aligned")
+    if normalized["derived"][0]["target"] != "feature:F1.explicit_centers.0.x":
+        fail("drawing normalizer does not rewrite indexed derived targets")
+    if normalized["derived"][0]["expr"] != {
+        "op": "add",
+        "args": [
+            {"source": "S1"},
+            {"target": "feature:F1.centerline.z"},
+        ],
+    }:
+        fail("drawing normalizer does not canonicalize derived expressions")
+
+    ambiguous_center = {"features": [{"id": "F2", "position": {"center": [1, 2]}}]}
+    ambiguous_normalized, _, ambiguous_errors = runner.normalize_drawing_json(
+        ambiguous_center
+    )
+    if ambiguous_errors or ambiguous_normalized["features"][0].get("centerline"):
+        fail("drawing normalizer guesses an ambiguous 2D center")
+    if ambiguous_normalized["features"][0]["position"]["center"] != [1, 2]:
+        fail("drawing normalizer does not preserve an ambiguous center")
+
+    conflicting_alias = {
+        "features": [{"id": "F3", "type": "hole", "feature_type": "slot"}]
+    }
+    conflicting_normalized, _, conflict_errors = runner.normalize_drawing_json(
+        conflicting_alias
+    )
+    if not conflict_errors or conflicting_normalized["features"][0]["type"] != "hole":
+        fail("drawing normalizer overwrites a conflicting canonical field")
+
     profile_fixture = json.loads(json.dumps(drawing_example))
     profile_fixture["profile"] = {"body": {"y": [-30, 30]}}
     profile_fixture["source_ledger"].append(
@@ -754,9 +842,11 @@ def main() -> None:
         fail("top-level Gate A coordinate sanity rule missing")
     for token in (
         "validate-drawing",
+        "--normalize",
         'source_ownership.status="pass"',
         "正常路径**不读取 examples**",
         "禁止递归搜索 Runner",
+        "trace-stage",
     ):
         if token not in top:
             fail(f"top-level Gate A validator/fast-path regression: missing {token}")
@@ -913,6 +1003,8 @@ def main() -> None:
     runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
     for token in (
         "def check_drawing_json",
+        "def normalize_drawing_json",
+        "def _cmd_trace_stage",
         "_drawing_direct_semantic_ok",
         "_drawing_check_feature_bbox",
         "crosses feature boundaries without relation evidence",

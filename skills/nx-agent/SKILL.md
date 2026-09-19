@@ -33,12 +33,13 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 ### 模式 B：二维机械工程图自动建模
 用户上传二维机械工程图并要求“开始建模”“按图建模”“用 NX 画出来”等时：
 
-1. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。正常路径**不读取 examples**；只有 validator 报 schema 错误时才查看 `examples/example-output.json`。
-2. 输出结构化 drawing JSON 后，按“运行时与路径”的固定规则只解析一次 `runtime-config.json`，禁止扫描目录；用其中 `python_exe` 执行同目录 `runner.py validate-drawing <drawing.json>`。
-3. 只有 validate-drawing exit code=0，且返回 `source_ownership.status="pass"` 与 `coordinate_sanity.status="pass"`，才通过门禁 A。
-4. 读取建模规划与拓扑规则，生成 frozen plan，并通过门禁 B。
-5. 调用 Plan Runner 执行。
-6. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
+1. 按“运行时与路径”的固定规则只解析一次 `runtime-config.json`，禁止扫描目录；立即用其中 `python_exe` 执行同目录 `runner.py trace-stage <trace.json> mode_b_started --status started`。本任务后续复用同一运行时与 trace 文件。
+2. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`；读取图纸后记录 `image_loaded`。正常路径**不读取 examples**；只有规范化后 validator 仍报 schema 错误时才查看 `examples/example-output.json`。
+3. 输出结构化 drawing JSON，记录 `drawing_json_written`，再执行 `runner.py validate-drawing <drawing.json> --normalize`。Normalizer 只转换等价 schema/坐标表达并逐项留痕，不猜尺寸、特征归属、方向或拓扑；发生冲突时不覆写文件。随后按结果记录 `gate_a_completed`（`--status completed|failed`）。
+4. 只有 validate-drawing exit code=0，且返回 `source_ownership.status="pass"` 与 `coordinate_sanity.status="pass"`，才通过门禁 A。
+5. 读取建模规划与拓扑规则，生成 frozen plan 后记录 `frozen_plan_written`；通过门禁 B 后记录 `gate_b_completed`。
+6. 调用 Plan Runner 前记录 `runner_started --status started`，结束后按 report 记录 `runner_completed --status completed|failed`。
+7. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。trace 只用于分段耗时诊断，不参与 Gate 判定。
 
 两条链路：
 
@@ -77,7 +78,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 Gate A 判断的是**最低充分建模闭合**，不是“整张图所有文字/工艺信息都必须 100% 解释”。
 
 同时满足以下条件才通过：
-- 本地 `runner.py validate-drawing <drawing.json>` exit code=0；
+- 本地 `runner.py validate-drawing <drawing.json> --normalize` exit code=0；
 - validator 返回 `source_ownership.status="pass"`；
 - validator 返回 `coordinate_sanity.status="pass"`；
 - `blocking_unresolved = 0`、`dimension_conflicts = 0`、`dimension_closure.status = "closed"`。

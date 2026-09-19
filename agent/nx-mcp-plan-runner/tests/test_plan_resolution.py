@@ -776,6 +776,36 @@ def test_run_history_persists_consumed_repair(tmp_path=None):
     h2 = R.RunHistory(hp)
     assert h2.most_recent(r"C:\work\repair.prt")["repair_attempt"] == 1
 
+
+def test_mode_b_trace_records_ordered_wall_clock_events(tmp_path=None):
+    import contextlib
+    import io
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    trace_path = os.path.join(directory, "mode-b-trace.json")
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert R._cmd_trace_stage(
+            SimpleNamespace(
+                trace=trace_path, stage="mode_b_started", status="started"
+            )
+        ) == 0
+        assert R._cmd_trace_stage(
+            SimpleNamespace(
+                trace=trace_path, stage="image_loaded", status="completed"
+            )
+        ) == 0
+    with open(trace_path, encoding="utf-8") as handle:
+        trace = json.load(handle)
+    assert trace["schema_version"] == 1
+    assert [event["stage"] for event in trace["events"]] == [
+        "mode_b_started",
+        "image_loaded",
+    ]
+    assert trace["events"][1]["elapsed_ms"] >= 0
+    assert trace["events"][1]["delta_ms"] >= 0
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------

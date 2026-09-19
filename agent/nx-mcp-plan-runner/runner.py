@@ -9,7 +9,8 @@ This Runner is PART-AGNOSTIC and PLAN-AGNOSTIC:
 - it never invents repairs: a failed step stops the run (declared retries only).
 
 Modes:
-  python runner.py validate-drawing <drawing.json>  # Gate A structural/evidence check, no NX
+  python runner.py validate-drawing <drawing.json> [--normalize]  # Gate A, no NX
+  python runner.py trace-stage <trace.json> <stage> # Mode B wall-clock milestones
   python runner.py run   <plan.json> [--workspace DIR] [--report OUT.json]
   python runner.py check <plan.json> [--frozen]     # static, no NX
   python runner.py build <plan.json> <out.json>     # frozen -> executable, no NX
@@ -1481,6 +1482,440 @@ _DRAWING_RELATION_SEMANTICS = {
     "alignment",
 }
 
+_MODE_B_TRACE_STAGES = (
+    "mode_b_started",
+    "image_loaded",
+    "drawing_json_written",
+    "gate_a_completed",
+    "frozen_plan_written",
+    "gate_b_completed",
+    "runner_started",
+    "runner_completed",
+)
+
+
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Write JSON without exposing a partially written runtime artifact."""
+    absolute = os.path.abspath(path)
+    parent = os.path.dirname(absolute)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    temp = f"{absolute}.tmp-{os.getpid()}"
+    try:
+        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temp, absolute)
+    finally:
+        if os.path.exists(temp):
+            os.remove(temp)
+
+
+def _normalization_change(
+    changes: list[dict[str, Any]],
+    code: str,
+    path: str,
+    before: Any,
+    after: Any,
+) -> None:
+    changes.append({"code": code, "path": path, "from": before, "to": after})
+
+
+def _normalization_assign(
+    obj: dict,
+    old_key: str,
+    new_key: str,
+    path: str,
+    changes: list[dict[str, Any]],
+    errors: list[str],
+    target_map: dict[str, str],
+) -> bool:
+    """Move an unambiguous alias, refusing to overwrite a different value."""
+    if old_key not in obj:
+        return False
+    old_path = f"{path}.{old_key}"
+    new_path = f"{path}.{new_key}"
+    value = obj[old_key]
+    if new_key in obj and not _drawing_equal(obj[new_key], value):
+        errors.append(
+            f"normalization conflict: {old_path} differs from existing {new_path}"
+        )
+        return False
+    if new_key not in obj:
+        obj[new_key] = value
+    del obj[old_key]
+    target_map[old_path] = new_path
+    _normalization_change(changes, "alias", old_path, value, value)
+    return True
+
+
+def _normalization_center_axes(axis: str, length: int) -> tuple[str, ...] | None:
+    if length == 3:
+        return ("x", "y", "z")
+    if length != 2:
+        return None
+    return {
+        "X": ("y", "z"),
+        "Y": ("x", "z"),
+        "Z": ("x", "y"),
+    }.get(axis)
+
+
+def _normalize_feature_object(
+    obj: dict,
+    path: str,
+    changes: list[dict[str, Any]],
+    errors: list[str],
+    target_map: dict[str, str],
+) -> None:
+    for old_key, new_key in (
+        ("feature_type", "type"),
+        ("thread_spec", "spec"),
+        ("is_through", "through"),
+    ):
+        _normalization_assign(
+            obj, old_key, new_key, path, changes, errors, target_map
+        )
+
+    for key in ("axis", "width_axis", "through_axis"):
+        value = obj.get(key)
+        if isinstance(value, str) and value.upper() in {"X", "Y", "Z"} and value != value.upper():
+            obj[key] = value.upper()
+            target_map[f"{path}.{key}"] = f"{path}.{key}"
+            _normalization_change(
+                changes, "axis_case", f"{path}.{key}", value, obj[key]
+            )
+
+    centerline = obj.get("centerline")
+    if centerline is None:
+        centerline = {}
+    elif not isinstance(centerline, dict):
+        errors.append(f"normalization conflict: {path}.centerline must be an object")
+        centerline = None
+
+    if centerline is not None:
+        for axis_name in ("x", "y", "z"):
+            aliases = (f"center_{axis_name}", f"centerline_{axis_name}")
+            for alias in aliases:
+                if alias not in obj:
+                    continue
+                value = obj[alias]
+                old_path = f"{path}.{alias}"
+                new_path = f"{path}.centerline.{axis_name}"
+                if axis_name in centerline and not _drawing_equal(centerline[axis_name], value):
+                    errors.append(
+                        f"normalization conflict: {old_path} differs from existing {new_path}"
+                    )
+                    continue
+                centerline[axis_name] = value
+                del obj[alias]
+                target_map[old_path] = new_path
+                _normalization_change(changes, "center_alias", old_path, value, value)
+
+        position = obj.get("position")
+        if isinstance(position, dict) and "center" in position:
+            raw_center = position.get("center")
+            named: dict[str, Any] | None = None
+            if isinstance(raw_center, dict):
+                if all(key in {"x", "y", "z"} for key in raw_center):
+                    named = dict(raw_center)
+            elif isinstance(raw_center, list):
+                axes = _normalization_center_axes(
+                    str(obj.get("axis") or "").upper(), len(raw_center)
+                )
+                if axes and all(_num(item) is not None for item in raw_center):
+                    named = dict(zip(axes, raw_center, strict=True))
+            if named is not None:
+                conflicts = [
+                    key
+                    for key, value in named.items()
+                    if key in centerline and not _drawing_equal(centerline[key], value)
+                ]
+                if conflicts:
+                    errors.append(
+                        f"normalization conflict: {path}.position.center differs from "
+                        f"{path}.centerline on {','.join(conflicts)}"
+                    )
+                else:
+                    old_path = f"{path}.position.center"
+                    new_path = f"{path}.centerline"
+                    centerline.update(named)
+                    del position["center"]
+                    if not position:
+                        del obj["position"]
+                    target_map[old_path] = new_path
+                    for index, axis_name in enumerate(named):
+                        target_map[f"{old_path}.{index}"] = f"{new_path}.{axis_name}"
+                    _normalization_change(
+                        changes, "named_center", old_path, raw_center, named
+                    )
+
+        if centerline and obj.get("centerline") is not centerline:
+            obj["centerline"] = centerline
+
+    explicit = obj.get("explicit_centers")
+    axis = str(obj.get("axis") or "").upper()
+    if isinstance(explicit, list):
+        converted: list[Any] = []
+        can_convert = True
+        for item in explicit:
+            if not isinstance(item, list):
+                converted.append(item)
+                continue
+            axes = _normalization_center_axes(axis, len(item))
+            if axes is None or not all(_num(value) is not None for value in item):
+                can_convert = False
+                break
+            converted.append(dict(zip(axes, item, strict=True)))
+        if can_convert and converted != explicit:
+            before = copy.deepcopy(explicit)
+            obj["explicit_centers"] = converted
+            aggregate = f"{path}.explicit_centers"
+            target_map[aggregate] = aggregate
+            for index, (old_item, new_item) in enumerate(zip(before, converted, strict=True)):
+                if isinstance(old_item, list) and isinstance(new_item, dict):
+                    for coord_index, axis_name in enumerate(new_item):
+                        target_map[f"{aggregate}.{index}.{coord_index}"] = (
+                            f"{aggregate}.{index}.{axis_name}"
+                        )
+            _normalization_change(
+                changes, "named_explicit_centers", aggregate, before, converted
+            )
+
+    members = obj.get("members")
+    if isinstance(members, list):
+        for index, member in enumerate(members):
+            if isinstance(member, dict):
+                _normalize_feature_object(
+                    member,
+                    f"{path}.members.{index}",
+                    changes,
+                    errors,
+                    target_map,
+                )
+
+
+def _normalize_target_syntax(target: str) -> str:
+    normalized = re.sub(r"\[(\d+)\]", r".\1", target)
+    normalized = re.sub(r"(?<=[A-Za-z_]):(?=\d+(?:\.|$))", ".", normalized)
+    return normalized
+
+
+def _rewrite_normalized_target(target: str, target_map: dict[str, str]) -> str:
+    normalized = _normalize_target_syntax(target)
+    for old_path in sorted(target_map, key=len, reverse=True):
+        if normalized == old_path or normalized.startswith(f"{old_path}."):
+            return target_map[old_path] + normalized[len(old_path) :]
+    return normalized
+
+
+def _normalize_expr(
+    expr: Any,
+    path: str,
+    changes: list[dict[str, Any]],
+    errors: list[str],
+    target_map: dict[str, str],
+) -> Any:
+    if isinstance(expr, (int, float)) and not isinstance(expr, bool):
+        result = {"const": expr}
+        _normalization_change(changes, "expr_const", path, expr, result)
+        return result
+    if isinstance(expr, str):
+        if expr.startswith("source:") and expr[len("source:") :]:
+            result = {"source": expr[len("source:") :]}
+        elif expr.startswith("target:") and expr[len("target:") :]:
+            result = {
+                "target": _rewrite_normalized_target(
+                    expr[len("target:") :], target_map
+                )
+            }
+        elif expr.startswith("feature:") or expr.startswith("overall_dimensions."):
+            result = {"target": _rewrite_normalized_target(expr, target_map)}
+        else:
+            return expr
+        _normalization_change(changes, "expr_reference", path, expr, result)
+        return result
+    if not isinstance(expr, dict):
+        return expr
+
+    result = copy.deepcopy(expr)
+    for old_key, new_key in (
+        ("source_ref", "source"),
+        ("target_ref", "target"),
+        ("operator", "op"),
+        ("operands", "args"),
+    ):
+        if old_key not in result:
+            continue
+        if new_key in result and result[new_key] != result[old_key]:
+            errors.append(
+                f"normalization conflict: {path}.{old_key} differs from "
+                f"existing {path}.{new_key}"
+            )
+            continue
+        if new_key not in result:
+            result[new_key] = result[old_key]
+        del result[old_key]
+        _normalization_change(
+            changes, "expr_alias", f"{path}.{old_key}", expr[old_key], result[new_key]
+        )
+    if isinstance(result.get("target"), str):
+        before = result["target"]
+        result["target"] = _rewrite_normalized_target(before, target_map)
+        if result["target"] != before:
+            _normalization_change(
+                changes, "target_path", f"{path}.target", before, result["target"]
+            )
+    if isinstance(result.get("args"), list):
+        result["args"] = [
+            _normalize_expr(
+                item, f"{path}.args.{index}", changes, errors, target_map
+            )
+            for index, item in enumerate(result["args"])
+        ]
+    return result
+
+
+def normalize_drawing_json(data: dict) -> tuple[dict, list[dict[str, Any]], list[str]]:
+    """Canonicalize only schema-equivalent forms; never infer drawing semantics."""
+    canonical = copy.deepcopy(data)
+    changes: list[dict[str, Any]] = []
+    errors: list[str] = []
+    target_map: dict[str, str] = {}
+
+    if "schema_version" not in canonical:
+        canonical["schema_version"] = 1
+        _normalization_change(changes, "schema_version", "schema_version", None, 1)
+
+    features = canonical.get("features")
+    if isinstance(features, list):
+        for index, feature in enumerate(features):
+            if not isinstance(feature, dict):
+                continue
+            fid = feature.get("id")
+            path = f"feature:{fid}" if isinstance(fid, str) and fid else f"features.{index}"
+            _normalize_feature_object(
+                feature, path, changes, errors, target_map
+            )
+
+    reference_fields = {
+        "target",
+        "targets",
+        "between",
+        "links",
+        "center",
+        "diameter",
+        "tangent",
+    }
+    ledger = canonical.get("source_ledger")
+    if isinstance(ledger, list):
+        for index, source in enumerate(ledger):
+            if not isinstance(source, dict):
+                continue
+            original_target = source.get("target")
+            original_value = copy.deepcopy(source.get("value"))
+            for key in reference_fields:
+                value = source.get(key)
+                if isinstance(value, str):
+                    rewritten = _rewrite_normalized_target(value, target_map)
+                    if rewritten != value:
+                        source[key] = rewritten
+                        _normalization_change(
+                            changes,
+                            "target_path",
+                            f"source_ledger.{index}.{key}",
+                            value,
+                            rewritten,
+                        )
+                elif isinstance(value, list):
+                    rewritten_list = [
+                        _rewrite_normalized_target(item, target_map)
+                        if isinstance(item, str)
+                        else item
+                        for item in value
+                    ]
+                    if rewritten_list != value:
+                        source[key] = rewritten_list
+                        _normalization_change(
+                            changes,
+                            "target_paths",
+                            f"source_ledger.{index}.{key}",
+                            value,
+                            rewritten_list,
+                        )
+            target = source.get("target")
+            if isinstance(target, str) and "value" in source:
+                try:
+                    actual = _drawing_path_get(canonical, target)
+                except KeyError:
+                    pass
+                else:
+                    original_path = (
+                        _normalize_target_syntax(original_target)
+                        if isinstance(original_target, str)
+                        else None
+                    )
+                    original_matches = False
+                    if original_path is not None:
+                        try:
+                            original_actual = _drawing_path_get(data, original_path)
+                        except KeyError:
+                            pass
+                        else:
+                            original_matches = _drawing_equal(
+                                original_value, original_actual
+                            )
+                    shape_changed = bool(
+                        original_path is not None
+                        and any(
+                            original_path == old_path
+                            or original_path.startswith(f"{old_path}.")
+                            for old_path in target_map
+                        )
+                    )
+                    if (
+                        original_matches
+                        and shape_changed
+                        and not _drawing_equal(source["value"], actual)
+                    ):
+                        before = source["value"]
+                        source["value"] = copy.deepcopy(actual)
+                        _normalization_change(
+                            changes,
+                            "source_value_shape",
+                            f"source_ledger.{index}.value",
+                            before,
+                            source["value"],
+                        )
+
+    derived = canonical.get("derived")
+    if isinstance(derived, list):
+        for index, item in enumerate(derived):
+            if not isinstance(item, dict):
+                continue
+            target = item.get("target")
+            if isinstance(target, str):
+                rewritten = _rewrite_normalized_target(target, target_map)
+                if rewritten != target:
+                    item["target"] = rewritten
+                    _normalization_change(
+                        changes,
+                        "target_path",
+                        f"derived.{index}.target",
+                        target,
+                        rewritten,
+                    )
+            if "expr" in item:
+                item["expr"] = _normalize_expr(
+                    item["expr"],
+                    f"derived.{index}.expr",
+                    changes,
+                    errors,
+                    target_map,
+                )
+
+    return canonical, changes, errors
+
 
 def _drawing_path_get(data: dict, target: str) -> Any:
     """Resolve feature:<id>.<path> or a normal dotted/list path."""
@@ -2612,17 +3047,101 @@ def _load_drawing(path: str) -> dict:
 
 
 def _cmd_validate_drawing(args: argparse.Namespace) -> int:
+    t_start = time.perf_counter()
     drawing = _load_drawing(args.drawing)
+    t_loaded = time.perf_counter()
+    changes: list[dict[str, Any]] = []
+    normalization_errors: list[str] = []
+    normalized = False
+    t_normalized = t_loaded
+    t_written = t_loaded
+    if args.normalize:
+        drawing, changes, normalization_errors = normalize_drawing_json(drawing)
+        t_normalized = time.perf_counter()
+        if not normalization_errors:
+            _atomic_write_json(args.drawing, drawing)
+            normalized = True
+        t_written = time.perf_counter()
     errors = check_drawing_json(drawing)
+    if normalization_errors:
+        errors = normalization_errors + errors
+    t_validated = time.perf_counter()
     result = {
         "drawing": args.drawing,
+        "normalization": {
+            "requested": bool(args.normalize),
+            "written": normalized,
+            "change_count": len(changes),
+            "changes": changes,
+            "errors": normalization_errors,
+        },
         "source_ownership": {"status": "pass" if not errors else "fail"},
         "coordinate_sanity": {"status": "pass" if not errors else "fail"},
         "errors": errors,
+        "timings_ms": {
+            "load": round((t_loaded - t_start) * 1000.0, 3),
+            "normalize": round((t_normalized - t_loaded) * 1000.0, 3),
+            "write": round((t_written - t_normalized) * 1000.0, 3),
+            "validate": round((t_validated - t_written) * 1000.0, 3),
+            "total": round((t_validated - t_start) * 1000.0, 3),
+        },
         "ok": not errors,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if not errors else 1
+
+
+def _parse_utc_timestamp(value: str) -> _dt.datetime:
+    return _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _cmd_trace_stage(args: argparse.Namespace) -> int:
+    now = _dt.datetime.now(_dt.timezone.utc)
+    now_text = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    exists = os.path.exists(args.trace)
+    if exists:
+        with open(args.trace, encoding="utf-8-sig") as handle:
+            trace = json.load(handle)
+        if not isinstance(trace, dict) or not isinstance(trace.get("events"), list):
+            raise PlanError(f"{args.trace}: invalid Mode B trace")
+    else:
+        if args.stage != "mode_b_started":
+            raise PlanError("the first trace stage must be mode_b_started")
+        trace = {
+            "schema_version": 1,
+            "started_at": now_text,
+            "events": [],
+        }
+
+    events = trace["events"]
+    if any(event.get("stage") == args.stage for event in events if isinstance(event, dict)):
+        raise PlanError(f"trace stage already recorded: {args.stage}")
+    if events:
+        previous = events[-1]
+        previous_stage = previous.get("stage")
+        if previous_stage not in _MODE_B_TRACE_STAGES:
+            raise PlanError(f"invalid previous trace stage: {previous_stage!r}")
+        if _MODE_B_TRACE_STAGES.index(args.stage) <= _MODE_B_TRACE_STAGES.index(previous_stage):
+            raise PlanError(
+                f"trace stage {args.stage!r} is out of order after {previous_stage!r}"
+            )
+
+    started = _parse_utc_timestamp(str(trace["started_at"]))
+    previous_at = (
+        _parse_utc_timestamp(str(events[-1]["timestamp"])) if events else started
+    )
+    event = {
+        "stage": args.stage,
+        "status": args.status,
+        "timestamp": now_text,
+        "elapsed_ms": round((now - started).total_seconds() * 1000.0, 3),
+        "delta_ms": round((now - previous_at).total_seconds() * 1000.0, 3),
+    }
+    events.append(event)
+    trace["updated_at"] = now_text
+    _atomic_write_json(args.trace, trace)
+    print(json.dumps({"trace": args.trace, "event": event, "ok": True}, ensure_ascii=False, indent=2))
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -2806,7 +3325,22 @@ def main(argv: list[str] | None = None) -> int:
 
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")
     pd.add_argument("drawing")
+    pd.add_argument(
+        "--normalize",
+        action="store_true",
+        help="atomically write schema-equivalent canonical forms before validation",
+    )
     pd.set_defaults(func=_cmd_validate_drawing)
+
+    pt = sub.add_parser("trace-stage", help="record one Mode B wall-clock milestone")
+    pt.add_argument("trace")
+    pt.add_argument("stage", choices=_MODE_B_TRACE_STAGES)
+    pt.add_argument(
+        "--status",
+        choices=("started", "completed", "failed"),
+        default="completed",
+    )
+    pt.set_defaults(func=_cmd_trace_stage)
 
     args = p.parse_args(argv)
     if inspect.iscoroutinefunction(args.func):

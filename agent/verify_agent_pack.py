@@ -457,6 +457,81 @@ def main() -> None:
         if token not in drawing_rules:
             fail(f"quick drawing relation contract regression: missing {token}")
 
+    for token in (
+        "Gate A canonical output contract",
+        "length_x / width_y / height_z",
+        "非空 `type` 和显式 `count`",
+        "centerline:{x,y,z}",
+        "`width` 必须由 `slot_width` source 覆盖",
+        "规格字段固定为 `spec`",
+        "hole_diameter / counterbore_diameter / counterbore_depth",
+        "profile.sections.0.z_max",
+        "relation source 不得写 direct `target`",
+        "const` 只用于真正数学常量",
+        "dimension_conflicts",
+        "overall_dimensions.x/y/z",
+        "normalizer 不负责把这些字段猜测重命名",
+    ):
+        if token not in drawing_reader:
+            fail(f"Reader canonical Gate A contract regression: missing {token}")
+    for token in (
+        "overall_dimensions.length_x / width_y / height_z",
+        "required feature 固定写 `type` 与 `count`",
+        "不用 `center_x/y/z`",
+        "规格写 `spec`",
+        "不用 `through_diameter / cbore_diameter / cbore_depth`",
+        "list 只接受数字索引",
+        "normalizer 只做无歧义 schema shape 转换",
+    ):
+        if token not in drawing_rules:
+            fail(f"quick Reader canonical contract regression: missing {token}")
+
+    canonical_fixture_path = RUNNER / "tests" / "fixtures" / "canonical-reader-output.json"
+    canonical_fixture = json.loads(canonical_fixture_path.read_text(encoding="utf-8"))
+    required_drawing_roots = {
+        "overall_dimensions", "coordinate_system", "features", "source_ledger",
+        "derived", "unresolved", "dimension_conflicts", "dimension_closure",
+    }
+    if not required_drawing_roots.issubset(canonical_fixture):
+        fail("canonical Reader fixture is missing a Gate A root")
+    if set(canonical_fixture.get("overall_dimensions") or {}) != {
+        "length_x", "width_y", "height_z",
+    }:
+        fail("canonical Reader fixture overall dimensions drifted")
+    forbidden_reader_keys = {
+        "kind", "center_x", "center_y", "center_z", "open_from_z",
+        "thread_spec", "x_start", "through_diameter", "cbore_diameter",
+        "cbore_depth",
+    }
+
+    def collect_keys(value: object) -> set[str]:
+        if isinstance(value, dict):
+            return set(value) | {
+                key
+                for child in value.values()
+                for key in collect_keys(child)
+            }
+        if isinstance(value, list):
+            return {key for child in value for key in collect_keys(child)}
+        return set()
+
+    bad_fixture_keys = forbidden_reader_keys & collect_keys(canonical_fixture)
+    if bad_fixture_keys:
+        fail(f"canonical Reader fixture uses forbidden aliases: {sorted(bad_fixture_keys)}")
+
+    drawing_tests = (RUNNER / "tests" / "test_drawing_validation.py").read_text(encoding="utf-8")
+    for token in (
+        "test_canonical_reader_fixture_passes_machine_gate_a",
+        "test_canonical_reader_fixture_covers_required_field_contracts",
+        "test_canonical_reader_source_targets_resolve_and_match_semantics",
+        "test_free_label_center_distance_endpoints_are_rejected",
+        "test_relation_source_cannot_use_direct_target_shape",
+        "test_dimension_conflicts_is_a_required_root",
+        "test_normalizer_does_not_rename_noncanonical_semantic_fields",
+    ):
+        if token not in drawing_tests:
+            fail(f"canonical Reader regression test missing: {token}")
+
     timing_tests = (RUNNER / "tests" / "test_bbox_report.py").read_text(encoding="utf-8")
     if "test_timing_bucket_separates_postprocess_from_validation" not in timing_tests:
         fail("Runner timing phase regression test missing")

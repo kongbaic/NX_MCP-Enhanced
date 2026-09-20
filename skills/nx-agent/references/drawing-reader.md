@@ -135,7 +135,44 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
   "source_ledger": [],
   "derived": [],
   "unresolved": [],
+  "dimension_conflicts": [],
   "dimension_closure": {"status": "closed"}
+}
+```
+
+### 11.1 Gate A canonical output contract
+
+以下字段名以当前 `runner.py` 的 Gate A validator 为机器真相。Reader 第一版输出必须直接使用 canonical schema，不能期待 normalizer 做语义重命名：
+
+- 顶层必需根：`overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`。
+- `overall_dimensions` 固定写 `length_x / width_y / height_z`，值必须为正数，并分别由 `overall_dimension` source 覆盖。
+- required feature 必须有稳定 `id`、非空 `type` 和显式 `count`；`type` 用 `feature_kind` source，`count` 用 `feature_count` source。若输出 `through`，必须另有 `through` source。
+- 孔类横向中心使用 `centerline:{x,y,z}`、`centerline_x/y/z`、`position.center` 或 `explicit_centers` 中与孔轴垂直的坐标。对应 direct semantic 为 `center_position`；禁止使用 `center_x / center_y / center_z`。
+- slot/slit 使用 `type`、`width`、`width_axis`、`through_axis`，非贯穿且有直接证据时可使用 `depth`；有证据的轴向边界使用 validator 支持的 `top_z / bottom_z / start_z / end_z`。`width` 必须由 `slot_width` source 覆盖。
+- threaded hole 的规格字段固定为 `spec`，source semantic 为 `thread_spec`；中心、`axis`、`hole_depth`/`depth`、`count` 等字段各自保留对应 evidence。
+- counterbore 使用 `hole_diameter / counterbore_diameter / counterbore_depth`；直径分别使用 `diameter` source，深度使用 `depth` source。
+- `explicit_centers` 是 2D/3D 坐标数组；每个 HARD 坐标分量必须有 direct、relation 或 derived evidence，且数组长度必须等于 `count`。
+- direct source 固定为 `{id, semantic, value, target}`；`target` 必须是 `_drawing_path_get` 可解析的真实 JSON path。`feature:<id>.<path>` 按 feature id 定位；普通 list 只能使用数字索引，例如 `profile.sections.0.z_max`，禁止用逻辑名称冒充数组 key。
+- relation source 不得写 direct `target`。`center_distance / center_spacing` 必须使用 `between:[realCenterTargetA, realCenterTargetB]`；两个 endpoint 都必须可解析且被 `_drawing_is_center_target` 识别。
+- derived 固定包含 `id / target / value / expr`，需要非数值关系时另加 `relation_refs`。图纸数值必须经 `{"source":"S..."}` 或已绑定 geometry `{"target":"..."}` 进入表达式；`const` 只用于真正数学常量，不得替代图纸 provenance。
+- `unresolved` 与 `dimension_conflicts` 始终显式输出 list；只有二者无 blocking item 且 `dimension_closure.status="closed"` 才能通过 Gate A。
+
+已知非 canonical Reader 输出明确禁止：`overall_dimensions.x/y/z`、以 `kind` 代替 `type`、`center_x/y/z`、`open_from_z`、`thread_spec` 字段、`x_start`、`through_diameter`、`cbore_diameter`、`cbore_depth`。normalizer 不负责把这些字段猜测重命名为 canonical geometry。
+
+通用 source / relation / derived 形状：
+
+```json
+{
+  "source_ledger": [
+    {"id":"S_CENTER_A", "semantic":"center_position", "value":0, "target":"feature:F_A.centerline.x"},
+    {"id":"S_DISTANCE", "semantic":"center_distance", "value":20, "between":["feature:F_A.centerline.x", "feature:F_B.centerline.x"]}
+  ],
+  "derived": [{
+    "id":"D_CENTER_B",
+    "target":"feature:F_B.centerline.x",
+    "value":20,
+    "expr":{"op":"add", "args":[{"target":"feature:F_A.centerline.x"}, {"source":"S_DISTANCE"}]}
+  }]
 }
 ```
 

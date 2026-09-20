@@ -105,6 +105,17 @@
 - `C2` / `C2×45°` 只有在实际标注明确绑定到边时才表示倒角。
 - 参数表字段 `C=2` 不等价于边标注 `C2`；没有明确边绑定时禁止自动生成 chamfer。
 
+### 7.3 Gate A canonical 字段速查
+
+- overall extent：`overall_dimensions.length_x / width_y / height_z`；不用 `x / y / z`。
+- feature identity/count：required feature 固定写 `type` 与 `count`，并分别提供 `feature_kind`、`feature_count` provenance；不用 `kind` 代替 `type`。
+- hole center：使用 `centerline.x/y/z`、`centerline_x/y/z`、`position.center` 或 `explicit_centers`；不用 `center_x/y/z`。
+- slot：`width / width_axis / through_axis`，有直接边界证据时使用 `top_z / bottom_z / start_z / end_z`；不用 `open_from_z`。
+- thread：规格写 `spec`，由 `thread_spec` semantic 指向；不用 feature 字段 `thread_spec` 或 `x_start`。
+- counterbore：`hole_diameter / counterbore_diameter / counterbore_depth`；不用 `through_diameter / cbore_diameter / cbore_depth`。
+- target 必须是实际 JSON path；list 只接受数字索引。relation 不写 direct `target`，中心距 `between` 的两端必须是真实 center coordinate path。
+- 第一版必须显式输出 `unresolved / dimension_conflicts / dimension_closure`。normalizer 只做无歧义 schema shape 转换，不承担上述语义字段重命名。
+
 ## 8. 尺寸闭合检查
 
 - 仅基于图上已标注数值进行一致性校验，例如：

@@ -1,0 +1,131 @@
+{
+  "overall_dimensions": {
+    "length_x": 120,
+    "width_y": 80,
+    "height_z": 50
+  },
+  "coordinate_system": {
+    "origin": "part_center_xy_bottom_z0",
+    "x_positive": "right",
+    "y_positive": "up",
+    "z_positive": "up",
+    "unit": "mm"
+  },
+  "features": [
+    {
+      "id": "F_REFERENCE",
+      "type": "through_hole",
+      "axis": "Z",
+      "centerline": {"x": -20, "y": 0},
+      "hole_diameter": 10,
+      "through": true,
+      "count": 1,
+      "required_for_modeling": true
+    },
+    {
+      "id": "F_DERIVED",
+      "type": "through_hole",
+      "axis": "Z",
+      "centerline": {"x": 20, "y": 0},
+      "hole_diameter": 8,
+      "through": true,
+      "count": 1,
+      "required_for_modeling": true
+    },
+    {
+      "id": "F_SLOT",
+      "type": "slot",
+      "width": 10,
+      "width_axis": "X",
+      "through_axis": "Z",
+      "count": 1,
+      "required_for_modeling": true
+    },
+    {
+      "id": "F_THREAD",
+      "type": "threaded_hole",
+      "axis": "Z",
+      "centerline": {"x": 0, "y": 20},
+      "spec": "M6",
+      "hole_depth": 12,
+      "count": 1,
+      "required_for_modeling": true
+    },
+    {
+      "id": "F_COUNTERBORE",
+      "type": "counterbore_hole",
+      "axis": "Z",
+      "centerline": {"x": 0, "y": -20},
+      "hole_diameter": 6,
+      "counterbore_diameter": 12,
+      "counterbore_depth": 4,
+      "through": true,
+      "count": 1,
+      "required_for_modeling": true
+    }
+  ],
+  "patterns": [],
+  "symmetry": [],
+  "source_ledger": [
+    {"id": "S_OVERALL_X", "semantic": "overall_dimension", "value": 120, "target": "overall_dimensions.length_x"},
+    {"id": "S_OVERALL_Y", "semantic": "overall_dimension", "value": 80, "target": "overall_dimensions.width_y"},
+    {"id": "S_OVERALL_Z", "semantic": "overall_dimension", "value": 50, "target": "overall_dimensions.height_z"},
+
+    {"id": "S_REFERENCE_TYPE", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_REFERENCE.type"},
+    {"id": "S_REFERENCE_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_REFERENCE.axis"},
+    {"id": "S_REFERENCE_X", "semantic": "center_position", "value": -20, "target": "feature:F_REFERENCE.centerline.x"},
+    {"id": "S_REFERENCE_Y", "semantic": "center_position", "value": 0, "target": "feature:F_REFERENCE.centerline.y"},
+    {"id": "S_REFERENCE_DIAMETER", "semantic": "diameter", "value": 10, "target": "feature:F_REFERENCE.hole_diameter"},
+    {"id": "S_REFERENCE_THROUGH", "semantic": "through", "value": true, "target": "feature:F_REFERENCE.through"},
+    {"id": "S_REFERENCE_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_REFERENCE.count"},
+
+    {"id": "S_DERIVED_TYPE", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_DERIVED.type"},
+    {"id": "S_DERIVED_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_DERIVED.axis"},
+    {"id": "S_DERIVED_Y", "semantic": "center_position", "value": 0, "target": "feature:F_DERIVED.centerline.y"},
+    {"id": "S_DERIVED_DIAMETER", "semantic": "diameter", "value": 8, "target": "feature:F_DERIVED.hole_diameter"},
+    {"id": "S_DERIVED_THROUGH", "semantic": "through", "value": true, "target": "feature:F_DERIVED.through"},
+    {"id": "S_DERIVED_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_DERIVED.count"},
+    {"id": "S_CENTER_DISTANCE", "semantic": "center_distance", "value": 40, "between": ["feature:F_REFERENCE.centerline.x", "feature:F_DERIVED.centerline.x"]},
+
+    {"id": "S_SLOT_TYPE", "semantic": "feature_kind", "value": "slot", "target": "feature:F_SLOT.type"},
+    {"id": "S_SLOT_WIDTH", "semantic": "slot_width", "value": 10, "target": "feature:F_SLOT.width"},
+    {"id": "S_SLOT_WIDTH_AXIS", "semantic": "axis", "value": "X", "target": "feature:F_SLOT.width_axis"},
+    {"id": "S_SLOT_THROUGH_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_SLOT.through_axis"},
+    {"id": "S_SLOT_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_SLOT.count"},
+
+    {"id": "S_THREAD_TYPE", "semantic": "feature_kind", "value": "threaded_hole", "target": "feature:F_THREAD.type"},
+    {"id": "S_THREAD_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_THREAD.axis"},
+    {"id": "S_THREAD_X", "semantic": "center_position", "value": 0, "target": "feature:F_THREAD.centerline.x"},
+    {"id": "S_THREAD_Y", "semantic": "center_position", "value": 20, "target": "feature:F_THREAD.centerline.y"},
+    {"id": "S_THREAD_SPEC", "semantic": "thread_spec", "value": "M6", "target": "feature:F_THREAD.spec"},
+    {"id": "S_THREAD_DEPTH", "semantic": "depth", "value": 12, "target": "feature:F_THREAD.hole_depth"},
+    {"id": "S_THREAD_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_THREAD.count"},
+
+    {"id": "S_COUNTERBORE_TYPE", "semantic": "feature_kind", "value": "counterbore_hole", "target": "feature:F_COUNTERBORE.type"},
+    {"id": "S_COUNTERBORE_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_COUNTERBORE.axis"},
+    {"id": "S_COUNTERBORE_X", "semantic": "center_position", "value": 0, "target": "feature:F_COUNTERBORE.centerline.x"},
+    {"id": "S_COUNTERBORE_Y", "semantic": "center_position", "value": -20, "target": "feature:F_COUNTERBORE.centerline.y"},
+    {"id": "S_COUNTERBORE_HOLE_DIAMETER", "semantic": "diameter", "value": 6, "target": "feature:F_COUNTERBORE.hole_diameter"},
+    {"id": "S_COUNTERBORE_DIAMETER", "semantic": "diameter", "value": 12, "target": "feature:F_COUNTERBORE.counterbore_diameter"},
+    {"id": "S_COUNTERBORE_DEPTH", "semantic": "depth", "value": 4, "target": "feature:F_COUNTERBORE.counterbore_depth"},
+    {"id": "S_COUNTERBORE_THROUGH", "semantic": "through", "value": true, "target": "feature:F_COUNTERBORE.through"},
+    {"id": "S_COUNTERBORE_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_COUNTERBORE.count"}
+  ],
+  "derived": [
+    {
+      "id": "D_DERIVED_X",
+      "target": "feature:F_DERIVED.centerline.x",
+      "value": 20,
+      "expr": {
+        "op": "add",
+        "args": [
+          {"target": "feature:F_REFERENCE.centerline.x"},
+          {"source": "S_CENTER_DISTANCE"}
+        ]
+      }
+    }
+  ],
+  "unresolved": [],
+  "dimension_conflicts": [],
+  "dimension_closure": {"status": "closed"}
+}

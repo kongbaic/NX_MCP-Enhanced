@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER_PATH = ROOT / "agent" / "nx-mcp-plan-runner" / "runner.py"
 EXAMPLE_PATH = ROOT / "skills" / "nx-agent" / "examples" / "example-output.json"
+CANONICAL_READER_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "canonical-reader-output.json"
 
 SPEC = importlib.util.spec_from_file_location("audited_runner", RUNNER_PATH)
 assert SPEC and SPEC.loader
@@ -22,6 +23,10 @@ SPEC.loader.exec_module(R)
 
 def example() -> dict:
     return json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
+
+
+def canonical_reader_fixture() -> dict:
+    return json.loads(CANONICAL_READER_FIXTURE.read_text(encoding="utf-8"))
 
 
 def source(data: dict, source_id: str) -> dict:
@@ -104,6 +109,63 @@ def relation_fixture(*, target_edge: str = "min") -> dict:
 
 
 class DrawingGateATests(unittest.TestCase):
+    def test_canonical_reader_fixture_passes_machine_gate_a(self) -> None:
+        self.assertEqual([], R.check_drawing_json(canonical_reader_fixture()))
+
+    def test_canonical_reader_fixture_covers_required_field_contracts(self) -> None:
+        data = canonical_reader_fixture()
+        targets = {
+            item.get("target")
+            for item in data["source_ledger"]
+            if isinstance(item.get("target"), str)
+        }
+        self.assertTrue({
+            "overall_dimensions.length_x",
+            "overall_dimensions.width_y",
+            "overall_dimensions.height_z",
+            "feature:F_REFERENCE.type",
+            "feature:F_REFERENCE.count",
+            "feature:F_REFERENCE.centerline.x",
+            "feature:F_SLOT.width",
+            "feature:F_THREAD.spec",
+            "feature:F_COUNTERBORE.hole_diameter",
+            "feature:F_COUNTERBORE.counterbore_diameter",
+            "feature:F_COUNTERBORE.counterbore_depth",
+        }.issubset(targets))
+
+    def test_canonical_reader_source_targets_resolve_and_match_semantics(self) -> None:
+        data = canonical_reader_fixture()
+        for item in data["source_ledger"]:
+            if item["semantic"] in R._DRAWING_RELATION_SEMANTICS:
+                continue
+            with self.subTest(source=item["id"]):
+                self.assertEqual(item["value"], R._drawing_path_get(data, item["target"]))
+                self.assertTrue(R._drawing_direct_semantic_ok(data, item))
+
+    def test_canonical_center_distance_uses_resolvable_center_paths(self) -> None:
+        data = canonical_reader_fixture()
+        relation = source(data, "S_CENTER_DISTANCE")
+        self.assertNotIn("target", relation)
+        for target in relation["between"]:
+            self.assertTrue(R._drawing_is_center_target(target))
+            self.assertIsInstance(R._drawing_path_get(data, target), (int, float))
+
+    def test_free_label_center_distance_endpoints_are_rejected(self) -> None:
+        data = canonical_reader_fixture()
+        relation = source(data, "S_CENTER_DISTANCE")
+        relation["between"] = ["left", "right"]
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any("endpoints must be center coordinates" in error for error in errors))
+        self.assertTrue(any("references missing endpoint" in error for error in errors))
+
+    def test_dimension_conflicts_is_a_required_root(self) -> None:
+        data = canonical_reader_fixture()
+        del data["dimension_conflicts"]
+        self.assertIn(
+            "drawing JSON missing dimension_conflicts",
+            R.check_drawing_json(data),
+        )
+
     def test_example_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(example()))
 
@@ -312,6 +374,26 @@ class DrawingGateATests(unittest.TestCase):
 
 
 class DrawingSchemaNormalizationTests(unittest.TestCase):
+    def test_normalizer_does_not_rename_noncanonical_semantic_fields(self) -> None:
+        data = {
+            "overall_dimensions": {"x": 10, "y": 20, "z": 30},
+            "features": [{
+                "id": "F1",
+                "kind": "threaded_hole",
+                "center_x": 1,
+                "open_from_z": 2,
+                "thread_spec": "M6",
+                "x_start": 3,
+                "through_diameter": 4,
+                "cbore_diameter": 8,
+                "cbore_depth": 2,
+            }],
+        }
+        normalized, errors, changes = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual([], changes)
+        self.assertEqual(data, normalized)
+
     def test_dimension_to_dimensions(self) -> None:
         data = {"features": [{"id": "F1", "dimension": {"width": 2}}]}
         out, errors, changes = R.normalize_drawing_schema(data)

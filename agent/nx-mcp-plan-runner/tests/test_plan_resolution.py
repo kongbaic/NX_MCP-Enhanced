@@ -787,12 +787,46 @@ def _capture_json_command(command, args):
     return exit_code, json.loads(output.getvalue())
 
 
+def _write_timing_drawing_fixture(directory):
+    path = os.path.join(directory, "timing-drawing.json")
+    drawing = {
+        "overall_dimensions": {"length": 10, "width": 8, "height": 2},
+        "coordinate_system": {"origin": "part_center_xy_bottom_z0"},
+        "features": [
+            {
+                "id": "F_BASE",
+                "type": "base_plate",
+                "dimensions": {"length": 10, "width": 8, "thickness": 2},
+                "count": 1,
+                "required_for_modeling": True,
+            }
+        ],
+        "source_ledger": [
+            {"id": "S_OL", "semantic": "overall_dimension", "value": 10, "target": "overall_dimensions.length"},
+            {"id": "S_OW", "semantic": "overall_dimension", "value": 8, "target": "overall_dimensions.width"},
+            {"id": "S_OH", "semantic": "overall_dimension", "value": 2, "target": "overall_dimensions.height"},
+            {"id": "S_KIND", "semantic": "feature_kind", "value": "base_plate", "target": "feature:F_BASE.type"},
+            {"id": "S_L", "semantic": "feature_dimension", "value": 10, "target": "feature:F_BASE.dimensions.length"},
+            {"id": "S_W", "semantic": "feature_dimension", "value": 8, "target": "feature:F_BASE.dimensions.width"},
+            {"id": "S_T", "semantic": "thickness", "value": 2, "target": "feature:F_BASE.dimensions.thickness"},
+            {"id": "S_N", "semantic": "feature_count", "value": 1, "target": "feature:F_BASE.count"},
+        ],
+        "derived": [],
+        "unresolved": [],
+        "dimension_conflicts": [],
+        "dimension_closure": {"status": "closed"},
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(drawing, handle)
+    return path
+
+
 def test_validate_build_check_return_independent_timing(tmp_path=None):
     import tempfile
     from types import SimpleNamespace
 
     directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
-    drawing = os.path.abspath(os.path.join(PROJECT, "..", "..", "skills", "nx-agent", "examples", "example-output.json"))
+    drawing = _write_timing_drawing_fixture(directory)
     for _ in range(2):
         exit_code, result = _capture_json_command(R._cmd_validate_drawing, SimpleNamespace(drawing=drawing))
         assert exit_code == 0
@@ -813,10 +847,12 @@ def test_validate_build_check_return_independent_timing(tmp_path=None):
     assert check_result["timing"]["input_file"]["first_write_reliable"] is False
 
 
-def test_timing_failure_does_not_change_validate_result():
+def test_timing_failure_does_not_change_validate_result(tmp_path=None):
+    import tempfile
     from types import SimpleNamespace
 
-    drawing = os.path.abspath(os.path.join(PROJECT, "..", "..", "skills", "nx-agent", "examples", "example-output.json"))
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    drawing = _write_timing_drawing_fixture(directory)
     original = R.time.perf_counter_ns
     try:
         R.time.perf_counter_ns = lambda: (_ for _ in ()).throw(RuntimeError("clock failed"))

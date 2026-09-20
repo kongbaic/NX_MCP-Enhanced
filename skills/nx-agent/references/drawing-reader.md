@@ -19,11 +19,13 @@
 
 1. **视图坐标**：识别 Front / Side / Top / Section / Detail，确定 plane、normal 以及 view-local 轴与全局轴的对应。
 2. **Feature association**：用投影对齐、中心线、同心圆、轮廓类型、规格和引线指向关联同一 feature；先归组，后求组级 axis / centerline。
-3. **Dimension ownership**：沿 witness/extension line、leader、arrow endpoint、centerline endpoint 与 feature boundary endpoint 绑定尺寸。
-4. **Relation / derived**：只用已绑定尺寸和明确的对称、相切、共线、中心距等关系闭合几何；同组成员继承组级位置。
-5. **Global conversion**：最后一次性转换到 `part_center_xy_bottom_z0`；center coordinate 与沿轴 start/end/range 分开。
-6. **Canonical writer finalization**：先冻结最终 canonical geometry shape，并从该 shape 枚举实际存在的 HARD leaf paths；再为这些 path 收口本次 Reader first-pass 的 direct、relation coverage 与 derived writers。禁止保留 target 不存在的 writer，禁止 direct + derived 同写一个 target，relation 已提供 coverage 后禁止再为该 target 生成 direct/derived。完成 edge coordinate 校验后才可落盘。
-7. **Output**：输出本轮 drawing JSON，交由机器 Gate A 验证。
+3. **Dimension ownership**：沿 witness/extension line、leader、arrow endpoint、centerline endpoint 与 feature boundary endpoint 绑定尺寸，并为每个物理 annotation 保留唯一稳定的 measured quantity 与 endpoint ownership。
+4. **Direct witness / ownership lock**：先锁定明确 datum/boundary→centerline annotation 的原始 ownership；boundary distance 保留 `edge_offset` 的原始 `value/axis/from/targets`，由真实 boundary 计算 concrete coordinate。锁定后不得把同一 annotation 重新解释为局部尺寸或叠加其它尺寸。
+5. **Geometry relations**：在数值 derived 之前建立图纸明确表达的 shared centerline、alignment、connected、tangent、coincident、spacing 与 symmetry；同组成员继承组级位置。
+6. **Feature-local derived**：只用已绑定尺寸及第5步已建立的明确关系闭合几何；跨 feature 计算必须引用参与该关系的 geometry 与 `relation_refs`，不得自由借用邻近 feature 的 depth/spec/diameter/endpoint。
+7. **Global conversion**：最后一次性转换到 `part_center_xy_bottom_z0`；center coordinate 与沿轴 start/end/range 分开。
+8. **Canonical writer finalization**：先冻结最终 canonical geometry shape，并从该 shape 枚举实际存在的 HARD leaf paths；再为这些 path 收口本次 Reader first-pass 的 direct、relation coverage 与 derived writers。禁止保留 target 不存在的 writer，禁止 direct + derived 同写一个 target，relation 已提供 coverage 后禁止再为该 target 生成 direct/derived。完成 ownership、relation 与 edge coordinate 校验后才可落盘。
+9. **Output**：输出本轮 drawing JSON，交由机器 Gate A 验证。
 
 - 正交视图中的 concentric circles、hidden parallel lines 与 thread projection 必须先按 projection alignment、shared centerline、feature identity、specification 及 leader/witness endpoints 做 association。
 - `M-series thread / through hole / counterbore` 不得按单视图独立解释；association 阶段不要求候选先有完整 global coordinates。关联完成后统一确定 coax/group axis 与 shared centerline；若对应 feature 在 YZ side view 呈圆形，则 axis=X、transverse center coordinates=Y/Z，members 继承而不重复推断 group axis/centerline。
@@ -78,11 +80,14 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 ## 6. 尺寸归属与特征语义
 
 - 尺寸 ownership 只由 witness/extension line、leader、arrow endpoint、centerline endpoint 或 feature boundary endpoint 建立；邻近文字和数值不能替代端点证据。
-- HARD 字段一旦由明确证据绑定，其归属锁定。一个 source 默认只服务一个字段，除非图纸明确表达共享约束。
-- 线性尺寸先按两个实际 endpoints 判定 ownership。datum→centerline 直接约束中心，不因路径经过 step/thickness 再叠加；只有起点明确落在 intermediate surface 时，才以该 surface 与局部尺寸形成 derived。
+- HARD 字段一旦由明确证据绑定，其归属锁定。一个物理 annotation 只有一个稳定 measured quantity / endpoint ownership；它可以通过明确的 symmetry/alignment/spacing/connected relation 间接约束其它 geometry，但不得克隆成另一个 source ID 并赋予不同的物理含义。
+- 线性尺寸先按两个实际 endpoints 判定 ownership。Direct witness / ownership precedence 指先锁定图纸实际测量量，而不是把所有 boundary dimension 改写为 `center_position`：若 annotation 是 absolute/ordinate coordinate，才直接写对应 center coordinate；若 measured quantity 是 overall min/max boundary→centerline distance，必须保留原始 `edge_offset(value,axis,from,targets)`，再由 boundary±value 计算并锁定 concrete coordinate。锁定后不因路径经过 step/thickness 再叠加，也不得叠加 plate thickness、pad height、step height、neighboring feature dimension 或 inferred local offset；只有起点明确落在 intermediate surface 时，才以该 surface 与局部尺寸形成 derived。
 - 两个 endpoints 都是 center coordinates 时，输出 `center_distance / center_spacing` 与真实 `between`。若目标 coordinate 既没有 direct writer，也没有提供该 target coverage 的 relation，但可由 known opposite center endpoint 加该 relation 唯一求得，才输出 concrete value + derived，而不是因缺少 direct dimension 进入 blocking unresolved；derived 同时引用 opposite endpoint target 与 relation source。禁止在没有 opposite endpoint 时只用 `±0.5*spacing` 凭空生成两端。
 - 明确属于 `overall_dimensions` 的全局 min/max boundary→单中心或 `explicit_centers` center coordinate，必须输出 `edge_offset(value,axis,from,targets)`，禁止输出 `center_position`。同一标注约束多个 center coordinate 时，把所有实际 canonical paths 一次列入 `targets`；relation 自身提供 target coverage，被覆盖的 target 禁止再生成 direct/derived。Reader 必须先写并校验 concrete coordinate，且不得把 `edge_offset` 放入 derived numeric expression。方向固定为：`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`。
 - 只有 endpoint ownership 明确落在 `overall_dimensions` 的全局 boundary 时，才按 `part_center_xy_bottom_z0` 使用 overall bbox：`X=[-length_x/2,+length_x/2]`、`Y=[-width_y/2,+width_y/2]`、`Z=[0,height_z]`。局部 profile/body/step boundary 不得直接套用 overall bbox；必须按实际 geometry endpoint ownership 和该局部 boundary 的真实 coordinate 处理。
+- slot/slit 与 hole/circle 在同一正投影视图中由 shared centerline、对称边界或明确几何连通表达共线时，先建立 alignment relation；slot center coordinate 继承所对齐的 circle center coordinate。slot width annotation 只保留两侧边界之间的 width ownership，不得复制成 position 或 `edge_offset` source。
+- slot/slit 明确延伸到 circle/arc 并以 connected、tangent 或 coincident 关系终止时，Reader 保存 connected feature identity、relation evidence 与 nominal centerline endpoint。沿连接轴的 nominal endpoint 可由 `circle center ± radius` 唯一求得，符号只由图纸表达的连接侧决定。该 endpoint 是 drawing semantic，不声称具有非零 width 的实体 cut 严格停在切点就必然形成正确实体连通；实体 overlap/termination 由后续 Planner 在不改变 drawing semantic 的前提下实现。
+- feature-local dimension 默认只写入其 leader/witness endpoints 所绑定的 feature。其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的 numeric operand；只有图纸明确给出跨 feature relation 且 derived 保存对应 `relation_refs` 时才允许跨 feature 计算。
 
 合法 `edge_offset` relation 形状：
 
@@ -130,7 +135,7 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 
 - 保存稳定 `id`、实际 `target`、计算结果和 `expr`；
 - `expr` 只引用已存在的 geometry target、source 或数学常数；
-- 跨 feature 推导必须保留中心距、相切、重合、对齐或对称等关系证据；
+- 跨 feature 推导必须先有明确的中心距、相切、连通、重合、对齐或对称关系，并保留 `relation_refs`；`expr` 只能引用实际参与该关系的 geometry target/source。其它 feature 的 depth/spec/diameter/endpoint 或 nominal size 不能作为自由位置 operand；
 - 唯一推导完成后不再写入 `unresolved`。
 
 以下情况不能伪装成 derived：
@@ -252,6 +257,11 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 3. overall edge→center 必须使用 `edge_offset`；共享同一 edge 标注的 `explicit_centers` coordinates 必须一次列入同一 `targets`，不得另建复制型 derived。
 4. 明确属于 `overall_dimensions` 的全局 boundary 按 `part_center_xy_bottom_z0` 解析：`X=[-length_x/2,+length_x/2]`、`Y=[-width_y/2,+width_y/2]`、`Z=[0,height_z]`。每个 concrete target 必须满足 `from=min` 的 `min_edge + value` 或 `from=max` 的 `max_edge - value`。
 5. 局部 profile/body/step boundary 不使用 overall bbox；按其实际 geometry endpoint ownership 与真实 coordinate 计算。
+6. 每个物理 annotation 只有一个 measured quantity / endpoint ownership；允许通过明确 relation 间接约束其它 geometry，但禁止复制成不同 source ID 后赋予 width、position、depth 或 edge offset 等另一种物理含义。
+7. datum/boundary ownership 锁定后保留原始 source semantic 与 measured value；concrete coordinate 由该 ownership 计算，禁止再叠加 plate/pad/step/neighbor尺寸，也禁止被其它 derived 改写。
+8. shared centerline/alignment 已确定的 slot center 不得再从 overall edge或slot width推导；width annotation 不得兼任position evidence。
+9. connected slot的nominal endpoint derived必须引用所连接circle/arc的center与radius/diameter evidence，并保存 connected/tangent/coincident `relation_refs`；此项只验证drawing semantic，不规定实体cut实现。
+10. 跨 feature derived 没有明确 relation evidence，或使用其它 feature 的 depth/spec/diameter/endpoint 作为自由位置operand时，禁止落盘。
 
 这是 Reader first-pass 输出前的 self-consistency 规则，不表示 Runner 已实现普遍的 exactly-one-writer 合同。
 

@@ -576,6 +576,16 @@ def main() -> None:
         "`X=[-length_x/2,+length_x/2]`",
         "局部 profile/body/step boundary 不使用 overall bbox",
         "不表示 Runner 已实现普遍的 exactly-one-writer 合同",
+        "Direct witness / ownership lock",
+        "一个物理 annotation 只有一个稳定 measured quantity / endpoint ownership",
+        "不得克隆成另一个 source ID 并赋予不同的物理含义",
+        "而不是把所有 boundary dimension 改写为 `center_position`",
+        "保留原始 `edge_offset(value,axis,from,targets)`",
+        "shared centerline/alignment 已确定的 slot center",
+        "slot width annotation 只保留两侧边界之间的 width ownership",
+        "connected feature identity、relation evidence 与 nominal centerline endpoint",
+        "此项只验证drawing semantic，不规定实体cut实现",
+        "其它 feature 的 depth/spec/diameter/endpoint 或 nominal size 不能作为自由位置 operand",
     ):
         if token not in drawing_reader:
             fail(f"minimal Reader canonical contract regression: missing {token}")

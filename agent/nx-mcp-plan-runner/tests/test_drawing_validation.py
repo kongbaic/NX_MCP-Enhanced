@@ -544,33 +544,39 @@ class DrawingGateATests(unittest.TestCase):
         quick = (ROOT / "skills" / "nx-agent" / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
         planner = (ROOT / "skills" / "nx-agent" / "references" / "modeling-planner.md").read_text(encoding="utf-8")
         for token in (
-            "view-local",
-            "projection alignment",
-            "leader/witness endpoint",
-            "`axis=X`→Y/Z",
-            "center_distance / center_spacing",
-            "opposite endpoint target",
-            "`edge_offset` 不得作为 derived expression",
-            "`profile_dimension` 只用于两个 endpoints",
-            "thread projection 必须先按 projection alignment",
-            "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-            "而不是因缺少 direct dimension 进入 blocking unresolved",
-            "feature:F_HOLES.explicit_centers.0.x",
-            "normalizer 不重写 source_ledger / derived references",
-            "feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`",
-            "`{\"value\": 8}` 不是 expression node",
-            "direct-known target，不得再创建 derived writer",
+            "唯一 semantic decision chain",
+            "Annotation / same-feature projection association",
+            "Physical endpoint ownership",
+            "Direct coordinate / evidence-backed relation lock",
+            "Eligible derived",
+            "Required HARD feature inventory",
+            "Canonical serialization / validation",
+            "7. **Output**",
+            "association 本身不建立不同 feature 之间的数值关系",
+            "不得在全局坐标转换时重分类",
         ):
             self.assertIn(token, reader)
         for token in (
-            "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+            "只提供视觉识别与制图符号词典",
+            "Front / 正视图",
             "axial projection candidate",
-            "axis=X→Y/Z",
-            "datum→centerline",
-            "centerline↔centerline",
-            "profile boundary↔profile boundary",
+            "projection alignment",
+            "extension / witness line",
+            "centerline / center mark",
+            "M-series thread / through hole / counterbore / countersink",
+            "pattern/symmetry 不得在本文件中创建坐标",
+            "连续 profile segments",
+            "Closure is validation only",
         ):
             self.assertIn(token, quick)
+        for forbidden in (
+            "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+            "ownership precedence",
+            "dimension-bearing number",
+            "Canonical serialization / validation",
+            "relation coverage 后没有额外 direct/derived writer",
+        ):
+            self.assertNotIn(forbidden, quick)
         for token in ("同轴复合孔 centerline 是不可变输入", "不得平移", "改正负号", "自动镜像"):
             self.assertIn(token, planner)
 

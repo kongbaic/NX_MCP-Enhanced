@@ -426,48 +426,43 @@ def main() -> None:
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
     drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
     for token in (
-        "view-local",
-        "projection alignment",
-        "leader/witness endpoint",
-        "`axis=X`→Y/Z",
-        "center_distance / center_spacing",
-        "opposite endpoint target",
-        "`edge_offset` 不得作为 derived expression",
-        "`profile_dimension` 只用于两个 endpoints",
+        "唯一 semantic decision chain",
+        "Annotation / same-feature projection association",
+        "Physical endpoint ownership",
+        "Direct coordinate / evidence-backed relation lock",
+        "Eligible derived",
+        "Required HARD feature inventory",
+        "Canonical serialization / validation",
+        "association 本身不建立不同 feature 之间的数值关系",
+        "不得在全局坐标转换时重分类",
+        "distinct-feature alignment/connected/spacing",
+        "dimension-bearing number 必须通过 `source`",
+        "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
+        "required inventory 必须在 canonical shape freeze 之前完成",
+        "ownership 必须先于 pattern/symmetry/spacing completion 锁定",
     ):
         if token not in drawing_reader:
-            fail(f"drawing relation contract regression: missing {token}")
+            fail(f"consolidated Reader decision contract regression: missing {token}")
     for token in (
-        "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+        "只提供视觉识别与制图符号词典",
+        "本文件不得建立第二套 inference policy",
         "axial projection candidate",
-        "axis=X→Y/Z",
-        "datum→centerline",
-        "centerline↔centerline",
-        "profile boundary↔profile boundary",
+        "same-feature association 只识别 identity",
+        "实际 ownership 只按 `drawing-reader.md`",
+        "pattern/symmetry 不得在本文件中创建坐标",
+        "Closure is validation only",
     ):
         if token not in drawing_rules:
-            fail(f"quick drawing relation contract regression: missing {token}")
-
-    for token in (
-        "线性尺寸先按两个实际 endpoints",
-        "不因路径经过 step/thickness 再叠加",
-        "两个 endpoints 都是 center coordinates",
-        "profile_dimension` 只用于两个 endpoints",
-        "同轴候选先按 projection alignment",
-        "thread projection 必须先按 projection alignment",
-        "而不是因缺少 direct dimension 进入 blocking unresolved",
+            fail(f"quick drawing recognition boundary regression: missing {token}")
+    for forbidden in (
+        '{"const": 8}',
+        "总高 = 底板厚度 + 凸台高度",
+        "总宽 = 2 × 孔中心距 + 分布圆直径",
+        "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+        "兼容旧文档检索",
     ):
-        if token not in drawing_reader:
-            fail(f"drawing ownership/association contract regression: missing {token}")
-    for token in (
-        "datum→centerline",
-        "centerline↔centerline",
-        "outer min/max edge→centerline",
-        "profile boundary↔profile boundary",
-        "相同数值但 endpoints 不同",
-    ):
-        if token not in drawing_rules:
-            fail(f"quick ownership contract regression: missing {token}")
+        if forbidden in drawing_reader or forbidden in drawing_rules:
+            fail(f"Reader consolidation regression: forbidden inference example remains: {forbidden}")
 
     ownership_fixture_path = RUNNER / "tests" / "fixtures" / "drawing-ownership-cases.json"
     ownership_fixture = json.loads(ownership_fixture_path.read_text(encoding="utf-8"))
@@ -550,45 +545,37 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "最小 canonical contract",
+        "Canonical JSON contract",
         "length_x / width_y / height_z",
         "稳定 `id` 和非空 `type`",
         "Runner 不要求所有 feature 一律输出 count",
-        "`target` 必须是实际可解析 path",
+        "实际可解析的 `target`",
         "若 source 包含 `value`",
         "relation source 不写 direct `target`",
         "`edge_offset` 不得作为 derived expression",
-        "opposite endpoint target",
+        "known opposite endpoint target",
         "ancestor target",
         "placeholder `0`",
         "dimension_conflicts",
         "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-        "{\"source\": \"S_SPACING\"}",
         "`type→feature_kind`",
-        "overall/body edge→feature center 使用 `edge_offset`",
         "profile.segments.0.y1",
-        "feature:F_HOLES.explicit_centers.0.x",
-        "{\"const\": 8}",
-        "Canonical writer finalization",
-        "Reader first-pass self-consistency",
-        "禁止 direct + derived 同 target",
-        "relation 已提供 coverage 后禁止再为该 target 生成 direct/derived",
+        "First-pass canonical validation",
+        "required HARD feature inventory 中没有静默遗漏",
+        "没有 direct+derived 同 target",
+        "relation coverage 后没有额外 direct/derived writer",
         "`X=[-length_x/2,+length_x/2]`",
-        "局部 profile/body/step boundary 不使用 overall bbox",
+        "局部 profile/body/step boundary 不得套 overall bbox",
         "不表示 Runner 已实现普遍的 exactly-one-writer 合同",
-        "Direct witness / ownership lock",
-        "一个物理 annotation 只有一个稳定 measured quantity / endpoint ownership",
-        "不得克隆成另一个 source ID 并赋予不同的物理含义",
-        "而不是把所有 boundary dimension 改写为 `center_position`",
-        "保留原始 `edge_offset(value,axis,from,targets)`",
-        "shared centerline/alignment 已确定的 slot center",
-        "slot width annotation 只保留两侧边界之间的 width ownership",
         "connected feature identity、relation evidence 与 nominal centerline endpoint",
-        "此项只验证drawing semantic，不规定实体cut实现",
-        "其它 feature 的 depth/spec/diameter/endpoint 或 nominal size 不能作为自由位置 operand",
+        "只描述 drawing semantic，不规定具有非零 width 的实体 cut realization",
+        "其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand",
+        "Closure is validation only",
     ):
-        if token not in drawing_reader:
-            fail(f"minimal Reader canonical contract regression: missing {token}")
+        if token not in drawing_reader and token != "Closure is validation only":
+            fail(f"consolidated Reader canonical contract regression: missing {token}")
+        if token == "Closure is validation only" and token not in drawing_rules:
+            fail(f"quick closure boundary regression: missing {token}")
 
     canonical_fixture_path = RUNNER / "tests" / "fixtures" / "canonical-reader-output.json"
     canonical_fixture = json.loads(canonical_fixture_path.read_text(encoding="utf-8"))

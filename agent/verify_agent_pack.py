@@ -447,15 +447,6 @@ def main() -> None:
         "coordinate 正确不能替代该 ownership",
         "这些 centers 不要求位于同一个 feature object",
         "每个 dimension-bearing annotation 在 numeric use 前已有 identity",
-        "非正式 `connected_to` 不能替代 relation source",
-        "只修正 path、schema shape 和 representation syntax",
-        "只写一次 drawing JSON",
-        "不得拆成多个独立 `center_position`",
-        "稳定 `upper_tangent / lower_tangent` source",
-        "不得丢弃 annotation identity后把计算所得坐标伪装成 direct `center_position`",
-        "relation→direct 降级",
-        "serialization 前后的 annotation/relation inventory 完整一致",
-        "FAIL 必须原样保留该 drawing 并 BLOCKED",
     ):
         if token not in drawing_reader:
             fail(f"consolidated Reader decision contract regression: missing {token}")

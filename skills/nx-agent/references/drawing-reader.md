@@ -18,11 +18,11 @@
 
 1. **Annotation / same-feature projection association**：保存 view-local evidence，只确认投影属于同一 feature；axis/centerline 仍是待锁定候选。hole/thread/counterbore 必须穷尽整图中的 same-feature orthographic candidates 后才能输出 axis/center、宣告 unresolved 或解释 start face。association 本身不建立不同 feature 之间的数值关系，也不授权跨 feature derived。
 2. **Physical endpoint ownership**：沿 witness/leader/arrow、centerline 与 feature boundary，为每个 dimension-bearing annotation 建立稳定 annotation/source identity、feature/view identity、physical endpoints 和唯一 measured quantity。绑定前，annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate。
-3. **Direct coordinate / evidence-backed relation lock**：直接证据写 direct；alignment、tangent、coincident、spacing、symmetry 等不同 feature 关系必须以稳定 ID 正式写入 source ledger，并保存 source views、physical endpoints、linked feature target paths 与 evidence。非正式 `connected_to` 不能替代 relation source；ownership 和 relation 锁定后不得在全局坐标转换时重分类，也不得在 canonicalization 中删除或拆分。
+3. **Direct coordinate / evidence-backed relation lock**：直接证据写 direct；alignment、connected、tangent、coincident、spacing、symmetry 等不同 feature 关系必须单独建立并保存 evidence。ownership 和 relation 锁定后不得在全局坐标转换时重分类。
 4. **Eligible derived**：只用已锁定的 source/target 与明确 relation 唯一计算缺失 target。没有 evidence-backed relation 禁止跨 feature derived。
 5. **Required HARD feature inventory**：根据工程图列出总体、主体/profile、明确孔槽及其它会改变实体的必需 feature。无法可靠表达的必需项进入 blocking `unresolved`，不得从 inventory 或输出中静默删除。
-6. **Canonical serialization / validation**：根据 HARD inventory 生成 canonical shape，只修正 path、schema shape 和 representation syntax；同时收口 writers、coverage、坐标一致性与 inventory omission，不改变已锁定 semantic inventory。
-7. **Output**：首次落盘前在内存中完成 semantic-inventory persistence 与 canonical validation，只写一次 drawing JSON 交给 Gate A。
+6. **Canonical serialization / validation**：根据 HARD inventory 生成并冻结 canonical shape，收口实际 paths、writers、coverage 和坐标一致性，同时检查 inventory omission。
+7. **Output**：首次落盘前完成验证，然后输出 drawing JSON 交给 Gate A。
 
 ## 3. 视图、association 与坐标系
 
@@ -87,16 +87,15 @@ dimension-bearing annotation 参与 derived、spacing/pattern/projection complet
 
 局部 profile/body/step boundary 不得套 overall bbox，必须引用其实际 geometry endpoint。
 
-一个 overall edge→center annotation 可用一个 `edge_offset` relation 覆盖多个实际 target paths；这些 centers 不要求位于同一个 feature object。repeated-feature 的 center-spacing 与 edge-offset annotation 必须分别保留为一个原始 relation，不得拆成多个独立 `center_position`。ownership 必须先于 pattern/symmetry/spacing completion 锁定；后者不得删除真实 edge dimension、改写成 group center/半距，或换成数学等价但 ownership 不同的另一侧 offset。
+一个 overall edge→center annotation 可用一个 `edge_offset` relation 覆盖多个实际 target paths；这些 centers 不要求位于同一个 feature object。ownership 必须先于 pattern/symmetry/spacing completion 锁定；后者不得删除真实 edge dimension、改写成 group center/半距，或换成数学等价但 ownership 不同的另一侧 offset。
 
 `edge_offset` relation 保存 `value / axis / from / targets`，自身提供 target coverage；`edge_offset` 不得作为 derived expression 的 numeric source。`center_distance / center_spacing` relation 本身不覆盖 endpoints；若派生其中一个 endpoint，expr 同时引用 known opposite endpoint target 和 relation source。
 
 ## 5. Relation 与 feature-local geometry
 
 - distinct-feature `alignment / connected / tangent / coincident / spacing / symmetry` 必须有图纸证据和稳定 relation identity。没有 relation 时禁止跨 feature numeric derived。
-- slot/slit 与 circle/hole 由 shared centerline、对称边界或明确连通表达共线时，使用稳定 `alignment` source，其 `links` 指向两个 feature 的实际 center paths。slot width annotation 只定义两侧边界距离，不得兼任 position 或 edge offset。
-- slot/slit 明确连接 circle/arc 时，nominal centerline endpoint 使用稳定 `upper_tangent / lower_tangent` source，保存 `center / diameter / tangent / links` 与 source views；由此正式保存 connected feature identity、relation evidence 与 nominal centerline endpoint。若 endpoint 另需 derived，必须引用该 relation；relation 已提供 coverage 时不得再加 direct/derived writer。非正式 `connected_to` 不能替代这些正式 relations。这只描述 drawing semantic，不规定具有非零 width 的实体 cut realization。
-- 已识别的 centerline↔centerline 尺寸必须保存为 `center_distance / center_spacing` 与真实 `between` endpoints；不得丢弃 annotation identity后把计算所得坐标伪装成 direct `center_position`。
+- slot/slit 与 circle/hole 由 shared centerline、对称边界或明确连通表达共线时，alignment relation 可让 slot center 继承 circle center。slot width annotation 只定义两侧边界距离，不得兼任 position 或 edge offset。
+- slot/slit 明确连接 circle/arc 时，保存 connected feature identity、relation evidence 与 nominal centerline endpoint。endpoint 可引用 circle center 与 radius/diameter source 求得，符号由连接侧证据决定，并保存 `relation_refs`。这只描述 drawing semantic，不规定具有非零 width 的实体 cut realization。
 - feature-local dimension 只绑定其 endpoints 所属 feature。其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand。
 - coaxial group 保存共享 axis/centerline，members 继承共享 geometry，只保留自己的 diameter/spec/depth/side/range。
 - 对 slot/cut，位置或中心距不得改作 width/depth/bottom。depth/termination 只来自明确深度语义、剖视起止面或 evidence-backed termination relation。
@@ -168,7 +167,6 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 
 ### 8.2 Source、relation 与 derived schema
 
-- canonicalization 只允许无损修改 path、schema shape 与 representation syntax。已锁定 annotation/relation 的 `id / semantic / measured quantity / physical endpoints / source views / evidence` 必须保持；不得删除 relation、relation→direct 降级、从 concrete coordinate 反造 measured source，或用 semantic token 试错换取 coverage。无法无损映射时写 blocking unresolved 并停止，不能输出降级版本。
 - direct source 具有稳定 `id`、compatible `semantic` 和实际可解析的 `target`；若 source 包含 `value`，必须等于 target concrete value。图纸 dimension 得到的 coordinate 必须追溯到保留 measured ownership 的 source/relation；coordinate 正确不能替代该 ownership。
 - HARD leaf 使用兼容 provenance：`type→feature_kind`、axis fields→`axis`、`spec→thread_spec`，count/diameter/depth/through 使用对应 semantic。
 - 螺纹 geometry 的 feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`。
@@ -184,16 +182,13 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 
 首次落盘前只验证第2节唯一决策链的结果，不重新定义 inference policy：
 
-1. serialization 前后的 annotation/relation inventory 完整一致：稳定 ID、measured quantity、physical endpoints、source views 与 evidence 均未变化；multi-target relation 未拆成多个 fake direct sources，concrete coordinate 未替代 ownership。
-2. required HARD feature inventory 中没有静默遗漏；blocking unresolved 与 concrete geometry 不并存。
-3. 所有 direct target、relation `targets/between/links` 和 derived target 都实际存在。
-4. 本次 Reader first-pass 的 target inventory 中没有 direct+derived 同 target；relation coverage 后没有额外 direct/derived writer。
-5. 每个 HARD field 有 compatible coverage；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；coordinate 可追溯到原 measured ownership。
-6. edge concrete coordinate 满足已锁定 boundary ownership；局部 boundary 未套 overall bbox。
-7. derived 没有 dimension-bearing free const；跨 feature derived 均有 evidence-backed `relation_refs`。
-8. closure 仅验证结果，没有创建或改写 geometry。
-
-首次写入并调用 Gate A 后，PASS 才能进入 Planner；FAIL 必须原样保留该 drawing 并 BLOCKED，不得重新 interpretation、覆盖 drawing、试错 semantic token 或再次提交新版本。
+1. required HARD feature inventory 中没有静默遗漏；blocking unresolved 与 concrete geometry 不并存。
+2. 所有 direct target、relation `targets/between` 和 derived target 都实际存在。
+3. 本次 Reader first-pass 的 target inventory 中没有 direct+derived 同 target；relation coverage 后没有额外 direct/derived writer。
+4. 每个 HARD field 有 compatible coverage；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；coordinate 可追溯到原 measured ownership。
+5. edge concrete coordinate 满足已锁定 boundary ownership；局部 boundary 未套 overall bbox。
+6. derived 没有 dimension-bearing free const；跨 feature derived 均有 evidence-backed `relation_refs`。
+7. closure 仅验证结果，没有创建或改写 geometry。
 
 这是 Reader first-pass self-consistency validation，不表示 Runner 已实现普遍的 exactly-one-writer 合同。
 

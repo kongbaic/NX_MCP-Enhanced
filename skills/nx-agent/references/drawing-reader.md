@@ -24,6 +24,9 @@
 5. **Global conversion**：最后一次性转换到 `part_center_xy_bottom_z0`；center coordinate 与沿轴 start/end/range 分开。
 6. **Output**：输出本轮 drawing JSON，交由机器 Gate A 验证。
 
+- 正交视图中的 concentric circles、hidden parallel lines 与 thread projection 必须先按 projection alignment、shared centerline、feature identity、specification 及 leader/witness endpoints 做 association。
+- `M-series thread / through hole / counterbore` 不得按单视图独立解释；association 阶段不要求候选先有完整 global coordinates。关联完成后统一确定 coax/group axis 与 shared centerline；若对应 feature 在 YZ side view 呈圆形，则 axis=X、transverse center coordinates=Y/Z，members 继承而不重复推断 group axis/centerline。
+
 ## 3. 必须提取
 
 - 总长、总宽、总高、板厚、壳体壁厚
@@ -76,8 +79,22 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 - 尺寸 ownership 只由 witness/extension line、leader、arrow endpoint、centerline endpoint 或 feature boundary endpoint 建立；邻近文字和数值不能替代端点证据。
 - HARD 字段一旦由明确证据绑定，其归属锁定。一个 source 默认只服务一个字段，除非图纸明确表达共享约束。
 - 线性尺寸先按两个实际 endpoints 判定 ownership。datum→centerline 直接约束中心，不因路径经过 step/thickness 再叠加；只有起点明确落在 intermediate surface 时，才以该 surface 与局部尺寸形成 derived。
-- 两个 endpoints 都是 center coordinates 时，输出 `center_distance / center_spacing` 与真实 `between`。relation 不覆盖 endpoint；目标中心用 opposite endpoint target ± relation source 派生，禁止只用 `±0.5*spacing` 凭空生成两端。
-- overall min/max edge→centerline 输出 `edge_offset(value,axis,from,targets)`。Reader 同时写入 bbox edge±offset 得到的 concrete coordinate；relation 自身提供 target coverage，且不得作为 derived numeric source。
+- 两个 endpoints 都是 center coordinates 时，输出 `center_distance / center_spacing` 与真实 `between`。若目标 coordinate 没有 direct dimension、但可由 known opposite center endpoint 加该 relation 唯一求得，必须输出 concrete value + derived，而不是因缺少 direct dimension 进入 blocking unresolved；derived 同时引用 opposite endpoint target 与 relation source。禁止在没有 opposite endpoint 时只用 `±0.5*spacing` 凭空生成两端。
+- overall min/max edge→centerline 输出 `edge_offset(value,axis,from,targets)`。Reader 必须写 concrete coordinate；relation 自身提供 target coverage，且不得进入 derived numeric expression。方向固定为：`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`。
+
+合法 `edge_offset` relation 形状：
+
+```json
+{
+  "id": "S_EDGE",
+  "semantic": "edge_offset",
+  "value": 10,
+  "axis": "Y",
+  "from": "min",
+  "targets": ["feature:F_A.centerline.y"]
+}
+```
+
 - `profile_dimension` 只用于两个 endpoints 都落在 profile/body boundary 的尺寸。任一 endpoint 落在 feature/group/pattern centerline 时，该尺寸属于 feature position/relation；相同数值但 endpoints 不同的标注保持独立 source 与 ownership。
 - 对开缝/槽，只有端点分别落在两侧边界的尺寸才可作为 `width`；普通位置或中心距不得改作 depth/bottom。
 - `depth / bottom / termination` 只来自明确深度语义、剖视图明确起止面、相切/共线终止关系或等价唯一约束；数值相同不构成语义复用依据。
@@ -218,6 +235,28 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 - `expr` 通过 `target` 或允许的 numeric `source` 引用已绑定证据，并使用 `add / sub / mul / div / neg / abs`；数学常数不能替代图纸 provenance。
 - 需要 alignment、coincident 或 tangent 等非数值关系时，使用 `relation_refs`。
 - 计算结果必须等于 declared value 和 target 中已写入的 concrete value。
+
+以下 compact canonical example 只锚定 direct target、center relation 和 derived reference 的机器形状：
+
+```json
+{
+  "source_ledger": [
+    {"id": "S_CENTER_A", "semantic": "center_position", "value": 10,
+     "target": "feature:F_A.centerline.x"},
+    {"id": "S_SPACING", "semantic": "center_spacing", "value": 18,
+     "between": ["feature:F_A.centerline.x", "feature:F_B.centerline.x"]}
+  ],
+  "derived": [{
+    "id": "D_CENTER_B", "target": "feature:F_B.centerline.x", "value": 28,
+    "expr": {"op": "add", "args": [
+      {"target": "feature:F_A.centerline.x"},
+      {"source": "S_SPACING"}
+    ]}
+  }]
+}
+```
+
+List target 使用数字索引，例如 `feature:F_GROUP.explicit_centers.0.1`。
 
 #### Profile、unknown 与 closure
 

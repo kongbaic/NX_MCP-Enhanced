@@ -552,6 +552,10 @@ class DrawingGateATests(unittest.TestCase):
             "opposite endpoint target",
             "`edge_offset` 不得作为 derived expression",
             "`profile_dimension` 只用于两个 endpoints",
+            "thread projection 必须先按 projection alignment",
+            "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
+            "而不是因缺少 direct dimension 进入 blocking unresolved",
+            "feature:F_GROUP.explicit_centers.0.1",
         ):
             self.assertIn(token, reader)
         for token in (

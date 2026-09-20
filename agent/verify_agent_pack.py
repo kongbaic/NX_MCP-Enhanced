@@ -454,6 +454,8 @@ def main() -> None:
         "两个 endpoints 都是 center coordinates",
         "profile_dimension` 只用于两个 endpoints",
         "同轴候选先按 projection alignment",
+        "thread projection 必须先按 projection alignment",
+        "而不是因缺少 direct dimension 进入 blocking unresolved",
     ):
         if token not in drawing_reader:
             fail(f"drawing ownership/association contract regression: missing {token}")
@@ -560,6 +562,8 @@ def main() -> None:
         "ancestor target",
         "placeholder `0`",
         "dimension_conflicts",
+        "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
+        "{\"source\": \"S_SPACING\"}",
     ):
         if token not in drawing_reader:
             fail(f"minimal Reader canonical contract regression: missing {token}")

@@ -33,13 +33,14 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 ### 模式 B：二维机械工程图自动建模
 用户上传二维机械工程图并要求“开始建模”“按图建模”“用 NX 画出来”等时：
 
-1. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
-2. 从**当前上传工程图**生成本轮 drawing interpretation 与当前 `drawing.json`，并通过门禁 A。
-3. Gate A PASS 后，根据**当前 drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
-4. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
-5. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
-6. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-7. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
+1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 `runtime-config.json`；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
+2. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
+3. 从**当前上传工程图**生成本轮 drawing interpretation 与当前 `drawing.json`，并通过门禁 A。
+4. Gate A PASS 后，根据**当前 drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
+5. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
+6. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
+7. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+8. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
 
 两条链路：
 
@@ -51,13 +52,21 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 ## 2. 运行时与路径
 
-安装器会在 Plan Runner 目录生成 `runtime-config.json`。执行 Runner 前优先读取其中：
+安装器会在 Plan Runner 目录生成 `runtime-config.json`。Mode B 必须使用以下确定性发现规则：
+
+1. 要求环境变量 `NX_MCP_WORKSPACE` 非空，并且只能读取：
+   `<NX_MCP_WORKSPACE>\nx-mcp-plan-runner\runtime-config.json`。
+2. 禁止扫描用户目录、仓库目录、其它 `NX_MCP_WORKSPACE*`、历史 CLEAN workspace、聊天目录、安装目录列表或 Python 环境来寻找其它 runtime-config。
+3. 环境变量缺失、该唯一文件不存在或必需字段缺失时，立即停止并报告 `runtime configuration missing`；禁止自动寻找其它 runtime-config。
+4. 读取后原样使用其中的：
 
 - `python_exe`
 - `workspace_root`
 - `nx_mcp_src`
 
-所有 PRT / STEP / plan / report 都必须落在 `workspace_root` 内。禁止把聊天目录、临时对话目录或其它任意绝对路径当作输出工作区。
+`python_exe` 必须是 runtime-config 指定且实际存在的文件；禁止 fallback 到 `python` / `python3` / `py`、系统 Python 或 PATH 中其它 Python。`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同，否则 fail closed。`nx_mcp_src` 只能取自当前 runtime-config，不得从历史仓库、备份仓库或其它 workspace 推断。
+
+当前 `drawing.json` / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 `workspace_root`。其它目录中已有文件不能触发 workspace 切换。runtime 一旦解析，本轮不得重新发现或切换 runtime。
 
 ## 3. 模式选择优先级
 

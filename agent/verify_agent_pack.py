@@ -222,6 +222,19 @@ def main() -> None:
         if token not in top:
             fail(f"Mode B current-request isolation regression: missing {token}")
     for token in (
+        "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
+        "只能读取",
+        "runtime configuration missing",
+        "禁止自动寻找其它 runtime-config",
+        "禁止 fallback 到 `python` / `python3` / `py`",
+        "`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同",
+        "`nx_mcp_src` 只能取自当前 runtime-config",
+        "本轮不得重新发现或切换 runtime",
+        "drawing.json` / frozen plan / executable plan / report / PRT / STEP",
+    ):
+        if token not in top:
+            fail(f"Mode B deterministic runtime regression: missing {token}")
+    for token in (
         "当前 drawing JSON，并重新生成 frozen plan",
         "旧 frozen 存在不能成为跳过 Planner",
         "旧 frozen/executable/report/PRT/STEP",
@@ -238,6 +251,31 @@ def main() -> None:
     ):
         if token not in pipeline_contract:
             fail(f"Mode B stale-workspace contract regression: missing {token}")
+    for token in (
+        "一次且仅一次 runtime discovery",
+        "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
+        "只能读取这一份",
+        "runtime configuration missing",
+        "规范化后必须相同",
+        "禁止 fallback 到 `python`、`python3`、`py`",
+        "`nx_mcp_src` 必须原样取自当前 runtime-config",
+        "本轮不得重新发现或切换 runtime",
+        "drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+    ):
+        if token not in pipeline_contract:
+            fail(f"Mode B runtime contract regression: missing {token}")
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+    for token in ("所有 `Doubao.exe` 进程", "安装器不会自动终止 Doubao 进程"):
+        if token not in readme:
+            fail(f"Agent Pack deployment restart note missing: {token}")
+    for token in ("every `Doubao.exe` process", "does not terminate Doubao"):
+        if token not in install_doc:
+            fail(f"Agent Pack installation restart note missing: {token}")
+    for forbidden_kill in ("Stop-Process -Name Doubao", "taskkill /IM Doubao.exe"):
+        if forbidden_kill.lower() in install_agent.lower():
+            fail("install-agent.ps1 must not terminate Doubao")
 
     # Static simulation of the reported workspace shape. Agent behavior is
     # governed by the checked contract; none of these stale artifacts is an

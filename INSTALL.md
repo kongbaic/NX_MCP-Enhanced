@@ -125,6 +125,11 @@ The installer automatically runs `install-agent.ps1` internally and installs:
 `install-agent.ps1` remains available only as an advanced helper when you want
 to reinstall the Agent Pack without reinstalling the NX_MCP core.
 
+After any Agent Pack update, fully exit every `Doubao.exe` process and restart
+Doubao before real E2E acceptance so the new Skill and runtime rules are loaded
+by a fresh process. The installer deliberately does not terminate Doubao
+processes automatically, to avoid losing unsaved session state.
+
 ## Manual / advanced installation
 
 If you intentionally want the core without the integrated Agent Pack, install only the runtime dependencies:

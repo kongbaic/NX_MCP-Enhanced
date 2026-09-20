@@ -20,8 +20,17 @@
 - `nx_mcp_src`
 - `repo_root`
 
-执行 Runner 时必须优先读取该文件，并使用其中的 `python_exe` 与 `workspace_root`。
-所有 plan / report / PRT / STEP 都必须落在 `workspace_root` 内，禁止把聊天目录或临时对话目录当作工作区。
+Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime discovery：
+
+1. `NX_MCP_WORKSPACE` 必须存在；唯一合法配置路径是 `<NX_MCP_WORKSPACE>\nx-mcp-plan-runner\runtime-config.json`，只能读取这一份。
+2. 环境变量缺失、配置文件不存在或 `python_exe / workspace_root / nx_mcp_src` 缺失时，立即停止并报告 `runtime configuration missing`。
+3. 禁止扫描用户目录、仓库目录、其它 workspace、CLEAN workspace、历史聊天目录、安装目录列表、Python 环境或 PATH 寻找替代 runtime-config、Runner 或 Python。
+4. `runtime-config.workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同；不一致时 fail closed。
+5. `python_exe` 必须原样取自 runtime-config 且文件存在；禁止 fallback 到 `python`、`python3`、`py`、系统 Python或 PATH 中其它 Python。
+6. `nx_mcp_src` 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
+7. runtime 一旦解析，本轮 drawing、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
+
+当前 Mode B 的 drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 `runtime-config.workspace_root`；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图读取
 读取 `drawing-reader.md` 与 `nx-drawing-rules.md`。

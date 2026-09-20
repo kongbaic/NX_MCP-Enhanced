@@ -94,6 +94,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AgentProfile 
 让新进程读取 `UGII_USER_DIR` 并自动加载新部署的 Loader。
 如果 NX 尚未启动，安装完成后直接启动即可。
 
+如果本次更新包含 Agent Pack，真实 E2E 验收前还必须完全结束所有 `Doubao.exe` 进程，再重新启动 Doubao，使新 Skill 与运行时规则进入新进程。安装器不会自动终止 Doubao 进程，避免丢失未保存的会话状态。
+
 安装完成并启动 / 重启 NX 后，有两种建模方式：
 
 ### 方式一：文字描述建模

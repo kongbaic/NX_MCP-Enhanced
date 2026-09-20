@@ -29,10 +29,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AgentProfile 
 
 ## 使用
 
-1. 安装完成后启动 / 重启 Siemens NX。
-2. 新开一个Agent 对话。
-3. 上传二维机械工程图。
-4. 输入：
+1. 安装或更新 Agent Pack 后，完全结束所有 `Doubao.exe` 进程并重新启动 Doubao；安装器不会自动结束进程。
+2. 安装完成后启动 / 重启 Siemens NX。
+3. 新开一个Agent 对话。
+4. 上传二维机械工程图。
+5. 输入：
 
 ```
 开始建模

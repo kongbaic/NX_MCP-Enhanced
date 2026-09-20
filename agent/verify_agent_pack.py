@@ -564,6 +564,11 @@ def main() -> None:
         "dimension_conflicts",
         "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
         "{\"source\": \"S_SPACING\"}",
+        "`type→feature_kind`",
+        "overall/body edge→feature center 使用 `edge_offset`",
+        "profile.segments.0.y1",
+        "feature:F_HOLES.explicit_centers.0.x",
+        "{\"const\": 8}",
     ):
         if token not in drawing_reader:
             fail(f"minimal Reader canonical contract regression: missing {token}")

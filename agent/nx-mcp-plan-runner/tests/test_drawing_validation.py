@@ -555,7 +555,11 @@ class DrawingGateATests(unittest.TestCase):
             "thread projection 必须先按 projection alignment",
             "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
             "而不是因缺少 direct dimension 进入 blocking unresolved",
-            "feature:F_GROUP.explicit_centers.0.1",
+            "feature:F_HOLES.explicit_centers.0.x",
+            "normalizer 不重写 source_ledger / derived references",
+            "feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`",
+            "`{\"value\": 8}` 不是 expression node",
+            "direct-known target，不得再创建 derived writer",
         ):
             self.assertIn(token, reader)
         for token in (

@@ -211,6 +211,7 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 - `overall_dimensions` 使用正数 `length_x / width_y / height_z`；`coordinate_system.origin` 为 `part_center_xy_bottom_z0`。
 - feature 使用稳定 `id` 和非空 `type`。实际出现的 HARD geometry 必须由 direct、derived 或 relation coverage 支持；不要为了合同而添加图纸没有表达的字段。
 - hole-like feature 给出 `axis` 和与该轴垂直的两个 center coordinates；slot/slit 给出正 `width` 以及不同的 `width_axis / through_axis`。
+- 第一遍即使用最终 canonical shape：单中心使用 `centerline`，或一致使用 `position.center`；多中心使用 `explicit_centers`，禁止自由命名的 `centers`。geometry 与 source/relation/derived 必须引用完全相同的最终 path；normalizer 不重写 source_ledger / derived references。
 - `count` 若输出，必须是正整数并与 explicit centers 或 pattern counts 一致；Runner 不要求所有 feature 一律输出 count。
 
 #### Target 与 direct source
@@ -218,6 +219,8 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 - `target` 必须是实际可解析 path；feature 使用 `feature:<id>.<path>`，list 使用数字索引。
 - direct source 具有稳定 `id`、与 target compatible 的 `semantic` 和 direct `target`；若 source 包含 `value`，其值必须等于 target。
 - 常用 direct semantic：总体尺寸=`overall_dimension`，轮廓=`profile_dimension`，类型=`feature_kind`，数量=`feature_count`，孔径=`diameter`，槽宽=`slot_width`，深度=`depth`，轴=`axis`，中心=`center_position`，螺纹规格=`thread_spec`。
+- 每个已输出的 HARD leaf 同时闭合 provenance：`type→feature_kind`，`axis/width_axis/through_axis→axis`，`through→through`，`spec→thread_spec`，count/diameter/depth 使用各自 compatible semantic；每个已存在的 transverse center coordinate 由 direct、relation 或 derived 覆盖。
+- 螺纹 geometry 的 feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`。source 不得指向 drawing 中不存在的 summary/alias field。
 - direct 只表示图上尺寸、引线或符号直接绑定的字段。关系尺寸不得降级成泛化 direct position。
 
 #### Relation
@@ -225,42 +228,58 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 - relation source 不写 direct `target`。
 - `edge_offset` 保存 numeric `value`、`axis`、`from:min|max` 和一个或多个 `targets`。Reader 先写 bbox edge±offset 得到的 concrete coordinate；该 relation 自身提供 target coverage。
 - `edge_offset` 不得作为 derived expression 的 numeric source。
-- `center_distance / center_spacing` 保存 numeric `value` 和两个真实 center paths 的 `between`；relation 本身不覆盖任一 endpoint。
+- `center_distance / center_spacing` 只表示 center↔center，`between` 两端都必须是真实 center coordinate paths；`overall_dimensions.*` 或 body/profile edge 不是 center endpoint。overall/body edge→feature center 使用 `edge_offset`。
+- `center_distance / center_spacing` relation 本身不覆盖任一 endpoint。
 - 若一个 center endpoint 需要派生，derived expression 必须同时引用 opposite endpoint target 和该 distance/spacing source。
 - symmetry、alignment、coincident、tangent 等非数值关系只作为 relation evidence，不作为自由 numeric operand。
 
 #### Derived
 
 - 每个 derived 包含稳定 `id`、实际 `target`、声明的 `value` 和可计算 `expr`。
-- `expr` 通过 `target` 或允许的 numeric `source` 引用已绑定证据，并使用 `add / sub / mul / div / neg / abs`；数学常数不能替代图纸 provenance。
+- `expr` 原子只使用 `{"const": 8}`、`{"target": "feature:F_A.centerline.z"}` 或 `{"source": "S_SPACING"}`；`{"value": 8}` 不是 expression node。组合只使用 `{"op":"add|sub|mul|div|neg|abs","args":[...]}`。
 - 需要 alignment、coincident 或 tangent 等非数值关系时，使用 `relation_refs`。
 - 计算结果必须等于 declared value 和 target 中已写入的 concrete value。
+- target 已由 direct source 明确给定时，它是 direct-known target，不得再创建 derived writer；尺寸链一致性只能验证，尤其不得反向 derived 写 `overall_dimensions.*`。
 
-以下 compact canonical example 只锚定 direct target、center relation 和 derived reference 的机器形状：
+以下 compact canonical example 锚定 feature object 与 ledger 使用同一 canonical path，并示范合法 center relation/derived reference：
 
 ```json
 {
+  "features": [
+    {"id": "F_A", "type": "threaded_hole", "axis": "X",
+     "centerline": {"y": 0, "z": 20}, "spec": "M6"},
+    {"id": "F_B", "type": "hole", "axis": "X",
+     "centerline": {"y": 0, "z": 38}}
+  ],
   "source_ledger": [
-    {"id": "S_CENTER_A", "semantic": "center_position", "value": 10,
-     "target": "feature:F_A.centerline.x"},
+    {"id": "S_A_TYPE", "semantic": "feature_kind", "value": "threaded_hole", "target": "feature:F_A.type"},
+    {"id": "S_A_AXIS", "semantic": "axis", "value": "X", "target": "feature:F_A.axis"},
+    {"id": "S_A_Y", "semantic": "center_position", "value": 0, "target": "feature:F_A.centerline.y"},
+    {"id": "S_A_Z", "semantic": "center_position", "value": 20, "target": "feature:F_A.centerline.z"},
+    {"id": "S_A_SPEC", "semantic": "thread_spec", "value": "M6", "target": "feature:F_A.spec"},
+    {"id": "S_B_TYPE", "semantic": "feature_kind", "value": "hole", "target": "feature:F_B.type"},
+    {"id": "S_B_AXIS", "semantic": "axis", "value": "X", "target": "feature:F_B.axis"},
+    {"id": "S_B_Y", "semantic": "center_position", "value": 0, "target": "feature:F_B.centerline.y"},
     {"id": "S_SPACING", "semantic": "center_spacing", "value": 18,
-     "between": ["feature:F_A.centerline.x", "feature:F_B.centerline.x"]}
+     "between": ["feature:F_A.centerline.z", "feature:F_B.centerline.z"]}
   ],
   "derived": [{
-    "id": "D_CENTER_B", "target": "feature:F_B.centerline.x", "value": 28,
+    "id": "D_CENTER_B", "target": "feature:F_B.centerline.z", "value": 38,
     "expr": {"op": "add", "args": [
-      {"target": "feature:F_A.centerline.x"},
+      {"target": "feature:F_A.centerline.z"},
       {"source": "S_SPACING"}
     ]}
   }]
 }
 ```
 
-List target 使用数字索引，例如 `feature:F_GROUP.explicit_centers.0.1`。
+多中心 geometry 与 relation 统一使用 `explicit_centers`，例如 named-coordinate path `feature:F_HOLES.explicit_centers.0.x`；若 item 使用坐标数组，则 path 使用对应数字索引。不要输出或引用自由命名的 `centers`。
 
 #### Profile、unknown 与 closure
 
 - `profile` 中实际出现的 HARD geometry 必须有 coverage；允许一个 ancestor target 覆盖 descendants，不要求每个 leaf 独立 source。
+- Profile 使用当前 accepted `profile.segments`，source/derived/relation 只能引用真实存在的 boundary path，例如 `profile.segments.0.y1`；禁止为尺寸语义发明未写入 geometry 的 `pad_height / plate_width_y / pad_width_y` 等 summary fields。
+- 例如直接边界可用 `{"semantic":"profile_dimension","value":-16,"target":"profile.segments.0.y1"}`；其它已存在 HARD geometry 仍须由兼容 direct、derived、relation 或合法 ancestor coverage 闭合，本例不要求每个 leaf 都单独 source。
 - 连续、对齐或 overall boundary 推导出的 profile endpoint 使用 derived/relation；只有直接标注的 profile boundary 才使用 direct `profile_dimension`。
 - blocking unresolved 指向的字段不得保留 concrete value、默认值或 placeholder `0`；soft unresolved 不改变已知 geometry。
 - Gate A PASS 要求 blocking unresolved=0、dimension conflicts=0、`dimension_closure.status="closed"`，并同时通过其它机器结构、coverage 和 coordinate checks；`closed` 字样本身不能替代这些检查。

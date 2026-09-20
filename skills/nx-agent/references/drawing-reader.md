@@ -16,8 +16,8 @@
 
 必须严格按以下顺序执行；后一步不得重新分类前一步已经锁定的 annotation 或 ownership。
 
-1. **Annotation / same-feature projection association**：保存 view-local evidence；只确认不同视图中的投影是否属于同一个 feature，以及该 feature 的 axis projection。association 本身不建立不同 feature 之间的数值关系，也不授权跨 feature derived。
-2. **Physical endpoint ownership**：沿 witness/extension line、leader、arrow endpoint、centerline endpoint 与 feature boundary endpoint 确定每个物理 annotation 的两个 endpoints、唯一 measured quantity 和稳定 source identity。
+1. **Annotation / same-feature projection association**：保存 view-local evidence，只确认投影属于同一 feature；axis/centerline 仍是待锁定候选。hole/thread/counterbore 必须穷尽整图中的 same-feature orthographic candidates 后才能输出 axis/center、宣告 unresolved 或解释 start face。association 本身不建立不同 feature 之间的数值关系，也不授权跨 feature derived。
+2. **Physical endpoint ownership**：沿 witness/leader/arrow、centerline 与 feature boundary，为每个 dimension-bearing annotation 建立稳定 annotation/source identity、feature/view identity、physical endpoints 和唯一 measured quantity。绑定前，annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate。
 3. **Direct coordinate / evidence-backed relation lock**：直接证据写 direct；alignment、connected、tangent、coincident、spacing、symmetry 等不同 feature 关系必须单独建立并保存 evidence。ownership 和 relation 锁定后不得在全局坐标转换时重分类。
 4. **Eligible derived**：只用已锁定的 source/target 与明确 relation 唯一计算缺失 target。没有 evidence-backed relation 禁止跨 feature derived。
 5. **Required HARD feature inventory**：根据工程图列出总体、主体/profile、明确孔槽及其它会改变实体的必需 feature。无法可靠表达的必需项进入 blocking `unresolved`，不得从 inventory 或输出中静默删除。
@@ -46,11 +46,12 @@ XY 原点为零件整体外形中心，Z=0 为零件底面。标准正投影视�
 
 第一角/第三角投影只改变视图排布。左右侧视图只改变观察方向，不改变 normal=X。
 
-- feature 在已确定方向的正投影视图中显示为圆时，其轴为该视图 normal；其它视图的隐藏平行线只是同一 feature 的 axial projection candidate。
+- hole/thread/counterbore 的圆形 end-view 提供 axis 候选；隐藏线投影提供 transverse center、axial range 及绑定 dimension 的候选证据。
 - 孔的 transverse coordinates 由轴唯一确定：`axis=X`→Y/Z、axis=Y→X/Z、axis=Z→X/Y。
 - `M-series thread / through hole / counterbore` 等跨视图候选只按 projection alignment、shared centerline、feature identity、specification 和 leader/witness endpoints 判断是否为同一 feature/coaxial group；邻近、同值或 axis 相同不足以 association。
+- 锁定 axis/center 或宣告 unresolved 前必须核对全部正交视图候选。start face 只能在 axis 锁定后解释，不得反向决定 axis。
 - thread projection 必须先按 projection alignment 与 identity evidence 完成 same-feature association，不能靠邻近关系归组。
-- same-feature association 只合并 identity、axis 和共享 transverse centerline。distinct-feature alignment/connected/spacing 必须建立独立 relation，并保留 evidence / `relation_refs`。
+- same-feature association 只合并 identity；axis 与 shared transverse centerline 必须由完整候选证据锁定。distinct-feature alignment/connected/spacing 必须建立独立 relation，并保留 evidence / `relation_refs`。
 - slot/cut 分别记录 `width_axis` 与 `through_axis`；两条平行边只能识别 width_axis，不能单独决定 through_axis。
 - center coordinate 与沿轴 start/end/range 分开。side 或 axial range 会改变实体而不能唯一确定时进入 blocking `unresolved`。
 
@@ -58,7 +59,9 @@ XY 原点为零件整体外形中心，Z=0 为零件底面。标准正投影视�
 
 ## 4. Physical endpoint ownership
 
-一个物理 annotation 只有一个 source identity、一个 measured quantity 和一组真实 endpoint ownership。相同数值但 endpoints 不同的 annotations 保持独立 source；不得克隆 source 后赋予另一种物理含义。
+一个物理 annotation 只有一个稳定 annotation/source identity、一个 associated feature/view identity、一个 measured quantity 和一组真实 endpoint ownership。相同数值但 endpoints 不同的 annotations 保持独立 source；不得克隆 source 后赋予另一种物理含义。
+
+dimension-bearing annotation 参与 derived、spacing/pattern/projection completion、global calculation 或 concrete assignment 前，必须完成上述绑定并按第3步锁定 source/relation ownership。未绑定尺寸不得作为裸 numeric operand 或 mental arithmetic 输入，不得只保留 coordinate 或在 canonical 阶段伪装成 direct `center_position`。
 
 按 endpoints 使用唯一决策表：
 
@@ -84,7 +87,7 @@ XY 原点为零件整体外形中心，Z=0 为零件底面。标准正投影视�
 
 局部 profile/body/step boundary 不得套 overall bbox，必须引用其实际 geometry endpoint。
 
-一个 overall edge→repeated feature centers annotation 可用一个 `edge_offset` relation 覆盖多个实际 `explicit_centers` target paths。ownership 必须先于 pattern/symmetry/spacing completion 锁定；后者不得删除真实 edge dimension、改写成 group center/半距，或换成数学等价但 ownership 不同的另一侧 offset。
+一个 overall edge→center annotation 可用一个 `edge_offset` relation 覆盖多个实际 target paths；这些 centers 不要求位于同一个 feature object。ownership 必须先于 pattern/symmetry/spacing completion 锁定；后者不得删除真实 edge dimension、改写成 group center/半距，或换成数学等价但 ownership 不同的另一侧 offset。
 
 `edge_offset` relation 保存 `value / axis / from / targets`，自身提供 target coverage；`edge_offset` 不得作为 derived expression 的 numeric source。`center_distance / center_spacing` relation 本身不覆盖 endpoints；若派生其中一个 endpoint，expr 同时引用 known opposite endpoint target 和 relation source。
 
@@ -164,7 +167,7 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 
 ### 8.2 Source、relation 与 derived schema
 
-- direct source 具有稳定 `id`、compatible `semantic` 和实际可解析的 `target`；若 source 包含 `value`，必须等于 target concrete value。
+- direct source 具有稳定 `id`、compatible `semantic` 和实际可解析的 `target`；若 source 包含 `value`，必须等于 target concrete value。图纸 dimension 得到的 coordinate 必须追溯到保留 measured ownership 的 source/relation；coordinate 正确不能替代该 ownership。
 - HARD leaf 使用兼容 provenance：`type→feature_kind`、axis fields→`axis`、`spec→thread_spec`，count/diameter/depth/through 使用对应 semantic。
 - 螺纹 geometry 的 feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`。
 - relation source 不写 direct `target`。`edge_offset` 使用 `targets`；`center_distance / center_spacing` 使用真实 center paths 的 `between`；非数值 relation 保存 evidence identity。
@@ -182,7 +185,7 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 1. required HARD feature inventory 中没有静默遗漏；blocking unresolved 与 concrete geometry 不并存。
 2. 所有 direct target、relation `targets/between` 和 derived target 都实际存在。
 3. 本次 Reader first-pass 的 target inventory 中没有 direct+derived 同 target；relation coverage 后没有额外 direct/derived writer。
-4. 每个已输出 HARD field 有 compatible coverage；每个 physical annotation 保持唯一 measured quantity 与 endpoint ownership。
+4. 每个 HARD field 有 compatible coverage；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；coordinate 可追溯到原 measured ownership。
 5. edge concrete coordinate 满足已锁定 boundary ownership；局部 boundary 未套 overall bbox。
 6. derived 没有 dimension-bearing free const；跨 feature derived 均有 evidence-backed `relation_refs`。
 7. closure 仅验证结果，没有创建或改写 geometry。

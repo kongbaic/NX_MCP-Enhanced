@@ -554,6 +554,12 @@ class DrawingGateATests(unittest.TestCase):
             "7. **Output**",
             "association 本身不建立不同 feature 之间的数值关系",
             "不得在全局坐标转换时重分类",
+            "必须穷尽整图中的 same-feature orthographic candidates",
+            "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
+            "不得作为裸 numeric operand 或 mental arithmetic 输入",
+            "start face 只能在 axis 锁定后解释",
+            "coordinate 正确不能替代该 ownership",
+            "这些 centers 不要求位于同一个 feature object",
         ):
             self.assertIn(token, reader)
         for token in (

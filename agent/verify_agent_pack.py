@@ -440,6 +440,13 @@ def main() -> None:
         "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
         "required inventory 必须在 canonical shape freeze 之前完成",
         "ownership 必须先于 pattern/symmetry/spacing completion 锁定",
+        "必须穷尽整图中的 same-feature orthographic candidates",
+        "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
+        "不得作为裸 numeric operand 或 mental arithmetic 输入",
+        "start face 只能在 axis 锁定后解释",
+        "coordinate 正确不能替代该 ownership",
+        "这些 centers 不要求位于同一个 feature object",
+        "每个 dimension-bearing annotation 在 numeric use 前已有 identity",
     ):
         if token not in drawing_reader:
             fail(f"consolidated Reader decision contract regression: missing {token}")

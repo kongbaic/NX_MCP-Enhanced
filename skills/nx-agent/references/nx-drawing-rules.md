@@ -20,7 +20,7 @@
 - 另一正交视图中的隐藏矩形/隐藏平行线是 axial projection candidate，不能单独改写 axis。
 - projection alignment、shared centerline、同心圆、相同 specification、leader/witness endpoint 和一致轮廓类型是 same-feature association evidence。
 - `M-series thread / through hole / counterbore / countersink` 可在不同视图表达同一 feature 或 coaxial group；邻近、相同数值或相同 axis 本身不是 association evidence。
-- same-feature association 只识别 identity、axis projection 和共享 centerline。不同 feature 的 alignment/connected/spacing 不在本词典推导，必须回到 `drawing-reader.md` 建立 evidence-backed relation。
+- same-feature association 只识别 identity；axis projection 和共享 centerline 只作为同一 identity 下的视觉候选，锁定由 `drawing-reader.md` 完成。不同 feature 的 alignment/connected/spacing 仍须建立 evidence-backed relation。
 - center coordinate 与 axial start/end/range 是不同几何概念；隐藏线长度不能冒充 transverse center。
 - 视觉轴映射速记：axis=X→Y/Z、axis=Y→X/Z、axis=Z→X/Y；它只识别 transverse coordinate axes，不决定尺寸 ownership。
 

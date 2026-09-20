@@ -101,6 +101,9 @@ Runner 正式开始建模后，任一 operation 失败：
 以下任一情况必须最终失败：
 - A 阶段 unresolved > 0 / dimension conflict / 尺寸缺失；
 - 需要猜尺寸、改尺寸、改孔位、改特征数量；
+- **禁止数值 nudge / epsilon 修复**：任何来自 drawing、derived、frozen plan 的设计几何数值，包括 coordinate、start/end、slot bottom、hole center、diameter、depth、thickness、radius、chamfer、fillet，都不得为了让 NX Boolean 成功而改成邻近值，例如 `Z=50 → Z=49`。
+- Controlled Self-Healing 只允许 selection criteria 修复，以及不改变已冻结设计几何语义的确定性 plan-level / selection-level 技术修复。
+- 若精确相切/共面导致 NX kernel Boolean 失败，而没有 geometry-preserving 修复路径，必须失败；不得扩大、缩短、偏移或以其它方式 nudge 工具体。
 - Boolean 不相交且根因属于几何设计/规划错误；
 - 超出 certified tools 能力边界；
 - 需要新增或修改 NX_MCP / Runner / Loader；

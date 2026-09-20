@@ -268,6 +268,22 @@ def main() -> None:
     if "纯计划表达错误" not in pipeline_contract or "result_bindings" not in pipeline_contract:
         fail("pipeline contract does not allow safe one-shot repair of binding-only plan errors")
 
+    for token in (
+        "禁止数值 nudge / epsilon 修复",
+        "drawing、derived、frozen plan",
+        "Z=50 → Z=49",
+        "geometry-preserving",
+    ):
+        if token not in pipeline_contract:
+            fail(f"pipeline numeric-nudge repair regression: missing {token}")
+    for token in (
+        "禁止 geometry / numeric nudge",
+        "Z=50 → Z=49",
+        "精确相切/共面",
+    ):
+        if token not in top:
+            fail(f"top-level numeric-nudge repair regression: missing {token}")
+
     timing_tests = (RUNNER / "tests" / "test_bbox_report.py").read_text(encoding="utf-8")
     if "test_timing_bucket_separates_postprocess_from_validation" not in timing_tests:
         fail("Runner timing phase regression test missing")

@@ -594,6 +594,79 @@ class DrawingGateATests(unittest.TestCase):
 
 
 class DrawingSchemaNormalizationTests(unittest.TestCase):
+    @staticmethod
+    def range_alias_data() -> dict:
+        return {
+            "features": [{"id": "F_SLOT", "range_z": {"from": "5", "to": 15}}],
+            "source_ledger": [
+                {"id": "S_BOTTOM", "target": "feature:F_SLOT.range_z.from"},
+                {
+                    "id": "R_TARGETS",
+                    "semantic": "edge_offset",
+                    "targets": ["feature:F_SLOT.range_z.from"],
+                },
+                {
+                    "id": "R_BETWEEN",
+                    "semantic": "center_spacing",
+                    "between": [
+                        "feature:F_SLOT.range_z.from",
+                        "feature:F_SLOT.range_z.to",
+                    ],
+                },
+                {
+                    "id": "R_LINKS",
+                    "semantic": "alignment",
+                    "links": ["F_SLOT.range_z.from", "feature:F_SLOT.range_z.to"],
+                },
+            ],
+            "relations": [
+                {
+                    "id": "R_TOP_LEVEL",
+                    "targets": ["feature:F_SLOT.range_z.to"],
+                    "between": [
+                        "feature:F_SLOT.range_z.from",
+                        "feature:F_SLOT.range_z.to",
+                    ],
+                    "links": [
+                        "feature:F_SLOT.range_z.from",
+                        "feature:F_SLOT.range_z.to",
+                    ],
+                }
+            ],
+            "derived": [
+                {
+                    "id": "D_TOP",
+                    "target": "feature:F_SLOT.range_z.to",
+                    "expr": {"target": "feature:F_SLOT.range_z.from"},
+                    "refs": ["feature:F_SLOT.range_z.to"],
+                }
+            ],
+            "unresolved": [
+                {"id": "U_BOTTOM", "target": "feature:F_SLOT.range_z.from"}
+            ],
+        }
+
+    @staticmethod
+    def gate_a_range_alias_data() -> dict:
+        data = canonical_reader_fixture()
+        slot = next(item for item in data["features"] if item["id"] == "F_SLOT")
+        slot["range_z"] = {"from": 5, "to": 15}
+        data["source_ledger"].extend([
+            {
+                "id": "S_SLOT_BOTTOM",
+                "semantic": "position_dimension",
+                "value": 5,
+                "target": "feature:F_SLOT.range_z.from",
+            },
+            {
+                "id": "S_SLOT_TOP",
+                "semantic": "position_dimension",
+                "value": 15,
+                "target": "feature:F_SLOT.range_z.to",
+            },
+        ])
+        return data
+
     def test_normalizer_does_not_rename_noncanonical_semantic_fields(self) -> None:
         data = {
             "overall_dimensions": {"x": 10, "y": 20, "z": 30},
@@ -697,6 +770,147 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
         out, errors, _ = R.normalize_drawing_schema(data)
         self.assertEqual([], errors)
         self.assertEqual(unresolved, out["unresolved"])
+
+    def test_range_z_and_source_target_are_canonicalized_together(self) -> None:
+        data = self.range_alias_data()
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertTrue(changes)
+        feature = out["features"][0]
+        self.assertNotIn("range_z", feature)
+        self.assertEqual(5, feature["bottom_z"])
+        self.assertEqual(15, feature["top_z"])
+        self.assertEqual("feature:F_SLOT.bottom_z", out["source_ledger"][0]["target"])
+
+    def test_all_declared_reference_shapes_follow_range_z_rewrite(self) -> None:
+        out, errors, _ = R.normalize_drawing_schema(self.range_alias_data())
+        self.assertEqual([], errors)
+        serialized = json.dumps(out, ensure_ascii=False)
+        self.assertNotIn("range_z", serialized)
+        self.assertEqual(
+            ["feature:F_SLOT.bottom_z"], out["source_ledger"][1]["targets"]
+        )
+        self.assertEqual(
+            ["feature:F_SLOT.bottom_z", "feature:F_SLOT.top_z"],
+            out["source_ledger"][2]["between"],
+        )
+        self.assertEqual(
+            ["feature:F_SLOT.bottom_z", "feature:F_SLOT.top_z"],
+            out["source_ledger"][3]["links"],
+        )
+        self.assertEqual("feature:F_SLOT.top_z", out["derived"][0]["target"])
+        self.assertEqual(
+            "feature:F_SLOT.bottom_z", out["derived"][0]["expr"]["target"]
+        )
+        self.assertEqual(["feature:F_SLOT.top_z"], out["derived"][0]["refs"])
+        self.assertEqual("feature:F_SLOT.bottom_z", out["unresolved"][0]["target"])
+
+    def test_canonicalization_preserves_numeric_and_id_inventories(self) -> None:
+        data = self.range_alias_data()
+        before = R.drawing_preservation_inventory(data)
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual(before, R.drawing_preservation_inventory(out))
+        self.assertEqual(
+            R.drawing_semantic_projection(data), R.drawing_semantic_projection(out)
+        )
+        self.assertEqual(
+            ["F_SLOT"], [item["id"] for item in out["features"]]
+        )
+        self.assertEqual(
+            ["S_BOTTOM", "R_TARGETS", "R_BETWEEN", "R_LINKS"],
+            [item["id"] for item in out["source_ledger"]],
+        )
+        self.assertEqual(["R_TOP_LEVEL"], [item["id"] for item in out["relations"]])
+        self.assertEqual(["D_TOP"], [item["id"] for item in out["derived"]])
+        self.assertEqual(["U_BOTTOM"], [item["id"] for item in out["unresolved"]])
+
+    def test_conflicting_range_destination_fails_closed(self) -> None:
+        data = self.range_alias_data()
+        data["features"][0]["bottom_z"] = 5
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertTrue(any("conflicting range_z" in error for error in errors))
+        self.assertEqual(data, out)
+        self.assertEqual([], changes)
+
+    def test_unknown_range_alias_fails_without_guessing(self) -> None:
+        data = self.range_alias_data()
+        data["features"][0]["range_z"] = {"start": 5, "to": 15}
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertTrue(any("unknown or ambiguous range_z" in error for error in errors))
+        self.assertEqual(data, out)
+        self.assertEqual([], changes)
+
+    def test_bare_feature_path_alias_is_rewritten_only_when_resolvable(self) -> None:
+        data = {"features": [{"id": "F1", "diameter": 6}], "source_ledger": [
+            {"id": "S1", "target": "F1.diameter"}
+        ]}
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual("feature:F1.diameter", out["source_ledger"][0]["target"])
+        data["source_ledger"][0]["target"] = "F1.missing"
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertTrue(any("cannot resolve canonical target" in error for error in errors))
+        self.assertEqual(data, out)
+        self.assertEqual([], changes)
+
+    def test_missing_ownership_is_not_invented_by_canonicalizer(self) -> None:
+        data = self.range_alias_data()
+        data.pop("source_ledger")
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertNotIn("source_ledger", out)
+        self.assertEqual([], R.drawing_preservation_inventory(out)["source_ids"])
+
+    def test_canonicalize_cli_gate_failure_writes_nothing(self) -> None:
+        data = self.gate_a_range_alias_data()
+        data["source_ledger"] = [
+            item for item in data["source_ledger"] if item["id"] != "S_SLOT_WIDTH"
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            original = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+            draft.write_text(original, encoding="utf-8")
+            args = type("Args", (), {"draft": str(draft), "out": str(output)})()
+            with redirect_stdout(io.StringIO()):
+                result = R._cmd_canonicalize_drawing(args)
+            self.assertEqual(1, result)
+            self.assertFalse(output.exists())
+            self.assertEqual(original, draft.read_text(encoding="utf-8"))
+
+    def test_canonicalize_cli_rejects_overwriting_semantic_draft(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            original = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+            draft.write_text(original, encoding="utf-8")
+            args = type("Args", (), {"draft": str(draft), "out": str(draft)})()
+            with redirect_stdout(io.StringIO()):
+                result = R._cmd_canonicalize_drawing(args)
+            self.assertEqual(1, result)
+            self.assertEqual(original, draft.read_text(encoding="utf-8"))
+
+    def test_canonicalize_cli_passes_gate_then_writes_output_atomically(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            original = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+            draft.write_text(original, encoding="utf-8")
+            args = type("Args", (), {"draft": str(draft), "out": str(output)})()
+            with redirect_stdout(io.StringIO()):
+                result = R._cmd_canonicalize_drawing(args)
+            self.assertEqual(0, result)
+            self.assertTrue(output.exists())
+            canonical = json.loads(output.read_text(encoding="utf-8"))
+            slot = next(item for item in canonical["features"] if item["id"] == "F_SLOT")
+            self.assertEqual(5, slot["bottom_z"])
+            self.assertEqual(15, slot["top_z"])
+            self.assertNotIn("range_z", slot)
+            self.assertEqual([], R.check_drawing_json(canonical))
+            self.assertEqual(original, draft.read_text(encoding="utf-8"))
+            self.assertEqual([], list(Path(tmp).glob(".drawing-canonical-*.tmp")))
 
 
 def thread_drawing(**overrides) -> dict:

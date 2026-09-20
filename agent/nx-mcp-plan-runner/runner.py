@@ -9,6 +9,7 @@ This Runner is PART-AGNOSTIC and PLAN-AGNOSTIC:
 - it never invents repairs: a failed step stops the run (declared retries only).
 
 Modes:
+  python runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
   python runner.py validate-drawing <drawing.json>  # Gate A structural/evidence check, no NX
   python runner.py run   <plan.json> [--workspace DIR] [--report OUT.json]
   python runner.py check <plan.json> [--frozen]     # static, no NX
@@ -31,6 +32,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -1587,6 +1589,223 @@ def _normalize_drawing_feature(feature: dict, changes: list[str]) -> tuple[dict,
     return item, errors
 
 
+_DRAWING_PATH_SCALAR_KEYS = {"target", "center", "diameter", "tangent"}
+_DRAWING_PATH_LIST_KEYS = {"targets", "between", "links", "refs"}
+
+
+def _drawing_feature_id_set(data: dict) -> tuple[set[str], list[str]]:
+    ids: set[str] = set()
+    errors: list[str] = []
+    for feature in data.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_id = feature.get("id")
+        if not isinstance(feature_id, str) or not feature_id:
+            continue
+        if feature_id in ids:
+            errors.append(f"duplicate feature id {feature_id!r} prevents canonical path rewrite")
+        ids.add(feature_id)
+    return ids, errors
+
+
+def _drawing_add_path_mapping(
+    mapping: dict[str, str], old: str, new: str, errors: list[str]
+) -> None:
+    prior = mapping.get(old)
+    if prior is not None and prior != new:
+        errors.append(f"ambiguous drawing path alias {old!r}: {prior!r} vs {new!r}")
+        return
+    for other_old, other_new in mapping.items():
+        if other_old != old and other_new == new:
+            errors.append(
+                f"multiple drawing path aliases target the same destination {new!r}"
+            )
+            return
+    mapping[old] = new
+
+
+def _drawing_canonicalize_range_z(
+    item: dict,
+    prefix: str,
+    mapping: dict[str, str],
+    errors: list[str],
+    changes: list[str],
+) -> None:
+    if "range_z" in item:
+        value = item["range_z"]
+        if not isinstance(value, dict) or set(value) != {"from", "to"}:
+            errors.append(
+                f"unknown or ambiguous range_z alias at {prefix!r}; expected exactly from/to"
+            )
+        elif "bottom_z" in item or "top_z" in item:
+            errors.append(
+                f"conflicting range_z and bottom_z/top_z representations at {prefix!r}"
+            )
+        else:
+            bottom = value["from"]
+            top = value["to"]
+            _drawing_add_path_mapping(
+                mapping, f"{prefix}.range_z.from", f"{prefix}.bottom_z", errors
+            )
+            _drawing_add_path_mapping(
+                mapping, f"{prefix}.range_z.to", f"{prefix}.top_z", errors
+            )
+            if not errors:
+                item.pop("range_z")
+                item["bottom_z"] = bottom
+                item["top_z"] = top
+                changes.append(f"normalized {prefix}.range_z.from/to -> bottom_z/top_z")
+
+    members = item.get("members")
+    if isinstance(members, list):
+        for index, member in enumerate(members):
+            if isinstance(member, dict):
+                _drawing_canonicalize_range_z(
+                    member,
+                    f"{prefix}.members.{index}",
+                    mapping,
+                    errors,
+                    changes,
+                )
+
+
+def _drawing_iter_path_references(value: Any):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in _DRAWING_PATH_SCALAR_KEYS and isinstance(child, str):
+                yield child
+            elif key in _DRAWING_PATH_LIST_KEYS and isinstance(child, list):
+                for item in child:
+                    if isinstance(item, str):
+                        yield item
+            yield from _drawing_iter_path_references(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _drawing_iter_path_references(child)
+
+
+def _drawing_rewrite_path_references(value: Any, mapping: dict[str, str]) -> Any:
+    def rewrite(path: str) -> str:
+        seen: set[str] = set()
+        while path in mapping:
+            if path in seen:
+                break
+            seen.add(path)
+            path = mapping[path]
+        return path
+
+    if isinstance(value, dict):
+        out = {}
+        for key, child in value.items():
+            if key in _DRAWING_PATH_SCALAR_KEYS and isinstance(child, str):
+                out[key] = rewrite(child)
+            elif key in _DRAWING_PATH_LIST_KEYS and isinstance(child, list):
+                out[key] = [rewrite(item) if isinstance(item, str) else copy.deepcopy(item)
+                            for item in child]
+            else:
+                out[key] = _drawing_rewrite_path_references(child, mapping)
+        return out
+    if isinstance(value, list):
+        return [_drawing_rewrite_path_references(child, mapping) for child in value]
+    return copy.deepcopy(value)
+
+
+def _drawing_canonicalize_paths(
+    data: dict, changes: list[str]
+) -> tuple[dict, list[str]]:
+    """Apply only proven one-to-one drawing field/path aliases."""
+    out = copy.deepcopy(data)
+    errors: list[str] = []
+    feature_ids, id_errors = _drawing_feature_id_set(out)
+    errors.extend(id_errors)
+    mapping: dict[str, str] = {}
+
+    for feature in out.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_id = feature.get("id")
+        if isinstance(feature_id, str) and feature_id:
+            _drawing_canonicalize_range_z(
+                feature, f"feature:{feature_id}", mapping, errors, changes
+            )
+
+    if errors:
+        return data, errors
+
+    for path in list(_drawing_iter_path_references(out)):
+        if path in mapping:
+            continue
+        if path.startswith("feature:"):
+            if ".range_z." in path:
+                errors.append(f"unknown drawing path alias {path!r}")
+            continue
+        head, dot, tail = path.partition(".")
+        if dot and head in feature_ids:
+            candidate = f"feature:{head}.{tail}"
+            if candidate in mapping:
+                _drawing_add_path_mapping(mapping, path, candidate, errors)
+            else:
+                try:
+                    _drawing_path_get(out, candidate)
+                except KeyError:
+                    errors.append(
+                        f"drawing path alias {path!r} cannot resolve canonical target {candidate!r}"
+                    )
+                else:
+                    _drawing_add_path_mapping(mapping, path, candidate, errors)
+        elif ".range_z." in path:
+            errors.append(f"unknown drawing path alias {path!r}")
+
+    if errors:
+        return data, errors
+
+    rewritten = _drawing_rewrite_path_references(out, mapping)
+    for old, new in mapping.items():
+        seen: set[str] = set()
+        while new in mapping:
+            if new in seen:
+                errors.append(f"cyclic drawing path alias involving {new!r}")
+                break
+            seen.add(new)
+            new = mapping[new]
+        try:
+            new_value = _drawing_path_get(rewritten, new)
+        except KeyError:
+            errors.append(f"canonical drawing target {new!r} does not exist")
+            continue
+        if old.startswith("feature:") and ".range_z." in old:
+            feature_id, _, tail = old[len("feature:"):].partition(".")
+            original_feature = next(
+                (item for item in data.get("features", [])
+                 if isinstance(item, dict) and item.get("id") == feature_id),
+                None,
+            )
+            if original_feature is None:
+                errors.append(f"canonicalization lost feature identity {feature_id!r}")
+                continue
+            cur: Any = original_feature
+            try:
+                for part in tail.split("."):
+                    if isinstance(cur, dict):
+                        cur = cur[part]
+                    elif isinstance(cur, list) and part.isdigit():
+                        cur = cur[int(part)]
+                    else:
+                        raise KeyError(old)
+            except (KeyError, IndexError):
+                errors.append(f"original drawing target {old!r} does not exist")
+                continue
+            if cur != new_value:
+                errors.append(f"canonical path rewrite changes leaf value for {old!r}")
+
+    if errors:
+        return data, errors
+    for old, new in mapping.items():
+        if old != new:
+            changes.append(f"rewrote drawing path {old} -> {new}")
+    return rewritten, []
+
+
 def _drawing_normalize_numbers(value: Any, key: str = "") -> Any:
     if isinstance(value, dict):
         return {k: _drawing_normalize_numbers(v, str(k)) for k, v in value.items()}
@@ -1612,7 +1831,34 @@ def drawing_semantic_projection(data: dict) -> dict:
             else:
                 canonical_features.append(feature)
         projection["features"] = canonical_features
-    return _drawing_normalize_numbers(projection)
+    projection = _drawing_normalize_numbers(projection)
+    projected_changes: list[str] = []
+    projected, errors = _drawing_canonicalize_paths(projection, projected_changes)
+    return projection if errors else _drawing_normalize_numbers(projected)
+
+
+def drawing_preservation_inventory(data: dict) -> dict:
+    """Stable inventories that canonicalization is never allowed to change."""
+    projection = drawing_semantic_projection(data)
+    source_ledger = projection.get("source_ledger") or []
+    relations = projection.get("relations") or []
+    return {
+        "feature_ids": [item.get("id") for item in projection.get("features") or []
+                        if isinstance(item, dict)],
+        "source_ids": [item.get("id") for item in source_ledger
+                       if isinstance(item, dict)],
+        "relation_ids": [item.get("id") for item in relations
+                         if isinstance(item, dict)],
+        "ledger_relation_ids": [item.get("id") for item in source_ledger
+                                if isinstance(item, dict)
+                                and item.get("semantic") in _DRAWING_RELATION_SEMANTICS],
+        "derived_ids": [item.get("id") for item in projection.get("derived") or []
+                        if isinstance(item, dict)],
+        "unresolved_ids": [item.get("id") for item in projection.get("unresolved") or []
+                           if isinstance(item, dict)],
+        "source_count": len(source_ledger),
+        "relation_count": len(relations),
+    }
 
 
 def normalize_drawing_schema(data: dict) -> tuple[dict, list[str], list[str]]:
@@ -1620,6 +1866,7 @@ def normalize_drawing_schema(data: dict) -> tuple[dict, list[str], list[str]]:
     if not isinstance(data, dict):
         return data, ["drawing JSON root must be an object"], []
     before = drawing_semantic_projection(data)
+    before_inventory = drawing_preservation_inventory(data)
     out = copy.deepcopy(data)
     errors: list[str] = []
     changes: list[str] = []
@@ -1651,8 +1898,17 @@ def normalize_drawing_schema(data: dict) -> tuple[dict, list[str], list[str]]:
         out = number_normalized
         changes.append("normalized unambiguous numeric strings")
 
+    out, path_errors = _drawing_canonicalize_paths(out, changes)
+    errors.extend(path_errors)
+    post_path_numbers = _drawing_normalize_numbers(out)
+    if post_path_numbers != out:
+        out = post_path_numbers
+        changes.append("normalized numeric strings exposed by canonical path rewrite")
+
     if errors:
         return copy.deepcopy(data), errors, []
+    if drawing_preservation_inventory(out) != before_inventory:
+        return copy.deepcopy(data), ["normalizer identity/count preservation check failed"], []
     if drawing_semantic_projection(out) != before:
         return copy.deepcopy(data), ["normalizer semantic preservation check failed"], []
     return out, [], changes
@@ -3307,6 +3563,82 @@ def _cmd_validate_drawing(args: argparse.Namespace) -> int:
     return 0 if not errors else 1
 
 
+def _atomic_write_json(path: str, data: dict) -> None:
+    directory = os.path.dirname(os.path.abspath(path)) or os.curdir
+    if not os.path.isdir(directory):
+        raise PlanError(f"canonical drawing output directory does not exist: {directory}")
+    fd, temporary = tempfile.mkstemp(prefix=".drawing-canonical-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
+    timing_state = _begin_command_timing("A3_CANONICALIZE", args.draft)
+    draft_path = os.path.abspath(args.draft)
+    output_path = os.path.abspath(args.out)
+    errors: list[str] = []
+    normalization_errors: list[str] = []
+    gate_errors: list[str] = []
+    gate_attempted = False
+    changes: list[str] = []
+    drawing: dict | None = None
+
+    if os.path.normcase(draft_path) == os.path.normcase(output_path):
+        errors.append("semantic draft and canonical drawing output must be different paths")
+    else:
+        try:
+            original = _load_drawing(draft_path)
+            drawing, normalization_errors, changes = normalize_drawing_schema(original)
+            errors.extend(normalization_errors)
+            if not errors:
+                gate_attempted = True
+                gate_errors = check_drawing_json(drawing)
+                errors.extend(gate_errors)
+        except (OSError, ValueError, PlanError) as exc:
+            errors.append(str(exc))
+
+    result = {
+        "semantic_draft": draft_path,
+        "canonical_drawing": output_path,
+        "normalization": {"changes": changes, "errors": normalization_errors},
+        "gate_a": {
+            "attempted": gate_attempted,
+            "errors": gate_errors,
+            "ok": gate_attempted and not gate_errors,
+        },
+        "source_ownership": {"status": "pass" if not errors else "fail"},
+        "coordinate_sanity": {"status": "pass" if not errors else "fail"},
+        "errors": errors,
+        "written": False,
+        "ok": False,
+    }
+
+    if not errors and drawing is not None:
+        try:
+            _atomic_write_json(output_path, drawing)
+        except (OSError, PlanError) as exc:
+            errors.append(str(exc))
+            result["errors"] = errors
+        else:
+            result["written"] = True
+            result["ok"] = True
+
+    _attach_command_timing(result, timing_state)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 1
+
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -3534,6 +3866,14 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")
     pd.add_argument("drawing")
     pd.set_defaults(func=_cmd_validate_drawing)
+
+    pcan = sub.add_parser(
+        "canonicalize-drawing",
+        help="losslessly canonicalize a semantic draft and write only after Gate A passes",
+    )
+    pcan.add_argument("draft")
+    pcan.add_argument("out")
+    pcan.set_defaults(func=_cmd_canonicalize_drawing)
 
     args = p.parse_args(argv)
     if inspect.iscoroutinefunction(args.func):

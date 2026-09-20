@@ -55,6 +55,8 @@ nx-mcp-plan-runner/
 ## 用法
 
 ```text
+python runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
+python runner.py validate-drawing <drawing.json>
 python runner.py run   <executable-plan.json> [--workspace DIR] [--report out.json]
                        [--mode normal|benchmark] [--allow-overwrite] [--history FILE]
                        [--repair-attempt 0|1] [--repair-report attempt1.json]
@@ -63,6 +65,11 @@ python runner.py build <frozen-plan.json> <out.json> [--drawing <current-drawing
 python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 ```
 
+- `canonicalize-drawing`：只执行白名单schema/path等价转换并同步引用；在内存中
+  通过现有Gate A后才以临时文件+atomic replace写出canonical drawing。失败时
+  返回nonzero、不写输出，也不覆盖semantic draft；不推断geometry或ownership。
+- `validate-drawing`：对drawing执行同一representation-only normalization和
+  Gate A验证，不触NX。
 - `run`：静态校验 → Loader ping → **preflight 安全检查** → 顺序执行全部
   operation → 输出 JSON 报告（per-step 日志 + 汇总 + 分阶段计时）。
 - `check`：不触 NX 的静态检查（工具合法性、参数合法性、引用可解析、占位符
@@ -71,7 +78,7 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 
 ### 命令计时
 
-`validate-drawing`、`build`、`check` 和 `run` 在原 JSON 结果中附加 `timing`，不改变原有 status、exit code、Gate A 或 Gate B：
+`canonicalize-drawing`、`validate-drawing`、`build`、`check` 和 `run` 在原 JSON 结果中附加 `timing`，不改变原有 status、exit code、Gate A 或 Gate B：
 
 - validate/build/check：UTC start/end 与 `perf_counter_ns()` 计算的 `elapsed_ms`；
 - run：`c1_runner_start_utc`、最后一个成功 topology-changing operation 完成时的 `c2_modeling_complete_utc`、STEP export 且文件 settle 完成时的 `c3_export_complete_utc`；

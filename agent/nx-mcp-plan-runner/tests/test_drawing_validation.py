@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import io
 import importlib.util
 import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -163,6 +166,46 @@ class DrawingGateATests(unittest.TestCase):
     def test_relation_fixture_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(relation_fixture()))
 
+    def test_direct_center_writer_only_passes(self) -> None:
+        self.assertEqual([], R.check_drawing_json(example()))
+
+    def test_derived_center_writer_only_passes(self) -> None:
+        self.assertEqual([], R.check_drawing_json(relation_fixture()))
+
+    def test_center_distance_derived_and_fake_direct_writer_conflict(self) -> None:
+        data = relation_fixture()
+        data["source_ledger"].append({
+            "id": "S_FAKE_TARGET_Z",
+            "semantic": "center_position",
+            "value": 35,
+            "target": "feature:F_TARGET.centerline.z",
+        })
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any(
+            "feature:F_TARGET.centerline.z" in error and "writer conflict" in error
+            for error in errors
+        ))
+
+    def test_edge_offset_and_fake_direct_center_writer_conflict(self) -> None:
+        data = relation_fixture()
+        data["source_ledger"].append({
+            "id": "S_FAKE_TARGET_Y",
+            "semantic": "center_position",
+            "value": -30,
+            "target": "feature:F_TARGET.centerline.y",
+        })
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any(
+            "feature:F_TARGET.centerline.y" in error and "writer conflict" in error
+            for error in errors
+        ))
+
+    def test_relation_metadata_on_same_feature_is_not_a_writer_conflict(self) -> None:
+        data = relation_fixture()
+        self.assertFalse(any(
+            "writer conflict" in error for error in R.check_drawing_json(data)
+        ))
+
     def test_edge_offset_preserves_min_and_max_side(self) -> None:
         self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="min")))
         self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="max")))
@@ -284,6 +327,15 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
         self.assertEqual([1, 2], out["features"][0]["position"]["center"])
         self.assertNotIn("center", out["features"][0])
 
+    def test_schema_only_normalization_can_continue_to_gate_a(self) -> None:
+        data = example()
+        boss = next(item for item in data["features"] if item["id"] == "F_BOSS")
+        boss["center"] = boss.pop("position")["center"]
+        normalized, errors, changes = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertTrue(changes)
+        self.assertEqual([], R.check_drawing_json(normalized))
+
     def test_numeric_strings_are_normalized(self) -> None:
         data = {"features": [{"id": "F1", "dimensions": {"width": "2.5"}, "count": "2"}]}
         out, errors, _ = R.normalize_drawing_schema(data)
@@ -304,6 +356,18 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
         self.assertTrue(errors)
         self.assertEqual(data, out)
         self.assertEqual([], changes)
+
+    def test_failed_validation_does_not_overwrite_original_drawing(self) -> None:
+        data = {"features": [{"id": "F1", "dimensions": [{"value": 2}]}]}
+        original = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "drawing.json"
+            path.write_text(original, encoding="utf-8")
+            args = type("Args", (), {"drawing": str(path)})()
+            with redirect_stdout(io.StringIO()):
+                result = R._cmd_validate_drawing(args)
+            self.assertEqual(1, result)
+            self.assertEqual(original, path.read_text(encoding="utf-8"))
 
     def test_missing_geometry_and_evidence_are_not_added(self) -> None:
         data = {"features": [{"id": "F1", "type": "slot"}]}

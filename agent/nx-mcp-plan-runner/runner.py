@@ -3094,6 +3094,13 @@ def check_drawing_json(data: dict) -> list[str]:
                 f"derived {did!r} crosses feature boundaries without relation evidence"
             )
 
+    computed_targets = derived_targets | relation_targets
+    for target in sorted(direct_targets & computed_targets):
+        errors.append(
+            f"drawing geometry target {target!r} has a writer conflict: "
+            "both direct and derived/relation writers are present"
+        )
+
     covered_targets = direct_targets | derived_targets | relation_targets
 
     # Required feature geometry must have evidence; profile/overall get the same rule.

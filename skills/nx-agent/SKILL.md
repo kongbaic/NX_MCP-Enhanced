@@ -34,11 +34,12 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 用户上传二维机械工程图并要求“开始建模”“按图建模”“用 NX 画出来”等时：
 
 1. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
-2. 输出结构化 JSON，并通过门禁 A。
-3. 读取建模规划与拓扑规则，生成 frozen plan，并通过门禁 B。
-4. 调用 Plan Runner 执行。
-5. 总控规则见 `references/pipeline-contract.md`。
-6. 用户输出规范见 `references/chinese-output.md`。
+2. 从**当前上传工程图**生成本轮 drawing interpretation 与当前 `drawing.json`，并通过门禁 A。
+3. Gate A PASS 后，根据**当前 drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
+4. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
+5. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
+6. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+7. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
 
 两条链路：
 
@@ -76,8 +77,11 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 否则立即停止，不进入建模规划。
 
+Gate A/schema retry 只能调用 schema-only normalization，允许 `dimension → dimensions`、`center → position.center`、无歧义 numeric string 和 object/list 等价转换。禁止新增或修改尺寸、axis、center、depth、count、side、feature ownership、source evidence、derived relation 或 unresolved。缺少 geometry/evidence/ownership 时保持 Gate A BLOCKED；example 只能说明 schema shape，不能作为当前零件 evidence 来源。
+
 ### 门禁 B
-- runner build/check 通过
+- 当前 frozen plan 必须由本轮 Gate A PASS 的 drawing JSON 新生成
+- runner build 必须带 `--drawing <current-drawing>`，随后 build/check 通过
 - unresolved reference = 0
 - illegal tool_args = 0
 - natural language placeholder = 0

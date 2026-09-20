@@ -145,6 +145,18 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
         self.assertNotIn("source_ledger", out)
         self.assertNotIn("dimensions", out["features"][0])
 
+    def test_schema_retry_keeps_missing_evidence_blocked(self) -> None:
+        data = example()
+        data["source_ledger"] = [
+            item for item in data["source_ledger"] if item["id"] != "S_HOLE_AXIS"
+        ]
+        before = copy.deepcopy(data)
+        normalized, normalization_errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], normalization_errors)
+        self.assertEqual(before["source_ledger"], normalized["source_ledger"])
+        gate_errors = R.check_drawing_json(normalized)
+        self.assertTrue(any("required geometry field lacks evidence" in error for error in gate_errors))
+
     def test_unresolved_is_not_deleted(self) -> None:
         unresolved = [{"item": "axis", "required_for_modeling": True}]
         data = {"features": [], "unresolved": unresolved}

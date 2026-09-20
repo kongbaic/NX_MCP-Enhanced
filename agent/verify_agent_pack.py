@@ -208,6 +208,82 @@ def main() -> None:
         if token not in top:
             fail(f"SKILL Mode A Fast Path regression: missing {token}")
 
+    drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+    planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
+    pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
+    for token in (
+        "当前上传工程图",
+        "从零生成新的 frozen plan",
+        "不得跳过 Planner",
+        "--drawing <current-drawing>",
+        "禁止主动读取或把工作区中的旧 frozen/executable plan",
+        "禁止扫描工作区寻找“可复用”的历史 plan",
+    ):
+        if token not in top:
+            fail(f"Mode B current-request isolation regression: missing {token}")
+    for token in (
+        "当前 drawing JSON，并重新生成 frozen plan",
+        "旧 frozen 存在不能成为跳过 Planner",
+        "旧 frozen/executable/report/PRT/STEP",
+        "--drawing <current-drawing>",
+    ):
+        if token not in planner_rules:
+            fail(f"Mode B Planner isolation regression: missing {token}")
+    for token in (
+        "当前上传工程图 → 当前 drawing interpretation → 当前 drawing.json",
+        "已有 `frozen-plan.json` 或 executable 不得作为输入",
+        "不能直接 build/run 或进入 Runner",
+        "不得扫描工作区判断是否存在“可用计划”",
+        "build <current-frozen> <current-executable> --drawing <current-drawing>",
+    ):
+        if token not in pipeline_contract:
+            fail(f"Mode B stale-workspace contract regression: missing {token}")
+
+    # Static simulation of the reported workspace shape. Agent behavior is
+    # governed by the checked contract; none of these stale artifacts is an
+    # allowed planning input for the current drawing request.
+    simulated_workspace = {
+        "drawing.json": "current",
+        "frozen-plan.json": "stale",
+        "executable-plan.json": "stale",
+        "old.prt": "stale",
+        "old.step": "stale",
+        "report.json": "stale",
+    }
+    allowed_mode_b_inputs = {"drawing.json"}
+    if set(simulated_workspace) & allowed_mode_b_inputs != {"drawing.json"}:
+        fail("Mode B stale-workspace simulation lost the current drawing")
+    if any(
+        name in allowed_mode_b_inputs
+        for name in simulated_workspace
+        if simulated_workspace[name] == "stale"
+    ):
+        fail("Mode B stale-workspace simulation permits a stale artifact")
+
+    schema_retry_tokens = {
+        "SKILL.md": (
+            "schema-only normalization", "source evidence", "unresolved",
+            "Gate A BLOCKED", "example",
+        ),
+        "pipeline-contract.md": (
+            "schema retry 只能做表示形式等价转换", "source evidence",
+            "unresolved", "不能成为当前零件的 geometry/evidence 来源",
+        ),
+        "drawing-reader.md": (
+            "schema-only normalization", "source evidence", "unresolved",
+            "Gate A BLOCKED", "example",
+        ),
+    }
+    schema_retry_texts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "drawing-reader.md": drawing_reader,
+    }
+    for name, tokens in schema_retry_tokens.items():
+        for token in tokens:
+            if token not in schema_retry_texts[name]:
+                fail(f"Gate A schema-retry contract regression in {name}: missing {token}")
+
     runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
     for token in (
         "def drawing_semantic_projection",
@@ -294,7 +370,6 @@ def main() -> None:
     if "<stepN ...>" not in text_fast or "禁止写裸语义名" not in text_fast:
         fail("text-mode selection consumer placeholder rule missing")
 
-    pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     if "纯计划表达错误" not in pipeline_contract or "result_bindings" not in pipeline_contract:
         fail("pipeline contract does not allow safe one-shot repair of binding-only plan errors")
 

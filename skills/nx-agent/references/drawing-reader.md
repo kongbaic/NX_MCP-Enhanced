@@ -25,6 +25,8 @@
 6. 最后才转换到固定全局坐标系 `part_center_xy_bottom_z0`；center coordinate 与沿孔轴的 start/end/range 必须分开。
 7. 运行 `runner.py validate-drawing <drawing.json>` 做机器反算；机器 Gate A 通过后才交给 Planner。
 
+若 validate-drawing 因 schema 表示形式失败，只允许 schema-only normalization。禁止为了 PASS 新增或修改 source evidence、geometry、ownership、derived relation 或 unresolved；真正缺少 evidence/geometry/ownership 时必须保持 Gate A BLOCKED。禁止从 example 抄取当前零件的 evidence。
+
 ## 3. 必须提取
 
 - 总长、总宽、总高、板厚、壳体壁厚

@@ -8,6 +8,8 @@
 **输出**：一份可直接执行的 NX_MCP 建模计划 JSON（`mode` + `operations` +
 `final_validation` + `fallbacks`），以及执行阶段的硬性规则。
 
+Mode B 每个新工程图请求必须只消费本轮 Gate A PASS 的当前 drawing JSON，并重新生成 frozen plan。禁止读取、复用或参考工作区旧 frozen/executable/report/PRT/STEP；旧 frozen 存在不能成为跳过 Planner 或直接进入 Runner 的理由。build 必须使用 `--drawing <current-drawing>` 绑定本轮输入。
+
 **本模块 不做**：
 - 图片识别、OCR、工程图读取（由工程图读取模块 负责，完成后把结构化 JSON 交给本模块）
 - 按比例推测、重新计算或修改用户已明确给出的尺寸

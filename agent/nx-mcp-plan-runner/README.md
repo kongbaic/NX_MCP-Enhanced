@@ -58,8 +58,8 @@ nx-mcp-plan-runner/
 python runner.py run   <executable-plan.json> [--workspace DIR] [--report out.json]
                        [--mode normal|benchmark] [--allow-overwrite] [--history FILE]
                        [--repair-attempt 0|1] [--repair-report attempt1.json]
-python runner.py check <plan.json> [--frozen]
-python runner.py build <frozen-plan.json> <out.json>
+python runner.py check <plan.json> [--frozen] [--drawing <current-drawing.json>]
+python runner.py build <frozen-plan.json> <out.json> [--drawing <current-drawing.json>]
 python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 ```
 

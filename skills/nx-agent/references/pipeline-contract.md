@@ -25,14 +25,14 @@
 
 ## 3. 阶段 A：工程图读取
 读取 `drawing-reader.md` 与 `nx-drawing-rules.md`。
-输出结构化 JSON 并落盘。
+只从当前上传工程图生成当前 drawing interpretation，输出结构化 JSON 并落盘。当前请求不得搜索或复用工作区里其它历史 drawing。
 
 门禁：
 - unresolved=0
 - dimension_closure.status="closed"
 - overall_dimensions / coordinate_system / features 均存在
 
-A 失败立即停止，**不允许自动修复**。
+A 失败立即停止，**不允许通过补造 geometry/evidence 自动修复**。schema retry 只能做表示形式等价转换；不得新增或修改 source evidence、derived relation、unresolved、尺寸、axis、center、depth、count、side 或 feature ownership。example 只可说明 schema shape，不能成为当前零件的 geometry/evidence 来源。
 
 ## 4. 阶段 B：建模规划
 输入可以是工程图模式 A 阶段 JSON，或文字模式中已经确认完整的结构化建模意图。
@@ -45,8 +45,17 @@ A 失败立即停止，**不允许自动修复**。
 
 正常路径：
 ```text
-结构化输入 → FAST plan → 发布前静态自检 → frozen plan → runner build → runner check → executable plan
+当前上传工程图 → 当前 drawing interpretation → 当前 drawing.json → validate-drawing → 根据当前 drawing.json 新生成 frozen plan → runner build --drawing <current-drawing> → runner check → 当前 executable plan
 ```
+
+### 4.1 Mode B 当前请求 artifact isolation
+
+- Gate A PASS 后必须重新运行 Planner，从本轮当前 drawing JSON 生成新的 frozen plan；已有 `frozen-plan.json` 或 executable 不得作为输入，也不得作为“已规划完成”的依据。
+- 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 `run_history.json`、旧 PRT/STEP，以及其它历史零件的 drawing/frozen/executable。
+- 工作区即使同时存在新 `drawing.json` 与旧 frozen/executable/report/PRT/STEP，也必须忽略旧 artifact，不能直接 build/run 或进入 Runner。
+- 允许覆盖固定输出文件名，但不得先读取已有内容作为规划参考；不得扫描工作区判断是否存在“可用计划”。
+- Mode B build 固定绑定本轮 drawing：`runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`。
+- 只有当前请求刚生成的 drawing、frozen、executable 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
 
 runner build/check 任一失败即 B 失败。B 阶段失败**不进入自修复**，禁止修改 frozen plan 后自动重跑。
 

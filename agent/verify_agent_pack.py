@@ -569,6 +569,13 @@ def main() -> None:
         "profile.segments.0.y1",
         "feature:F_HOLES.explicit_centers.0.x",
         "{\"const\": 8}",
+        "Canonical writer finalization",
+        "Reader first-pass self-consistency",
+        "禁止 direct + derived 同 target",
+        "relation 已提供 coverage 后禁止再为该 target 生成 direct/derived",
+        "`X=[-length_x/2,+length_x/2]`",
+        "局部 profile/body/step boundary 不使用 overall bbox",
+        "不表示 Runner 已实现普遍的 exactly-one-writer 合同",
     ):
         if token not in drawing_reader:
             fail(f"minimal Reader canonical contract regression: missing {token}")

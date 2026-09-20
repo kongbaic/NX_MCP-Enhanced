@@ -22,7 +22,8 @@
 3. **Dimension ownership**：沿 witness/extension line、leader、arrow endpoint、centerline endpoint 与 feature boundary endpoint 绑定尺寸。
 4. **Relation / derived**：只用已绑定尺寸和明确的对称、相切、共线、中心距等关系闭合几何；同组成员继承组级位置。
 5. **Global conversion**：最后一次性转换到 `part_center_xy_bottom_z0`；center coordinate 与沿轴 start/end/range 分开。
-6. **Output**：输出本轮 drawing JSON，交由机器 Gate A 验证。
+6. **Canonical writer finalization**：先冻结最终 canonical geometry shape，并从该 shape 枚举实际存在的 HARD leaf paths；再为这些 path 收口本次 Reader first-pass 的 direct、relation coverage 与 derived writers。禁止保留 target 不存在的 writer，禁止 direct + derived 同写一个 target，relation 已提供 coverage 后禁止再为该 target 生成 direct/derived。完成 edge coordinate 校验后才可落盘。
+7. **Output**：输出本轮 drawing JSON，交由机器 Gate A 验证。
 
 - 正交视图中的 concentric circles、hidden parallel lines 与 thread projection 必须先按 projection alignment、shared centerline、feature identity、specification 及 leader/witness endpoints 做 association。
 - `M-series thread / through hole / counterbore` 不得按单视图独立解释；association 阶段不要求候选先有完整 global coordinates。关联完成后统一确定 coax/group axis 与 shared centerline；若对应 feature 在 YZ side view 呈圆形，则 axis=X、transverse center coordinates=Y/Z，members 继承而不重复推断 group axis/centerline。
@@ -79,8 +80,9 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 - 尺寸 ownership 只由 witness/extension line、leader、arrow endpoint、centerline endpoint 或 feature boundary endpoint 建立；邻近文字和数值不能替代端点证据。
 - HARD 字段一旦由明确证据绑定，其归属锁定。一个 source 默认只服务一个字段，除非图纸明确表达共享约束。
 - 线性尺寸先按两个实际 endpoints 判定 ownership。datum→centerline 直接约束中心，不因路径经过 step/thickness 再叠加；只有起点明确落在 intermediate surface 时，才以该 surface 与局部尺寸形成 derived。
-- 两个 endpoints 都是 center coordinates 时，输出 `center_distance / center_spacing` 与真实 `between`。若目标 coordinate 没有 direct dimension、但可由 known opposite center endpoint 加该 relation 唯一求得，必须输出 concrete value + derived，而不是因缺少 direct dimension 进入 blocking unresolved；derived 同时引用 opposite endpoint target 与 relation source。禁止在没有 opposite endpoint 时只用 `±0.5*spacing` 凭空生成两端。
-- overall min/max edge→centerline 输出 `edge_offset(value,axis,from,targets)`。Reader 必须写 concrete coordinate；relation 自身提供 target coverage，且不得进入 derived numeric expression。方向固定为：`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`。
+- 两个 endpoints 都是 center coordinates 时，输出 `center_distance / center_spacing` 与真实 `between`。若目标 coordinate 既没有 direct writer，也没有提供该 target coverage 的 relation，但可由 known opposite center endpoint 加该 relation 唯一求得，才输出 concrete value + derived，而不是因缺少 direct dimension 进入 blocking unresolved；derived 同时引用 opposite endpoint target 与 relation source。禁止在没有 opposite endpoint 时只用 `±0.5*spacing` 凭空生成两端。
+- 明确属于 `overall_dimensions` 的全局 min/max boundary→单中心或 `explicit_centers` center coordinate，必须输出 `edge_offset(value,axis,from,targets)`，禁止输出 `center_position`。同一标注约束多个 center coordinate 时，把所有实际 canonical paths 一次列入 `targets`；relation 自身提供 target coverage，被覆盖的 target 禁止再生成 direct/derived。Reader 必须先写并校验 concrete coordinate，且不得把 `edge_offset` 放入 derived numeric expression。方向固定为：`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`。
+- 只有 endpoint ownership 明确落在 `overall_dimensions` 的全局 boundary 时，才按 `part_center_xy_bottom_z0` 使用 overall bbox：`X=[-length_x/2,+length_x/2]`、`Y=[-width_y/2,+width_y/2]`、`Z=[0,height_z]`。局部 profile/body/step boundary 不得直接套用 overall bbox；必须按实际 geometry endpoint ownership 和该局部 boundary 的真实 coordinate 处理。
 
 合法 `edge_offset` relation 形状：
 
@@ -226,7 +228,7 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 #### Relation
 
 - relation source 不写 direct `target`。
-- `edge_offset` 保存 numeric `value`、`axis`、`from:min|max` 和一个或多个 `targets`。Reader 先写 bbox edge±offset 得到的 concrete coordinate；该 relation 自身提供 target coverage。
+- `edge_offset` 保存 numeric `value`、`axis`、`from:min|max` 和一个或多个 `targets`。明确属于 `overall_dimensions` 的全局 boundary 才使用 overall bbox edge±offset；局部 profile/body/step boundary 必须使用其实际 geometry endpoint。Reader 先写并校验得到的 concrete coordinate；该 relation 自身提供 target coverage。
 - `edge_offset` 不得作为 derived expression 的 numeric source。
 - `center_distance / center_spacing` 只表示 center↔center，`between` 两端都必须是真实 center coordinate paths；`overall_dimensions.*` 或 body/profile edge 不是 center endpoint。overall/body edge→feature center 使用 `edge_offset`。
 - `center_distance / center_spacing` relation 本身不覆盖任一 endpoint。
@@ -239,7 +241,19 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 - `expr` 原子只使用 `{"const": 8}`、`{"target": "feature:F_A.centerline.z"}` 或 `{"source": "S_SPACING"}`；`{"value": 8}` 不是 expression node。组合只使用 `{"op":"add|sub|mul|div|neg|abs","args":[...]}`。
 - 需要 alignment、coincident 或 tangent 等非数值关系时，使用 `relation_refs`。
 - 计算结果必须等于 declared value 和 target 中已写入的 concrete value。
-- target 已由 direct source 明确给定时，它是 direct-known target，不得再创建 derived writer；尺寸链一致性只能验证，尤其不得反向 derived 写 `overall_dimensions.*`。
+- target 已由 direct source 明确给定时，它是 direct-known target，不得再创建 derived writer；target 已由 relation 提供 coverage 时也不得再创建 direct/derived writer。尺寸链一致性只能验证，尤其不得反向 derived 写 `overall_dimensions.*`。
+
+#### Reader first-pass self-consistency
+
+首次落盘前，Reader 必须以最终 canonical geometry shape 为准完成以下检查：
+
+1. 每个 direct source target、relation `targets` / `between` path 和 derived target 都实际存在；不存在的 target 禁止生成 writer。
+2. 对本次 Reader first-pass 生成的 writers 建立 target inventory：禁止 direct + derived 同 target；relation 已提供 coverage 后禁止再为该 target 生成 direct/derived。
+3. overall edge→center 必须使用 `edge_offset`；共享同一 edge 标注的 `explicit_centers` coordinates 必须一次列入同一 `targets`，不得另建复制型 derived。
+4. 明确属于 `overall_dimensions` 的全局 boundary 按 `part_center_xy_bottom_z0` 解析：`X=[-length_x/2,+length_x/2]`、`Y=[-width_y/2,+width_y/2]`、`Z=[0,height_z]`。每个 concrete target 必须满足 `from=min` 的 `min_edge + value` 或 `from=max` 的 `max_edge - value`。
+5. 局部 profile/body/step boundary 不使用 overall bbox；按其实际 geometry endpoint ownership 与真实 coordinate 计算。
+
+这是 Reader first-pass 输出前的 self-consistency 规则，不表示 Runner 已实现普遍的 exactly-one-writer 合同。
 
 以下 compact canonical example 锚定 feature object 与 ledger 使用同一 canonical path，并示范合法 center relation/derived reference：
 

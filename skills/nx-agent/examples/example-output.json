@@ -8,8 +8,7 @@
     "length": 80,
     "width": 60,
     "height": 25,
-    "unit": "mm",
-    "source": "俯视图 80×60；总高 25 = 底板 10 + 凸台 15"
+    "unit": "mm"
   },
   "coordinate_system": {
     "origin": "part_center_xy_bottom_z0",
@@ -20,6 +19,7 @@
   },
   "features": [
     {
+      "id": "F_BASE",
       "name": "底板",
       "type": "base_plate",
       "dimensions": {
@@ -27,16 +27,11 @@
         "width": 60,
         "thickness": 10
       },
-      "position": {},
       "count": 1,
-      "source_views": [
-        "俯视图",
-        "剖视图 A-A"
-      ],
-      "confidence": "high",
       "required_for_modeling": true
     },
     {
+      "id": "F_BOSS",
       "name": "中央凸台",
       "type": "boss",
       "dimensions": {
@@ -50,14 +45,10 @@
         ]
       },
       "count": 1,
-      "source_views": [
-        "俯视图",
-        "剖视图 A-A"
-      ],
-      "confidence": "high",
       "required_for_modeling": true
     },
     {
+      "id": "F_HOLE",
       "name": "中心通孔",
       "type": "through_hole",
       "dimensions": {
@@ -70,24 +61,136 @@
         ]
       },
       "count": 1,
-      "source_views": [
-        "俯视图",
-        "剖视图 A-A"
-      ],
-      "confidence": "high",
-      "required_for_modeling": true
+      "required_for_modeling": true,
+      "axis": "Z"
     }
   ],
+  "source_ledger": [
+    {
+      "id": "S_OVERALL_L",
+      "semantic": "overall_dimension",
+      "value": 80,
+      "target": "overall_dimensions.length"
+    },
+    {
+      "id": "S_OVERALL_W",
+      "semantic": "overall_dimension",
+      "value": 60,
+      "target": "overall_dimensions.width"
+    },
+    {
+      "id": "S_OVERALL_H",
+      "semantic": "overall_dimension",
+      "value": 25,
+      "target": "overall_dimensions.height"
+    },
+    {
+      "id": "S_BASE_L",
+      "semantic": "feature_dimension",
+      "value": 80,
+      "target": "feature:F_BASE.dimensions.length"
+    },
+    {
+      "id": "S_BASE_KIND",
+      "semantic": "feature_kind",
+      "value": "base_plate",
+      "target": "feature:F_BASE.type"
+    },
+    {
+      "id": "S_BASE_W",
+      "semantic": "feature_dimension",
+      "value": 60,
+      "target": "feature:F_BASE.dimensions.width"
+    },
+    {
+      "id": "S_BASE_T",
+      "semantic": "thickness",
+      "value": 10,
+      "target": "feature:F_BASE.dimensions.thickness"
+    },
+    {
+      "id": "S_BASE_N",
+      "semantic": "feature_count",
+      "value": 1,
+      "target": "feature:F_BASE.count"
+    },
+    {
+      "id": "S_BOSS_D",
+      "semantic": "diameter",
+      "value": 40,
+      "target": "feature:F_BOSS.dimensions.diameter"
+    },
+    {
+      "id": "S_BOSS_KIND",
+      "semantic": "feature_kind",
+      "value": "boss",
+      "target": "feature:F_BOSS.type"
+    },
+    {
+      "id": "S_BOSS_H",
+      "semantic": "feature_dimension",
+      "value": 15,
+      "target": "feature:F_BOSS.dimensions.height"
+    },
+    {
+      "id": "S_BOSS_C",
+      "semantic": "center_position",
+      "value": [
+        0,
+        0
+      ],
+      "target": "feature:F_BOSS.position.center"
+    },
+    {
+      "id": "S_BOSS_N",
+      "semantic": "feature_count",
+      "value": 1,
+      "target": "feature:F_BOSS.count"
+    },
+    {
+      "id": "S_HOLE_AXIS",
+      "semantic": "axis",
+      "value": "Z",
+      "target": "feature:F_HOLE.axis"
+    },
+    {
+      "id": "S_HOLE_KIND",
+      "semantic": "feature_kind",
+      "value": "through_hole",
+      "target": "feature:F_HOLE.type"
+    },
+    {
+      "id": "S_HOLE_D",
+      "semantic": "diameter",
+      "value": 20,
+      "target": "feature:F_HOLE.dimensions.diameter"
+    },
+    {
+      "id": "S_HOLE_C",
+      "semantic": "center_position",
+      "value": [
+        0,
+        0
+      ],
+      "target": "feature:F_HOLE.position.center"
+    },
+    {
+      "id": "S_HOLE_N",
+      "semantic": "feature_count",
+      "value": 1,
+      "target": "feature:F_HOLE.count"
+    }
+  ],
+  "derived": [],
   "patterns": [],
   "symmetry": [
     "凸台与中心孔同心，并与底板中心重合"
   ],
   "unresolved": [],
+  "warnings": [],
+  "dimension_conflicts": [],
   "dimension_closure": {
     "status": "closed",
-    "basis": "仅使用图上已标注数值",
-    "checks": [
-      "总高 25 = 10 + 15 ✓"
-    ]
+    "basis": "required geometry has direct or deterministic provenance"
   }
 }

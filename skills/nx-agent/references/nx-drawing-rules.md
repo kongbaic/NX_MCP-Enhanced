@@ -15,7 +15,7 @@
 | 剖视图 Section | 带剖切符号与标注（如 `A-A`、`SECTION A-A`、剖面线 hatched）；给出内部结构：孔径、深度、壁厚、台阶 |
 | 局部放大图 Detail | 标注如 `DETAIL B`、`I` 放大圈；用于读小尺寸与倒角/圆角细节 |
 
-**规则**：先整体识别视图布局，再按视图归属登记标注。剖视图中的内部尺寸（孔深、沉孔深、壁厚）优先级最高，主/俯视图中的外部尺寸优先级最高。
+**规则**：先确定各视图 plane / normal 并登记 view-local evidence；严格按 `view-local evidence → feature association → dimension ownership → relation/derived → global coordinates → machine back-check → Gate A` 执行。
 
 ### 1.1 正投影视图 → 全局轴（硬契约）
 
@@ -28,10 +28,14 @@
 
 由此：
 - 某孔在一个已确定方向的正投影视图中显示为圆 → 该孔 `axis` = 该视图法向轴；
+- 同一孔在另一正交视图中的隐藏矩形/隐藏平行线只是轴向投影候选，不能据此把孔轴改为该视图法向；
 - 槽/开缝在某视图显示成两条平行边 → 两边间距只确定 `width_axis`，不能直接当作 `through_axis`；
 - 局部放大图必须继承明确母视图的方向；母视图不明则方向保持 unresolved。
 
 ## 2. 跨视图尺寸对应关系
+
+**处理顺序：先关联 feature，再求 group centerline，最后转全局坐标。**
+禁止先给每个视图里的孔/沉孔/螺纹孔各自写一个全局中心坐标，再根据这些已猜坐标决定是否属于同一特征。
 
 - 同一特征的不同尺寸分布在多个视图：俯视图给 长×宽，主/剖视图给 高与厚度，Ø 直径常同时出现在投影图与剖视图。
 - 同一标注在不同视图重复出现 = 交叉确认：**合并为同一特征，confidence 提升**，不得作为多个独立尺寸。
@@ -56,6 +60,7 @@
 
 - 格式 `数量×规格`，如 `4×Ø8 THRU`、`4×R8`、`4×Ø6.6 ON PCD Ø44`。
 - 数量作用于紧随其后的特征；同一标注行内多个规格依次计数。
+- `N×` 是该 feature 的总实例数，不得再因 symmetry/mirror 翻倍；`explicit_centers.length` 和 `count_x*count_y` 必须与 count 一致。
 
 ## 5. 对称 / 镜像 / 阵列
 
@@ -74,10 +79,10 @@
 
 ## 7. 尺寸归属与深度语义
 
-- 明确尺寸线/箭头/引线绑定到哪个特征，就优先归属于哪个特征；禁止用附近孤立数字或其它参数覆盖。
-- 槽两侧边界之间的明确线性尺寸 = 槽宽。若图中槽边之间明确标 `2`，不得把附近没有绑定到槽宽的 `1.6` 当成槽宽。
-- `深N` / `DEPTH N`、剖视图明确起止面或等价的唯一几何约束，才可生成 feature `depth`。
-- 普通位置尺寸（如某轴线间距、中心高、参数 `E`）不得自动改解释为槽深；没有深度证据就保持原始尺寸语义。
+- 只沿 witness/extension line、leader、arrow endpoint、centerline endpoint、feature boundary endpoint 确定 ownership；附近孤立数字不得覆盖。
+- HARD 字段一旦由明确 source 绑定便锁定；同一 source 默认不能跨 feature 复用。
+- 槽两侧边界之间的明确尺寸才是槽宽；已绑定的 `slot.width` 不得改写。
+- 中心距/中心位置不得解释为 slot depth/bottom；derived 必须声明唯一 `target`。
 - directional feature 输出要求：hole/counterbore/countersink → `axis`；slot/cut → `width_axis` + `through_axis`，非贯穿时才另给有证据的 `depth`。
 
 ### 7.1 同轴复合孔归组
@@ -122,6 +127,14 @@
 ## 11. 固定输出坐标系
 
 - XY 原点 = **零件整体外形中心**；Z=0 = **零件底面**；+X 向右、+Y 向上（俯视图）、+Z 向上。
+- 若 overall 为 `Lx×Ly×H`，最终全局 bbox 必须是 X=`[-Lx/2,+Lx/2]`、Y=`[-Ly/2,+Ly/2]`、Z=`[0,H]`。
+- 所有 Reader 最终输出的 profile 范围、孔/槽非轴向中心、pattern centers 必须按该坐标系归一化；边缘基准尺寸不能原样冒充中心原点坐标。
+- 明确左/右对齐或偏置的 profile 不得因整体 bbox 对称而自动居中；center coordinate 与沿孔轴 start/end/range 必须分离。
+- Gate A 前必须做 bbox sanity：用于实体内部加工的孔/沉孔/螺纹孔非轴向中心若超出 overall bbox 且没有图纸明确依据，必须 BLOCK，不得 closed。
+- Gate A 前必须做**中心距反算**：图纸明确中心距/节距为 P 时，最终坐标差必须反算为 P。
+- Gate A 前必须做**对称反算**：图纸明确关于中心线对称时，成对坐标中点必须回到对称线；若同时已知中心距 P，则关于 0 对称的坐标必须为 `±P/2`，不得产生无依据整体偏移。
+- pattern / explicit centers 必须同时通过 count、pitch/span、symmetry 的反算校验；失败即 blocking conflict。
+- 上述反算由 `validate-drawing` 机器完成。validator 只能检查图纸已有关系，不得创造尺寸、平移、改符号或修正坐标。
 - 所有孔位、凸台位置、特征坐标一律转换到该坐标系后再输出；**不得让下游建模端自行猜测原点**。
 - 示例：160×100 底板、孔中心距四周边缘 20 mm → 四孔中心输出 `[-60,-30]`、`[-60,30]`、`[60,-30]`、`[60,30]`。
 - JSON 必须包含：

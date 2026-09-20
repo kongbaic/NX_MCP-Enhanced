@@ -69,6 +69,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 ## 4. 工程图门禁
 
 ### 门禁 A
+- 先运行 `runner.py validate-drawing <drawing.json>`；机器结果 `source_ownership.status="pass"` 且 `coordinate_sanity.status="pass"`
 - `unresolved = 0`
 - `dimension_closure.status = "closed"`
 - 存在 `overall_dimensions`、`coordinate_system`、`features`

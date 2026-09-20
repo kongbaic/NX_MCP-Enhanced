@@ -18,12 +18,12 @@
 必须按以下顺序执行，禁止把“成员先定全局坐标、之后再归组”作为正常流程：
 
 1. 先观察整张图，识别主视图、俯视图、侧视图、剖视图、局部放大图。
-2. 第一轮尽可能读取所有会影响三维建模的尺寸、中心线、投影对应与符号；此时只记录**视图内原始证据**和来源，不给可能属于复合特征的成员各自猜全局 centerline。
-3. 先做 **feature association**：用中心线、同心圆、投影对应、引线归属、尺寸链等证据，把跨视图重复表达或同一加工轴上的候选成员关联成同一个 feature / composite group。
-4. association 完成后，才在**组级别**求 axis、centerline、数量、位置尺寸及 derived 值；同组成员继承组级位置，不得各自重新求一个不同 centerline。
-5. 把组级几何一次性转换到固定全局坐标系 `part_center_xy_bottom_z0`。
-6. 只用图中明确数值与确定性关系进行尺寸闭合。
-7. 输出结构化 JSON。
+2. 第一轮只保存 **view-local evidence** 和来源，不给候选成员猜全局 centerline。
+3. 做 **feature association**：用中心线、同心圆、正投影对应、引线归属和尺寸链关联同一 feature / composite group。其它正交视图里的隐藏矩形或隐藏平行线只作轴向投影候选，不能用该视图 normal 重定义孔轴。
+4. 完成 **dimension ownership**：只沿 witness/extension line、leader、arrow endpoint、centerline endpoint、feature boundary endpoint 绑定字段；相同数值出现在不同位置时分别绑定，禁止跨 feature 复用。
+5. 建立明确 relation，并计算带唯一 `target` 的 derived；同组成员继承组级 axis/centerline。
+6. 最后才转换到固定全局坐标系 `part_center_xy_bottom_z0`；center coordinate 与沿孔轴的 start/end/range 必须分开。
+7. 运行 `runner.py validate-drawing <drawing.json>` 做机器反算；机器 Gate A 通过后才交给 Planner。
 
 ## 3. 必须提取
 
@@ -67,16 +67,17 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 
 方向读取硬规则：
 1. 某孔/沉孔/圆柱特征在一个已确定方向的正投影视图中显示为圆时，孔轴/圆柱轴 = 该视图法向轴；若其它视图明确表达不同轴向则进入 `unresolved`/conflict，不得自行选择。
-2. 槽/开缝/切口在某视图中显示为两条平行轮廓线时，两线间的明确尺寸只定义该视图平面内的 **width_axis**；**不能由这两条线直接推断 through_axis**。
-3. 对 slot/cut 必须分别记录 `width_axis` 与 `through_axis`。若贯穿方向会改变三维结果而图纸不能唯一确定，必须 `unresolved`。
-4. DETAIL / 局部放大图若明确由某母视图引出，则继承母视图的平面/法向；若无法确认母视图方向，不得只凭局部图朝向推断全局轴。
+2. 同一孔在其它正交视图中的隐藏矩形或隐藏平行线只表示轴向投影，不能因为其所在视图的 normal 改写孔轴。
+3. 槽/开缝/切口在某视图中显示为两条平行轮廓线时，两线间的明确尺寸只定义该视图平面内的 **width_axis**；**不能由这两条线直接推断 through_axis**。
+4. 对 slot/cut 必须分别记录 `width_axis` 与 `through_axis`。若贯穿方向会改变三维结果而图纸不能唯一确定，必须 `unresolved`。
+5. DETAIL / 局部放大图若明确由某母视图引出，则继承母视图的平面/法向；若无法确认母视图方向，不得只凭局部图朝向推断全局轴。
 
 ## 6. 尺寸归属与特征语义
 
-- **明确箭头/引线优先绑定其实际指向的几何特征。** 同一区域出现其它孤立数值、表格字段或邻近标注时，禁止因为“位置接近”就覆盖明确箭头标注。
-- 对开缝/槽：直接跨两侧边界的线性尺寸才可作为 `width`；例如两条槽边之间明确标注 `2`，则槽宽就是 2。附近未通过尺寸线/引线绑定到该槽的 `1.6` 不得替代它。
-- `depth` 只能来自明确的深度语义（如 `深12` / `DEPTH 12`）、剖视图中明确的起止面，或其它能够唯一限定切除深度的标注。**普通线性位置尺寸不得因为数值合适就被改解释成 slot/cut depth。**
-- 因此像 `E=18` 这类线性/位置参数，除非图纸明确把它绑定为槽深，否则只能保留其原始位置尺寸语义，不能自动写成 `slot.depth=18`。
+- **明确箭头/引线优先绑定其实际指向的几何特征。** HARD 几何字段一旦由明确证据绑定，其 ownership 锁定；一个 source 默认不能跨 feature 复用，除非图纸明确表达共享约束。
+- 对开缝/槽：只有直接跨两侧边界的尺寸可作为 `width`；`slot.width` 一旦明确绑定，不得被其它邻近数值覆盖。
+- `depth` / `bottom` 只能来自明确深度语义、剖视图明确起止面或确定性终止关系。中心距、中心位置和普通位置尺寸不能被重新解释成 slot depth / bottom。
+- `derived` 必须明确 `target`，并保存所用 source/relation；没有额外证据不得将结果跨 feature 复用。
 - 孔类 feature 必须输出 `axis`；slot/cut 必须输出 `width_axis`、`through_axis`（若非贯穿则再输出有明确证据的 `depth`）。任何会改变三维结果的方向字段不能唯一确定时，Gate A 不得 closed。
 - **同轴复合孔必须先做 association，再求全局 centerline**：通孔、沉孔、盲孔、螺纹孔等若在不同视图中由共中心线、同心圆、正投影对应、共同引线/尺寸链等明确证据指向同一加工轴，先建立一个候选 `coaxial_hole_group`；**禁止先给每个候选 member 分别赋全局 Z/Y/X，再根据已经猜出的坐标决定是否归组**。
 - association 阶段只比较图纸证据，不要求成员已经拥有最终全局坐标。归组完成后才统一求组级 `axis` 与 `centerline`，再让所有 member 继承。成员可以有不同直径、深度、轴向起止侧或加工语义，但不能拥有不同的非轴向中心坐标。
@@ -118,11 +119,13 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 
 ## 9. Profile-First 复杂轮廓
 
-如果图纸表达一个连续外轮廓，禁止用“矩形 + 圆”等包络图元替代真实轮廓。JSON 必须提供足以唯一重建的 `profile.segments`：直线端点、圆弧圆心/半径/角度、圆角 R、斜边角度及参考方向、相切/连接关系。任一轮廓段不能唯一确定时，加入 `unresolved`。
+如果图纸表达一个连续外轮廓，禁止用“矩形 + 圆”等包络图元替代真实轮廓。JSON 必须提供足以唯一重建的 `profile.segments`。正交视图明确表达左对齐、右对齐或偏置时必须保留；不得因为 overall bbox 对称就自动居中。任一轮廓段不能唯一确定时，加入 `unresolved`。
 
-## 10. Pattern 语义
+## 10. Pattern / 数量语义
 
-二维孔阵列同时存在 X/Y 间距时必须输出 `rectangular`。圆周阵列除 count / PCD / angle 外，还必须输出 `start_angle_deg`、`angle_reference` 或 `explicit_centers`。中心线已经明确方向时可直接输出坐标，这不属于比例测量。
+- 图纸的 `N×` 是该 feature 的总实例数；symmetry/mirror 只能解释位置，不能再翻倍。
+- `explicit_centers.length == count`；rectangular 必须满足 `count_x * count_y == count`。
+- 机器 Gate A 必须用最终 centers/count/pitch/span 反算源数量；不一致即失败。
 
 ## 11. 输出结构
 
@@ -135,10 +138,14 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
   "features": [],
   "patterns": [],
   "symmetry": [],
+  "source_ledger": [],
+  "derived": [],
   "unresolved": [],
   "dimension_closure": {"status": "closed"}
 }
 ```
+
+Reader 不得自报 `coordinate_sanity=pass`。`validate-drawing` 机器计算 source ownership、required geometry evidence、overall/profile/feature bbox、center distance、symmetry 和 count back-check；validator 只能验证图纸已给关系，禁止创造尺寸或修正坐标。
 
 完整示例：`examples/example-output.json`。
 快速视图/标注识别规则：`references/nx-drawing-rules.md`。

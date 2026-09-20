@@ -69,6 +69,15 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
   清零、selection criteria 语法）。
 - `build`：冻结 → 可执行转换（无 NX）。
 
+### 命令计时
+
+`validate-drawing`、`build`、`check` 和 `run` 在原 JSON 结果中附加 `timing`，不改变原有 status、exit code、Gate A 或 Gate B：
+
+- validate/build/check：UTC start/end 与 `perf_counter_ns()` 计算的 `elapsed_ms`；
+- run：`c1_runner_start_utc`、最后一个成功 topology-changing operation 完成时的 `c2_modeling_complete_utc`、STEP export 且文件 settle 完成时的 `c3_export_complete_utc`；
+- 输入文件 mtime 仅是 observation，固定 `first_write_reliable=false`，绝不声称是首次写入时间；
+- 时钟或 metadata 获取失败时字段可为 null，命令原结果保持不变。
+
 ## Runtime Config
 
 安装器会在 Runner 目录生成 `runtime-config.json`，包含 `python_exe`、

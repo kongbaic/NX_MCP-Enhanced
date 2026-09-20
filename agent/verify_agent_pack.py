@@ -230,6 +230,16 @@ def main() -> None:
     if "_THREAD_SURROGATE_RECIPES" in runner_source:
         fail("fixed per-designation thread surrogate recipes are forbidden")
     for token in (
+        "def _begin_command_timing",
+        "def _finish_command_timing",
+        '"c1_runner_start_utc"',
+        '"c2_modeling_complete_utc"',
+        '"c3_export_complete_utc"',
+        '"first_write_reliable": False',
+    ):
+        if token not in runner_source:
+            fail(f"Runner command timing regression: missing {token}")
+    for token in (
         '"nx_modeling_elapsed"',
         '"validation_ops_elapsed"',
         '"export_call_elapsed"',

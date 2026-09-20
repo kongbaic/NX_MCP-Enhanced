@@ -458,6 +458,105 @@ def main() -> None:
             fail(f"quick drawing relation contract regression: missing {token}")
 
     for token in (
+        "两个实际 witness/extension/arrow endpoint 分类",
+        "禁止再次叠加这些量",
+        "两个 endpoint 都落在 feature/group centerline",
+        "profile_dimension` 只允许两个 endpoint",
+        "hidden parallel lines、thread projection",
+    ):
+        if token not in drawing_reader:
+            fail(f"drawing ownership/association contract regression: missing {token}")
+    for token in (
+        "datum→centerline",
+        "centerline↔centerline",
+        "edge_offset(from=min|max)",
+        "profile boundary↔profile boundary",
+        "禁止按数值相同合并 ownership",
+    ):
+        if token not in drawing_rules:
+            fail(f"quick ownership contract regression: missing {token}")
+
+    ownership_fixture_path = RUNNER / "tests" / "fixtures" / "drawing-ownership-cases.json"
+    ownership_fixture = json.loads(ownership_fixture_path.read_text(encoding="utf-8"))
+    ownership_cases = {
+        item.get("id"): item for item in ownership_fixture.get("cases") or []
+    }
+    expected_ownership_cases = {
+        "datum_to_centerline_ignores_intermediate_step",
+        "intermediate_surface_to_centerline_uses_local_conversion",
+        "centerline_to_centerline_is_relation",
+        "known_center_plus_distance_derives_opposite_center",
+        "coaxial_members_share_group_centerline",
+        "max_edge_to_center_is_edge_offset",
+        "min_edge_to_center_is_edge_offset",
+        "feature_center_dimension_is_not_profile_dimension",
+        "profile_boundary_pair_allows_profile_dimension",
+        "equal_values_keep_endpoint_specific_ownership",
+    }
+    if set(ownership_cases) != expected_ownership_cases:
+        fail("drawing ownership fixture case set drifted")
+
+    datum_case = ownership_cases["datum_to_centerline_ignores_intermediate_step"]
+    if (
+        datum_case["expected"].get("global_value") != datum_case["dimension"].get("value")
+        or "feature:F_STEP.thickness" not in datum_case["expected"].get("must_not_add", [])
+    ):
+        fail("datum-to-centerline fixture re-adds intermediate thickness")
+    intermediate_case = ownership_cases["intermediate_surface_to_centerline_uses_local_conversion"]
+    if (
+        intermediate_case["expected"].get("writer") != "derived"
+        or intermediate_case["expected"].get("expr_refs")
+        != [
+            intermediate_case["endpoints"][0].get("target"),
+            intermediate_case["dimension"].get("source_id"),
+        ]
+    ):
+        fail("intermediate-surface fixture is not local-to-global derived")
+    center_case = ownership_cases["centerline_to_centerline_is_relation"]
+    if (
+        center_case["expected"].get("semantic") != "center_distance"
+        or center_case["expected"].get("between")
+        != [item["target"] for item in center_case["endpoints"]]
+    ):
+        fail("centerline distance fixture lost endpoint relation")
+    derived_center_case = ownership_cases["known_center_plus_distance_derives_opposite_center"]
+    if derived_center_case["expected"].get("expr_refs") != [
+        derived_center_case.get("known_target"), derived_center_case.get("relation_source")
+    ]:
+        fail("derived center fixture lost known-target/relation provenance")
+    coaxial_case = ownership_cases["coaxial_members_share_group_centerline"]
+    if (
+        coaxial_case["expected"].get("member_centerline_policy") != "inherit_group"
+        or not {
+            "concentric_circles", "orthographic_hidden_parallel_lines",
+            "shared_centerline", "projection_alignment",
+        }.issubset(coaxial_case.get("association_evidence") or [])
+    ):
+        fail("coaxial fixture no longer inherits the group centerline")
+    if ownership_cases["max_edge_to_center_is_edge_offset"]["expected"].get("from") != "max":
+        fail("max-edge fixture lost edge_offset ownership")
+    if ownership_cases["min_edge_to_center_is_edge_offset"]["expected"].get("from") != "min":
+        fail("min-edge fixture lost edge_offset ownership")
+    feature_center_case = ownership_cases["feature_center_dimension_is_not_profile_dimension"]
+    if (
+        feature_center_case["expected"].get("semantic") != "edge_offset"
+        or "profile_dimension"
+        not in feature_center_case["expected"].get("forbidden_semantics", [])
+    ):
+        fail("feature-center fixture permits profile pollution")
+    if ownership_cases["profile_boundary_pair_allows_profile_dimension"]["expected"].get("semantic") != "profile_dimension":
+        fail("profile-boundary fixture lost profile ownership")
+    equal_value_case = ownership_cases["equal_values_keep_endpoint_specific_ownership"]
+    equal_dimensions = equal_value_case.get("dimensions") or []
+    if (
+        len({item.get("value") for item in equal_dimensions}) != 1
+        or len({item.get("source_id") for item in equal_dimensions}) != len(equal_dimensions)
+        or len({item.get("expected_semantic") for item in equal_dimensions}) != len(equal_dimensions)
+        or equal_value_case["expected"].get("merge_sources") is not False
+    ):
+        fail("equal-value fixture merges endpoint-specific ownership")
+
+    for token in (
         "Gate A canonical output contract",
         "length_x / width_y / height_z",
         "非空 `type` 和显式 `count`",

@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "id": "datum_to_centerline_ignores_intermediate_step",
+      "endpoints": [
+        {"kind": "datum", "axis": "Z", "coordinate": 0},
+        {"kind": "feature_centerline", "target": "feature:F_TARGET.centerline.z"}
+      ],
+      "dimension": {"source_id": "S_DATUM_CENTER", "value": 25},
+      "intermediate_geometry": ["feature:F_STEP.thickness"],
+      "expected": {
+        "semantic": "center_position",
+        "target": "feature:F_TARGET.centerline.z",
+        "global_value": 25,
+        "must_not_add": ["feature:F_STEP.thickness"]
+      }
+    },
+    {
+      "id": "intermediate_surface_to_centerline_uses_local_conversion",
+      "endpoints": [
+        {"kind": "intermediate_surface", "target": "feature:F_STEP.top_z"},
+        {"kind": "feature_centerline", "target": "feature:F_TARGET.centerline.z"}
+      ],
+      "dimension": {"source_id": "S_LOCAL_CENTER", "value": 11},
+      "expected": {
+        "writer": "derived",
+        "expr_refs": ["feature:F_STEP.top_z", "S_LOCAL_CENTER"]
+      }
+    },
+    {
+      "id": "centerline_to_centerline_is_relation",
+      "endpoints": [
+        {"kind": "feature_centerline", "target": "feature:F_REFERENCE.centerline.z"},
+        {"kind": "group_centerline", "target": "feature:F_GROUP.centerline.z"}
+      ],
+      "dimension": {"source_id": "S_CENTER_DISTANCE", "value": 17},
+      "expected": {
+        "semantic": "center_distance",
+        "between": ["feature:F_REFERENCE.centerline.z", "feature:F_GROUP.centerline.z"]
+      }
+    },
+    {
+      "id": "known_center_plus_distance_derives_opposite_center",
+      "known_target": "feature:F_REFERENCE.centerline.z",
+      "relation_source": "S_CENTER_DISTANCE",
+      "expected": {
+        "writer": "derived",
+        "target": "feature:F_GROUP.centerline.z",
+        "expr_refs": ["feature:F_REFERENCE.centerline.z", "S_CENTER_DISTANCE"]
+      }
+    },
+    {
+      "id": "coaxial_members_share_group_centerline",
+      "association_evidence": [
+        "concentric_circles",
+        "orthographic_hidden_parallel_lines",
+        "shared_centerline",
+        "projection_alignment"
+      ],
+      "expected": {
+        "type": "coaxial_hole_group",
+        "centerline_target": "feature:F_GROUP.centerline.z",
+        "member_centerline_policy": "inherit_group"
+      }
+    },
+    {
+      "id": "max_edge_to_center_is_edge_offset",
+      "endpoints": [
+        {"kind": "overall_max_edge", "axis": "Y"},
+        {"kind": "feature_centerline", "target": "feature:F_EDGE.centerline.y"}
+      ],
+      "dimension": {"source_id": "S_MAX_OFFSET", "value": 15},
+      "expected": {"semantic": "edge_offset", "axis": "Y", "from": "max"}
+    },
+    {
+      "id": "min_edge_to_center_is_edge_offset",
+      "endpoints": [
+        {"kind": "overall_min_edge", "axis": "Y"},
+        {"kind": "feature_centerline", "target": "feature:F_EDGE.centerline.y"}
+      ],
+      "dimension": {"source_id": "S_MIN_OFFSET", "value": 15},
+      "expected": {"semantic": "edge_offset", "axis": "Y", "from": "min"}
+    },
+    {
+      "id": "feature_center_dimension_is_not_profile_dimension",
+      "endpoints": [
+        {"kind": "overall_profile_outer_boundary", "target": "profile.segments.0.y1"},
+        {"kind": "feature_centerline", "target": "feature:F_EDGE.centerline.y"}
+      ],
+      "expected": {
+        "semantic": "edge_offset",
+        "forbidden_semantics": ["profile_dimension"]
+      }
+    },
+    {
+      "id": "profile_boundary_pair_allows_profile_dimension",
+      "endpoints": [
+        {"kind": "profile_boundary", "target": "profile.segments.0.y1"},
+        {"kind": "profile_boundary", "target": "profile.segments.0.y2"}
+      ],
+      "expected": {"semantic": "profile_dimension"}
+    },
+    {
+      "id": "equal_values_keep_endpoint_specific_ownership",
+      "dimensions": [
+        {
+          "source_id": "S_PROFILE_WIDTH",
+          "value": 9,
+          "endpoint_kinds": ["profile_boundary", "profile_boundary"],
+          "expected_semantic": "profile_dimension"
+        },
+        {
+          "source_id": "S_FEATURE_OFFSET",
+          "value": 9,
+          "endpoint_kinds": ["overall_max_edge", "feature_centerline"],
+          "expected_semantic": "edge_offset"
+        }
+      ],
+      "expected": {"merge_sources": false}
+    }
+  ]
+}

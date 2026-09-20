@@ -82,6 +82,10 @@
 ## 7. 尺寸归属与深度语义
 
 - 只沿 witness/extension line、leader、arrow endpoint、centerline endpoint、feature boundary endpoint 确定 ownership；附近孤立数字不得覆盖。
+- endpoint 决策优先：datum→centerline 直接约束中心，不能因中间经过 step/thickness 再叠加；只有 witness endpoint 真正在 intermediate surface 时才做 local→global derived。
+- centerline↔centerline 必须是 `center_distance/center_spacing`；已知 center + relation source 派生 opposite center，同轴组只绑定 group centerline。
+- outer min/max edge→feature centerline 必须是 `edge_offset(from=min|max)`，不得写进 profile；只有 profile boundary↔profile boundary 才允许 `profile_dimension`。
+- 相同数值若 endpoints 不同，必须保留不同 source/semantic，禁止按数值相同合并 ownership。
 - HARD 字段一旦由明确 source 绑定便锁定；同一 source 默认不能跨 feature 复用。
 - 槽两侧边界之间的明确尺寸才是槽宽；已绑定的 `slot.width` 不得改写。
 - 中心距/中心位置不得解释为 slot depth/bottom；derived 必须声明唯一 `target`。

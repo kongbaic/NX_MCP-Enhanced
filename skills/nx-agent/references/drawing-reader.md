@@ -80,12 +80,19 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 ## 6. 尺寸归属与特征语义
 
 - **明确箭头/引线优先绑定其实际指向的几何特征。** HARD 几何字段一旦由明确证据绑定，其 ownership 锁定；一个 source 默认不能跨 feature 复用，除非图纸明确表达共享约束。
+- 线性尺寸必须先按两个实际 witness/extension/arrow endpoint 分类，再决定 semantic 和全局换算；尺寸文字所在区域、路径中经过的轮廓或附近数值都不能改变 ownership。
+- 已知 datum（例如全局 bottom datum）到 feature centerline 的尺寸直接约束该 centerline。若 datum 坐标为 0，则 center coordinate 就是带方向的尺寸值；尺寸路径中即使经过 step、thickness、shoulder 或 intermediate surface，也禁止再次叠加这些量。只有起始 witness endpoint 明确落在某个 intermediate surface 时，才允许以该 surface target 加局部尺寸做 local→global derived。
+- 两个 endpoint 都落在 feature/group centerline 时，必须输出 `center_distance / center_spacing` 与真实 `between` targets；若目标中心不是 direct dimension，则以已闭合 center target 加 relation source 派生目标 center。对于 `coaxial_hole_group`，尺寸绑定 group centerline，members 继承，不分别求中心。
+- overall/profile outer boundary 到 feature centerline 的尺寸必须输出 `edge_offset(axis, from=min|max, targets)`；不得把边距值直接写成 center coordinate、profile width、base depth 或 profile segment endpoint。
+- `profile_dimension` 只允许两个 endpoint 都实际落在 profile/body boundaries。任一 endpoint 落在 hole/feature/pattern/slot centerline 时，该尺寸属于 feature positioning/relation，禁止污染 `profile.segments`。
+- 相同数值出现在不同位置时，必须为每组 endpoints 保留独立 source 与 semantic；禁止因为数值相同而合并 ownership 或跨 feature 复用。
 - 对开缝/槽：只有直接跨两侧边界的尺寸可作为 `width`；`slot.width` 一旦明确绑定，不得被其它邻近数值覆盖。
 - `depth` / `bottom` 只能来自明确深度语义、剖视图明确起止面或确定性终止关系。中心距、中心位置和普通位置尺寸不能被重新解释成 slot depth / bottom。
 - `derived` 必须明确 `target`，并保存所用 source/relation；没有额外证据不得将结果跨 feature 复用。
 - 孔类 feature 必须输出 `axis`；slot/cut 必须输出 `width_axis`、`through_axis`（若非贯穿则再输出有明确证据的 `depth`）。任何会改变三维结果的方向字段不能唯一确定时，Gate A 不得 closed。
 - 孔的 `center` 只包含与孔轴垂直的横向坐标：`axis=X` 时必须给 Y/Z，X 只能表示 axial start/end/range；`axis=Y` 时必须给 X/Z；`axis=Z` 时必须给 X/Y。禁止把轴向范围误报成横向 center，也禁止把 X-axis hole 描述成“缺 XY center”。
 - **同轴复合孔必须先做 association，再求全局 centerline**：通孔、沉孔、盲孔、螺纹孔等若在不同视图中由共中心线、同心圆、正投影对应、共同引线/尺寸链等明确证据指向同一加工轴，先建立一个候选 `coaxial_hole_group`；**禁止先给每个候选 member 分别赋全局 Z/Y/X，再根据已经猜出的坐标决定是否归组**。
+- 同一加工轴在一视图中的同心圆，与正交视图中的 hidden parallel lines、thread projection 或同一 centerline，只有在 projection alignment、axis 与 feature identity 同时成立时才归入该 group；归组后再求一次 group centerline。
 - M 系列螺纹、through hole、counterbore 等邻近候选必须按 projection alignment、centerline、specification、leader/witness endpoint 与 feature identity 做 association，再决定是否属于同一同轴组；文本邻近、数值相同或 axis 相同都不能单独证明归组。
 - association 阶段只比较图纸证据，不要求成员已经拥有最终全局坐标。归组完成后才统一求组级 `axis` 与 `centerline`，再让所有 member 继承。成员可以有不同直径、深度、轴向起止侧或加工语义，但不能拥有不同的非轴向中心坐标。
 - 同轴归组的证据必须来自中心线、同心圆、跨视图投影对应、明确中心距链或等价确定性关系；**仅仅 axis 相同、数值接近或位于同一区域不足以归组**。证据不足且归组与否会改变实体时，进入 blocking unresolved。

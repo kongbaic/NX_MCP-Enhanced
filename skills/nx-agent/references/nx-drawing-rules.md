@@ -15,7 +15,7 @@
 | 剖视图 Section | 带剖切符号与标注（如 `A-A`、`SECTION A-A`、剖面线 hatched）；给出内部结构：孔径、深度、壁厚、台阶 |
 | 局部放大图 Detail | 标注如 `DETAIL B`、`I` 放大圈；用于读小尺寸与倒角/圆角细节 |
 
-**规则**：先确定各视图 plane / normal 并登记 view-local evidence；严格按 `view-local evidence → feature association → dimension ownership → relation/derived → global coordinates → machine back-check → Gate A` 执行。
+**规则**：先确定各视图 plane / normal 和 view-local 轴，再登记标注；feature association、dimension ownership 完成后才转换全局坐标。
 
 ### 1.1 正投影视图 → 全局轴（硬契约）
 
@@ -81,20 +81,14 @@
 
 ## 7. 尺寸归属与深度语义
 
-- 只沿 witness/extension line、leader、arrow endpoint、centerline endpoint、feature boundary endpoint 确定 ownership；附近孤立数字不得覆盖。
-- endpoint 决策优先：datum→centerline 直接约束中心，不能因中间经过 step/thickness 再叠加；只有 witness endpoint 真正在 intermediate surface 时才做 local→global derived。
-- centerline↔centerline 必须是 `center_distance/center_spacing`；已知 center + relation source 派生 opposite center，同轴组只绑定 group centerline。
-- outer min/max edge→feature centerline 必须是 `edge_offset(from=min|max)`，不得写进 profile；只有 profile boundary↔profile boundary 才允许 `profile_dimension`。
-- 相同数值若 endpoints 不同，必须保留不同 source/semantic，禁止按数值相同合并 ownership。
-- HARD 字段一旦由明确 source 绑定便锁定；同一 source 默认不能跨 feature 复用。
-- 槽两侧边界之间的明确尺寸才是槽宽；已绑定的 `slot.width` 不得改写。
-- 中心距/中心位置不得解释为 slot depth/bottom；derived 必须声明唯一 `target`。
-- directional feature 输出要求：hole/counterbore/countersink → `axis`；slot/cut → `width_axis` + `through_axis`，非贯穿时才另给有证据的 `depth`。
-- 孔横向中心坐标固定为：`axis=X → Y/Z`、`axis=Y → X/Z`、`axis=Z → X/Y`；轴本身只用于 axial start/end/range。
-- direct source 只表示直接绑定目标；`center_position/position_dimension` 不能承载 edge offset、center distance、symmetry、tangent 或 derived coordinate。
-- `center_distance/center_spacing` 是 relation，必须保存 `between:[targetA,targetB]`，且两个 endpoint 都必须是 center coordinate target；不能连接 depth、slot bottom 或 generic field。
-- `edge_offset` 必须保存 `axis`、`from:min|max`、`value` 和 `targets`。centered bbox 中 `from=min` 使用 `min_edge + offset`，`from=max` 使用 `max_edge - offset`；`from` 只由真实 witness/extension endpoint 决定。
-- `derived` 必须保存唯一 `target`、可计算 `expr` 及所需 source/relation references；关系尺寸不得降级成 direct `feature_dimension`。
+- 只沿 witness/extension line、leader、arrow endpoint、centerline endpoint 和 feature boundary endpoint 确定 ownership；邻近数字不能替代端点证据。
+- HARD 字段一旦绑定便锁定；同一 source 默认只服务一个 geometry field。
+- datum→centerline 直接约束中心，不因中间经过 step/thickness 再叠加；只有起点实际落在 intermediate surface 时才做 local→global derived。
+- centerline↔centerline 使用 `center_distance/center_spacing` 与真实 endpoints；已知中心加 relation source 派生另一中心。
+- outer min/max edge→centerline 使用 `edge_offset`；只有 profile boundary↔profile boundary 才是 `profile_dimension`。
+- 相同数值但 endpoints 不同的标注保持独立 ownership。
+- 槽两侧边界之间的尺寸才是槽宽；中心距和普通位置尺寸不得解释为 slot depth/bottom。
+- hole/counterbore/countersink 输出 `axis`；slot/cut 输出 `width_axis` 与 `through_axis`。孔横向中心为 `axis=X→Y/Z`、`axis=Y→X/Z`、`axis=Z→X/Y`。
 
 ### 7.1 同轴复合孔归组
 
@@ -108,25 +102,6 @@
 
 - `C2` / `C2×45°` 只有在实际标注明确绑定到边时才表示倒角。
 - 参数表字段 `C=2` 不等价于边标注 `C2`；没有明确边绑定时禁止自动生成 chamfer。
-
-### 7.3 Gate A canonical 字段速查
-
-- overall extent：`overall_dimensions.length_x / width_y / height_z`；不用 `x / y / z`。
-- feature identity/count：required feature 固定写 `type` 与 `count`，并分别提供 `feature_kind`、`feature_count` provenance；不用 `kind` 代替 `type`。
-- hole center：使用 `centerline.x/y/z`、`centerline_x/y/z`、`position.center` 或 `explicit_centers`；不用 `center_x/y/z`。
-- slot：`width / width_axis / through_axis`，有直接边界证据时使用 `top_z / bottom_z / start_z / end_z`；不用 `open_from_z`。
-- thread：规格写 `spec`，由 `thread_spec` semantic 指向；不用 feature 字段 `thread_spec` 或 `x_start`。
-- counterbore：`hole_diameter / counterbore_diameter / counterbore_depth`；不用 `through_diameter / cbore_diameter / cbore_depth`。
-- target 必须是实际 JSON path；list 只接受数字索引。relation 不写 direct `target`，中心距 `between` 的两端必须是真实 center coordinate path。
-- 第一版必须显式输出 `unresolved / dimension_conflicts / dimension_closure`。normalizer 只做无歧义 schema shape 转换，不承担上述语义字段重命名。
-
-### 7.4 First-pass provenance coherence
-
-- blocking unresolved 指向的 HARD field 必须缺失，不得写猜测值、默认值或 placeholder `0`；已有唯一 provenance 的 concrete field 则不得同时 unresolved。
-- 每个 geometry target 只能有一种 value writer：direct 或 derived/relation。direct source 的 `value` 必须等于 target 当前实际值。
-- required feature 的 `type`、`count` 和所有已存在 HARD geometry 必须 provenance-complete；`type → feature_kind`，`count → feature_count`。
-- canonical profile 固定使用 `profile.segments`；每个 HARD leaf 都要 evidence。由连续/对齐关系确定的 endpoint 使用 derived/relation，不伪装成 direct `profile_dimension`。
-- `center_spacing.between` 保留两个真实 endpoint。derived `expr` 必须引用 opposite endpoint target 与 spacing source；若还依赖 symmetry/alignment，关系也必须保留。禁止只计算 `±0.5 * spacing` 生成两端。
 
 ## 8. 尺寸闭合检查
 
@@ -157,18 +132,9 @@
 ## 11. 固定输出坐标系
 
 - XY 原点 = **零件整体外形中心**；Z=0 = **零件底面**；+X 向右、+Y 向上（俯视图）、+Z 向上。
-- 若 overall 为 `Lx×Ly×H`，最终全局 bbox 必须是 X=`[-Lx/2,+Lx/2]`、Y=`[-Ly/2,+Ly/2]`、Z=`[0,H]`。
-- 所有 Reader 最终输出的 profile 范围、孔/槽非轴向中心、pattern centers 必须按该坐标系归一化；边缘基准尺寸不能原样冒充中心原点坐标。
-- 明确左/右对齐或偏置的 profile 不得因整体 bbox 对称而自动居中；center coordinate 与沿孔轴 start/end/range 必须分离。
-- Gate A 前必须做 bbox sanity：用于实体内部加工的孔/沉孔/螺纹孔非轴向中心若超出 overall bbox 且没有图纸明确依据，必须 BLOCK，不得 closed。
-- Gate A 前必须做**中心距反算**：图纸明确中心距/节距为 P 时，最终坐标差必须反算为 P。
-- Gate A 前必须做**对称反算**：图纸明确关于中心线对称时，成对坐标中点必须回到对称线；若同时已知中心距 P，则关于 0 对称的坐标必须为 `±P/2`，不得产生无依据整体偏移。
-- pattern / explicit centers 必须同时通过 count、pitch/span、symmetry 的反算校验；失败即 blocking conflict。
-- `N×` 与单轴 spacing 只约束数量和该轴位置，不能创造另一轴坐标；另一轴必须有 direct evidence 或指向各 `explicit_centers` 坐标分量的 relation evidence。
-- 上述反算由 `validate-drawing` 机器完成。validator 只能检查图纸已有关系，不得创造尺寸、平移、改符号或修正坐标。
-- 所有孔位、凸台位置、特征坐标一律转换到该坐标系后再输出；**不得让下游建模端自行猜测原点**。
-- 示例：160×100 底板、孔中心距四周边缘 20 mm → 四孔中心输出 `[-60,-30]`、`[-60,30]`、`[60,-30]`、`[60,30]`。
-- JSON 必须包含：
+- association、ownership 和 relation 完成后，才换算 profile、孔/槽横向中心与 pattern centers；边缘基准尺寸不能原样冒充中心坐标。
+- 明确左/右对齐或偏置的 profile 不得因整体 bbox 对称而自动居中；center coordinate 与轴向 start/end/range 分离。
+- 禁止让下游建模端自行猜测原点。JSON 声明：
 ```json
 "coordinate_system": {
   "origin": "part_center_xy_bottom_z0",

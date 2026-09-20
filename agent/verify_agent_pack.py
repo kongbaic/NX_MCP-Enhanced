@@ -308,16 +308,10 @@ def main() -> None:
             "不得读取 `examples/example-output.json`", "不得再次 validate 新 drawing",
             "原始诊断证据",
         ),
-        "drawing-reader.md": (
-            "machine schema-only normalization", "禁止读取 example",
-            "禁止重新 interpretation 或第二次 validate", "原始诊断证据",
-            "runtime 不得读取它",
-        ),
     }
     schema_retry_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
-        "drawing-reader.md": drawing_reader,
     }
     for name, tokens in schema_retry_tokens.items():
         for token in tokens:
@@ -432,46 +426,43 @@ def main() -> None:
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
     drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
     for token in (
-        "view-local evidence",
+        "view-local",
         "projection alignment",
         "leader/witness endpoint",
-        "axis=X` 时必须给 Y/Z",
+        "`axis=X`→Y/Z",
         "center_distance / center_spacing",
-        "between:[targetA,targetB]",
-        "edge_offset",
-        "from:min|max",
-        "不得伪装成 direct `center_position`",
-        "explicit_centers.0.1",
-        "不得因为 overall bbox 对称",
+        "opposite endpoint target",
+        "`edge_offset` 不得作为 derived expression",
+        "`profile_dimension` 只用于两个 endpoints",
     ):
         if token not in drawing_reader:
             fail(f"drawing relation contract regression: missing {token}")
     for token in (
         "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
         "axial projection candidate",
-        "axis=X → Y/Z",
-        "between:[targetA,targetB]",
-        "from:min|max",
-        "不能创造另一轴坐标",
+        "axis=X→Y/Z",
+        "datum→centerline",
+        "centerline↔centerline",
+        "profile boundary↔profile boundary",
     ):
         if token not in drawing_rules:
             fail(f"quick drawing relation contract regression: missing {token}")
 
     for token in (
-        "两个实际 witness/extension/arrow endpoint 分类",
-        "禁止再次叠加这些量",
-        "两个 endpoint 都落在 feature/group centerline",
-        "profile_dimension` 只允许两个 endpoint",
-        "hidden parallel lines、thread projection",
+        "线性尺寸先按两个实际 endpoints",
+        "不因路径经过 step/thickness 再叠加",
+        "两个 endpoints 都是 center coordinates",
+        "profile_dimension` 只用于两个 endpoints",
+        "同轴候选先按 projection alignment",
     ):
         if token not in drawing_reader:
             fail(f"drawing ownership/association contract regression: missing {token}")
     for token in (
         "datum→centerline",
         "centerline↔centerline",
-        "edge_offset(from=min|max)",
+        "outer min/max edge→centerline",
         "profile boundary↔profile boundary",
-        "禁止按数值相同合并 ownership",
+        "相同数值但 endpoints 不同",
     ):
         if token not in drawing_rules:
             fail(f"quick ownership contract regression: missing {token}")
@@ -557,55 +548,21 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "Gate A canonical output contract",
+        "最小 canonical contract",
         "length_x / width_y / height_z",
-        "非空 `type` 和显式 `count`",
-        "centerline:{x,y,z}",
-        "`width` 必须由 `slot_width` source 覆盖",
-        "规格字段固定为 `spec`",
-        "hole_diameter / counterbore_diameter / counterbore_depth",
-        "profile.sections.0.z_max",
-        "relation source 不得写 direct `target`",
-        "const` 只用于真正数学常量",
-        "dimension_conflicts",
-        "overall_dimensions.x/y/z",
-        "normalizer 不负责把这些字段猜测重命名",
-    ):
-        if token not in drawing_reader:
-            fail(f"Reader canonical Gate A contract regression: missing {token}")
-    for token in (
-        "First-pass provenance coherence",
-        "UNKNOWN",
+        "稳定 `id` 和非空 `type`",
+        "Runner 不要求所有 feature 一律输出 count",
+        "`target` 必须是实际可解析 path",
+        "若 source 包含 `value`",
+        "relation source 不写 direct `target`",
+        "`edge_offset` 不得作为 derived expression",
+        "opposite endpoint target",
+        "ancestor target",
         "placeholder `0`",
-        "exactly one writer",
-        "source.value == target actual value",
-        "profile.segments",
-        "provenance-complete",
-        "opposite endpoint",
-        "±0.5 * spacing",
+        "dimension_conflicts",
     ):
         if token not in drawing_reader:
-            fail(f"Reader first-pass coherence contract regression: missing {token}")
-    for token in (
-        "overall_dimensions.length_x / width_y / height_z",
-        "required feature 固定写 `type` 与 `count`",
-        "不用 `center_x/y/z`",
-        "规格写 `spec`",
-        "不用 `through_diameter / cbore_diameter / cbore_depth`",
-        "list 只接受数字索引",
-        "normalizer 只做无歧义 schema shape 转换",
-    ):
-        if token not in drawing_rules:
-            fail(f"quick Reader canonical contract regression: missing {token}")
-    for token in (
-        "blocking unresolved 指向的 HARD field 必须缺失",
-        "只能有一种 value writer",
-        "value` 必须等于 target 当前实际值",
-        "profile.segments",
-        "opposite endpoint target 与 spacing source",
-    ):
-        if token not in drawing_rules:
-            fail(f"quick Reader coherence contract regression: missing {token}")
+            fail(f"minimal Reader canonical contract regression: missing {token}")
 
     canonical_fixture_path = RUNNER / "tests" / "fixtures" / "canonical-reader-output.json"
     canonical_fixture = json.loads(canonical_fixture_path.read_text(encoding="utf-8"))

@@ -544,26 +544,23 @@ class DrawingGateATests(unittest.TestCase):
         quick = (ROOT / "skills" / "nx-agent" / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
         planner = (ROOT / "skills" / "nx-agent" / "references" / "modeling-planner.md").read_text(encoding="utf-8")
         for token in (
-            "view-local evidence",
+            "view-local",
             "projection alignment",
             "leader/witness endpoint",
-            "axis=X` 时必须给 Y/Z",
+            "`axis=X`→Y/Z",
             "center_distance / center_spacing",
-            "between:[targetA,targetB]",
-            "edge_offset",
-            "from:min|max",
-            "不得伪装成 direct `center_position`",
-            "explicit_centers.0.1",
-            "不得因为 overall bbox 对称",
+            "opposite endpoint target",
+            "`edge_offset` 不得作为 derived expression",
+            "`profile_dimension` 只用于两个 endpoints",
         ):
             self.assertIn(token, reader)
         for token in (
             "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
             "axial projection candidate",
-            "axis=X → Y/Z",
-            "between:[targetA,targetB]",
-            "from:min|max",
-            "不能创造另一轴坐标",
+            "axis=X→Y/Z",
+            "datum→centerline",
+            "centerline↔centerline",
+            "profile boundary↔profile boundary",
         ):
             self.assertIn(token, quick)
         for token in ("同轴复合孔 centerline 是不可变输入", "不得平移", "改正负号", "自动镜像"):

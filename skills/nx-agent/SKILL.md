@@ -35,7 +35,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 `runtime-config.json`；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
 2. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
-3. 从**当前上传工程图**生成本轮 drawing interpretation 与当前 `drawing.json`，并通过门禁 A。
+3. 当前上传工程图是本轮 interpretation 的唯一几何输入。若 `<workspace_root>\drawing.json` 已存在，禁止在 interpretation 前读取、比较或引用其内容；先从当前上传图独立完成 interpretation，再直接覆盖写入当前 `drawing.json`，并通过门禁 A。
 4. Gate A PASS 后，根据**当前 drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
 5. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
 6. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
@@ -86,7 +86,9 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 否则立即停止，不进入建模规划。
 
-Gate A/schema retry 只能调用 schema-only normalization，允许 `dimension → dimensions`、`center → position.center`、无歧义 numeric string 和 object/list 等价转换。禁止新增或修改尺寸、axis、center、depth、count、side、feature ownership、source evidence、derived relation 或 unresolved。缺少 geometry/evidence/ownership 时保持 Gate A BLOCKED；example 只能说明 schema shape，不能作为当前零件 evidence 来源。
+Gate A 的 schema 处理只允许 `validate-drawing` 内部执行一次 machine schema-only normalization，包括 `dimension → dimensions`、`center → position.center`、无歧义 numeric string 和 object/list 等价转换。Agent/LLM 禁止读取 `examples/example-output.json` 或任何 example 后重写 drawing，禁止重新看图生成第二版 interpretation，也禁止新增或修改尺寸、axis、center、depth、count、side、feature ownership、source evidence、derived relation 或 unresolved。
+
+Machine normalization 后仍有错误时，立即 Gate A BLOCKED，并报告 `schema normalization failed` 或 `drawing schema invalid after schema-only normalization`。不得 retry、不得再次 interpretation、不得再次 validate 新 drawing。首次 current `drawing.json` 必须保持为本轮 Reader 原始输出，失败后禁止 Agent/LLM 覆盖。
 
 ### 门禁 B
 - 当前 frozen plan 必须由本轮 Gate A PASS 的 drawing JSON 新生成

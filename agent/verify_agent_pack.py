@@ -213,6 +213,9 @@ def main() -> None:
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     for token in (
         "当前上传工程图",
+        "唯一几何输入",
+        "禁止在 interpretation 前读取、比较或引用其内容",
+        "直接覆盖写入当前 `drawing.json`",
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
@@ -278,38 +281,37 @@ def main() -> None:
             fail("install-agent.ps1 must not terminate Doubao")
 
     # Static simulation of the reported workspace shape. Agent behavior is
-    # governed by the checked contract; none of these stale artifacts is an
-    # allowed planning input for the current drawing request.
-    simulated_workspace = {
-        "drawing.json": "current",
+    # governed by the checked contract. Before interpretation, even an existing
+    # drawing is stale output; only the newly uploaded image is an input.
+    simulated_pre_interpretation = {
+        "drawing.json": "stale",
         "frozen-plan.json": "stale",
         "executable-plan.json": "stale",
         "old.prt": "stale",
         "old.step": "stale",
         "report.json": "stale",
     }
-    allowed_mode_b_inputs = {"drawing.json"}
-    if set(simulated_workspace) & allowed_mode_b_inputs != {"drawing.json"}:
-        fail("Mode B stale-workspace simulation lost the current drawing")
+    allowed_pre_interpretation_inputs = {"uploaded-engineering-drawing"}
     if any(
-        name in allowed_mode_b_inputs
-        for name in simulated_workspace
-        if simulated_workspace[name] == "stale"
+        name in allowed_pre_interpretation_inputs
+        for name in simulated_pre_interpretation
     ):
-        fail("Mode B stale-workspace simulation permits a stale artifact")
+        fail("Mode B pre-interpretation simulation permits a stale artifact")
 
     schema_retry_tokens = {
         "SKILL.md": (
-            "schema-only normalization", "source evidence", "unresolved",
-            "Gate A BLOCKED", "example",
+            "machine schema-only normalization", "禁止读取 `examples/example-output.json`",
+            "不得 retry", "首次 current `drawing.json`", "失败后禁止 Agent/LLM 覆盖",
         ),
         "pipeline-contract.md": (
-            "schema retry 只能做表示形式等价转换", "source evidence",
-            "unresolved", "不能成为当前零件的 geometry/evidence 来源",
+            "machine schema-only normalization", "不得 schema retry",
+            "不得读取 `examples/example-output.json`", "不得再次 validate 新 drawing",
+            "原始诊断证据",
         ),
         "drawing-reader.md": (
-            "schema-only normalization", "source evidence", "unresolved",
-            "Gate A BLOCKED", "example",
+            "machine schema-only normalization", "禁止读取 example",
+            "禁止重新 interpretation 或第二次 validate", "原始诊断证据",
+            "runtime 不得读取它",
         ),
     }
     schema_retry_texts = {

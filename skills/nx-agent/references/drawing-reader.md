@@ -23,9 +23,12 @@
 4. 完成 **dimension ownership**：只沿 witness/extension line、leader、arrow endpoint、centerline endpoint、feature boundary endpoint 绑定字段；相同数值出现在不同位置时分别绑定，禁止跨 feature 复用。
 5. 建立明确 relation，并计算带唯一 `target` 的 derived；同组成员继承组级 axis/centerline。
 6. 最后才转换到固定全局坐标系 `part_center_xy_bottom_z0`；center coordinate 与沿孔轴的 start/end/range 必须分开。
-7. 运行 `runner.py validate-drawing <drawing.json>` 做机器反算；机器 Gate A 通过后才交给 Planner。
+7. 当前上传工程图是唯一几何输入；即使目标路径已有 `drawing.json`，也禁止在 interpretation 前读取或比较旧内容。完成本轮 interpretation 后直接覆盖该 stale output。
+8. 运行 `runner.py validate-drawing <drawing.json>` 做机器反算；机器 Gate A 通过后才交给 Planner。
 
-若 validate-drawing 因 schema 表示形式失败，只允许 schema-only normalization。禁止为了 PASS 新增或修改 source evidence、geometry、ownership、derived relation 或 unresolved；真正缺少 evidence/geometry/ownership 时必须保持 Gate A BLOCKED。禁止从 example 抄取当前零件的 evidence。
+Schema 表示处理只能由 `validate-drawing` 内部的 machine schema-only normalization 完成。Agent/LLM 禁止读取 example、禁止重写 drawing、禁止重新 interpretation 或第二次 validate，也禁止为了 PASS 新增或修改 source evidence、geometry、axis、center、depth、count、side、ownership、derived relation 或 unresolved。
+
+Normalization 或 Gate A 失败时立即 BLOCK，并报告 `schema normalization failed` 或 `drawing schema invalid after schema-only normalization`。首次写出的 current `drawing.json` 是本轮 Reader 原始诊断证据，失败后必须保持不变。
 
 ## 3. 必须提取
 
@@ -173,5 +176,5 @@ Direct source 只写一个 `target`，并且只表示图上尺寸线、引线或
 
 Reader 不得自报 `coordinate_sanity=pass`。`validate-drawing` 机器计算 source ownership、required geometry evidence、overall/profile/feature bbox、center distance、symmetry 和 count back-check；validator 只能验证图纸已给关系，禁止创造尺寸或修正坐标。
 
-完整示例：`examples/example-output.json`。
+开发文档、静态测试与 fixture/reference 示例：`examples/example-output.json`。真实 Mode B runtime 不得读取它作为 schema repair、retry 或 drawing 重写模板。
 快速视图/标注识别规则：`references/nx-drawing-rules.md`。

@@ -2096,6 +2096,91 @@ def _drawing_path_get(data: dict, target: str) -> Any:
     return cur
 
 
+def _drawing_unresolved_geometry_pattern(item: dict) -> str | None:
+    """Map a blocking unresolved field to a canonical geometry target pattern."""
+    target = item.get("target")
+    if isinstance(target, str) and target.strip():
+        pattern = target.strip()
+    else:
+        field = item.get("field")
+        if not isinstance(field, str) or not field.strip():
+            return None
+        field = field.strip()
+        feature_id = (
+            item.get("feature_id")
+            or item.get("owner_feature_id")
+            or item.get("feature")
+        )
+        if isinstance(feature_id, str) and feature_id.strip():
+            pattern = f"feature:{feature_id.strip()}.{field}"
+        elif field.startswith(("feature:", "profile.")):
+            pattern = field
+        elif field.startswith("segments."):
+            pattern = f"profile.{field}"
+        else:
+            return None
+
+    pattern = re.sub(r"\[(\d+|\*)\]", r".\1", pattern)
+    pattern = re.sub(r"\.{2,}", ".", pattern).strip(".")
+    lower = pattern.lower()
+    leaf = lower.split(".")[-1]
+    if re.search(r"\.centerline\.(x|y|z)$", lower):
+        return pattern
+    if ".position.center" in lower:
+        return pattern
+    if ".explicit_centers." in lower and leaf in {"0", "1", "2", "*"}:
+        return pattern
+    if leaf in {"top_z", "bottom_z", "start_z", "end_z", "side", "start_side"}:
+        return pattern
+    if re.fullmatch(
+        r"profile\.segments\.(\d+|\*)\.(x1|y1|z1|x2|y2|z2|start|end)",
+        lower,
+    ):
+        return pattern
+    return None
+
+
+def _drawing_expand_target_pattern(data: dict, pattern: str) -> list[tuple[str, Any]]:
+    """Resolve canonical target patterns, expanding list wildcards only."""
+    candidates = [pattern]
+    while any(".*" in candidate for candidate in candidates):
+        expanded: list[str] = []
+        for candidate in candidates:
+            if ".*" not in candidate:
+                expanded.append(candidate)
+                continue
+            prefix, suffix = candidate.split(".*", 1)
+            try:
+                container = _drawing_path_get(data, prefix)
+            except KeyError:
+                continue
+            if isinstance(container, list):
+                expanded.extend(
+                    f"{prefix}.{index}{suffix}" for index in range(len(container))
+                )
+            elif isinstance(container, dict):
+                expanded.extend(
+                    f"{prefix}.{key}{suffix}" for key in sorted(container)
+                )
+        candidates = expanded
+
+    resolved: list[tuple[str, Any]] = []
+    for candidate in candidates:
+        try:
+            resolved.append((candidate, _drawing_path_get(data, candidate)))
+        except KeyError:
+            continue
+    return resolved
+
+
+def _drawing_has_concrete_value(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_drawing_has_concrete_value(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_drawing_has_concrete_value(child) for child in value)
+    return value is not None
+
+
 def _drawing_target_feature(data: dict, target: str) -> dict | None:
     if not target.startswith("feature:"):
         return None
@@ -3174,6 +3259,15 @@ def check_drawing_json(data: dict) -> list[str]:
             for item in unresolved
             if isinstance(item, dict) and item.get("required_for_modeling") is True
         ]
+        for item in blockers:
+            pattern = _drawing_unresolved_geometry_pattern(item)
+            if pattern is None:
+                continue
+            for target, value in _drawing_expand_target_pattern(data, pattern):
+                if _drawing_has_concrete_value(value):
+                    errors.append(
+                        f"unresolved geometry has concrete placeholder: {target}"
+                    )
         if blockers:
             errors.append(f"blocking_unresolved={len(blockers)}")
 

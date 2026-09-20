@@ -580,6 +580,22 @@ def main() -> None:
         if token not in drawing_tests:
             fail(f"canonical Reader regression test missing: {token}")
 
+    for token in (
+        "def _drawing_unresolved_geometry_pattern",
+        "def _drawing_expand_target_pattern",
+        "unresolved geometry has concrete placeholder",
+    ):
+        if token not in runner_source:
+            fail(f"Runner unresolved-geometry coherence guard missing: {token}")
+    for token in (
+        "test_blocking_unresolved_centerline_with_concrete_value_fails",
+        "test_blocking_unresolved_explicit_center_wildcard_with_zero_fails",
+        "test_blocking_unresolved_profile_coordinate_with_concrete_value_fails",
+        "test_nonblocking_warning_does_not_conflict_with_known_geometry",
+    ):
+        if token not in drawing_tests:
+            fail(f"unresolved-geometry regression test missing: {token}")
+
     timing_tests = (RUNNER / "tests" / "test_bbox_report.py").read_text(encoding="utf-8")
     if "test_timing_bucket_separates_postprocess_from_validation" not in timing_tests:
         fail("Runner timing phase regression test missing")

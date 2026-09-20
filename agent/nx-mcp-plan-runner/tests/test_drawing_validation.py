@@ -176,6 +176,66 @@ class DrawingGateATests(unittest.TestCase):
         self.assertTrue(any("requires center coordinate x" in error for error in errors))
         self.assertTrue(any("blocking_unresolved=1" in error for error in errors))
 
+    def test_blocking_unresolved_centerline_with_concrete_value_fails(self) -> None:
+        data = canonical_reader_fixture()
+        feature = next(item for item in data["features"] if item["id"] == "F_REFERENCE")
+        feature["centerline"]["z"] = 10
+        data["unresolved"].append({
+            "id": "U_REFERENCE_Z",
+            "feature_id": "F_REFERENCE",
+            "field": "centerline.z",
+            "required_for_modeling": True,
+        })
+        errors = R.check_drawing_json(data)
+        self.assertIn(
+            "unresolved geometry has concrete placeholder: feature:F_REFERENCE.centerline.z",
+            errors,
+        )
+
+    def test_blocking_unresolved_explicit_center_wildcard_with_zero_fails(self) -> None:
+        data = canonical_reader_fixture()
+        feature = next(item for item in data["features"] if item["id"] == "F_SPACED_PAIR")
+        feature["explicit_centers"][0][1] = 0
+        feature["explicit_centers"][1][1] = 0
+        y_source = source(data, "S_PAIR_Y")
+        y_source.update({"value": 40, "from": "min"})
+        data["unresolved"].append({
+            "id": "U_PAIR_Y",
+            "feature_id": "F_SPACED_PAIR",
+            "field": "explicit_centers[*].1",
+            "required_for_modeling": True,
+        })
+        errors = R.check_drawing_json(data)
+        for index in (0, 1):
+            self.assertIn(
+                "unresolved geometry has concrete placeholder: "
+                f"feature:F_SPACED_PAIR.explicit_centers.{index}.1",
+                errors,
+            )
+
+    def test_blocking_unresolved_profile_coordinate_with_concrete_value_fails(self) -> None:
+        data = canonical_reader_fixture()
+        data["unresolved"].append({
+            "id": "U_PROFILE_Z",
+            "field": "segments.1.z1",
+            "required_for_modeling": True,
+        })
+        errors = R.check_drawing_json(data)
+        self.assertIn(
+            "unresolved geometry has concrete placeholder: profile.segments.1.z1",
+            errors,
+        )
+
+    def test_nonblocking_warning_does_not_conflict_with_known_geometry(self) -> None:
+        data = canonical_reader_fixture()
+        data["unresolved"].append({
+            "id": "W_REFERENCE_X",
+            "feature_id": "F_REFERENCE",
+            "field": "centerline.x",
+            "required_for_modeling": False,
+        })
+        self.assertEqual([], R.check_drawing_json(data))
+
     def test_known_centers_have_exactly_one_writer_and_no_unresolved(self) -> None:
         data = canonical_reader_fixture()
         self.assertEqual(

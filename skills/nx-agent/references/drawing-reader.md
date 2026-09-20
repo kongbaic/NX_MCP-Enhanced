@@ -190,6 +190,8 @@ Reader 落盘前必须逐个 HARD field 做 coherence 检查；即使 interpreta
 
 落盘前的二选一状态必须成立：`KNOWN = concrete geometry + exactly one writer + no same-field blocking unresolved`；`UNKNOWN = blocking unresolved + no concrete placeholder`。
 
+Blocking unresolved 与 canonical geometry concrete value 不得并存；这一条由 Machine Gate A 强制执行，Reader contract 不是唯一防线。
+
 `source_ledger` 使用机器可判定的固定语义：
 
 - direct：`overall_dimension / profile_dimension / feature_dimension / feature_count / diameter / radius / slot_width / depth / thickness / axis / center_position / position_dimension / thread_spec / feature_kind / side / through / pattern_dimension`；

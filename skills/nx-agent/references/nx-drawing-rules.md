@@ -34,12 +34,14 @@
 
 ## 2. 跨视图尺寸对应关系
 
-**处理顺序：先关联 feature，再求 group centerline，最后转全局坐标。**
+**处理顺序：view-local evidence → feature association → dimension ownership → relation/derived → global coordinates。**
 禁止先给每个视图里的孔/沉孔/螺纹孔各自写一个全局中心坐标，再根据这些已猜坐标决定是否属于同一特征。
 
-- 同一特征的不同尺寸分布在多个视图：俯视图给 长×宽，主/剖视图给 高与厚度，Ø 直径常同时出现在投影图与剖视图。
-- 同一标注在不同视图重复出现 = 交叉确认：**合并为同一特征，confidence 提升**，不得作为多个独立尺寸。
-- 示例：俯视图 Ø60 凸台 + 剖视图 Ø60 凸台 → 一个 boss 特征，source_views: ["俯视图","剖视图"]。
+- 圆形投影决定候选孔 axis；其它正交视图中的隐藏矩形/隐藏平行线只是 axial projection candidate，不得用该视图 normal 改写 axis。
+- M 系列螺纹、through hole、counterbore 等候选按 projection alignment、centerline、specification、leader/witness endpoint 和 feature identity 关联；邻近或数值相同不足以归组。
+- 同一 feature 在多个视图重复表达时合并为一个 feature；同一 coaxial group 的 members 共享 `axis` 与 transverse centerline。
+- center coordinate 与 axial start/end/range 必须分开；沿孔轴的范围不得写成横向中心坐标。
+- 视图明确显示左/右对齐或偏置时保留该关系，不得因 overall bbox 对称而自动居中。
 
 ## 3. 标注符号速查
 
@@ -84,12 +86,17 @@
 - 槽两侧边界之间的明确尺寸才是槽宽；已绑定的 `slot.width` 不得改写。
 - 中心距/中心位置不得解释为 slot depth/bottom；derived 必须声明唯一 `target`。
 - directional feature 输出要求：hole/counterbore/countersink → `axis`；slot/cut → `width_axis` + `through_axis`，非贯穿时才另给有证据的 `depth`。
+- 孔横向中心坐标固定为：`axis=X → Y/Z`、`axis=Y → X/Z`、`axis=Z → X/Y`；轴本身只用于 axial start/end/range。
+- direct source 只表示直接绑定目标；`center_position/position_dimension` 不能承载 edge offset、center distance、symmetry、tangent 或 derived coordinate。
+- `center_distance/center_spacing` 是 relation，必须保存 `between:[targetA,targetB]`，且两个 endpoint 都必须是 center coordinate target；不能连接 depth、slot bottom 或 generic field。
+- `edge_offset` 必须保存 `axis`、`from:min|max`、`value` 和 `targets`。centered bbox 中 `from=min` 使用 `min_edge + offset`，`from=max` 使用 `max_edge - offset`；`from` 只由真实 witness/extension endpoint 决定。
+- `derived` 必须保存唯一 `target`、可计算 `expr` 及所需 source/relation references；关系尺寸不得降级成 direct `feature_dimension`。
 
 ### 7.1 同轴复合孔归组
 
 - 通孔 / 沉孔 / 盲孔 / 螺纹孔若有明确证据共享同一轴线，先输出一个 `coaxial_hole_group`，再把不同加工段放入 `members`。
 - 归组必须同时满足：同一 `axis`、同一横向 `centerline`、图纸存在共中心线/同心圆/跨视图投影/明确尺寸链等确定性证据。
-- 同组 member 必须继承同一个 centerline；禁止一个 member 用 `Z=58`，另一个因为“看起来与主孔齐平”被另行放到 `Z=40`。
+- 同组 member 必须继承同一个 axis 和 transverse centerline；禁止按视觉邻近为各 member 另设中心。
 - 只有 axis 相同但中心线证据不足时不得强行合并；若会影响实体则 blocking unresolved。
 - 位置尺寸绑定同轴组 centerline，而不是分别绑定各 member。
 
@@ -134,6 +141,7 @@
 - Gate A 前必须做**中心距反算**：图纸明确中心距/节距为 P 时，最终坐标差必须反算为 P。
 - Gate A 前必须做**对称反算**：图纸明确关于中心线对称时，成对坐标中点必须回到对称线；若同时已知中心距 P，则关于 0 对称的坐标必须为 `±P/2`，不得产生无依据整体偏移。
 - pattern / explicit centers 必须同时通过 count、pitch/span、symmetry 的反算校验；失败即 blocking conflict。
+- `N×` 与单轴 spacing 只约束数量和该轴位置，不能创造另一轴坐标；另一轴必须有 direct evidence 或指向各 `explicit_centers` 坐标分量的 relation evidence。
 - 上述反算由 `validate-drawing` 机器完成。validator 只能检查图纸已有关系，不得创造尺寸、平移、改符号或修正坐标。
 - 所有孔位、凸台位置、特征坐标一律转换到该坐标系后再输出；**不得让下游建模端自行猜测原点**。
 - 示例：160×100 底板、孔中心距四周边缘 20 mm → 四孔中心输出 `[-60,-30]`、`[-60,30]`、`[60,-30]`、`[60,30]`。

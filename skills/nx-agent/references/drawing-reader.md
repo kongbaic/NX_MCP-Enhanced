@@ -81,24 +81,13 @@ XY 原点为零件整体外形中心，Z=0 为零件底面，+X 向右、+Y 为�
 - `depth` / `bottom` 只能来自明确深度语义、剖视图明确起止面或确定性终止关系。中心距、中心位置和普通位置尺寸不能被重新解释成 slot depth / bottom。
 - `derived` 必须明确 `target`，并保存所用 source/relation；没有额外证据不得将结果跨 feature 复用。
 - 孔类 feature 必须输出 `axis`；slot/cut 必须输出 `width_axis`、`through_axis`（若非贯穿则再输出有明确证据的 `depth`）。任何会改变三维结果的方向字段不能唯一确定时，Gate A 不得 closed。
+- 孔的 `center` 只包含与孔轴垂直的横向坐标：`axis=X` 时必须给 Y/Z，X 只能表示 axial start/end/range；`axis=Y` 时必须给 X/Z；`axis=Z` 时必须给 X/Y。禁止把轴向范围误报成横向 center，也禁止把 X-axis hole 描述成“缺 XY center”。
 - **同轴复合孔必须先做 association，再求全局 centerline**：通孔、沉孔、盲孔、螺纹孔等若在不同视图中由共中心线、同心圆、正投影对应、共同引线/尺寸链等明确证据指向同一加工轴，先建立一个候选 `coaxial_hole_group`；**禁止先给每个候选 member 分别赋全局 Z/Y/X，再根据已经猜出的坐标决定是否归组**。
+- M 系列螺纹、through hole、counterbore 等邻近候选必须按 projection alignment、centerline、specification、leader/witness endpoint 与 feature identity 做 association，再决定是否属于同一同轴组；文本邻近、数值相同或 axis 相同都不能单独证明归组。
 - association 阶段只比较图纸证据，不要求成员已经拥有最终全局坐标。归组完成后才统一求组级 `axis` 与 `centerline`，再让所有 member 继承。成员可以有不同直径、深度、轴向起止侧或加工语义，但不能拥有不同的非轴向中心坐标。
 - 同轴归组的证据必须来自中心线、同心圆、跨视图投影对应、明确中心距链或等价确定性关系；**仅仅 axis 相同、数值接近或位于同一区域不足以归组**。证据不足且归组与否会改变实体时，进入 blocking unresolved。
-- 对同轴组，位置尺寸（例如两条轴线之间的 `E`）绑定到**组 centerline**，不能只绑定到其中一个 member 后再给其它 member 另猜中心高度。若某参考轴中心高为 40、目标组与其明确中心距为 18，则目标组中心高通过确定性关系得到 58；同组所有 member 继承这一中心线。
-- 推荐结构：
-  ```json
-  {
-    "type": "coaxial_hole_group",
-    "axis": "X",
-    "centerline": {"y": -8, "z": 58},
-    "members": [
-      {"kind": "threaded_hole", "spec": "M6", "depth": 12, "side": "one_side"},
-      {"kind": "through_hole", "diameter": 6.6, "side": "opposite_side"},
-      {"kind": "counterbore", "diameter": 11, "depth": 6.5, "side": "opposite_side"}
-    ]
-  }
-  ```
-  `side` / 轴向起止范围若会改变实体且无法由图纸唯一确定，仍属于 HARD unresolved；不得用示例中的 side 文本代替真实方向。
+- 对同轴组，两条轴线之间的位置尺寸绑定到**组 centerline**，不能只绑定到一个 member 后再为其它 member 猜中心位置；所有 member 共享同一 `axis` 与 transverse centerline，只允许各自的直径、深度、side 和 axial range 不同。
+- `side` / 轴向起止范围若会改变实体且无法由图纸唯一确定，仍属于 HARD unresolved。
 - **倒角必须有明确边绑定**：只有图中实际出现并通过尺寸线/引线/局部细节绑定到某条边的 `C2`、`C2×45°` 等，才可输出 chamfer feature。参数表中的字段名 `C` 与数值 `2`（即 `C=2`）不能仅因拼起来像 “C2” 就自动解释为 2 mm 倒角。
 
 ## 7. 尺寸闭合
@@ -146,6 +135,41 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
   "dimension_closure": {"status": "closed"}
 }
 ```
+
+`source_ledger` 使用机器可判定的固定语义：
+
+- direct：`overall_dimension / profile_dimension / feature_dimension / feature_count / diameter / radius / slot_width / depth / thickness / axis / center_position / position_dimension / thread_spec / feature_kind / side / through / pattern_dimension`；
+- relation：`center_distance / center_spacing / edge_offset / symmetry / upper_tangent / lower_tangent / coincident / alignment`。
+
+Direct source 只写一个 `target`，并且只表示图上尺寸线、引线或符号直接绑定的目标。关系尺寸禁止降级成泛化 `feature_dimension`。由 edge offset、center distance、symmetry、tangent 或其它关系计算的坐标不得伪装成 direct `center_position` / `position_dimension`。
+
+`center_distance / center_spacing` 必须写 `between:[targetA,targetB]`；两个 endpoint 必须是真正的 center coordinate target，例如两个 feature 的 `centerline.z`，不能连接 depth、slot bottom 或其它无关字段。该关系只能服务这两个 endpoint 的推导。
+
+`derived` 必须包含稳定 `id`、唯一 `target`、声明的 `value` 和机器可计算的 `expr`。`expr` 只能通过 `target` / `source` 引用已绑定证据，或使用数值 `const`，并使用 `add/sub/mul/div/neg/abs`；需要相切、对齐、共线等非数值关系时，用 `relation_refs` 引用对应 relation source。跨 feature 推导没有匹配的 relation evidence 时必须 BLOCK。
+
+通用中心距推导形状如下，不得替换为型号专用常量：
+
+```json
+{
+  "id": "D_TARGET_CENTER",
+  "target": "feature:F_TARGET.centerline.z",
+  "value": "<computed-value>",
+  "expr": {
+    "op": "add",
+    "args": [
+      {"target": "feature:F_REFERENCE.centerline.z"},
+      {"source": "S_CENTER_DISTANCE"}
+    ]
+  }
+}
+```
+
+从 overall 外形边到中心的尺寸必须写成 `edge_offset`，并保存 `axis`、`from:min|max`、`value` 与一个或多个 `targets`。Reader 必须根据真实 witness/extension endpoint 决定 `from`，不能根据期待坐标反推：
+
+- `from=min`：`coord = min_edge + offset`；
+- `from=max`：`coord = max_edge - offset`。
+
+`explicit_centers` 的关系证据应指向具体坐标分量，例如 `feature:F_HOLES.explicit_centers.0.1`。数量和单轴 spacing 不能凭空生成另一轴坐标；缺少该轴的 direct 或 relation evidence 时保持 blocking unresolved。
 
 Reader 不得自报 `coordinate_sanity=pass`。`validate-drawing` 机器计算 source ownership、required geometry evidence、overall/profile/feature bbox、center distance、symmetry 和 count back-check；validator 只能验证图纸已给关系，禁止创造尺寸或修正坐标。
 

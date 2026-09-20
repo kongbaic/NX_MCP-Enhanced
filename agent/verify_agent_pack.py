@@ -389,6 +389,34 @@ def main() -> None:
         if token not in top:
             fail(f"top-level numeric-nudge repair regression: missing {token}")
 
+    drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+    drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
+    for token in (
+        "view-local evidence",
+        "projection alignment",
+        "leader/witness endpoint",
+        "axis=X` 时必须给 Y/Z",
+        "center_distance / center_spacing",
+        "between:[targetA,targetB]",
+        "edge_offset",
+        "from:min|max",
+        "不得伪装成 direct `center_position`",
+        "explicit_centers.0.1",
+        "不得因为 overall bbox 对称",
+    ):
+        if token not in drawing_reader:
+            fail(f"drawing relation contract regression: missing {token}")
+    for token in (
+        "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+        "axial projection candidate",
+        "axis=X → Y/Z",
+        "between:[targetA,targetB]",
+        "from:min|max",
+        "不能创造另一轴坐标",
+    ):
+        if token not in drawing_rules:
+            fail(f"quick drawing relation contract regression: missing {token}")
+
     timing_tests = (RUNNER / "tests" / "test_bbox_report.py").read_text(encoding="utf-8")
     if "test_timing_bucket_separates_postprocess_from_validation" not in timing_tests:
         fail("Runner timing phase regression test missing")

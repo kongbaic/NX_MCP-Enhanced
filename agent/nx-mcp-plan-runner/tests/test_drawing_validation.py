@@ -25,6 +25,81 @@ def source(data: dict, source_id: str) -> dict:
     return next(item for item in data["source_ledger"] if item["id"] == source_id)
 
 
+def relation_fixture(*, target_edge: str = "min") -> dict:
+    target_y = -30 if target_edge == "min" else 30
+    return {
+        "overall_dimensions": {"length_x": 100, "width_y": 80, "height_z": 60},
+        "coordinate_system": {"origin": "part_center_xy_bottom_z0"},
+        "features": [
+            {
+                "id": "F_REFERENCE",
+                "type": "through_hole",
+                "axis": "Y",
+                "centerline": {"x": 0, "z": 20},
+                "diameter": 10,
+                "count": 1,
+                "required_for_modeling": True,
+            },
+            {
+                "id": "F_TARGET",
+                "type": "through_hole",
+                "axis": "X",
+                "centerline": {"y": target_y, "z": 35},
+                "diameter": 6,
+                "count": 1,
+                "required_for_modeling": True,
+            },
+            {
+                "id": "F_PAIR",
+                "type": "through_hole",
+                "axis": "Z",
+                "explicit_centers": [[-12, 30], [12, 30]],
+                "diameter": 5,
+                "count": 2,
+                "required_for_modeling": True,
+            },
+        ],
+        "source_ledger": [
+            {"id": "S_L", "semantic": "overall_dimension", "value": 100, "target": "overall_dimensions.length_x"},
+            {"id": "S_W", "semantic": "overall_dimension", "value": 80, "target": "overall_dimensions.width_y"},
+            {"id": "S_H", "semantic": "overall_dimension", "value": 60, "target": "overall_dimensions.height_z"},
+            {"id": "S_REF_KIND", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_REFERENCE.type"},
+            {"id": "S_REF_AXIS", "semantic": "axis", "value": "Y", "target": "feature:F_REFERENCE.axis"},
+            {"id": "S_REF_X", "semantic": "center_position", "value": 0, "target": "feature:F_REFERENCE.centerline.x"},
+            {"id": "S_REF_Z", "semantic": "center_position", "value": 20, "target": "feature:F_REFERENCE.centerline.z"},
+            {"id": "S_REF_D", "semantic": "diameter", "value": 10, "target": "feature:F_REFERENCE.diameter"},
+            {"id": "S_REF_N", "semantic": "feature_count", "value": 1, "target": "feature:F_REFERENCE.count"},
+            {"id": "S_TARGET_KIND", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_TARGET.type"},
+            {"id": "S_TARGET_AXIS", "semantic": "axis", "value": "X", "target": "feature:F_TARGET.axis"},
+            {"id": "S_TARGET_Y", "semantic": "edge_offset", "value": 10, "axis": "Y", "from": target_edge, "targets": ["feature:F_TARGET.centerline.y"]},
+            {"id": "S_TARGET_D", "semantic": "diameter", "value": 6, "target": "feature:F_TARGET.diameter"},
+            {"id": "S_TARGET_N", "semantic": "feature_count", "value": 1, "target": "feature:F_TARGET.count"},
+            {"id": "S_CENTER_DISTANCE", "semantic": "center_distance", "value": 15, "between": ["feature:F_REFERENCE.centerline.z", "feature:F_TARGET.centerline.z"]},
+            {"id": "S_PAIR_KIND", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_PAIR.type"},
+            {"id": "S_PAIR_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_PAIR.axis"},
+            {"id": "S_PAIR_D", "semantic": "diameter", "value": 5, "target": "feature:F_PAIR.diameter"},
+            {"id": "S_PAIR_N", "semantic": "feature_count", "value": 2, "target": "feature:F_PAIR.count"},
+            {"id": "S_PAIR_CENTERS", "semantic": "pattern_dimension", "value": [[-12, 30], [12, 30]], "target": "feature:F_PAIR.explicit_centers"},
+            {"id": "S_PAIR_SPACING", "semantic": "center_spacing", "value": 24, "between": ["feature:F_PAIR.explicit_centers.0.0", "feature:F_PAIR.explicit_centers.1.0"]},
+            {"id": "S_PAIR_Y", "semantic": "edge_offset", "value": 10, "axis": "Y", "from": "max", "targets": ["feature:F_PAIR.explicit_centers.0.1", "feature:F_PAIR.explicit_centers.1.1"]},
+            {"id": "S_PAIR_SYMMETRY", "semantic": "symmetry", "feature": "F_PAIR", "axis": "X", "about": 0},
+        ],
+        "derived": [
+            {
+                "id": "D_TARGET_Z",
+                "target": "feature:F_TARGET.centerline.z",
+                "value": 35,
+                "expr": {"op": "add", "args": [{"target": "feature:F_REFERENCE.centerline.z"}, {"source": "S_CENTER_DISTANCE"}]},
+            }
+        ],
+        "patterns": [],
+        "symmetry": [],
+        "unresolved": [],
+        "dimension_conflicts": [],
+        "dimension_closure": {"status": "closed"},
+    }
+
+
 class DrawingGateATests(unittest.TestCase):
     def test_example_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(example()))
@@ -85,11 +160,104 @@ class DrawingGateATests(unittest.TestCase):
         data["dimension_conflicts"] = [{"item": "width"}]
         self.assertTrue(R.check_drawing_json(data))
 
+    def test_relation_fixture_passes_machine_gate_a(self) -> None:
+        self.assertEqual([], R.check_drawing_json(relation_fixture()))
+
+    def test_edge_offset_preserves_min_and_max_side(self) -> None:
+        self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="min")))
+        self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="max")))
+
+        mismatched = relation_fixture(target_edge="min")
+        target = next(item for item in mismatched["features"] if item["id"] == "F_TARGET")
+        target["centerline"]["y"] = 30
+        self.assertTrue(any("edge_offset does not match" in error for error in R.check_drawing_json(mismatched)))
+
+    def test_relation_source_cannot_use_direct_target_shape(self) -> None:
+        data = relation_fixture()
+        source(data, "S_TARGET_Y")["target"] = "feature:F_TARGET.centerline.y"
+        self.assertTrue(any("must not use direct target" in error for error in R.check_drawing_json(data)))
+
+    def test_center_distance_requires_center_endpoints(self) -> None:
+        data = relation_fixture()
+        source(data, "S_CENTER_DISTANCE")["between"][1] = "feature:F_TARGET.diameter"
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any("endpoints must be center coordinates" in error for error in errors))
+
+    def test_derived_target_expr_and_relation_source_are_checked(self) -> None:
+        data = relation_fixture()
+        derived = data["derived"][0]
+        derived["expr"]["args"][1] = {"const": 14}
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any("expr does not match" in error for error in errors))
+        self.assertTrue(any("without relation evidence" in error for error in errors))
+
+    def test_hole_axis_requires_transverse_center_coordinates(self) -> None:
+        valid = {
+            "X": {"y": 1, "z": 2},
+            "Y": {"x": 1, "z": 2},
+            "Z": {"x": 1, "y": 2},
+        }
+        missing = {
+            "X": {"y": 1},
+            "Y": {"x": 1},
+            "Z": {"x": 1},
+        }
+        for axis in ("X", "Y", "Z"):
+            errors: list[str] = []
+            R._drawing_check_feature_structure(errors, {"id": axis, "type": "threaded_hole", "axis": axis, "centerline": valid[axis]})
+            self.assertEqual([], errors, axis)
+            R._drawing_check_feature_structure(errors := [], {"id": axis, "type": "threaded_hole", "axis": axis, "centerline": missing[axis]})
+            self.assertTrue(errors, axis)
+
+    def test_explicit_centers_are_tracked_per_coordinate(self) -> None:
+        paths = R._drawing_hard_paths({"explicit_centers": [[-3, 4], [3, 4]]})
+        self.assertEqual(
+            {
+                "explicit_centers.0.0",
+                "explicit_centers.0.1",
+                "explicit_centers.1.0",
+                "explicit_centers.1.1",
+            },
+            paths,
+        )
+
+    def test_count_and_single_axis_spacing_do_not_create_other_axis(self) -> None:
+        data = relation_fixture()
+        data["source_ledger"] = [
+            item for item in data["source_ledger"]
+            if item["id"] not in {"S_PAIR_CENTERS", "S_PAIR_Y"}
+        ]
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any("explicit_centers.0.1" in error for error in errors))
+        self.assertTrue(any("explicit_centers.1.1" in error for error in errors))
+
     def test_reader_and_planner_rules_are_locked(self) -> None:
         reader = (ROOT / "skills" / "nx-agent" / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+        quick = (ROOT / "skills" / "nx-agent" / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
         planner = (ROOT / "skills" / "nx-agent" / "references" / "modeling-planner.md").read_text(encoding="utf-8")
-        for token in ("隐藏矩形", "slot.width", "center distance", "不得因为 overall bbox 对称", "不能再翻倍"):
+        for token in (
+            "view-local evidence",
+            "projection alignment",
+            "leader/witness endpoint",
+            "axis=X` 时必须给 Y/Z",
+            "center_distance / center_spacing",
+            "between:[targetA,targetB]",
+            "edge_offset",
+            "from:min|max",
+            "不得伪装成 direct `center_position`",
+            "explicit_centers.0.1",
+            "不得因为 overall bbox 对称",
+        ):
             self.assertIn(token, reader)
+        for token in (
+            "view-local evidence → feature association → dimension ownership → relation/derived → global coordinates",
+            "axial projection candidate",
+            "axis=X → Y/Z",
+            "between:[targetA,targetB]",
+            "from:min|max",
+            "不能创造另一轴坐标",
+        ):
+            self.assertIn(token, quick)
         for token in ("同轴复合孔 centerline 是不可变输入", "不得平移", "改正负号", "自动镜像"):
             self.assertIn(token, planner)
 

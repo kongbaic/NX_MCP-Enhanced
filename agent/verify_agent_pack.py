@@ -210,6 +210,24 @@ def main() -> None:
 
     runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
     for token in (
+        "def drawing_semantic_projection",
+        "def normalize_drawing_schema",
+        "normalizer semantic preservation check failed",
+        "normalized feature dimension -> dimensions",
+        "normalized feature center -> position.center",
+    ):
+        if token not in runner_source:
+            fail(f"Runner drawing normalizer regression: missing {token}")
+    for forbidden in (
+        "drawing_semantics_sha256",
+        "plan_geometry_sha256",
+        "gate_a_geometry_sha256",
+        "mode_b_task_id",
+        "design_guard",
+    ):
+        if forbidden in runner_source:
+            fail(f"forbidden heavy semantic mechanism present: {forbidden}")
+    for token in (
         '"nx_modeling_elapsed"',
         '"validation_ops_elapsed"',
         '"export_call_elapsed"',

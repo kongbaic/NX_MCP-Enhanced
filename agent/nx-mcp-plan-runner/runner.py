@@ -1387,6 +1387,195 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# Drawing schema normalization — representation only, no inferred geometry
+# --------------------------------------------------------------------------
+_DRAWING_NUMERIC_KEYS = {
+    "length", "length_x", "width", "width_y", "height", "height_z",
+    "thickness", "diameter", "hole_diameter", "counterbore_diameter",
+    "countersink_diameter", "radius", "depth", "hole_depth",
+    "counterbore_depth", "count", "count_x", "count_y", "spacing",
+    "spacing_x", "spacing_y", "pitch", "pcd", "start_angle_deg",
+    "top_z", "bottom_z", "start_z", "end_z", "start_offset",
+    "distance", "angle", "angle_deg", "x", "y", "z", "x1", "y1",
+    "z1", "x2", "y2", "z2", "value",
+}
+_DRAWING_OBJECT_LIST_KEYS = {
+    "features", "source_ledger", "derived", "relations", "patterns",
+    "unresolved", "dimension_conflicts",
+}
+
+
+def _drawing_canonical_number(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", text):
+        return value
+    number = float(text)
+    return int(number) if number.is_integer() else number
+
+
+def _drawing_named_dimensions(value: Any) -> tuple[Any, str | None]:
+    if not isinstance(value, list):
+        return value, None
+    if not value:
+        return {}, None
+    out: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return value, "dimensions list must contain named value objects"
+        name = item.get("name", item.get("key"))
+        if (
+            not isinstance(name, str)
+            or not name
+            or "value" not in item
+            or name in out
+            or set(item) - {"name", "key", "value"}
+        ):
+            return value, "dimensions list shape is ambiguous"
+        out[name] = item["value"]
+    return out, None
+
+
+def _drawing_object_list(value: Any, key: str) -> tuple[Any, str | None]:
+    if isinstance(value, list):
+        return copy.deepcopy(value), None
+    if not isinstance(value, dict):
+        return value, f"{key} must be a list or an object of objects"
+    out = []
+    for item_id, child in value.items():
+        if not isinstance(child, dict):
+            return value, f"{key} object shape is ambiguous"
+        item = copy.deepcopy(child)
+        if key in {"features", "source_ledger", "derived", "relations"}:
+            if "id" in item and str(item["id"]) != str(item_id):
+                return value, f"{key} key/id conflict for {item_id!r}"
+            item.setdefault("id", str(item_id))
+        out.append(item)
+    return out, None
+
+
+def _normalize_drawing_feature(feature: dict, changes: list[str]) -> tuple[dict, list[str]]:
+    item = copy.deepcopy(feature)
+    errors: list[str] = []
+    if "dimension" in item:
+        if "dimensions" in item and item["dimensions"] != item["dimension"]:
+            errors.append("feature has conflicting dimension and dimensions")
+        elif "dimensions" not in item:
+            item["dimensions"] = item["dimension"]
+            changes.append("normalized feature dimension -> dimensions")
+        item.pop("dimension", None)
+
+    if "dimensions" in item:
+        normalized, error = _drawing_named_dimensions(item["dimensions"])
+        if error:
+            errors.append(error)
+        elif normalized != item["dimensions"]:
+            item["dimensions"] = normalized
+            changes.append("normalized feature dimensions list -> object")
+
+    if "center" in item:
+        position = item.get("position")
+        if isinstance(position, dict) and "center" in position:
+            if position["center"] != item["center"]:
+                errors.append("feature has conflicting center and position.center")
+        else:
+            if position is not None and not isinstance(position, dict):
+                errors.append("feature position shape is ambiguous")
+            else:
+                position = dict(position or {})
+                position["center"] = item["center"]
+                item["position"] = position
+                changes.append("normalized feature center -> position.center")
+        item.pop("center", None)
+
+    members = item.get("members")
+    if isinstance(members, list):
+        normalized_members = []
+        for member in members:
+            if not isinstance(member, dict):
+                errors.append("feature members must contain objects")
+                normalized_members.append(member)
+                continue
+            normalized, member_errors = _normalize_drawing_feature(member, changes)
+            normalized_members.append(normalized)
+            errors.extend(member_errors)
+        item["members"] = normalized_members
+    return item, errors
+
+
+def _drawing_normalize_numbers(value: Any, key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {k: _drawing_normalize_numbers(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_drawing_normalize_numbers(item, key) for item in value]
+    return _drawing_canonical_number(value) if key in _DRAWING_NUMERIC_KEYS else value
+
+
+def drawing_semantic_projection(data: dict) -> dict:
+    """Canonical in-memory view proving representation-only equivalence."""
+    projection = copy.deepcopy(data)
+    for key in _DRAWING_OBJECT_LIST_KEYS:
+        if key in projection:
+            normalized, error = _drawing_object_list(projection[key], key)
+            if error is None:
+                projection[key] = normalized
+    if isinstance(projection.get("features"), list):
+        canonical_features = []
+        for feature in projection["features"]:
+            if isinstance(feature, dict):
+                normalized, _ = _normalize_drawing_feature(feature, [])
+                canonical_features.append(normalized)
+            else:
+                canonical_features.append(feature)
+        projection["features"] = canonical_features
+    return _drawing_normalize_numbers(projection)
+
+
+def normalize_drawing_schema(data: dict) -> tuple[dict, list[str], list[str]]:
+    """Normalize equivalent shapes only; never invent geometry or evidence."""
+    if not isinstance(data, dict):
+        return data, ["drawing JSON root must be an object"], []
+    before = drawing_semantic_projection(data)
+    out = copy.deepcopy(data)
+    errors: list[str] = []
+    changes: list[str] = []
+
+    for key in _DRAWING_OBJECT_LIST_KEYS:
+        if key not in out:
+            continue
+        normalized, error = _drawing_object_list(out[key], key)
+        if error:
+            errors.append(error)
+        elif normalized != out[key]:
+            out[key] = normalized
+            changes.append(f"normalized {key} object/list shape")
+
+    if isinstance(out.get("features"), list):
+        normalized_features = []
+        for feature in out["features"]:
+            if not isinstance(feature, dict):
+                errors.append("features must contain objects")
+                normalized_features.append(feature)
+                continue
+            normalized, feature_errors = _normalize_drawing_feature(feature, changes)
+            normalized_features.append(normalized)
+            errors.extend(feature_errors)
+        out["features"] = normalized_features
+
+    number_normalized = _drawing_normalize_numbers(out)
+    if number_normalized != out:
+        out = number_normalized
+        changes.append("normalized unambiguous numeric strings")
+
+    if errors:
+        return copy.deepcopy(data), errors, []
+    if drawing_semantic_projection(out) != before:
+        return copy.deepcopy(data), ["normalizer semantic preservation check failed"], []
+    return out, [], changes
+
+
+# --------------------------------------------------------------------------
 # Gate A drawing JSON validator — deterministic, part-agnostic, no NX
 # --------------------------------------------------------------------------
 _DRAWING_HARD_KEYS = {
@@ -2612,10 +2801,12 @@ def _load_drawing(path: str) -> dict:
 
 
 def _cmd_validate_drawing(args: argparse.Namespace) -> int:
-    drawing = _load_drawing(args.drawing)
-    errors = check_drawing_json(drawing)
+    original = _load_drawing(args.drawing)
+    drawing, normalization_errors, changes = normalize_drawing_schema(original)
+    errors = normalization_errors + check_drawing_json(drawing)
     result = {
         "drawing": args.drawing,
+        "normalization": {"changes": changes, "errors": normalization_errors},
         "source_ownership": {"status": "pass" if not errors else "fail"},
         "coordinate_sanity": {"status": "pass" if not errors else "fail"},
         "errors": errors,

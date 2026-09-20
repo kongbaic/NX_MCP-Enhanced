@@ -100,5 +100,58 @@ class DrawingGateATests(unittest.TestCase):
         self.assertEqual(before, data)
 
 
+class DrawingSchemaNormalizationTests(unittest.TestCase):
+    def test_dimension_to_dimensions(self) -> None:
+        data = {"features": [{"id": "F1", "dimension": {"width": 2}}]}
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual({"width": 2}, out["features"][0]["dimensions"])
+        self.assertNotIn("dimension", out["features"][0])
+        self.assertTrue(changes)
+
+    def test_center_to_position_center(self) -> None:
+        data = {"features": [{"id": "F1", "center": [1, 2]}]}
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual([1, 2], out["features"][0]["position"]["center"])
+        self.assertNotIn("center", out["features"][0])
+
+    def test_numeric_strings_are_normalized(self) -> None:
+        data = {"features": [{"id": "F1", "dimensions": {"width": "2.5"}, "count": "2"}]}
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual(2.5, out["features"][0]["dimensions"]["width"])
+        self.assertEqual(2, out["features"][0]["count"])
+
+    def test_semantic_projection_is_unchanged(self) -> None:
+        data = {"features": {"F1": {"dimension": {"width": "2"}, "center": [0, 1]}}}
+        before = R.drawing_semantic_projection(data)
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual(before, R.drawing_semantic_projection(out))
+
+    def test_ambiguous_shape_is_rejected(self) -> None:
+        data = {"features": [{"id": "F1", "dimensions": [{"value": 2}]}]}
+        out, errors, changes = R.normalize_drawing_schema(data)
+        self.assertTrue(errors)
+        self.assertEqual(data, out)
+        self.assertEqual([], changes)
+
+    def test_missing_geometry_and_evidence_are_not_added(self) -> None:
+        data = {"features": [{"id": "F1", "type": "slot"}]}
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual(data, out)
+        self.assertNotIn("source_ledger", out)
+        self.assertNotIn("dimensions", out["features"][0])
+
+    def test_unresolved_is_not_deleted(self) -> None:
+        unresolved = [{"item": "axis", "required_for_modeling": True}]
+        data = {"features": [], "unresolved": unresolved}
+        out, errors, _ = R.normalize_drawing_schema(data)
+        self.assertEqual([], errors)
+        self.assertEqual(unresolved, out["unresolved"])
+
+
 if __name__ == "__main__":
     unittest.main()

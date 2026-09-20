@@ -153,5 +153,98 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
         self.assertEqual(unresolved, out["unresolved"])
 
 
+def thread_drawing(**overrides) -> dict:
+    feature = {
+        "id": "T1",
+        "type": "threaded_hole",
+        "spec": "M6",
+        "axis": "Z",
+        "position": {"center": [2, 3]},
+        "depth": 12,
+        "axial_range": [0, 12],
+        "count": 1,
+        "required_for_modeling": True,
+    }
+    feature.update(overrides)
+    return {"features": [feature], "unresolved": []}
+
+
+def thread_plan(**arg_overrides) -> dict:
+    args = {"body_id": "body", "center": [2, 3, 0], "diameter": 5, "depth": 12, "start_offset": 0}
+    args.update(arg_overrides)
+    return {"operations": [{
+        "step": 1,
+        "tool": "nx_hole",
+        "tool_args": args,
+        "thread_surrogate_use": {"feature_id": "T1", "owner_feature_id": "T1"},
+    }]}
+
+
+class MetricThreadSurrogateTests(unittest.TestCase):
+    def test_m6_parameters(self) -> None:
+        value, error = R.resolve_metric_thread_parameters("M6")
+        self.assertIsNone(error)
+        self.assertEqual((6.0, 1.0, 5.0), (value["nominal_diameter"], value["pitch"], value["surrogate_diameter"]))
+
+    def test_m6x1_parameters(self) -> None:
+        value, error = R.resolve_metric_thread_parameters("M6x1")
+        self.assertIsNone(error)
+        self.assertEqual(5.0, value["surrogate_diameter"])
+        self.assertEqual("drawing_explicit", value["pitch_source"])
+
+    def test_m8_and_m8x1_25_parameters(self) -> None:
+        coarse, coarse_error = R.resolve_metric_thread_parameters("M8")
+        explicit, explicit_error = R.resolve_metric_thread_parameters("M8x1.25")
+        self.assertIsNone(coarse_error)
+        self.assertIsNone(explicit_error)
+        self.assertEqual(6.75, coarse["surrogate_diameter"])
+        self.assertEqual(6.75, explicit["surrogate_diameter"])
+
+    def test_unsupported_thread_fails_closed(self) -> None:
+        value, error = R.resolve_metric_thread_parameters("UNC 1/4")
+        self.assertIsNone(value)
+        self.assertIn("unsupported", error)
+
+    def test_missing_axis_center_depth_and_range_are_blocked(self) -> None:
+        for changes in ({"axis": None}, {"position": {}}, {"depth": None}, {"axial_range": None}):
+            _, errors = R.resolve_thread_drawing_geometries(thread_drawing(**changes))
+            self.assertTrue(errors, changes)
+
+    def test_valid_drawing_geometry_is_preserved(self) -> None:
+        geometries, errors = R.resolve_thread_drawing_geometries(thread_drawing())
+        self.assertEqual([], errors)
+        self.assertEqual("Z", geometries[0]["axis"])
+        self.assertEqual([[2.0, 3.0]], geometries[0]["transverse_centers"])
+        self.assertEqual([0.0, 12.0], geometries[0]["axial_range"])
+
+    def test_surrogate_cannot_change_axis(self) -> None:
+        drawing = thread_drawing(axis="X", position={"center": [3, 4]})
+        geometries, _ = R.resolve_thread_drawing_geometries(drawing)
+        recipes, _ = R.resolve_thread_surrogates(drawing)
+        self.assertTrue(any("changes axis" in item for item in R.thread_surrogate_plan_errors(thread_plan(), recipes, geometries)))
+
+    def test_surrogate_cannot_change_center(self) -> None:
+        drawing = thread_drawing()
+        geometries, _ = R.resolve_thread_drawing_geometries(drawing)
+        recipes, _ = R.resolve_thread_surrogates(drawing)
+        errors = R.thread_surrogate_plan_errors(thread_plan(center=[4, 3, 0]), recipes, geometries)
+        self.assertTrue(any("changes center" in item for item in errors))
+
+    def test_surrogate_cannot_change_depth_or_range(self) -> None:
+        drawing = thread_drawing()
+        geometries, _ = R.resolve_thread_drawing_geometries(drawing)
+        recipes, _ = R.resolve_thread_surrogates(drawing)
+        errors = R.thread_surrogate_plan_errors(thread_plan(depth=11), recipes, geometries)
+        self.assertTrue(any("changes depth" in item for item in errors))
+        self.assertTrue(any("changes axial range" in item for item in errors))
+
+    def test_surrogate_operation_count_must_match(self) -> None:
+        drawing = thread_drawing(count=2, explicit_centers=[[2, 3], [4, 3]])
+        geometries, _ = R.resolve_thread_drawing_geometries(drawing)
+        recipes, _ = R.resolve_thread_surrogates(drawing)
+        errors = R.thread_surrogate_plan_errors(thread_plan(), recipes, geometries)
+        self.assertTrue(any("operation count" in item for item in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

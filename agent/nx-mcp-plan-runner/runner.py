@@ -1383,6 +1383,12 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
             groups = [k for k in crit2 if not _is_info_key(k)] if kind2 == "groups" else []
             bound_selections[op["selection_binding"]] = {"kind": kind2, "groups": groups}
 
+    if plan.get("thread_surrogates") is not None or plan.get("thread_drawing_geometries") is not None:
+        errors.extend(thread_surrogate_plan_errors(
+            plan,
+            plan.get("thread_surrogates") or [],
+            plan.get("thread_drawing_geometries") or [],
+        ))
     return errors
 
 
@@ -1573,6 +1579,311 @@ def normalize_drawing_schema(data: dict) -> tuple[dict, list[str], list[str]]:
     if drawing_semantic_projection(out) != before:
         return copy.deepcopy(data), ["normalizer semantic preservation check failed"], []
     return out, [], changes
+
+
+# --------------------------------------------------------------------------
+# Lightweight metric thread surrogate semantics — no design lineage/hashes
+# --------------------------------------------------------------------------
+_THREAD_INHERITED_GEOMETRY_KEYS = (
+    "axis", "center", "position", "centerline", "explicit_centers", "count",
+    "side", "owner_feature_id", "axis_range", "axial_range", "range",
+    "through_range", "start_offset", "end_offset",
+)
+
+# Project-supported coarse-pitch metadata subset. Explicit pitch in the drawing
+# always wins; unsupported bare designations fail closed.
+_PROJECT_METRIC_COARSE_PITCH_MM = {
+    3.0: 0.50,
+    4.0: 0.70,
+    5.0: 0.80,
+    6.0: 1.00,
+    8.0: 1.25,
+    10.0: 1.50,
+    12.0: 1.75,
+    16.0: 2.00,
+    20.0: 2.50,
+}
+
+
+def _thread_feature_records(drawing: dict) -> list[dict]:
+    records: list[dict] = []
+
+    def visit(value: Any, path: str, inherited: dict, owner_id: str | None) -> None:
+        if isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}.{index}", inherited, owner_id)
+            return
+        if not isinstance(value, dict):
+            return
+        current = copy.deepcopy(inherited)
+        for key in _THREAD_INHERITED_GEOMETRY_KEYS:
+            if key in value:
+                current[key] = copy.deepcopy(value[key])
+        current_owner = str(value.get("id")) if value.get("id") else owner_id
+        dimensions = value.get("dimensions")
+        dimensions = dimensions if isinstance(dimensions, dict) else {}
+        type_text = str(value.get("type") or value.get("kind") or "").lower()
+        has_spec = any(key in value or key in dimensions for key in ("thread_spec", "thread_size", "spec"))
+        if has_spec or any(token in type_text for token in ("thread", "tapped", "螺纹")):
+            feature = copy.deepcopy(value)
+            for key, inherited_value in current.items():
+                feature.setdefault(key, copy.deepcopy(inherited_value))
+            records.append({
+                "feature": feature,
+                "path": path,
+                "owner_feature_id": owner_id or current_owner,
+            })
+        members = value.get("members")
+        if isinstance(members, list):
+            visit(members, f"{path}.members", current, current_owner)
+
+    visit(drawing.get("features") or [], "features", {}, None)
+    return records
+
+
+def _thread_feature_value(feature: dict, *keys: str) -> Any:
+    dimensions = feature.get("dimensions")
+    dimensions = dimensions if isinstance(dimensions, dict) else {}
+    for key in keys:
+        if key in feature:
+            return feature[key]
+        if key in dimensions:
+            return dimensions[key]
+    return None
+
+
+def _axis_transverse_center(axis: str, center: Any) -> list[float] | None:
+    axis = axis.upper()
+    if axis not in {"X", "Y", "Z"}:
+        return None
+    if isinstance(center, (list, tuple)):
+        values = [_num(value) for value in center]
+        if len(values) == 2 and all(value is not None for value in values):
+            return [float(values[0]), float(values[1])]
+        if len(values) == 3 and all(value is not None for value in values):
+            indexes = {"X": (1, 2), "Y": (0, 2), "Z": (0, 1)}[axis]
+            return [float(values[indexes[0]]), float(values[indexes[1]])]
+    if isinstance(center, dict):
+        keys = {"X": ("y", "z"), "Y": ("x", "z"), "Z": ("x", "y")}[axis]
+        values = [_num(center.get(key)) for key in keys]
+        if all(value is not None for value in values):
+            return [float(values[0]), float(values[1])]
+    return None
+
+
+def _thread_spec(feature: dict) -> str | None:
+    value = _thread_feature_value(feature, "thread_spec", "thread_size", "spec")
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
+def _metric_number_text(value: float) -> str:
+    return f"{value:.12g}"
+
+
+def resolve_metric_thread_parameters(spec: str | None) -> tuple[dict | None, str | None]:
+    """Resolve metric designation to nominal, pitch and nominal-minus-pitch drill."""
+    if not isinstance(spec, str):
+        return None, "thread designation is missing"
+    compact = re.sub(r"\s+", "", spec.upper().replace("×", "X"))
+    match = re.fullmatch(r"M(\d+(?:\.\d+)?)(?:X(\d+(?:\.\d+)?))?", compact)
+    if not match:
+        return None, f"unsupported metric thread designation {spec!r}"
+    nominal = float(match.group(1))
+    if nominal <= 0:
+        return None, f"invalid nominal diameter in thread designation {spec!r}"
+    if match.group(2) is not None:
+        pitch = float(match.group(2))
+        pitch_source = "drawing_explicit"
+    else:
+        pitch = _PROJECT_METRIC_COARSE_PITCH_MM.get(nominal)
+        pitch_source = "project_coarse_metadata"
+        if pitch is None:
+            return None, f"no supported coarse-pitch metadata for M{nominal:g}"
+    if pitch <= 0 or pitch >= nominal:
+        return None, f"invalid pitch in thread designation {spec!r}"
+    canonical = f"M{_metric_number_text(nominal)}"
+    if match.group(2) is not None:
+        canonical += f"x{_metric_number_text(pitch)}"
+    return {
+        "thread_spec": canonical,
+        "nominal_diameter": nominal,
+        "pitch": pitch,
+        "pitch_source": pitch_source,
+        "representation": "tap_drill",
+        "surrogate_method": "nominal_minus_pitch",
+        "surrogate_diameter": round(nominal - pitch, 12),
+        "approximation": True,
+        "reason": "real thread form is unavailable in the current toolset",
+    }, None
+
+
+def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
+    """Read placement/extent exactly as Gate A provided; never fill missing geometry."""
+    geometries: list[dict] = []
+    errors: list[str] = []
+    for index, record in enumerate(_thread_feature_records(drawing)):
+        feature = record["feature"]
+        if feature.get("required_for_modeling") is False:
+            continue
+        fid = str(feature.get("id") or f"thread[{index}]")
+        axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        if axis not in {"X", "Y", "Z"}:
+            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid axis")
+            continue
+        centers_value = _thread_feature_value(feature, "explicit_centers")
+        if not isinstance(centers_value, list) or not centers_value:
+            position = feature.get("position")
+            center = position.get("center") if isinstance(position, dict) else None
+            center = center if center is not None else _thread_feature_value(feature, "center", "centerline")
+            centers_value = [center] if center is not None else []
+        centers = [_axis_transverse_center(axis, center) for center in centers_value]
+        if not centers or any(center is None for center in centers):
+            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid center")
+            continue
+        depth = _num(_thread_feature_value(feature, "depth", "hole_depth"))
+        if depth is None or depth <= 0:
+            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid depth")
+            continue
+        axial_range = _thread_feature_value(feature, "axis_range", "axial_range", "through_range", "range")
+        if not (isinstance(axial_range, (list, tuple)) and len(axial_range) == 2 and all(_num(value) is not None for value in axial_range)):
+            errors.append(f"thread_geometry_violation: feature {fid!r} has no explicit axial range")
+            continue
+        axial_range = [float(_num(axial_range[0])), float(_num(axial_range[1]))]
+        if not _drawing_equal(abs(axial_range[1] - axial_range[0]), depth):
+            errors.append(f"thread_geometry_violation: feature {fid!r} depth and axial range disagree")
+            continue
+        count_value = _num(_thread_feature_value(feature, "count"))
+        if count_value is None or count_value <= 0 or not float(count_value).is_integer():
+            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
+            continue
+        count = int(count_value)
+        if len(centers) != count:
+            errors.append(f"thread_geometry_violation: feature {fid!r} center count does not equal count")
+            continue
+        geometry = {
+            "feature_id": fid,
+            "owner_feature_id": record.get("owner_feature_id") or fid,
+            "axis": axis,
+            "transverse_centers": centers,
+            "depth": float(depth),
+            "axial_range": axial_range,
+            "count": count,
+        }
+        if "side" in feature:
+            geometry["side"] = copy.deepcopy(feature["side"])
+        geometries.append(geometry)
+    return geometries, errors
+
+
+def resolve_thread_surrogates(drawing: dict) -> tuple[list[dict], list[str]]:
+    resolved: list[dict] = []
+    errors: list[str] = []
+    for index, record in enumerate(_thread_feature_records(drawing)):
+        feature = record["feature"]
+        if feature.get("required_for_modeling") is False:
+            continue
+        fid = str(feature.get("id") or f"thread[{index}]")
+        parameters, error = resolve_metric_thread_parameters(_thread_spec(feature))
+        if error or parameters is None:
+            errors.append(f"capability_violation: threaded feature {fid!r}: {error}")
+            continue
+        resolved.append({"feature_id": fid, **parameters})
+    return resolved, errors
+
+
+def _thread_operation_geometry(plan: dict, op: dict, expected_diameter: float) -> tuple[dict | None, list[str]]:
+    step = op.get("step")
+    tool = op.get("tool")
+    args = op.get("tool_args") or {}
+    if tool == "nx_hole":
+        if any(key not in args for key in ("center", "diameter", "depth", "start_offset")):
+            return None, [f"step {step}: thread hole geometry must be explicit"]
+        center = _axis_transverse_center("Z", args.get("center"))
+        depth, start, diameter = _num(args.get("depth")), _num(args.get("start_offset")), _num(args.get("diameter"))
+        if center is None or depth is None or depth <= 0 or start is None:
+            return None, [f"step {step}: invalid thread hole geometry"]
+        errors = [] if _drawing_equal(diameter, expected_diameter) else [f"step {step}: thread surrogate diameter differs from resolver"]
+        return {"axis": "Z", "transverse_center": center, "depth": float(depth), "axial_range": [float(start), float(start + depth)]}, errors
+    if tool != "nx_extrude" or args.get("operation") != "subtract":
+        return None, [f"step {step}: thread surrogate must use nx_hole or subtract nx_extrude"]
+    if any(key not in args for key in ("sketch_id", "distance", "start_offset", "reverse")):
+        return None, [f"step {step}: thread subtract geometry must be explicit"]
+    operations = plan.get("operations") or []
+    op_index = operations.index(op)
+    sketch_id = args.get("sketch_id")
+    circles = [candidate for candidate in operations[:op_index] if candidate.get("tool") == "nx_sketch_circle" and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id]
+    if len(circles) != 1:
+        return None, [f"step {step}: thread subtract needs exactly one sketch circle"]
+    circle = circles[0]
+    circle_index = operations.index(circle)
+    creates = [candidate for candidate in operations[:circle_index] if candidate.get("tool") == "nx_create_sketch"]
+    if not creates:
+        return None, [f"step {step}: thread sketch has no create operation"]
+    axis = {"XY": "Z", "XZ": "Y", "YZ": "X"}.get(str((creates[-1].get("tool_args") or {}).get("plane") or "").upper())
+    center = _axis_transverse_center("Z", (circle.get("tool_args") or {}).get("center")) if axis else None
+    depth, start = _num(args.get("distance")), _num(args.get("start_offset"))
+    diameter = _num((circle.get("tool_args") or {}).get("diameter"))
+    if axis is None or center is None or depth is None or depth <= 0 or start is None or not isinstance(args.get("reverse"), bool):
+        return None, [f"step {step}: invalid thread subtract geometry"]
+    direction = -1.0 if args["reverse"] else 1.0
+    errors = [] if _drawing_equal(diameter, expected_diameter) else [f"step {step}: thread surrogate diameter differs from resolver"]
+    return {"axis": axis, "transverse_center": center, "depth": float(depth), "axial_range": [float(start), float(start + direction * depth)]}, errors
+
+
+def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: list[dict]) -> list[str]:
+    """Gate B structural equality for axis, center, depth, range, count and owner."""
+    errors: list[str] = []
+    recipe_by_id = {item.get("feature_id"): item for item in recipes if isinstance(item, dict)}
+    geometry_by_id = {item.get("feature_id"): item for item in geometries if isinstance(item, dict)}
+    marked = [op for op in plan.get("operations") or [] if isinstance(op.get("thread_surrogate_use"), dict)]
+    for op in marked:
+        fid = op["thread_surrogate_use"].get("feature_id")
+        if fid not in recipe_by_id:
+            errors.append(f"step {op.get('step')}: thread surrogate feature is absent from drawing")
+    for fid, recipe in recipe_by_id.items():
+        expected = geometry_by_id.get(fid)
+        if expected is None:
+            errors.append(f"thread feature {fid!r} has no validated drawing geometry")
+            continue
+        matches = [op for op in marked if op["thread_surrogate_use"].get("feature_id") == fid]
+        if len(matches) != expected.get("count"):
+            errors.append(f"thread surrogate for feature {fid!r} operation count differs from drawing")
+        actual_geometries = []
+        for op in matches:
+            use = op["thread_surrogate_use"]
+            if use.get("owner_feature_id") != expected.get("owner_feature_id"):
+                errors.append(f"thread surrogate for feature {fid!r} changes feature ownership")
+            if use.get("side") != expected.get("side"):
+                errors.append(f"thread surrogate for feature {fid!r} changes side semantics")
+            actual, op_errors = _thread_operation_geometry(plan, op, float(recipe["surrogate_diameter"]))
+            errors.extend(op_errors)
+            if actual is not None:
+                actual_geometries.append(actual)
+        expected_centers = sorted(expected.get("transverse_centers") or [])
+        actual_centers = sorted(item["transverse_center"] for item in actual_geometries)
+        if actual_centers != expected_centers:
+            errors.append(f"thread surrogate for feature {fid!r} changes center")
+        for actual in actual_geometries:
+            if actual["axis"] != expected.get("axis"):
+                errors.append(f"thread surrogate for feature {fid!r} changes axis")
+            if not _drawing_equal(actual["depth"], expected.get("depth")):
+                errors.append(f"thread surrogate for feature {fid!r} changes depth")
+            if len(expected.get("axial_range") or []) != 2 or any(not _drawing_equal(a, b) for a, b in zip(actual["axial_range"], expected["axial_range"])):
+                errors.append(f"thread surrogate for feature {fid!r} changes axial range")
+    return errors
+
+
+def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:
+    original = _load_drawing(path)
+    drawing, normalization_errors, _ = normalize_drawing_schema(original)
+    errors = list(normalization_errors)
+    if not errors:
+        errors.extend(check_drawing_json(drawing))
+    geometries, geometry_errors = resolve_thread_drawing_geometries(drawing)
+    recipes, recipe_errors = resolve_thread_surrogates(drawing)
+    errors.extend(geometry_errors)
+    errors.extend(recipe_errors)
+    return drawing, recipes, geometries, errors
 
 
 # --------------------------------------------------------------------------
@@ -2933,7 +3244,13 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_check(args: argparse.Namespace) -> int:
     plan = _load_plan(args.plan)
     errs = check_plan(plan, executable=not args.frozen)
+    if args.drawing:
+        _, recipes, geometries, drawing_errors = _drawing_thread_context(args.drawing)
+        errs.extend(drawing_errors)
+        if not drawing_errors:
+            errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
     print(json.dumps({"plan": args.plan, "frozen": bool(args.frozen),
+                      "drawing": args.drawing,
                       "operations": len(plan.get("operations") or []),
                       "errors": errs, "ok": not errs}, ensure_ascii=False, indent=2))
     return 0 if not errs else 1
@@ -2942,6 +3259,11 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_build(args: argparse.Namespace) -> int:
     plan = _load_plan(args.plan)
     frozen_errs = check_plan(plan, executable=False)
+    recipes: list[dict] = []
+    geometries: list[dict] = []
+    if args.drawing:
+        _, recipes, geometries, drawing_errors = _drawing_thread_context(args.drawing)
+        frozen_errs.extend(drawing_errors)
     if frozen_errs:
         print(json.dumps({
             "built": None,
@@ -2952,6 +3274,9 @@ def _cmd_build(args: argparse.Namespace) -> int:
         return 1
 
     exe = build_executable_plan(plan)
+    if args.drawing:
+        exe["thread_surrogates"] = recipes
+        exe["thread_drawing_geometries"] = geometries
     errs = check_plan(exe, executable=True)
     if not errs:
         with open(args.out, "w", encoding="utf-8") as f:
@@ -2988,11 +3313,15 @@ def main(argv: list[str] | None = None) -> int:
     pc = sub.add_parser("check", help="static plan check (no NX)")
     pc.add_argument("plan")
     pc.add_argument("--frozen", action="store_true")
+    pc.add_argument("--drawing", default=None,
+                    help="optional Mode B drawing for thread geometry Gate B checks")
     pc.set_defaults(func=_cmd_check)
 
     pb = sub.add_parser("build", help="convert a frozen plan to the executable format (no NX)")
     pb.add_argument("plan")
     pb.add_argument("out")
+    pb.add_argument("--drawing", default=None,
+                    help="optional Mode B drawing for thread surrogate validation")
     pb.set_defaults(func=_cmd_build)
 
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")

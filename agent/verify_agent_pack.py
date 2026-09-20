@@ -218,15 +218,17 @@ def main() -> None:
     ):
         if token not in runner_source:
             fail(f"Runner drawing normalizer regression: missing {token}")
-    for forbidden in (
-        "drawing_semantics_sha256",
-        "plan_geometry_sha256",
-        "gate_a_geometry_sha256",
-        "mode_b_task_id",
-        "design_guard",
+    for token in (
+        "def resolve_metric_thread_parameters",
+        "nominal_minus_pitch",
+        "def resolve_thread_drawing_geometries",
+        "def thread_surrogate_plan_errors",
+        "changes axial range",
     ):
-        if forbidden in runner_source:
-            fail(f"forbidden heavy semantic mechanism present: {forbidden}")
+        if token not in runner_source:
+            fail(f"Runner metric-thread regression: missing {token}")
+    if "_THREAD_SURROGATE_RECIPES" in runner_source:
+        fail("fixed per-designation thread surrogate recipes are forbidden")
     for token in (
         '"nx_modeling_elapsed"',
         '"validation_ops_elapsed"',

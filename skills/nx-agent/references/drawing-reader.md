@@ -176,6 +176,20 @@ DETAIL / SECTION 是局部几何高优先级证据。出现矛盾必须进入 `u
 }
 ```
 
+### 11.2 First-pass provenance coherence
+
+Reader 落盘前必须逐个 HARD field 做 coherence 检查；即使 interpretation 可能读错，也不能输出内部矛盾的 geometry/provenance：
+
+- **UNKNOWN**：如果 blocking `unresolved.field` 指向某个 geometry field，该字段必须保持缺失；禁止填猜测值、默认值、placeholder `0` 或先写 concrete value 再声明 unresolved。缺失结构导致 Gate A BLOCK 是正确行为。
+- **KNOWN**：只有 direct、derived 或 relation 已唯一闭合字段时才写 concrete geometry，并且不得再为同一字段保留 blocking unresolved。
+- 每个最终 geometry target 必须恰好只有一种 value writer：direct，或 derived/relation。禁止同一 target 同时出现 direct source 与 derived/relation writer。
+- direct source 写出前必须用实际 target path 反查：`source.value == target actual value`。不相等表示 ownership/target 尚未完成；应重新绑定，仍不能确定则删除该 source 与 concrete field 并进入 unresolved，禁止强行保留 mismatch。
+- 每个 required feature 的 `type`、`count` 以及实际存在的 `through / side / axis / spec / diameter / depth / centerline / explicit_centers` 等 HARD leaf，都必须由 direct、derived 或 relation 覆盖。`type` 固定使用 `feature_kind` source，`count` 固定使用 `feature_count` source。
+- 连续截面沿用唯一稳定表达 `profile.segments`。每个 segment 的 `type` 与坐标 leaf 都必须 provenance-complete；直接标注的 endpoint 才能用 `profile_dimension`，由连续、对齐、overall、thickness 或 edge relation 得到的 endpoint 必须使用 derived/relation，禁止批量伪造 direct dimensions。
+- `center_spacing` 是 endpoint relation，不是脱离 endpoint 的自由数值。它不得写 direct `target`，`between` 必须列出两个真实 center coordinate paths。推导其中一个 endpoint 时，`expr` 必须同时引用 opposite endpoint 的 `{"target":"..."}` 与 spacing 的 `{"source":"S..."}`；opposite endpoint 本身必须已有独立 provenance。若闭合还依赖 symmetry/alignment，必须同时保留对应 relation。禁止仅用 `±0.5 * spacing` 或裸 `const` 凭空生成两个中心。
+
+落盘前的二选一状态必须成立：`KNOWN = concrete geometry + exactly one writer + no same-field blocking unresolved`；`UNKNOWN = blocking unresolved + no concrete placeholder`。
+
 `source_ledger` 使用机器可判定的固定语义：
 
 - direct：`overall_dimension / profile_dimension / feature_dimension / feature_count / diameter / radius / slot_width / depth / thickness / axis / center_position / position_dimension / thread_spec / feature_kind / side / through / pattern_dimension`；

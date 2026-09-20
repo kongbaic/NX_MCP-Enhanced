@@ -29,6 +29,39 @@ def canonical_reader_fixture() -> dict:
     return json.loads(CANONICAL_READER_FIXTURE.read_text(encoding="utf-8"))
 
 
+def unresolved_center_fixture() -> dict:
+    data = canonical_reader_fixture()
+    thread = next(item for item in data["features"] if item["id"] == "F_THREAD")
+    del thread["centerline"]["x"]
+    data["source_ledger"] = [
+        item for item in data["source_ledger"] if item["id"] != "S_THREAD_X"
+    ]
+    data["unresolved"].append({
+        "id": "U_THREAD_X",
+        "feature_id": "F_THREAD",
+        "field": "centerline.x",
+        "required_for_modeling": True,
+    })
+    data["dimension_closure"]["status"] = "incomplete"
+    return data
+
+
+def writer_kinds(data: dict, target: str) -> list[str]:
+    writers: list[str] = []
+    for item in data["source_ledger"]:
+        if item.get("semantic") in R._DRAWING_RELATION_SEMANTICS:
+            if target in (item.get("targets") or []):
+                writers.append("relation")
+            if item.get("tangent") == target:
+                writers.append("relation")
+        elif item.get("target") == target:
+            writers.append("direct")
+    writers.extend(
+        "derived" for item in data["derived"] if item.get("target") == target
+    )
+    return writers
+
+
 def source(data: dict, source_id: str) -> dict:
     return next(item for item in data["source_ledger"] if item["id"] == source_id)
 
@@ -132,6 +165,116 @@ class DrawingGateATests(unittest.TestCase):
             "feature:F_COUNTERBORE.counterbore_diameter",
             "feature:F_COUNTERBORE.counterbore_depth",
         }.issubset(targets))
+
+    def test_unresolved_center_has_no_concrete_placeholder_or_writer(self) -> None:
+        data = unresolved_center_fixture()
+        thread = next(item for item in data["features"] if item["id"] == "F_THREAD")
+        target = "feature:F_THREAD.centerline.x"
+        self.assertNotIn("x", thread["centerline"])
+        self.assertEqual([], writer_kinds(data, target))
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any("requires center coordinate x" in error for error in errors))
+        self.assertTrue(any("blocking_unresolved=1" in error for error in errors))
+
+    def test_known_centers_have_exactly_one_writer_and_no_unresolved(self) -> None:
+        data = canonical_reader_fixture()
+        self.assertEqual(
+            ["direct"], writer_kinds(data, "feature:F_REFERENCE.centerline.x")
+        )
+        self.assertEqual(
+            ["derived"], writer_kinds(data, "feature:F_DERIVED.centerline.x")
+        )
+        self.assertEqual([], data["unresolved"])
+
+    def test_reader_fixtures_do_not_mix_concrete_and_same_field_unresolved(self) -> None:
+        unknown = unresolved_center_fixture()
+        with self.assertRaises(KeyError):
+            R._drawing_path_get(unknown, "feature:F_THREAD.centerline.x")
+        self.assertTrue(any(
+            item.get("feature_id") == "F_THREAD"
+            and item.get("field") == "centerline.x"
+            for item in unknown["unresolved"]
+        ))
+
+        known = canonical_reader_fixture()
+        self.assertEqual(0, R._drawing_path_get(known, "feature:F_THREAD.centerline.x"))
+        self.assertFalse(any(
+            item.get("feature_id") == "F_THREAD"
+            and item.get("field") == "centerline.x"
+            for item in known["unresolved"]
+        ))
+
+    def test_direct_source_value_must_equal_actual_target(self) -> None:
+        data = canonical_reader_fixture()
+        source(data, "S_REFERENCE_X")["value"] = -19
+        errors = R.check_drawing_json(data)
+        self.assertTrue(any(
+            "S_REFERENCE_X" in error and "value does not match" in error
+            for error in errors
+        ))
+
+    def test_required_feature_type_and_count_have_provenance(self) -> None:
+        data = canonical_reader_fixture()
+        direct_targets = {
+            item.get("target")
+            for item in data["source_ledger"]
+            if item.get("semantic") not in R._DRAWING_RELATION_SEMANTICS
+        }
+        for feature in data["features"]:
+            with self.subTest(feature=feature["id"]):
+                self.assertIn(f"feature:{feature['id']}.type", direct_targets)
+                self.assertIn(f"feature:{feature['id']}.count", direct_targets)
+
+    def test_canonical_profile_is_provenance_complete(self) -> None:
+        data = canonical_reader_fixture()
+        covered = {
+            item["target"]
+            for item in data["source_ledger"]
+            if isinstance(item.get("target"), str)
+        }
+        covered.update(
+            target
+            for item in data["source_ledger"]
+            for target in item.get("targets") or []
+        )
+        covered.update(item["target"] for item in data["derived"])
+        for path in R._drawing_hard_paths(data["profile"]):
+            with self.subTest(path=path):
+                self.assertTrue(R._drawing_target_covered(f"profile.{path}", covered))
+
+    def test_profile_join_endpoints_are_derived_not_direct(self) -> None:
+        data = canonical_reader_fixture()
+        direct_targets = {
+            item.get("target")
+            for item in data["source_ledger"]
+            if item.get("semantic") not in R._DRAWING_RELATION_SEMANTICS
+        }
+        for target, relation in (
+            ("profile.segments.1.y1", "S_PROFILE_JOIN_Y"),
+            ("profile.segments.1.z1", "S_PROFILE_JOIN_Z"),
+        ):
+            with self.subTest(target=target):
+                self.assertNotIn(target, direct_targets)
+                derived = next(item for item in data["derived"] if item["target"] == target)
+                self.assertIn(relation, derived["relation_refs"])
+
+    def test_center_spacing_derived_references_opposite_endpoint(self) -> None:
+        data = canonical_reader_fixture()
+        relation = source(data, "S_PAIR_SPACING")
+        derived = next(item for item in data["derived"] if item["id"] == "D_PAIR_X1")
+        self.assertNotIn("target", relation)
+        self.assertEqual(
+            [
+                "feature:F_SPACED_PAIR.explicit_centers.0.0",
+                "feature:F_SPACED_PAIR.explicit_centers.1.0",
+            ],
+            relation["between"],
+        )
+        self.assertEqual(
+            {"target": relation["between"][0]}, derived["expr"]["args"][0]
+        )
+        self.assertEqual({"source": "S_PAIR_SPACING"}, derived["expr"]["args"][1])
+        self.assertEqual([], R.check_drawing_json(data))
 
     def test_canonical_reader_source_targets_resolve_and_match_semantics(self) -> None:
         data = canonical_reader_fixture()

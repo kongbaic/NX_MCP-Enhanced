@@ -475,6 +475,19 @@ def main() -> None:
         if token not in drawing_reader:
             fail(f"Reader canonical Gate A contract regression: missing {token}")
     for token in (
+        "First-pass provenance coherence",
+        "UNKNOWN",
+        "placeholder `0`",
+        "exactly one writer",
+        "source.value == target actual value",
+        "profile.segments",
+        "provenance-complete",
+        "opposite endpoint",
+        "±0.5 * spacing",
+    ):
+        if token not in drawing_reader:
+            fail(f"Reader first-pass coherence contract regression: missing {token}")
+    for token in (
         "overall_dimensions.length_x / width_y / height_z",
         "required feature 固定写 `type` 与 `count`",
         "不用 `center_x/y/z`",
@@ -485,6 +498,15 @@ def main() -> None:
     ):
         if token not in drawing_rules:
             fail(f"quick Reader canonical contract regression: missing {token}")
+    for token in (
+        "blocking unresolved 指向的 HARD field 必须缺失",
+        "只能有一种 value writer",
+        "value` 必须等于 target 当前实际值",
+        "profile.segments",
+        "opposite endpoint target 与 spacing source",
+    ):
+        if token not in drawing_rules:
+            fail(f"quick Reader coherence contract regression: missing {token}")
 
     canonical_fixture_path = RUNNER / "tests" / "fixtures" / "canonical-reader-output.json"
     canonical_fixture = json.loads(canonical_fixture_path.read_text(encoding="utf-8"))
@@ -518,6 +540,23 @@ def main() -> None:
     bad_fixture_keys = forbidden_reader_keys & collect_keys(canonical_fixture)
     if bad_fixture_keys:
         fail(f"canonical Reader fixture uses forbidden aliases: {sorted(bad_fixture_keys)}")
+    if not (canonical_fixture.get("profile") or {}).get("segments"):
+        fail("canonical Reader fixture lacks a segments-based profile")
+    direct_targets = {
+        item.get("target")
+        for item in canonical_fixture.get("source_ledger") or []
+        if item.get("semantic") not in {
+            "center_distance", "center_spacing", "edge_offset", "symmetry",
+            "upper_tangent", "lower_tangent", "coincident", "alignment",
+        }
+    }
+    for feature in canonical_fixture.get("features") or []:
+        feature_id = feature.get("id")
+        if (
+            f"feature:{feature_id}.type" not in direct_targets
+            or f"feature:{feature_id}.count" not in direct_targets
+        ):
+            fail("canonical Reader fixture feature lacks type/count provenance")
 
     drawing_tests = (RUNNER / "tests" / "test_drawing_validation.py").read_text(encoding="utf-8")
     for token in (
@@ -528,6 +567,15 @@ def main() -> None:
         "test_relation_source_cannot_use_direct_target_shape",
         "test_dimension_conflicts_is_a_required_root",
         "test_normalizer_does_not_rename_noncanonical_semantic_fields",
+        "test_unresolved_center_has_no_concrete_placeholder_or_writer",
+        "test_known_centers_have_exactly_one_writer_and_no_unresolved",
+        "test_reader_fixtures_do_not_mix_concrete_and_same_field_unresolved",
+        "test_direct_source_value_must_equal_actual_target",
+        "test_center_distance_derived_and_fake_direct_writer_conflict",
+        "test_required_feature_type_and_count_have_provenance",
+        "test_canonical_profile_is_provenance_complete",
+        "test_profile_join_endpoints_are_derived_not_direct",
+        "test_center_spacing_derived_references_opposite_endpoint",
     ):
         if token not in drawing_tests:
             fail(f"canonical Reader regression test missing: {token}")

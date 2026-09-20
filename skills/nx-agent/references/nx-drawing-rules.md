@@ -116,6 +116,14 @@
 - target 必须是实际 JSON path；list 只接受数字索引。relation 不写 direct `target`，中心距 `between` 的两端必须是真实 center coordinate path。
 - 第一版必须显式输出 `unresolved / dimension_conflicts / dimension_closure`。normalizer 只做无歧义 schema shape 转换，不承担上述语义字段重命名。
 
+### 7.4 First-pass provenance coherence
+
+- blocking unresolved 指向的 HARD field 必须缺失，不得写猜测值、默认值或 placeholder `0`；已有唯一 provenance 的 concrete field 则不得同时 unresolved。
+- 每个 geometry target 只能有一种 value writer：direct 或 derived/relation。direct source 的 `value` 必须等于 target 当前实际值。
+- required feature 的 `type`、`count` 和所有已存在 HARD geometry 必须 provenance-complete；`type → feature_kind`，`count → feature_count`。
+- canonical profile 固定使用 `profile.segments`；每个 HARD leaf 都要 evidence。由连续/对齐关系确定的 endpoint 使用 derived/relation，不伪装成 direct `profile_dimension`。
+- `center_spacing.between` 保留两个真实 endpoint。derived `expr` 必须引用 opposite endpoint target 与 spacing source；若还依赖 symmetry/alignment，关系也必须保留。禁止只计算 `±0.5 * spacing` 生成两端。
+
 ## 8. 尺寸闭合检查
 
 - 仅基于图上已标注数值进行一致性校验，例如：

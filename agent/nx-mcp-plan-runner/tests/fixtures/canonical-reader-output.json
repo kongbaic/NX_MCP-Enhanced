@@ -11,6 +11,12 @@
     "z_positive": "up",
     "unit": "mm"
   },
+  "profile": {
+    "segments": [
+      {"type": "line", "y1": -30, "z1": 0, "y2": 30, "z2": 0},
+      {"type": "line", "y1": 30, "z1": 0, "y2": 30, "z2": 20}
+    ]
+  },
   "features": [
     {
       "id": "F_REFERENCE",
@@ -62,6 +68,16 @@
       "through": true,
       "count": 1,
       "required_for_modeling": true
+    },
+    {
+      "id": "F_SPACED_PAIR",
+      "type": "through_hole",
+      "axis": "Z",
+      "explicit_centers": [[-15, 15], [15, 15]],
+      "hole_diameter": 5,
+      "through": true,
+      "count": 2,
+      "required_for_modeling": true
     }
   ],
   "patterns": [],
@@ -70,6 +86,17 @@
     {"id": "S_OVERALL_X", "semantic": "overall_dimension", "value": 120, "target": "overall_dimensions.length_x"},
     {"id": "S_OVERALL_Y", "semantic": "overall_dimension", "value": 80, "target": "overall_dimensions.width_y"},
     {"id": "S_OVERALL_Z", "semantic": "overall_dimension", "value": 50, "target": "overall_dimensions.height_z"},
+
+    {"id": "S_PROFILE_0_TYPE", "semantic": "profile_dimension", "value": "line", "target": "profile.segments.0.type"},
+    {"id": "S_PROFILE_0_Y1", "semantic": "profile_dimension", "value": -30, "target": "profile.segments.0.y1"},
+    {"id": "S_PROFILE_0_Z1", "semantic": "profile_dimension", "value": 0, "target": "profile.segments.0.z1"},
+    {"id": "S_PROFILE_0_Y2", "semantic": "profile_dimension", "value": 30, "target": "profile.segments.0.y2"},
+    {"id": "S_PROFILE_0_Z2", "semantic": "profile_dimension", "value": 0, "target": "profile.segments.0.z2"},
+    {"id": "S_PROFILE_1_TYPE", "semantic": "profile_dimension", "value": "line", "target": "profile.segments.1.type"},
+    {"id": "S_PROFILE_1_Y2", "semantic": "profile_dimension", "value": 30, "target": "profile.segments.1.y2"},
+    {"id": "S_PROFILE_1_Z2", "semantic": "profile_dimension", "value": 20, "target": "profile.segments.1.z2"},
+    {"id": "S_PROFILE_JOIN_Y", "semantic": "alignment", "links": ["profile.segments.0.y2", "profile.segments.1.y1"]},
+    {"id": "S_PROFILE_JOIN_Z", "semantic": "alignment", "links": ["profile.segments.0.z2", "profile.segments.1.z1"]},
 
     {"id": "S_REFERENCE_TYPE", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_REFERENCE.type"},
     {"id": "S_REFERENCE_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_REFERENCE.axis"},
@@ -109,7 +136,17 @@
     {"id": "S_COUNTERBORE_DIAMETER", "semantic": "diameter", "value": 12, "target": "feature:F_COUNTERBORE.counterbore_diameter"},
     {"id": "S_COUNTERBORE_DEPTH", "semantic": "depth", "value": 4, "target": "feature:F_COUNTERBORE.counterbore_depth"},
     {"id": "S_COUNTERBORE_THROUGH", "semantic": "through", "value": true, "target": "feature:F_COUNTERBORE.through"},
-    {"id": "S_COUNTERBORE_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_COUNTERBORE.count"}
+    {"id": "S_COUNTERBORE_COUNT", "semantic": "feature_count", "value": 1, "target": "feature:F_COUNTERBORE.count"},
+
+    {"id": "S_PAIR_TYPE", "semantic": "feature_kind", "value": "through_hole", "target": "feature:F_SPACED_PAIR.type"},
+    {"id": "S_PAIR_AXIS", "semantic": "axis", "value": "Z", "target": "feature:F_SPACED_PAIR.axis"},
+    {"id": "S_PAIR_X0_OFFSET", "semantic": "edge_offset", "value": 45, "axis": "X", "from": "min", "targets": ["feature:F_SPACED_PAIR.explicit_centers.0.0"]},
+    {"id": "S_PAIR_SPACING", "semantic": "center_spacing", "value": 30, "between": ["feature:F_SPACED_PAIR.explicit_centers.0.0", "feature:F_SPACED_PAIR.explicit_centers.1.0"]},
+    {"id": "S_PAIR_Y", "semantic": "edge_offset", "value": 25, "axis": "Y", "from": "max", "targets": ["feature:F_SPACED_PAIR.explicit_centers.0.1", "feature:F_SPACED_PAIR.explicit_centers.1.1"]},
+    {"id": "S_PAIR_SYMMETRY", "semantic": "symmetry", "feature": "F_SPACED_PAIR", "axis": "X", "about": 0},
+    {"id": "S_PAIR_DIAMETER", "semantic": "diameter", "value": 5, "target": "feature:F_SPACED_PAIR.hole_diameter"},
+    {"id": "S_PAIR_THROUGH", "semantic": "through", "value": true, "target": "feature:F_SPACED_PAIR.through"},
+    {"id": "S_PAIR_COUNT", "semantic": "feature_count", "value": 2, "target": "feature:F_SPACED_PAIR.count"}
   ],
   "derived": [
     {
@@ -121,6 +158,32 @@
         "args": [
           {"target": "feature:F_REFERENCE.centerline.x"},
           {"source": "S_CENTER_DISTANCE"}
+        ]
+      }
+    },
+    {
+      "id": "D_PROFILE_1_Y1",
+      "target": "profile.segments.1.y1",
+      "value": 30,
+      "expr": {"target": "profile.segments.0.y2"},
+      "relation_refs": ["S_PROFILE_JOIN_Y"]
+    },
+    {
+      "id": "D_PROFILE_1_Z1",
+      "target": "profile.segments.1.z1",
+      "value": 0,
+      "expr": {"target": "profile.segments.0.z2"},
+      "relation_refs": ["S_PROFILE_JOIN_Z"]
+    },
+    {
+      "id": "D_PAIR_X1",
+      "target": "feature:F_SPACED_PAIR.explicit_centers.1.0",
+      "value": 15,
+      "expr": {
+        "op": "add",
+        "args": [
+          {"target": "feature:F_SPACED_PAIR.explicit_centers.0.0"},
+          {"source": "S_PAIR_SPACING"}
         ]
       }
     }

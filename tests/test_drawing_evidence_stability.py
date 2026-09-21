@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from nx_mcp.drawing_intelligence import (
+    DatumAlignmentEvidence,
+    DimensionEndpoint,
+    DimensionObservation,
+    DirectValueEvidence,
+    EvidenceGraph,
+    OverallDimensions,
+    ProjectionEvidence,
+    ViewEvidence,
+    compare_evidence_runs,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _main_hole_graph(*, z_value: float, suffix: str, reverse_direct: bool = False):
+    direct = [
+        DirectValueEvidence(
+            id=f"KIND_{suffix}",
+            target="feature:F_MAIN.type",
+            value="through_hole",
+            source_ids=[f"SRC_KIND_{suffix}"],
+        ),
+        DirectValueEvidence(
+            id=f"DIA_{suffix}",
+            target="feature:F_MAIN.diameter",
+            value=20,
+            source_ids=[f"SRC_DIA_{suffix}"],
+        ),
+        DirectValueEvidence(
+            id=f"COUNT_{suffix}",
+            target="feature:F_MAIN.count",
+            value=1,
+            source_ids=[f"SRC_COUNT_{suffix}"],
+        ),
+    ]
+    if reverse_direct:
+        direct.reverse()
+
+    return EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[
+            ViewEvidence(
+                id=f"VIEW_{suffix}",
+                kind="front",
+                source_ids=[f"SRC_VIEW_{suffix}"],
+            )
+        ],
+        projections=[
+            ProjectionEvidence(
+                id=f"PROJ_{suffix}",
+                feature_id="F_MAIN",
+                view_id=f"VIEW_{suffix}",
+                shape="circle",
+                source_ids=[f"SRC_PROJ_{suffix}"],
+            )
+        ],
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id=f"ALIGN_X_{suffix}",
+                target="feature:F_MAIN.centerline.x",
+                axis="X",
+                source_ids=[f"SRC_CENTERLINE_{suffix}"],
+            )
+        ],
+        dimensions=[
+            DimensionObservation(
+                id=f"DIM_Z_{suffix}",
+                value=z_value,
+                axis="Z",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(
+                        role="feature_center",
+                        target="feature:F_MAIN.centerline.z",
+                    ),
+                ],
+                source_ids=[f"SRC_DIM_{suffix}"],
+            )
+        ],
+        direct_values=direct,
+        required_targets=[
+            "feature:F_MAIN.centerline.x",
+            "feature:F_MAIN.centerline.z",
+        ],
+    )
+
+
+def _spacing_graph(*, signed: bool):
+    relation = {
+        "id": "R_SPACING",
+        "kind": "center_spacing",
+        "axis": "X",
+        "value": 20,
+        "targets": [
+            "feature:F_A.centerline.x",
+            "feature:F_B.centerline.x",
+        ],
+    }
+    if signed:
+        relation["direction"] = 1
+
+    return EvidenceGraph.model_validate(
+        {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "direct_values": [
+                {
+                    "id": "A_X",
+                    "target": "feature:F_A.centerline.x",
+                    "value": -10,
+                }
+            ],
+            "relations": [relation],
+            "required_targets": ["feature:F_B.centerline.x"],
+        }
+    )
+
+
+def test_stability_ignores_evidence_ids_sources_and_order():
+    first = _main_hole_graph(z_value=40, suffix="A")
+    second = _main_hole_graph(
+        z_value=40,
+        suffix="B",
+        reverse_direct=True,
+    )
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable
+    assert report.unique_fingerprints == 1
+    assert report.changed_sections == {}
+    assert report.value_drift == {}
+    assert report.unresolved_presence == {}
+
+
+def test_stability_detects_resolved_value_drift_by_target():
+    first = _main_hole_graph(z_value=40, suffix="A")
+    second = _main_hole_graph(z_value=41, suffix="B")
+
+    report = compare_evidence_runs([first, second])
+
+    assert not report.stable
+    assert report.unique_fingerprints == 2
+    assert report.value_drift["feature:F_MAIN.centerline.z"] == [40.0, 41.0]
+    assert 2 in report.changed_sections
+    assert "relations" in report.changed_sections[2]
+    assert "resolved_values" in report.changed_sections[2]
+
+
+def test_stability_detects_resolved_vs_unresolved_drift():
+    resolved = _spacing_graph(signed=True)
+    unresolved = _spacing_graph(signed=False)
+
+    report = compare_evidence_runs([resolved, unresolved])
+
+    assert not report.stable
+    assert report.unresolved_presence["feature:F_B.centerline.x"] == [2]
+    assert report.value_drift["feature:F_B.centerline.x"] == [10.0, "<missing>"]
+
+
+def test_stability_cli_exit_codes_and_report(tmp_path: Path):
+    first = _main_hole_graph(z_value=40, suffix="A")
+    same = _main_hole_graph(z_value=40, suffix="B", reverse_direct=True)
+    drift = _main_hole_graph(z_value=41, suffix="C")
+
+    paths = []
+    for index, graph in enumerate((first, same, drift), start=1):
+        path = tmp_path / f"run-{index}.json"
+        path.write_text(
+            json.dumps(graph.model_dump(mode="json"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths.append(path)
+
+    stable_report = tmp_path / "stable-report.json"
+    stable = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "stability",
+            str(paths[0]),
+            str(paths[1]),
+            "--report",
+            str(stable_report),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stable.returncode == 0, stable.stdout + stable.stderr
+    stable_data = json.loads(stable.stdout)
+    assert stable_data["stable"] is True
+    assert stable_report.exists()
+
+    changed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "stability",
+            str(paths[0]),
+            str(paths[2]),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert changed.returncode == 2, changed.stdout + changed.stderr
+    changed_data = json.loads(changed.stdout)
+    assert changed_data["stable"] is False
+    assert changed_data["value_drift"]["feature:F_MAIN.centerline.z"] == [
+        40.0,
+        41.0,
+    ]

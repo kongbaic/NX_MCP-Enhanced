@@ -49,8 +49,8 @@ XY 原点为零件整体外形中心，Z=0 为零件底面。标准正投影视�
 - 圆形end-view提供axis候选；隐藏线投影提供transverse center、axial range及绑定dimension候选。
 - 孔的 transverse coordinates 由轴唯一确定：`axis=X`→Y/Z、axis=Y→X/Z、axis=Z→X/Y。
 - 跨视图候选只按projection alignment、shared centerline、specification和leader/witness endpoints判断same-feature/coaxial identity；邻近、同值或axis相同不足以association。
-- 每个候选先建立 view→projection geometry→annotation endpoints 的记录，再合并 same-feature identity。锁定 axis/每个 transverse center 或宣告 unresolved 前，必须逐项核对该 identity 的全部正交视图记录；任一视图上绑定的 center/spacing annotation 不得因其 feature 在另一视图显示为圆或隐藏线而丢失。
-- start face 只能在 axis 锁定后解释，不得反向决定 axis；看见孔位所在的面也不能代替 orthographic axis evidence。
+- 对 hole/thread/counterbore/countersink/coaxial compound，先建立 view→projection geometry candidates→same-feature identity，并逐项核对该 identity 的全部正交视图记录；raw leader/witness/arrow endpoint 可作 association evidence，但 identity 完成前不得锁定 measured ownership。identity 确认后才绑定 annotation endpoints 并锁定 axis/transverse center；若 dimension endpoints 终止于两个已确认 centerlines，必须保持 center-to-center ownership，不得因文字邻近轮廓而改作 edge-to-center。
+- thread 必须遵循 projection identity→axis→transverse center→depth/start-side；leader 所在视图、start face 或加工常识不得单独决定 axis，看见孔位所在的面也不能代替 orthographic axis evidence。start face 只能在 axis 锁定后解释，且仅在 axis 由 projection identity 锁定后描述 axial range/start-side 候选；证据不足时保持 null/unresolved。
 - same-feature association只合并identity；distinct-feature alignment/spacing须建立独立relation并保留evidence/`relation_refs`。
 - slot/cut 分别记录 `width_axis` 与 `through_axis`；两条平行边只能识别 width_axis，不能单独决定 through_axis。
 - center coordinate 与沿轴 start/end/range 分开。side 或 axial range 会改变实体而不能唯一确定时进入 blocking `unresolved`。

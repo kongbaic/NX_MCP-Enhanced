@@ -12,7 +12,6 @@ RelationKind = Literal[
     "center_distance",
     "upper_tangent",
     "lower_tangent",
-    "symmetry",
 ]
 ViewKind = Literal["front", "side", "top"]
 ProjectionShape = Literal[
@@ -136,8 +135,6 @@ class RelationEvidence(BaseModel):
     from_side: Literal["min", "max"] | None = None
     direction: Literal[-1, 1] | None = None
     diameter_target: str | None = None
-    about: float | None = None
-    feature_id: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -167,11 +164,6 @@ class RelationEvidence(BaseModel):
                 raise ValueError(
                     f"{self.kind} requires [center_target, tangent_target] "
                     "and diameter_target"
-                )
-        elif self.kind == "symmetry":
-            if len(self.targets) != 2 or self.about is None or not self.feature_id:
-                raise ValueError(
-                    "symmetry requires exactly two targets, numeric about, and feature_id"
                 )
         return self
 

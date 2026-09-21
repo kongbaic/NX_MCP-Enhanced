@@ -203,7 +203,7 @@ def compare_evidence_runs(graphs: list[EvidenceGraph]) -> StabilityReport:
     baseline = snapshots[0]
 
     changed_sections = {
-        index + 1: _section_diff(baseline, snapshot)
+        index + 2: _section_diff(baseline, snapshot)
         for index, snapshot in enumerate(snapshots[1:])
         if _section_diff(baseline, snapshot)
     }

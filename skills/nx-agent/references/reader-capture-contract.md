@@ -62,6 +62,25 @@ Backend v1 remains outside this contract and unchanged.
 
 The Reader must not add final `feature:...` targets anywhere in v2 capture.
 
+`overall_dimensions.length_x`, `width_y`, and `height_z` are mandatory
+positive numeric values in a valid Capture v2 artifact. They must never be
+`null`, omitted, zero, or replaced by a placeholder string.
+
+For standard orthographic views, copying an explicitly dimensioned overall
+extent into the canonical part axis is allowed and required. This is a view-axis
+mapping, not prohibited coordinate arithmetic:
+
+- front-view horizontal overall extent → X / `length_x`;
+- side-view horizontal overall extent → Y / `width_y`;
+- any standard-view vertical overall extent → Z / `height_z`;
+- top-view horizontal axes map to X/Y according to the documented view
+  orientation.
+
+Do not leave an explicitly dimensioned overall extent blank merely because the
+sheet displays it in a projected view. If an overall extent is genuinely not
+readable or not present, record a blocking unresolved reason and do not write a
+supposedly schema-valid capture with a null overall dimension.
+
 ## 3. Views
 
 Only standard orthographic views are formalized:
@@ -256,6 +275,11 @@ the dimension as unresolved instead.
 The Reader records the measured axis but does not calculate the resulting
 coordinate.
 
+Mapping a standard-view dimension to its canonical part axis is allowed and
+required. For example, a directly read overall horizontal dimension in a side
+view is a Y-axis dimension. This mapping does not authorize calculating a new
+numeric value; the numeric value must still come directly from the drawing.
+
 ## 8. Datum alignments
 
 Use only when a feature center is explicitly coincident with the part overall
@@ -335,6 +359,25 @@ No unresolved target may simultaneously receive a guessed concrete value.
 ## 12. First-pass immutability
 
 The Reader writes exactly one `reader-capture.json` for the current drawing.
+
+Before that single write, the complete in-memory payload must be validated with
+the production Pydantic model:
+
+~~~python
+ReaderCapture.model_validate(payload)
+~~~
+
+A JSON parse check, top-level-key count, or custom ad-hoc validator is not a
+substitute for production schema validation.
+
+If production validation fails:
+
+- do not write `reader-capture.json`;
+- do not repair by reading the drawing a second time;
+- report the validation error and stop the run.
+
+Only a payload that passes `ReaderCapture.model_validate(payload)` may be
+written as the immutable first-pass artifact.
 
 After writing it:
 

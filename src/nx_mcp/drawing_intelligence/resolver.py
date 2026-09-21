@@ -220,6 +220,99 @@ def _apply_tangent(relation: RelationEvidence, state: _State) -> bool:
     )
 
 
+def _apply_symmetry_constraint(
+    relation: RelationEvidence, state: _State
+) -> bool:
+    first, second = relation.targets
+    assert relation.about is not None
+
+    if first in state.values and second in state.values:
+        expected_second = 2.0 * relation.about - state.values[first]
+        if not isclose(
+            state.values[second], expected_second, abs_tol=_EPS, rel_tol=0.0
+        ):
+            conflict = {
+                "relation": relation.id,
+                "kind": "symmetry",
+                "about": relation.about,
+                "targets": relation.targets,
+                "values": [state.values[first], state.values[second]],
+            }
+            if conflict not in state.conflicts:
+                state.conflicts.append(conflict)
+    return False
+
+
+def _apply_coupled_symmetry_spacing(
+    relations: list[RelationEvidence], state: _State
+) -> bool:
+    """Solve a centered pair only when symmetry + signed spacing jointly close it."""
+
+    changed = False
+    symmetries = [item for item in relations if item.kind == "symmetry"]
+    spacings = [
+        item
+        for item in relations
+        if item.kind in {"center_spacing", "center_distance"}
+        and item.value is not None
+        and item.direction is not None
+    ]
+
+    for symmetry in symmetries:
+        first_sym, second_sym = symmetry.targets
+        if first_sym in state.values or second_sym in state.values:
+            continue
+        assert symmetry.about is not None
+
+        for spacing in spacings:
+            if spacing.axis != symmetry.axis:
+                continue
+            if set(spacing.targets) != set(symmetry.targets):
+                continue
+
+            first, second = spacing.targets
+            signed_distance = spacing.direction * abs(spacing.value)
+            first_value = symmetry.about - signed_distance / 2.0
+            second_value = symmetry.about + signed_distance / 2.0
+
+            trace = [
+                symmetry.id,
+                spacing.id,
+                *symmetry.source_ids,
+                *spacing.source_ids,
+            ]
+            first_op = "sub" if spacing.direction == 1 else "add"
+            second_op = "add" if spacing.direction == 1 else "sub"
+
+            changed = state.assign(
+                first,
+                first_value,
+                trace,
+                {
+                    "kind": spacing.kind,
+                    "relation_id": spacing.id,
+                    "symmetry_relation_id": symmetry.id,
+                    "dependencies": [second],
+                    "op": first_op,
+                },
+            ) or changed
+            changed = state.assign(
+                second,
+                second_value,
+                trace,
+                {
+                    "kind": spacing.kind,
+                    "relation_id": spacing.id,
+                    "symmetry_relation_id": symmetry.id,
+                    "dependencies": [first],
+                    "op": second_op,
+                },
+            ) or changed
+            break
+
+    return changed
+
+
 def _apply_relation(
     graph: EvidenceGraph, relation: RelationEvidence, state: _State
 ) -> bool:
@@ -231,6 +324,8 @@ def _apply_relation(
         return _apply_spacing(relation, state)
     if relation.kind in {"upper_tangent", "lower_tangent"}:
         return _apply_tangent(relation, state)
+    if relation.kind == "symmetry":
+        return _apply_symmetry_constraint(relation, state)
     return False
 
 
@@ -260,7 +355,7 @@ def resolve_evidence_graph(graph: EvidenceGraph) -> ResolutionResult:
 
     relations = sorted(graph.relations, key=lambda item: item.id)
     for _ in range(max(1, len(relations) + len(graph.required_targets) + 1)):
-        changed = False
+        changed = _apply_coupled_symmetry_spacing(relations, state)
         for relation in relations:
             changed = _apply_relation(graph, relation, state) or changed
         if not changed:

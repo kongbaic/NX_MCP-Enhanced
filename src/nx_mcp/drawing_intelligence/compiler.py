@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from .evidence import (
+    DatumAlignmentEvidence,
     DimensionObservation,
     DirectValueEvidence,
     EvidenceGraph,
@@ -155,6 +156,61 @@ def _overall_value(graph: EvidenceGraph, axis: str) -> float:
     return graph.overall_dimensions.height_z
 
 
+def _target_axis(target: str) -> str | None:
+    lower = target.lower()
+    if lower.endswith(".x") or lower.endswith("_x"):
+        return "X"
+    if lower.endswith(".y") or lower.endswith("_y"):
+        return "Y"
+    if lower.endswith(".z") or lower.endswith("_z"):
+        return "Z"
+
+    match = re.search(r"\.explicit_centers\.\d+\.(0|1|2)$", lower)
+    if match:
+        return {"0": "X", "1": "Y", "2": "Z"}[match.group(1)]
+    return None
+
+
+def _overall_center_value(graph: EvidenceGraph, axis: str) -> float:
+    if axis in {"X", "Y"}:
+        return 0.0
+    return graph.overall_dimensions.height_z / 2.0
+
+
+def _compile_datum_alignments(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    for observation in sorted(graph.datum_alignments, key=lambda item: item.id):
+        target_axis = _target_axis(observation.target)
+        if target_axis != observation.axis:
+            _append_unresolved(
+                unresolved,
+                uid=f"U_{observation.id}",
+                reason=(
+                    f"datum alignment axis {observation.axis} is incompatible with "
+                    f"target {observation.target!r}"
+                ),
+                target=observation.target,
+                required=observation.required_for_modeling,
+                evidence=[observation.id, *observation.source_ids],
+            )
+            continue
+
+        _append_direct(
+            direct,
+            unresolved,
+            DirectValueEvidence(
+                id=observation.id,
+                target=observation.target,
+                value=_overall_center_value(graph, observation.axis),
+                semantic="center_position",
+                source_ids=observation.source_ids,
+            ),
+        )
+
+
 def _compile_overall_dimension(
     graph: EvidenceGraph,
     observation: DimensionObservation,
@@ -298,6 +354,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
     _compile_axis_evidence(graph, direct, unresolved)
+    _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
 
     # Preserve deterministic ordering for byte/logical repeatability.

@@ -15,6 +15,7 @@ from nx_mcp.drawing_intelligence import (
     ProjectionEvidence,
     ViewEvidence,
     compare_evidence_runs,
+    write_strict_evidence,
 )
 
 
@@ -227,3 +228,124 @@ def test_stability_cli_exit_codes_and_report(tmp_path: Path):
         40.0,
         41.0,
     ]
+
+
+def _gate0_graph_with_bad_dimension(record: dict):
+    capture = {
+        "schema_version": "1.0",
+        "coordinate_system": "part_center_xy_bottom_z0",
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 32,
+            "height_z": 66,
+        },
+        "views": [],
+        "projections": [],
+        "dimensions": [record],
+        "datum_alignments": [],
+        "direct_values": [],
+        "relations": [],
+        "required_targets": [],
+        "observations": [],
+        "unresolved_evidence": [],
+    }
+    return write_strict_evidence(capture).evidence
+
+
+def test_stability_ignores_gate0_quarantine_ids_sources_notes_and_array_position():
+    first = _gate0_graph_with_bad_dimension(
+        {
+            "id": "DIM_A",
+            "value": 40,
+            "axis": "Z",
+            "endpoints": [],
+            "source_ids": ["SRC_A"],
+            "note": "first wording",
+            "required_for_modeling": True,
+        }
+    )
+    second = _gate0_graph_with_bad_dimension(
+        {
+            "id": "COMPLETELY_DIFFERENT_ID",
+            "value": 40,
+            "axis": "Z",
+            "endpoints": [],
+            "source_ids": ["OTHER_SOURCE"],
+            "note": "different prose",
+            "required_for_modeling": True,
+        }
+    )
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable
+    assert report.unique_fingerprints == 1
+    assert report.changed_sections == {}
+
+
+def test_stability_detects_gate0_quarantine_shape_drift_without_safe_target():
+    missing = _gate0_graph_with_bad_dimension(
+        {
+            "id": "D_MISSING",
+            "value": 40,
+            "axis": "Z",
+            "source_ids": ["SRC"],
+            "required_for_modeling": True,
+        }
+    )
+    empty = _gate0_graph_with_bad_dimension(
+        {
+            "id": "D_EMPTY",
+            "value": 40,
+            "axis": "Z",
+            "endpoints": [],
+            "source_ids": ["SRC"],
+            "required_for_modeling": True,
+        }
+    )
+
+    report = compare_evidence_runs([missing, empty])
+
+    assert not report.stable
+    assert report.unique_fingerprints == 2
+    assert 2 in report.changed_sections
+    assert "gate0_quarantines" in report.changed_sections[2]
+
+
+def test_stability_detects_gate0_quarantine_value_axis_and_role_drift():
+    first = _gate0_graph_with_bad_dimension(
+        {
+            "id": "D_A",
+            "value": 40,
+            "axis": "Z",
+            "endpoints": [
+                {"role": "overall_min"},
+                {
+                    "role": "intermediate_surface",
+                    "target": "feature:F_MAIN.centerline.z",
+                },
+            ],
+            "required_for_modeling": True,
+        }
+    )
+    second = _gate0_graph_with_bad_dimension(
+        {
+            "id": "D_B",
+            "value": 48,
+            "axis": "Y",
+            "endpoints": [
+                {"role": "overall_min"},
+                {
+                    "role": "step_surface",
+                    "target": "feature:F_MAIN.centerline.z",
+                },
+            ],
+            "required_for_modeling": True,
+        }
+    )
+
+    report = compare_evidence_runs([first, second])
+
+    assert not report.stable
+    assert 2 in report.changed_sections
+    assert "gate0_quarantines" in report.changed_sections[2]

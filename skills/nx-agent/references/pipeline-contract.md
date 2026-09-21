@@ -12,7 +12,8 @@
 - 自动修复必须从干净状态完整重跑，禁止从失败步骤续跑。
 
 工程图模式额外遵守 Evidence-first 原则：
-- Reader 只生成 drawing-evidence.json；
+- Reader 只生成 view-local reader-capture.json；
+- deterministic identity linker + Gate 0 生成 drawing-evidence.json；
 - deterministic compiler / resolver 负责几何关系与坐标求解；
 - semantic-draft.json 由固定程序生成；
 - canonicalizer / Gate A 只验证与规范化；
@@ -36,23 +37,56 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 6. nx_mcp_src 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
 7. runtime 一旦解析，本轮 drawing、Evidence、Resolver、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
 
-当前 Mode B 的 drawing-evidence.json、semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
+当前 Mode B 的 reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
 读取 drawing-reader.md 与 nx-drawing-rules.md。
 
-### A1. Evidence Reader
+### A1. Reader Capture
 
-Reader 只从当前上传工程图生成一次 drawing-evidence.json。
+Reader 只从当前上传工程图生成一次 reader-capture.json。
 
-- drawing-evidence.json 是 immutable first-pass visual evidence artifact；
-- Reader 不得直接写 semantic-draft.json；
-- Reader 不得直接写 drawing.json；
+- reader-capture.json 是 immutable first-pass visual evidence artifact；
+- Reader 只创建 view-local entity，不创建最终 physical feature ID；
+- Reader 只在有明确视觉证据时写 association claim；
+- Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json；
 - Reader 不做 centered global coordinate arithmetic；
-- Reader 不从 compiler / Resolver / Gate A 错误反向修正 evidence。
+- Reader 不从 linker / Gate 0 / Resolver / Gate A 错误反向修正 capture。
 
-### A2. Deterministic compile / resolve
+### A2. Deterministic identity link + Gate 0
+
+立即使用 runtime-config 指定的 python_exe 执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>
+~~~
+
+该命令只做：
+
+- ReaderCapture v2 schema validation；
+- view-local entity → deterministic physical feature identity linking；
+- explicit association structural validation；
+- identity collision detection；
+- Gate 0 strict EvidenceGraph validation；
+- target grammar / object-path safety；
+- frozen Compiler / Resolver / Draft downstream-consumability dry-run。
+
+该程序不得读取工程图，不得访问旧 plan / report / NX model。
+
+只有 process exit code=0、written=true、schema_valid=true 才进入 A3。
+blocking unresolved 可以保留在 drawing-evidence.json，由 resolve 正式判定 closure。
+
+如果 link-capture 返回非零：
+- 保留 reader-capture.json；
+- 如已生成 drawing-evidence.json 则保留作失败证据；
+- 立即 BLOCKED / STOP；
+- 禁止重新看图；
+- 禁止第二版 capture；
+- 禁止 Edit/Rewrite capture/evidence；
+- 禁止继续 Resolver / Gate A / Planner。
+
+### A3. Deterministic compile / resolve
 
 立即使用 runtime-config 指定的 python_exe 执行：
 
@@ -70,7 +104,7 @@ python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <seman
 
 该程序不得读取工程图，不得访问旧 plan / report / NX model。
 
-只有以下条件全部成立才进入 A3：
+只有以下条件全部成立才进入 A4：
 - process exit code = 0；
 - written = true；
 - ok = true；
@@ -79,17 +113,17 @@ python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <seman
 - dimension_closure = closed。
 
 如果 resolve 返回非零：
-- 保留 drawing-evidence.json；
+- 保留 reader-capture.json 与 drawing-evidence.json；
 - 如已写出 semantic-draft.json，则保留该 immutable draft 作为失败证据；
 - 立即 BLOCKED / STOP；
 - 禁止重新看图；
-- 禁止第二版 evidence；
-- 禁止 Edit/Rewrite evidence 或 draft；
+- 禁止第二版 capture/evidence；
+- 禁止 Edit/Rewrite capture、evidence 或 draft；
 - 禁止继续 canonicalizer / Planner。
 
-### A3. Canonicalizer + Gate A
+### A4. Canonicalizer + Gate A
 
-只在 A2 PASS 后执行：
+只在 A3 PASS 后执行：
 
 ~~~text
 runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
@@ -133,6 +167,8 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ~~~text
 当前上传工程图
+→ reader-capture.json
+→ deterministic identity link / Gate 0
 → drawing-evidence.json
 → deterministic resolve
 → semantic-draft.json
@@ -146,14 +182,15 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ### 4.1 Mode B 当前请求 artifact isolation
 
-- 新请求开始 interpretation 前，现有 drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一几何输入是当前上传工程图。
-- Reader 必须从当前图纸重新生成 drawing-evidence.json；旧 evidence 不得复用。
+- 新请求开始 interpretation 前，现有 reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一几何输入是当前上传工程图。
+- Reader 必须从当前图纸重新生成 reader-capture.json；旧 capture 不得复用。
+- link-capture 必须只读取本轮 reader-capture.json 并生成本轮 drawing-evidence.json；旧 evidence 不得复用。
 - resolve 必须只读取本轮 drawing-evidence.json；不得读取历史 semantic draft、drawing 或 plan。
 - canonicalize-drawing 成功后必须重新运行 Planner，只从本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。
 - Planner 不得读取 drawing-evidence.json 或 semantic-draft.json；Planner 只读取本轮 Gate A PASS 的 drawing.json。
 - Mode B build 固定绑定本轮 drawing：runner.py build <current-frozen> <current-executable> --drawing <current-drawing>。
-- 只有本轮 evidence → resolve → Gate A 成功后产生的 artifact 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
+- 只有本轮 capture → link-capture → evidence → resolve → Gate A 成功后产生的 artifact 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
 
 runner build/check 任一失败即 B 失败。B 阶段失败不进入自修复，禁止修改 frozen plan 后自动重跑。
 
@@ -199,7 +236,7 @@ Runner 正式开始建模后，任一 operation 失败：
 ### 6.3 禁止自动修复
 以下任一情况必须最终失败：
 - A 阶段 evidence unresolved / Resolver conflict / Gate A unresolved / dimension conflict / 尺寸缺失；
-- 需要重新看图或改 drawing-evidence.json；
+- 需要重新看图或改 reader-capture.json / drawing-evidence.json；
 - 需要猜尺寸、改尺寸、改孔位、改特征数量；
 - 禁止数值 nudge / epsilon 修复；
 - Controlled Self-Healing 只允许 selection criteria 修复，以及不改变已冻结设计几何语义的确定性 plan-level / selection-level 技术修复；

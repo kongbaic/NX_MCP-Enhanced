@@ -488,3 +488,48 @@ def test_gate0_cli_refuses_in_place_overwrite(tmp_path: Path):
     report = json.loads(completed.stdout)
     assert report["written"] is False
     assert report["schema_valid"] is False
+
+
+@pytest.mark.parametrize("target", ["datum:A", "gdt:position", "body:front.overall.z_min"])
+def test_gate0_quarantines_direct_targets_not_consumable_by_frozen_draft(target):
+    record = {
+        "id": "DV_UNSUPPORTED",
+        "target": target,
+        "value": 40,
+        "source_ids": ["OBS_UNSUPPORTED"],
+    }
+
+    result, strict = _gate0(_capture(direct_values=[record]))
+    added, observations = _gate0_items(result)
+
+    assert strict.direct_values == []
+    assert result.report["passed_direct_values"] == 0
+    assert result.report["quarantined_direct_values"] == 1
+    assert len(added) == 1
+    assert added[0]["raw_record"] == record
+    assert "not consumable by the frozen semantic-draft contract" in added[0]["reason"]
+    assert len(observations) == 1
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "feature:F_MAIN.diameter",
+        "overall_dimensions.length_x",
+        "profile.width",
+    ],
+)
+def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
+    record = {
+        "id": "DV_SUPPORTED",
+        "target": target,
+        "value": 40,
+        "source_ids": ["OBS_SUPPORTED"],
+    }
+
+    result, strict = _gate0(_capture(direct_values=[record]))
+
+    assert len(strict.direct_values) == 1
+    assert strict.direct_values[0].target == target
+    assert result.report["passed_direct_values"] == 1
+    assert result.report["quarantined_direct_values"] == 0

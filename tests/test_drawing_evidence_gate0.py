@@ -559,3 +559,105 @@ def test_gate0_quarantines_incomplete_downstream_target_paths(target):
     assert result.report["quarantined_direct_values"] == 1
     assert len(added) == 1
     assert added[0]["raw_record"] == record
+
+
+def test_gate0_quarantines_both_reader_directs_in_parent_child_path_conflict():
+    parent = {
+        "id": "DV_BOTTOM_FACE",
+        "target": "feature:F_BODY.bottom_face",
+        "value": 8,
+        "source_ids": ["OBS_PARENT"],
+    }
+    child = {
+        "id": "DV_BOTTOM_FACE_Z",
+        "target": "feature:F_BODY.bottom_face.z",
+        "value": 8,
+        "source_ids": ["OBS_CHILD"],
+    }
+
+    result, strict = _gate0(_capture(direct_values=[parent, child]))
+    added, _ = _gate0_items(result)
+
+    assert strict.direct_values == []
+    assert result.report["passed_direct_values"] == 0
+    assert result.report["quarantined_direct_values"] == 2
+    assert len(added) == 2
+    assert {item["raw_record"]["target"] for item in added} == {
+        "feature:F_BODY.bottom_face",
+        "feature:F_BODY.bottom_face.z",
+    }
+    assert all(
+        "downstream object-path conflict" in item["reason"]
+        for item in added
+    )
+
+
+def test_gate0_quarantines_reader_direct_that_conflicts_with_resolved_child_target():
+    parent = {
+        "id": "DV_POSITION",
+        "target": "feature:F_MAIN.position",
+        "value": 1,
+        "source_ids": ["OBS_PARENT"],
+    }
+    dimension = {
+        "id": "D_POSITION_X",
+        "value": 10,
+        "axis": "X",
+        "endpoints": [
+            {"role": "overall_min"},
+            {
+                "role": "feature_center",
+                "target": "feature:F_MAIN.position.x",
+            },
+        ],
+        "source_ids": ["ANN_X10"],
+        "required_for_modeling": True,
+    }
+
+    result, strict = _gate0(
+        _capture(
+            direct_values=[parent],
+            dimensions=[dimension],
+            required_targets=["feature:F_MAIN.position.x"],
+        )
+    )
+    added, _ = _gate0_items(result)
+
+    assert strict.direct_values == []
+    assert len(strict.dimensions) == 1
+    assert result.report["quarantined_direct_values"] == 1
+    assert any(
+        item["raw_record"].get("target") == "feature:F_MAIN.position"
+        for item in added
+    )
+
+    # Gate 0's final downstream dry-run must have succeeded. Re-run the public
+    # chain here so this exact regression remains locked.
+    from nx_mcp.drawing_intelligence import (
+        build_semantic_draft,
+        compile_evidence_graph,
+        resolve_evidence_graph,
+    )
+
+    compiled = compile_evidence_graph(strict)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+    assert draft["features"][0]["position"]["x"] == 0.0
+
+
+def test_gate0_allows_sibling_paths_without_quarantine():
+    first = {
+        "id": "DV_POS_X",
+        "target": "feature:F_MAIN.position.x",
+        "value": 1,
+    }
+    second = {
+        "id": "DV_POS_Y",
+        "target": "feature:F_MAIN.position.y",
+        "value": 2,
+    }
+
+    result, strict = _gate0(_capture(direct_values=[first, second]))
+
+    assert len(strict.direct_values) == 2
+    assert result.report["quarantined_direct_values"] == 0

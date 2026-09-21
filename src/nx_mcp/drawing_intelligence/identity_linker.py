@@ -56,6 +56,89 @@ def _canon(value: Any) -> Any:
     return value
 
 
+def _raw_fields_by_entity(capture: ReaderCapture) -> dict[str, set[str]]:
+    fields: dict[str, set[str]] = defaultdict(set)
+    for item in capture.values:
+        fields[item.entity_id].add(item.field)
+    return fields
+
+
+def _canonical_field(
+    capture: ReaderCapture,
+    entity_id: str,
+    field: str,
+) -> str:
+    if field == "hole_diameter":
+        return "diameter"
+
+    raw_fields = _raw_fields_by_entity(capture).get(entity_id, set())
+    if field == "depth" and "thread_spec" in raw_fields:
+        return "thread_depth"
+
+    return field
+
+
+def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
+    referenced: set[str] = set()
+
+    for association in capture.associations:
+        referenced.update(association.entity_ids)
+
+    for item in capture.values:
+        referenced.add(item.entity_id)
+
+    for item in capture.dimensions:
+        for endpoint in item.endpoints:
+            if endpoint.entity_id:
+                referenced.add(endpoint.entity_id)
+
+    for item in capture.datum_alignments:
+        referenced.add(item.entity_id)
+
+    for item in capture.required_targets:
+        referenced.add(item.entity_id)
+
+    return referenced
+
+
+def _canonical_projection_shape(
+    capture: ReaderCapture,
+    entity_id: str,
+    component_entity_ids: set[str],
+) -> str:
+    entity_by_id = {item.id: item for item in capture.entities}
+    entity = entity_by_id[entity_id]
+
+    if entity.shape != "profile":
+        return entity.shape
+
+    canonical_fields = {
+        _canonical_field(capture, item.entity_id, item.field)
+        for item in capture.values
+        if item.entity_id == entity_id
+    }
+    hole_fields = {
+        "diameter",
+        "fit",
+        "thread_spec",
+        "thread_depth",
+        "through",
+        "counterbore_diameter",
+        "counterbore_depth",
+    }
+    if canonical_fields & hole_fields:
+        return "hidden_parallel"
+
+    if any(
+        entity_by_id[other_id].shape in {"circle", "concentric_circles"}
+        for other_id in component_entity_ids
+        if other_id != entity_id
+    ):
+        return "hidden_parallel"
+
+    return entity.shape
+
+
 def _component_signature(
     capture: ReaderCapture,
     entity_ids: list[str],
@@ -67,7 +150,11 @@ def _component_signature(
         [
             {
                 "view_kind": view_kind[item.view_id],
-                "shape": item.shape,
+                "shape": _canonical_projection_shape(
+                    capture,
+                    item.id,
+                    entity_set,
+                ),
                 "required_for_modeling": item.required_for_modeling,
             }
             for item in capture.entities
@@ -79,7 +166,11 @@ def _component_signature(
     values = sorted(
         [
             {
-                "field": item.field,
+                "field": _canonical_field(
+                    capture,
+                    item.entity_id,
+                    item.field,
+                ),
                 "value": _canon(item.value),
                 "semantic": item.semantic,
             }
@@ -101,17 +192,10 @@ def _component_signature(
         key=lambda item: json.dumps(item, sort_keys=True),
     )
 
-    required_fields = sorted(
-        item.field
-        for item in capture.required_targets
-        if item.entity_id in entity_set
-    )
-
     return {
         "projections": projections,
         "values": values,
         "datums": datums,
-        "required_fields": required_fields,
     }
 
 
@@ -127,12 +211,27 @@ def _feature_id(signature: dict[str, Any]) -> str:
 
 def _association_components(
     capture: ReaderCapture,
-) -> tuple[list[list[str]], list[dict[str, Any]]]:
-    entities = {item.id: item for item in capture.entities}
+) -> tuple[list[list[str]], list[dict[str, Any]], list[str]]:
+    materialized = _materialized_entity_ids(capture)
+    ignored_orphan_profiles = sorted(
+        item.id
+        for item in capture.entities
+        if item.shape == "profile" and item.id not in materialized
+    )
+    entities = {
+        item.id: item
+        for item in capture.entities
+        if item.id not in ignored_orphan_profiles
+    }
     uf = _UnionFind(list(entities))
     unresolved: list[dict[str, Any]] = []
 
     for association in capture.associations:
+        if any(entity_id not in entities for entity_id in association.entity_ids):
+            raise IdentityLinkError(
+                f"association {association.id!r} references a non-materialized entity"
+            )
+
         by_view: dict[str, list[str]] = defaultdict(list)
         for entity_id in association.entity_ids:
             by_view[entities[entity_id].view_id].append(entity_id)
@@ -167,7 +266,11 @@ def _association_components(
     for entity_id in entities:
         components[uf.find(entity_id)].append(entity_id)
 
-    return [sorted(items) for items in components.values()], unresolved
+    return (
+        [sorted(items) for items in components.values()],
+        unresolved,
+        ignored_orphan_profiles,
+    )
 
 
 def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
@@ -177,7 +280,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     connect entities when structurally admissible; no geometry is guessed.
     """
 
-    components, unresolved = _association_components(capture)
+    components, unresolved, ignored_orphan_profiles = _association_components(capture)
 
     signatures: list[tuple[list[str], dict[str, Any], str]] = []
     by_feature_id: dict[str, list[list[str]]] = defaultdict(list)
@@ -241,27 +344,42 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         for item in capture.views
     ]
 
+    component_by_entity = {
+        entity_id: set(component)
+        for component in components
+        for entity_id in component
+    }
+
     projections = [
         ProjectionEvidence(
             id=f"P_{item.id}",
             feature_id=entity_to_feature[item.id],
             view_id=item.view_id,
-            shape=item.shape,
+            shape=_canonical_projection_shape(
+                capture,
+                item.id,
+                component_by_entity[item.id],
+            ),
             source_ids=[item.id, *item.source_ids],
             required_for_modeling=item.required_for_modeling,
         )
         for item in capture.entities
+        if item.id in entity_to_feature
     ]
 
     direct_values = [
         DirectValueEvidence(
             id=item.id,
-            target=f"feature:{entity_to_feature[item.entity_id]}.{item.field}",
+            target=(
+                f"feature:{entity_to_feature[item.entity_id]}."
+                f"{_canonical_field(capture, item.entity_id, item.field)}"
+            ),
             value=item.value,
             semantic=item.semantic,
             source_ids=item.source_ids,
         )
         for item in capture.values
+        if item.entity_id in entity_to_feature
     ]
 
     dimensions: list[DimensionObservation] = []
@@ -310,12 +428,20 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         for item in capture.datum_alignments
     ]
 
-    required_targets = sorted(
-        {
-            f"feature:{entity_to_feature[item.entity_id]}.{item.field}"
-            for item in capture.required_targets
-        }
-    )
+    required_targets = {
+        item.target
+        for item in direct_values
+    }
+    for item in dimensions:
+        if not item.required_for_modeling:
+            continue
+        for endpoint in item.endpoints:
+            if endpoint.role == "feature_center" and endpoint.target:
+                required_targets.add(endpoint.target)
+    for item in datum_alignments:
+        if item.required_for_modeling:
+            required_targets.add(item.target)
+    required_targets = sorted(required_targets)
 
     evidence = EvidenceGraph(
         schema_version="1.0",
@@ -331,8 +457,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         observations=[
             *capture.observations,
             {
+                "kind": "reader_required_targets_advisory",
+                "items": [
+                    item.model_dump(mode="json")
+                    for item in capture.required_targets
+                ],
+            },
+            {
                 "kind": "identity_linker_v2",
                 "entity_to_feature": dict(sorted(entity_to_feature.items())),
+                "ignored_orphan_profiles": ignored_orphan_profiles,
             },
         ],
         unresolved_evidence=[
@@ -345,6 +479,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         "capture_entities": len(capture.entities),
         "physical_components": len(components),
         "association_claims": len(capture.associations),
+        "ignored_orphan_profiles": len(ignored_orphan_profiles),
         "identity_collisions": len(collision_ids),
         "blocking_unresolved": sum(
             1

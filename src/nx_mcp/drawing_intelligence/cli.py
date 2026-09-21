@@ -168,6 +168,13 @@ def _cmd_stability(args: argparse.Namespace) -> int:
         DraftAssemblyError,
     ) as exc:
         report["errors"].append(f"{type(exc).__name__}: {exc}")
+        if args.report:
+            try:
+                _atomic_write_json(args.report, report)
+            except OSError as write_exc:
+                report["errors"].append(
+                    f"report write failed: {type(write_exc).__name__}: {write_exc}"
+                )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 1
 

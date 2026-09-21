@@ -89,6 +89,26 @@ class ProjectionEvidence(BaseModel):
     required_for_modeling: bool = True
 
 
+class DatumAlignmentEvidence(BaseModel):
+    """A feature coordinate explicitly coincident with the part overall center datum.
+
+    The visual stage identifies the coincidence; the deterministic compiler
+    converts it to the numeric coordinate implied by the fixed global frame.
+    """
+
+    id: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    axis: Axis
+    datum: Literal["overall_center"] = "overall_center"
+    source_ids: list[str] = Field(default_factory=list)
+    required_for_modeling: bool = True
+
+    @field_validator("source_ids")
+    @classmethod
+    def _source_ids_are_unique(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item for item in value if item))
+
+
 class DimensionEndpoint(BaseModel):
     """Physical endpoint identity before relation semantics are assigned."""
 
@@ -177,6 +197,7 @@ class EvidenceGraph(BaseModel):
     views: list[ViewEvidence] = Field(default_factory=list)
     projections: list[ProjectionEvidence] = Field(default_factory=list)
     dimensions: list[DimensionObservation] = Field(default_factory=list)
+    datum_alignments: list[DatumAlignmentEvidence] = Field(default_factory=list)
     direct_values: list[DirectValueEvidence] = Field(default_factory=list)
     direct_facts: list[CoordinateFact] = Field(default_factory=list)
     relations: list[RelationEvidence] = Field(default_factory=list)
@@ -197,6 +218,7 @@ class EvidenceGraph(BaseModel):
             [item.id for item in self.views]
             + [item.id for item in self.projections]
             + [item.id for item in self.dimensions]
+            + [item.id for item in self.datum_alignments]
             + [item.id for item in self.direct_values]
             + [item.id for item in self.relations]
         )

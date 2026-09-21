@@ -112,6 +112,40 @@ class ReaderCapture(BaseModel):
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
+    @field_validator("observations", mode="before")
+    @classmethod
+    def _normalize_observations(cls, value: Any) -> list[dict[str, Any]]:
+        """Normalize Reader prose observations without changing semantics.
+
+        Agent/VLM first-pass output commonly emits observations as plain
+        strings. They are representation-only notes, so preserve them
+        deterministically as structured text records instead of rejecting the
+        whole capture.
+        """
+
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("observations must be a list")
+
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(value):
+            if isinstance(item, dict):
+                normalized.append(item)
+            elif isinstance(item, str):
+                normalized.append(
+                    {
+                        "kind": "reader_observation",
+                        "text": item,
+                        "capture_index": index,
+                    }
+                )
+            else:
+                raise ValueError(
+                    "observation entries must be objects or strings"
+                )
+        return normalized
+
     @model_validator(mode="after")
     def _ids_and_references(self) -> "ReaderCapture":
         view_ids = [item.id for item in self.views]

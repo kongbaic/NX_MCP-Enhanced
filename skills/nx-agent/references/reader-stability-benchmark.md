@@ -1,9 +1,10 @@
-# Reader First-Pass Stability Benchmark v1
+# Reader First-Pass Stability Benchmark v2
 
 ## 1. Purpose
 
 Measure whether the visual Reader produces logically stable immutable first-pass
-`drawing-evidence.json` artifacts for the same engineering drawing.
+`reader-capture.json` artifacts for the same engineering drawing after deterministic
+identity linking and Gate 0 normalization.
 
 This benchmark measures **Reader stability**, not Resolver determinism and not
 NX backend stability.
@@ -18,15 +19,17 @@ A valid benchmark run must satisfy all of the following:
 4. The Reader receives only:
    - the current source drawing;
    - the current `drawing-reader.md`;
-   - the visual vocabulary/rules explicitly required by that contract.
+   - the current `reader-capture-contract.md`;
+   - the visual vocabulary/rules explicitly required by those contracts.
 5. The Reader must not receive or read:
-   - another run's evidence JSON;
+   - this benchmark/operator document itself;
+   - another run's capture or evidence JSON;
    - old semantic-draft/drawing JSON;
    - frozen/executable plans;
    - Runner reports;
    - PRT/STEP output;
    - benchmark expected answers.
-6. Each Reader pass writes exactly one immutable first-pass evidence file.
+6. Each Reader pass writes exactly one immutable first-pass `reader-capture.json` file.
 7. No second-look repair, retry, rewrite, or Gate A feedback is allowed.
 
 If these isolation requirements are not met, the result is not an independent
@@ -46,26 +49,42 @@ File naming:
 
 ```text
 reader-stability/
-  run-01.json
-  run-02.json
+  capture-run-01.json
+  capture-run-02.json
   ...
-  run-10.json
+  capture-run-10.json
+  linked/
+    run-01.json
+    ...
+    run-10.json
 ```
 
 The numeric suffix is execution order only and must not affect the Reader prompt.
 
-## 4. Comparison command
+## 4. Deterministic normalization and comparison
 
-Run:
+For every immutable first-pass capture, run exactly once:
 
-```text
+~~~text
+python -m nx_mcp.drawing_intelligence link-capture \
+  reader-stability/capture-run-01.json \
+  reader-stability/linked/run-01.json
+~~~
+
+Repeat for all runs without editing either the capture or linked output.
+
+Then compare the linked strict evidence:
+
+~~~text
 python -m nx_mcp.drawing_intelligence stability \
-  reader-stability/run-01.json \
-  reader-stability/run-02.json \
+  reader-stability/linked/run-01.json \
+  reader-stability/linked/run-02.json \
   ... \
-  reader-stability/run-10.json \
+  reader-stability/linked/run-10.json \
   --report reader-stability/report.json
-```
+~~~
+
+The identity linker is deterministic and must not read the source image.
 
 The comparator intentionally ignores:
 
@@ -89,9 +108,10 @@ unresolved_presence = {}
 changed_sections = {}
 ```
 
-All runs must therefore agree on:
+All runs must therefore agree after deterministic identity linking on:
 
 - overall dimensions;
+- physical feature semantic signatures;
 - feature direct semantic values;
 - view/projection-derived axes;
 - dimension ownership/relation semantics;
@@ -102,7 +122,7 @@ All runs must therefore agree on:
 - conflict state;
 - dimension_closure state.
 
-Evidence/source IDs are not required to match.
+Reader-local entity IDs, evidence IDs, source IDs, and association record IDs are not required to match. Physical feature identities produced from equivalent normalized evidence must match.
 
 ## 6. Failure interpretation
 
@@ -194,4 +214,4 @@ A Reader stability failure must not be repaired by changing:
 - NX core;
 - Gate A acceptance strictness.
 
-Fix the evidence extraction/association layer or leave the target unresolved.
+Fix Reader Capture extraction / association claims / deterministic identity linking, or leave the target unresolved.

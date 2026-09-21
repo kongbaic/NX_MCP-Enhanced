@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .resolver import resolve_evidence_graph
@@ -65,10 +66,18 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     try:
         raw = _load_json(evidence_path)
         graph = EvidenceGraph.model_validate(raw)
-        resolution = resolve_evidence_graph(graph)
-        draft = build_semantic_draft(graph, resolution)
+        compiled = compile_evidence_graph(graph)
+        resolution = resolve_evidence_graph(compiled)
+        draft = build_semantic_draft(compiled, resolution)
         _atomic_write_json(draft_path, draft)
-    except (OSError, json.JSONDecodeError, ValueError, ValidationError, DraftAssemblyError) as exc:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        EvidenceCompileError,
+        DraftAssemblyError,
+    ) as exc:
         report["errors"].append(f"{type(exc).__name__}: {exc}")
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 1
@@ -77,6 +86,8 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
         {
             "written": True,
             "ok": resolution.ok,
+            "compiled_direct_values": len(compiled.direct_values),
+            "compiled_relations": len(compiled.relations),
             "resolved_values": len(resolution.values),
             "derived_values": len(resolution.derivations),
             "blocking_unresolved": sum(
@@ -95,13 +106,13 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m nx_mcp.drawing_intelligence",
-        description="Deterministic drawing-evidence resolver",
+        description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     resolve = sub.add_parser(
         "resolve",
-        help="resolve drawing-evidence.json into semantic-draft.json",
+        help="compile/resolve drawing-evidence.json into semantic-draft.json",
     )
     resolve.add_argument("evidence")
     resolve.add_argument("out")

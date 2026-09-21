@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 from nx_mcp.drawing_intelligence import (
+    DatumAlignmentEvidence,
     DimensionEndpoint,
     DimensionObservation,
     DirectValueEvidence,
@@ -639,6 +640,20 @@ def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unres
                 source_ids=["REAL_PLATE_CENTER_D12"],
             ),
         ],
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id="A_PLATE_LEFT_Y_CENTER",
+                target=left_y,
+                axis="Y",
+                source_ids=["REAL_PLATE_HORIZONTAL_OVERALL_CENTERLINE"],
+            ),
+            DatumAlignmentEvidence(
+                id="A_PLATE_RIGHT_Y_CENTER",
+                target=right_y,
+                axis="Y",
+                source_ids=["REAL_PLATE_HORIZONTAL_OVERALL_CENTERLINE"],
+            ),
+        ],
         dimensions=[
             DimensionObservation(
                 id="D_PLATE_X120",
@@ -755,13 +770,62 @@ def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unres
     assert result.values[left_x] == -50
     assert result.values[right_x] == 50
 
-    assert left_y not in result.values
-    assert right_y not in result.values
+    assert result.values[left_y] == 0
+    assert result.values[right_y] == 0
+    assert result.ok
+
+
+def test_overall_center_datum_alignment_compiles_xy_to_zero_and_z_to_half_height():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=120, width_y=80, height_z=32),
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id="A_CENTER_X",
+                target="feature:F_A.centerline.x",
+                axis="X",
+                source_ids=["CENTERLINE_X"],
+            ),
+            DatumAlignmentEvidence(
+                id="A_CENTER_Y",
+                target="feature:F_A.centerline.y",
+                axis="Y",
+                source_ids=["CENTERLINE_Y"],
+            ),
+            DatumAlignmentEvidence(
+                id="A_CENTER_Z",
+                target="feature:F_A.centerline.z",
+                axis="Z",
+                source_ids=["CENTER_PLANE_Z"],
+            ),
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    values = {item.target: item.value for item in compiled.direct_values}
+
+    assert values["feature:F_A.centerline.x"] == 0
+    assert values["feature:F_A.centerline.y"] == 0
+    assert values["feature:F_A.centerline.z"] == 16
+
+
+def test_datum_alignment_axis_mismatch_is_unresolved_not_silently_reinterpreted():
+    target = "feature:F_A.centerline.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=120, width_y=80, height_z=32),
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id="A_BAD_AXIS",
+                target=target,
+                axis="Y",
+                source_ids=["BAD_CENTERLINE"],
+            )
+        ],
+        required_targets=[target],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    result = resolve_evidence_graph(compiled)
+
+    assert not any(item.target == target for item in compiled.direct_values)
     assert not result.ok
-    unresolved_targets = {
-        target
-        for item in result.unresolved
-        for target in item.get("targets", [])
-    }
-    assert left_y in unresolved_targets
-    assert right_y in unresolved_targets
+    assert any(item.get("target") == target for item in compiled.unresolved_evidence)

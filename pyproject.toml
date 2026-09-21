@@ -23,9 +23,6 @@ dev = [
     "mypy>=1.11,<2",
     "pre-commit>=3.5",
 ]
-line-evidence = [
-    "opencv-python-headless>=4.10,<5",
-]
 
 [project.scripts]
 nx-mcp = "nx_mcp.server:main"

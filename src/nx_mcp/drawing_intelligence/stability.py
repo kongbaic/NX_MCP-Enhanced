@@ -92,6 +92,25 @@ def _datum_signatures(graph: EvidenceGraph) -> list[dict[str, Any]]:
     )
 
 
+def _conflict_signature(item: dict[str, Any]) -> dict[str, Any]:
+    if "target" in item:
+        return _canon(
+            {
+                "target": item.get("target"),
+                "existing": item.get("existing"),
+                "candidate": item.get("candidate"),
+            }
+        )
+    return _canon(
+        {
+            "kind": item.get("kind"),
+            "targets": item.get("targets"),
+            "expected_distance": item.get("expected_distance"),
+            "actual_distance": item.get("actual_distance"),
+        }
+    )
+
+
 def _unresolved_targets(items: list[dict[str, Any]]) -> list[str]:
     targets: set[str] = set()
     for item in items:
@@ -129,7 +148,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     }
 
     conflicts = sorted(
-        [_canon(item) for item in resolution.conflicts],
+        [_conflict_signature(item) for item in resolution.conflicts],
         key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
     )
 

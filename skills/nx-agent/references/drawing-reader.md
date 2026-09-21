@@ -51,6 +51,7 @@ Reader 可以：
 - 读取明确尺寸文字、孔径、螺纹、深度、数量、fit、through 等直接信息，并使用固定 canonical field；
 - 根据真实箭头 / witness / extension line 绑定 dimension endpoint；
 - 记录 measured axis；
+- 把图纸直接标出的 overall extent 按标准视图轴映射写入 length_x / width_y / height_z；
 - 记录显式 overall-center coincidence；
 - 在存在充分视觉证据时提交跨视图 association claim；
 - 对重复特征使用固定 grouped/member 粒度规则；
@@ -66,6 +67,7 @@ Reader 不得：
 - 输出任何 `feature:...` final target；
 - 根据 overall dimensions 手算 centered global coordinate；
 - 把 edge distance 手算成绝对坐标；
+- 因为“需要视图轴映射”就把图纸已明确标出的 overall dimension 留成 null；
 - 根据圆形投影自己写最终 axis；
 - 仅因为数字相等、靠得近、都是孔、看起来对称就合并 entity；
 - 猜 start_side / termination / missing dimension；
@@ -207,15 +209,34 @@ counterbore_depth
 
 ## 8. Axis
 
-标准 view 法向映射全部由 deterministic Compiler 完成：
+feature 轴向的标准 view 法向映射由 deterministic Compiler 完成：
 
 - front → Y
 - side → X
 - top → Z
 
-Reader 只记录 view kind 与 projection shape。
+Reader 不根据圆形投影自行写最终 feature axis。
 
-如果 axis 本身有独立明确标注，可作为 direct semantic evidence；否则禁止凭经验写最终 axis。
+但 dimension / overall extent 的 measured axis 必须在 Capture 阶段按标准视图
+方向写成 canonical X/Y/Z。这个动作只是轴映射，不是坐标计算：
+
+- front 水平尺寸 → X；
+- side 水平尺寸 → Y；
+- 标准正/侧视图竖向尺寸 → Z。
+
+因此，图纸明确标出的 overall extent 必须写入：
+
+~~~text
+overall_dimensions.length_x
+overall_dimensions.width_y
+overall_dimensions.height_z
+~~~
+
+三项都必须是正数，禁止 null / 缺省 / 0。
+
+Reader 不得通过算术推导一个图纸没有直接给出的 overall 数值；如果某一 overall
+extent 确实无法直接读取，应写 blocking unresolved，并停止本轮 schema-valid
+capture 交付，而不是写 null 后宣称验证通过。
 
 ## 9. First-pass
 
@@ -227,8 +248,25 @@ reader-capture.json
 
 写出后立即冻结。
 
-Reader 写出前只检查：
+Reader 写出前必须先在内存中执行生产 schema 校验：
 
+~~~python
+ReaderCapture.model_validate(payload)
+~~~
+
+仅做 JSON parse、顶层键数量检查或自定义字段扫描不算生产 schema 校验。
+
+如果该校验失败：
+
+- 不写 reader-capture.json；
+- 不第二次看图修复；
+- 直接汇报验证错误并停止。
+
+生产 schema 校验通过后，才允许执行唯一一次文件写入。
+
+Reader 写出前还要检查：
+
+- overall_dimensions 三轴是否均为正数且来自图纸直接标注；
 - 每个 view-local entity 是否只属于一个 view；
 - direct value 是否绑定到正确 local entity；
 - dimension endpoint 是否由真实标注 geometry 支持；

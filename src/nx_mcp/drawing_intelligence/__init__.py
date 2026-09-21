@@ -19,6 +19,7 @@ from .evidence import (
     RelationEvidence,
     ViewEvidence,
 )
+from .gate0 import Gate0Error, Gate0Result, write_strict_evidence
 from .resolver import ResolutionResult, resolve_evidence_graph
 from .stability import (
     StabilityReport,
@@ -36,6 +37,8 @@ __all__ = [
     "DraftAssemblyError",
     "EvidenceCompileError",
     "EvidenceGraph",
+    "Gate0Error",
+    "Gate0Result",
     "OverallDimensions",
     "ProjectionEvidence",
     "RelationEvidence",
@@ -48,4 +51,5 @@ __all__ = [
     "logical_snapshot",
     "resolve_evidence_graph",
     "snapshot_fingerprint",
+    "write_strict_evidence",
 ]

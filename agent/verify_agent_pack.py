@@ -214,15 +214,12 @@ def main() -> None:
     for token in (
         "当前上传工程图",
         "唯一几何输入",
-        "Reader 在内存中形成一次完整 first-pass semantic JSON payload",
-        "runner.py submit-semantic-draft <semantic-draft.json> <drawing.json>",
-        "`submission_accepted=true`",
-        "`canonicalization_attempted=true`",
+        "Reader 只能一次写出 `semantic-draft.json`",
+        "Reader 不得直接创建、覆盖或手写 `drawing.json`",
         "process exit code = 0",
         "`written=true`",
         "`output_exists=true`",
-        "禁止第二次 submit",
-        "单独调用 `validate-drawing`",
+        "单独调用 `validate-drawing` 绕过 canonicalizer",
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
@@ -245,12 +242,10 @@ def main() -> None:
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")
     for token in (
-        "`submit-semantic-draft`成功生成的canonical `drawing.json`",
+        "`canonicalize-drawing`成功生成的canonical `drawing.json`",
         "禁止消费`semantic-draft.json`",
         "Agent手写或仅经独立`validate-drawing`通过的drawing",
         "exit code = 0",
-        "`submission_accepted=true`",
-        "`canonicalization_attempted=true`",
         "`written=true`",
         "`output_exists=true`",
         "--drawing <current-drawing>",
@@ -258,11 +253,9 @@ def main() -> None:
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "当前上传工程图 → 内存 semantic payload → submit-semantic-draft",
-        "Reader只从当前上传工程图在内存中形成一次完整 first-pass semantic JSON payload",
-        "只有process exit code = 0、`submission_accepted=true`、`canonicalization_attempted=true`、`written=true`、`output_exists=true`同时成立才PASS",
-        "`already_submitted`",
-        "`workspace_not_clean`",
+        "当前上传工程图 → 当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
+        "Reader只从当前上传工程图生成一次`semantic-draft.json`",
+        "只有process exit code = 0、`written=true`、`output_exists=true`同时成立才PASS",
         "Reader存在blocking unresolved",
         "draft只有白名单内安全schema/path差异",
         "draft存在真实semantic/ownership错误",
@@ -316,45 +309,37 @@ def main() -> None:
     ):
         fail("Mode B pre-interpretation simulation permits a stale artifact")
 
-    mode_b_submission_tokens = {
+    mode_b_canonicalizer_tokens = {
         "SKILL.md": (
-            "完整 first-pass semantic JSON payload",
-            "通过 stdin 一次且仅一次提交",
-            "禁止第二次 submit",
+            "immutable first-pass semantic artifact",
+            "禁止 retry、第二版 draft、Edit/Rewrite draft",
             "`drawing.json` 不存在",
             "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
         ),
         "pipeline-contract.md": (
             "immutable first-pass semantic artifact",
-            "命令独占创建",
             "semantic token/schema retry",
             "手写drawing",
-            "单独`validate-drawing`",
+            "单独`validate-drawing`绕过canonicalizer",
             "其它结果`BLOCKED / STOP`",
         ),
     }
-    mode_b_submission_texts = {
+    mode_b_canonicalizer_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
     }
-    for name, tokens in mode_b_submission_tokens.items():
+    for name, tokens in mode_b_canonicalizer_tokens.items():
         for token in tokens:
-            if token not in mode_b_submission_texts[name]:
-                fail(f"Mode B one-shot submission workflow regression in {name}: missing {token}")
+            if token not in mode_b_canonicalizer_texts[name]:
+                fail(f"Mode B canonicalizer workflow regression in {name}: missing {token}")
 
     for forbidden in (
         "直接覆盖写入当前 `drawing.json`",
         "当前 drawing interpretation → 当前 drawing.json → validate-drawing",
         "首次 current `drawing.json`",
-        "Reader 只能一次写出 `semantic-draft.json`",
-        "当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
-        "runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>",
-        "semantic-candidate.json",
-        "draft-temp.json",
-        "reader-output.json",
     ):
-        if forbidden in top or forbidden in drawing_reader or forbidden in pipeline_contract:
-            fail(f"legacy/bypass Mode B workflow remains: {forbidden}")
+        if forbidden in top or forbidden in pipeline_contract:
+            fail(f"legacy direct-drawing workflow remains: {forbidden}")
 
     runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
     for token in (
@@ -471,7 +456,7 @@ def main() -> None:
         "Eligible derived",
         "Required HARD feature inventory",
         "Semantic draft assembly",
-        "First-submission semantic check",
+        "First-write semantic check",
         "association 本身不建立不同 feature 之间的数值关系",
         "不得在全局坐标转换时重分类",
         "distinct-feature alignment/connected/spacing",
@@ -591,20 +576,20 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "Semantic payload contract",
+        "Semantic draft contract",
         "现有 drawing 结构",
         "稳定 feature、annotation、source、relation 与 unresolved identity",
         "measured quantity与physical endpoint ownership",
         "dimension-bearing数值只能通过已识别的source",
-        "payload可使用canonicalizer白名单",
+        "semantic draft可使用canonicalizer白名单",
         "Reader不承担path prefix",
         "canonicalizer只修representation",
         "`edge_offset` 不得作为 derived expression",
         "known opposite endpoint target",
         "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-        "First-submission semantic check",
+        "First-write semantic check",
         "HARD inventory无静默遗漏",
-        "提交第二版",
+        "不得生成第二版draft",
         "`X=[-length_x/2,+length_x/2]`",
         "局部 profile/body/step boundary 不得套 overall bbox",
         "connected feature identity、relation evidence 与 nominal centerline endpoint",

@@ -10,7 +10,7 @@
 - 多视图中同一 feature 的重复表达合并，不重复计数。
 - DETAIL / SECTION 是局部 geometry 的高优先级证据。
 - 不确定且影响实体的内容进入 blocking `unresolved`，不得猜测、默认或静默省略。
-- 最终在内存中形成一份完整 semantic JSON payload；不得 Write/Edit `semantic-draft.json`、`drawing.json` 或 candidate/临时语义文件。
+- 最终只输出一份 `semantic-draft.json`；不得直接创建正式 `drawing.json`。
 
 ## 2. 唯一 semantic decision chain
 
@@ -22,7 +22,7 @@
 4. **Eligible derived**：只用已锁定的 source/target 与明确 relation 唯一计算缺失 target。没有 evidence-backed relation 禁止跨 feature derived。
 5. **Required HARD feature inventory**：根据工程图列出总体、主体/profile、明确孔槽及其它会改变实体的必需 feature。无法可靠表达的必需项进入 blocking `unresolved`，不得从 inventory 或输出中静默删除。
 6. **Semantic draft assembly**：把已锁定的 feature、ownership、relation、derived、unresolved 与 HARD inventory 写入现有 drawing 结构；representation spelling 交给 deterministic canonicalizer，不得为适配 schema 改写 semantic truth。
-7. **Submission**：完成 first-submission semantic check 后，把完整 payload 通过 stdin 一次提交给 one-shot repo command；Reader 不自行落盘，提交后不得生成第二版或重试。
+7. **Output**：完成first-write semantic check后，只写一次 `semantic-draft.json`。不得直接写 `drawing.json`，不得在失败后生成第二版 draft。
 
 ## 3. 视图、association 与坐标系
 
@@ -152,18 +152,18 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 - symmetry 只约束中点或镜像关系，不自动产生实例或把 edge offset 变成半距。
 - 输出前核对 count 与 `explicit_centers.length` 或 pattern counts；不一致进入 conflict。
 
-## 8. Semantic payload contract
+## 8. Semantic draft contract
 
-Semantic payload 使用现有 drawing 结构，不创建第二套 schema。它必须携带 `overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`，并保留稳定 feature、annotation、source、relation 与 unresolved identity。
+`semantic-draft.json` 继续使用现有 drawing 结构，不创建第二套 schema。它必须携带 `overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`，并保留稳定 feature、annotation、source、relation 与 unresolved identity。
 
 - feature 必须表达真实 type、axis/center/profile、尺寸、数量和termination；source/relation必须保留 measured quantity与physical endpoint ownership，coordinate 正确不能替代该 ownership。
 - dimension-bearing数值只能通过已识别的source、relation或geometry target参与derived；不得降级为free numeric const。
 - blocking unresolved不得同时带猜测的concrete value；semantic缺失不得用schema convenience掩盖。
-- payload可使用canonicalizer白名单能够无损识别的pre-canonical representation；Reader不承担path prefix、endpoint field spelling、object/list或numeric-string repair，也不得据Gate A错误试写semantic token。
+- semantic draft可使用canonicalizer白名单能够无损识别的pre-canonical representation；Reader不承担path prefix、endpoint field spelling、object/list或numeric-string repair，也不得据Gate A错误试写semantic token。
 - canonicalizer只修representation，不补feature、ownership、relation、derived或unresolved。
 
-## 9. First-submission semantic check
+## 9. First-write semantic check
 
-唯一一次提交前只检查 semantic truth：HARD inventory无静默遗漏；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；relation/derived有证据；coordinate与ownership一致；blocking ambiguity已写入unresolved。随后把完整 payload 经 stdin 提交给 `submit-semantic-draft`；不得自行写 artifact、创建 candidate、提交第二版或直接写 `drawing.json`。
+首次且唯一一次落盘前只检查semantic truth：HARD inventory无静默遗漏；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；relation/derived有证据；coordinate与ownership一致；blocking ambiguity已写入unresolved。检查失败时仍写明unresolved并停止，不得生成第二版draft或直接写`drawing.json`。
 
 快速视觉识别词典：`references/nx-drawing-rules.md`。

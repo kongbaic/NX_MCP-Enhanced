@@ -10,10 +10,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .capture import ReaderCapture
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
+from .identity_linker import IdentityLinkError, link_reader_capture
 from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
 
@@ -48,6 +50,65 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
             pass
         raise
 
+
+
+def _cmd_link_capture(args: argparse.Namespace) -> int:
+    capture_path = str(Path(args.capture).resolve())
+    evidence_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "capture": capture_path,
+        "drawing_evidence": evidence_path,
+        "written": False,
+        "schema_valid": False,
+        "errors": [],
+    }
+
+    if os.path.normcase(capture_path) == os.path.normcase(evidence_path):
+        report["errors"].append(
+            "reader capture input and drawing evidence output must differ"
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        raw = _load_json(capture_path)
+        capture = ReaderCapture.model_validate(raw)
+        linked = link_reader_capture(capture)
+
+        gate0 = write_strict_evidence(
+            linked.evidence.model_dump(mode="json")
+        )
+        output = gate0.evidence.model_dump(mode="json")
+        _atomic_write_json(evidence_path, output)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        IdentityLinkError,
+        Gate0Error,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report.update(
+        {
+            "written": True,
+            "schema_valid": True,
+            "capture_entities": linked.report["capture_entities"],
+            "physical_components": linked.report["physical_components"],
+            "association_claims": linked.report["association_claims"],
+            "identity_collisions": linked.report["identity_collisions"],
+            "linker_blocking_unresolved": linked.report["blocking_unresolved"],
+            "gate0_added_blocking_unresolved": gate0.report[
+                "added_blocking_unresolved"
+            ],
+            "total_unresolved": gate0.report["total_unresolved"],
+        }
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 def _cmd_gate0(args: argparse.Namespace) -> int:
     capture_path = str(Path(args.capture).resolve())
@@ -195,6 +256,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    link_capture = sub.add_parser(
+        "link-capture",
+        help=(
+            "compile Reader Capture v2 view-local observations into strict "
+            "drawing evidence"
+        ),
+    )
+    link_capture.add_argument("capture")
+    link_capture.add_argument("out")
+    link_capture.set_defaults(func=_cmd_link_capture)
 
     gate0 = sub.add_parser(
         "gate0",

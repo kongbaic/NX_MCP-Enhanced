@@ -44,6 +44,7 @@ Reader 可以：
 - 标记 dimension measured axis；
 - 当图纸明确表达方向时记录 center-to-center 的 direction；
 - 记录 direct value evidence；
+- 当图纸明确显示 feature center 与零件 overall centerline / center plane 重合时，记录 datum_alignments；不得直接把它手算成 0；
 - 记录 required HARD target；
 - 把证据不足或 identity 冲突写入 unresolved_evidence；
 - 对已经机器可辨且无歧义的 relation 直接写 formal relation，但 v1 优先让 compiler 从 endpoints 编译 relation。
@@ -100,6 +101,7 @@ Reader 只写 view kind 与 projection；不得自己把 projection 手工改写
   "views": [],
   "projections": [],
   "dimensions": [],
+  "datum_alignments": [],
   "direct_values": [],
   "relations": [],
   "required_targets": [],
@@ -171,7 +173,36 @@ Reader 必须先完成 same-feature identity，再使用相同 feature_id。
 
 禁止把通过 overall bbox 或 relation 计算得到的 coordinate 写成 direct value。
 
-### 4.4 dimensions
+### 4.4 datum_alignments
+
+只用于图纸明确显示某个 feature center coordinate 与零件 overall center datum 重合的情况。
+
+示例：某孔中心明确落在零件 Y 向 overall centerline：
+
+~~~json
+{
+  "id": "A_HOLE_Y_CENTER",
+  "target": "feature:F_HOLE.centerline.y",
+  "axis": "Y",
+  "datum": "overall_center",
+  "source_ids": ["OBS_SHARED_OVERALL_CENTERLINE"],
+  "required_for_modeling": true
+}
+~~~
+
+Reader 只记录“重合”这个视觉事实，不写数值。
+
+Compiler 根据固定坐标系确定：
+
+- X overall center → X=0；
+- Y overall center → Y=0；
+- Z overall center plane → Z=height_z/2。
+
+如果 target path 的坐标轴与 axis 不一致，必须 unresolved，不得自动改轴。
+
+不得把“看起来居中”“左右差不多”“零件似乎对称”写成 datum alignment。必须存在明确 centerline / center mark / datum coincidence evidence。
+
+### 4.5 dimensions
 
 dimension 只记录 identity、value、axis、两个 physical endpoints、可选 direction 和 source evidence。
 
@@ -219,7 +250,7 @@ Reader 不得在这里写 Y=-8。compiler 会固定得到 overall Y max=+16，�
 
 如果只有中心距数值但无法从图纸确定正负方向：省略 direction；Resolver 保留 ambiguity，Reader 禁止替它选方向。
 
-### 4.5 required_targets
+### 4.6 required_targets
 
 列出所有会改变最终实体、但需要 evidence/Resolver 闭合的 HARD target。
 
@@ -234,7 +265,7 @@ Reader 不得在这里写 Y=-8。compiler 会固定得到 overall Y max=+16，�
 
 如果 required target 最终没有唯一 evidence-backed solution，Resolver 必须输出 blocking unresolved。
 
-### 4.6 unresolved_evidence
+### 4.7 unresolved_evidence
 
 任何影响实体且无法唯一确定的内容必须显式记录。
 
@@ -309,7 +340,7 @@ Reader 写出 drawing-evidence.json 后，由固定程序执行：
 <runtime python> -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>
 ~~~
 
-程序负责：view kind → axis、dimension endpoint → edge_offset / center_spacing / center_distance、centered X/Y bounds、Z bottom datum、alignment、tangent、unique coordinate propagation、conflict detection、required target closure、provenance-preserving semantic draft assembly。
+程序负责：view kind → axis、overall-center datum alignment → deterministic coordinate、dimension endpoint → edge_offset / center_spacing / center_distance、centered X/Y bounds、Z bottom datum、alignment、tangent、unique coordinate propagation、conflict detection、required target closure、provenance-preserving semantic draft assembly。
 
 程序不得读取图片。
 
@@ -328,7 +359,8 @@ Reader 写出 drawing-evidence.json 后，由固定程序执行：
 5. conflicting circular views → unresolved，不选 axis；
 6. unsigned center spacing 无方向 → unresolved；
 7. direct 与 relation 写入冲突 → conflict；
-8. identical evidence input → identical logical resolution output。
+8. identical evidence input → identical logical resolution output；
+9. explicit overall-center datum alignment：X/Y→0，Z→height_z/2；target axis mismatch → unresolved。
 
 ## 11. 外部开源组件边界
 

@@ -66,8 +66,9 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 ```
 
 - `canonicalize-drawing`：只执行白名单schema/path等价转换并同步引用；在内存中
-  通过现有Gate A后才以临时文件+atomic replace写出canonical drawing。失败时
-  返回nonzero、不写输出，也不覆盖semantic draft；不推断geometry或ownership。
+  通过现有Gate A后才以临时文件+atomic replace写出canonical drawing。调用开始时
+  先失效精确指定的旧output；失败时返回nonzero、output不存在，也不覆盖semantic
+  draft；不推断geometry或ownership。
 - `validate-drawing`：对drawing执行同一representation-only normalization和
   Gate A验证，不触NX。
 - `run`：静态校验 → Loader ping → **preflight 安全检查** → 顺序执行全部

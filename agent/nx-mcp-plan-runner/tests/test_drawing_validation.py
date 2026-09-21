@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -595,6 +596,21 @@ class DrawingGateATests(unittest.TestCase):
 
 class DrawingSchemaNormalizationTests(unittest.TestCase):
     @staticmethod
+    def run_canonicalize(draft: Path, output: Path) -> tuple[int, dict]:
+        args = type("Args", (), {"draft": str(draft), "out": str(output)})()
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            return_code = R._cmd_canonicalize_drawing(args)
+        return return_code, json.loads(stdout.getvalue())
+
+    @staticmethod
+    def write_stale_output(output: Path) -> bytes:
+        stale = canonical_reader_fixture()
+        stale["stale_output_test_sentinel"] = "STALE_SENTINEL"
+        output.write_text(json.dumps(stale, ensure_ascii=False, indent=2), encoding="utf-8")
+        return output.read_bytes()
+
+    @staticmethod
     def range_alias_data() -> dict:
         return {
             "features": [{"id": "F_SLOT", "range_z": {"from": "5", "to": 15}}],
@@ -879,6 +895,72 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(original, draft.read_text(encoding="utf-8"))
 
+    def test_canonicalize_cli_gate_failure_removes_stale_output(self) -> None:
+        data = self.gate_a_range_alias_data()
+        data["source_ledger"] = [
+            item for item in data["source_ledger"] if item["id"] != "S_SLOT_WIDTH"
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            self.write_stale_output(output)
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_normalization_failure_removes_stale_output(self) -> None:
+        data = {"features": [{"id": "F_BAD", "range_z": {"start": 1, "to": 2}}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            self.write_stale_output(output)
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertTrue(report["normalization"]["errors"])
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_missing_input_removes_stale_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "missing-semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            self.write_stale_output(output)
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_malformed_input_removes_stale_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text("{malformed", encoding="utf-8")
+            self.write_stale_output(output)
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_unreadable_input_removes_stale_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text("{}", encoding="utf-8")
+            self.write_stale_output(output)
+            with mock.patch.object(R, "_load_drawing", side_effect=PermissionError("unreadable")):
+                result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
     def test_canonicalize_cli_rejects_overwriting_semantic_draft(self) -> None:
         data = self.gate_a_range_alias_data()
         with tempfile.TemporaryDirectory() as tmp:
@@ -890,6 +972,48 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
                 result = R._cmd_canonicalize_drawing(args)
             self.assertEqual(1, result)
             self.assertEqual(original, draft.read_text(encoding="utf-8"))
+
+    def test_canonicalize_cli_rejects_output_directory_without_deleting_it(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            output.mkdir()
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertTrue(report["output_exists"])
+            self.assertTrue(output.is_dir())
+
+    def test_canonicalize_cli_output_invalidation_failure_is_nonzero(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            stale_bytes = self.write_stale_output(output)
+            with mock.patch.object(R.os, "unlink", side_effect=PermissionError("denied")):
+                result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertTrue(report["output_exists"])
+            self.assertEqual(stale_bytes, output.read_bytes())
+
+    def test_canonicalize_cli_atomic_write_failure_leaves_no_output_or_temp(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            self.write_stale_output(output)
+            with mock.patch.object(R.os, "replace", side_effect=OSError("replace failed")):
+                result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+            self.assertEqual([], list(Path(tmp).glob(".drawing-canonical-*.tmp")))
 
     def test_canonicalize_cli_passes_gate_then_writes_output_atomically(self) -> None:
         data = self.gate_a_range_alias_data()
@@ -910,6 +1034,23 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
             self.assertNotIn("range_z", slot)
             self.assertEqual([], R.check_drawing_json(canonical))
             self.assertEqual(original, draft.read_text(encoding="utf-8"))
+            self.assertEqual([], list(Path(tmp).glob(".drawing-canonical-*.tmp")))
+
+    def test_canonicalize_cli_pass_replaces_stale_output(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            stale_bytes = self.write_stale_output(output)
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(0, result)
+            self.assertTrue(report["written"])
+            self.assertTrue(report["output_exists"])
+            self.assertNotEqual(stale_bytes, output.read_bytes())
+            canonical = json.loads(output.read_text(encoding="utf-8"))
+            self.assertNotIn("stale_output_test_sentinel", canonical)
+            self.assertEqual([], R.check_drawing_json(canonical))
             self.assertEqual([], list(Path(tmp).glob(".drawing-canonical-*.tmp")))
 
 

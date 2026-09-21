@@ -3583,6 +3583,19 @@ def _atomic_write_json(path: str, data: dict) -> None:
         raise
 
 
+def _invalidate_canonical_output(path: str) -> None:
+    if not os.path.lexists(path):
+        return
+    if os.path.isdir(path):
+        raise PlanError(f"canonical drawing output path is a directory: {path}")
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    if os.path.lexists(path):
+        raise PlanError(f"failed to invalidate pre-existing canonical drawing: {path}")
+
+
 def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("A3_CANONICALIZE", args.draft)
     draft_path = os.path.abspath(args.draft)
@@ -3598,6 +3611,7 @@ def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
         errors.append("semantic draft and canonical drawing output must be different paths")
     else:
         try:
+            _invalidate_canonical_output(output_path)
             original = _load_drawing(draft_path)
             drawing, normalization_errors, changes = normalize_drawing_schema(original)
             errors.extend(normalization_errors)
@@ -3634,6 +3648,7 @@ def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
             result["written"] = True
             result["ok"] = True
 
+    result["output_exists"] = os.path.lexists(output_path)
     _attach_command_timing(result, timing_state)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1

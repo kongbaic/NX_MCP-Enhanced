@@ -1,3 +1,15 @@
+from .capture import (
+    AssociationClaim,
+    CaptureDatumAlignment,
+    CaptureDimension,
+    CaptureDimensionEndpoint,
+    CaptureEntity,
+    CaptureRequiredTarget,
+    CaptureValue,
+    CaptureView,
+    ReaderCapture,
+)
+from .identity_linker import IdentityLinkError, IdentityLinkResult, link_reader_capture
 """Deterministic drawing-evidence compilation and resolution.
 
 This package is intentionally independent from the NX execution backend.
@@ -29,6 +41,18 @@ from .stability import (
 )
 
 __all__ = [
+    "link_reader_capture",
+    "IdentityLinkResult",
+    "IdentityLinkError",
+    "ReaderCapture",
+    "CaptureView",
+    "CaptureValue",
+    "CaptureRequiredTarget",
+    "CaptureEntity",
+    "CaptureDimensionEndpoint",
+    "CaptureDimension",
+    "CaptureDatumAlignment",
+    "AssociationClaim",
     "CoordinateFact",
     "DatumAlignmentEvidence",
     "DimensionEndpoint",

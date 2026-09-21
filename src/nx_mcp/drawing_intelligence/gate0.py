@@ -190,6 +190,23 @@ def _preserve_extra_fields(
     )
 
 
+
+
+def _direct_target_is_downstream_safe(target: str) -> bool:
+    """Gate 0 target grammar accepted by the frozen draft/Gate A path.
+
+    EvidenceGraph intentionally allows arbitrary non-empty targets, but the
+    downstream semantic-draft contract does not. Gate 0 must therefore reject
+    syntactically valid Reader targets that the frozen backend cannot consume,
+    rather than letting them fail later or inventing a mapping.
+    """
+
+    return (
+        target.startswith("feature:")
+        or target.startswith("overall_dimensions.")
+        or target.startswith("profile.")
+    )
+
 def _validate_record(
     *,
     section: str,
@@ -223,6 +240,22 @@ def _validate_record(
             unresolved=unresolved,
         )
         return None
+
+    if section == "direct_values":
+        target = getattr(parsed, "target", "")
+        if not _direct_target_is_downstream_safe(str(target)):
+            _quarantine(
+                section=section,
+                index=index,
+                record=record,
+                reason=(
+                    "direct_values target is not consumable by the frozen "
+                    f"semantic-draft contract: {target!r}"
+                ),
+                observations=observations,
+                unresolved=unresolved,
+            )
+            return None
 
     record_id = getattr(parsed, "id", None)
     if section in _GLOBAL_ID_SECTIONS and isinstance(record_id, str):

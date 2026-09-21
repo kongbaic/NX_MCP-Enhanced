@@ -27,17 +27,19 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 用户上传二维机械工程图并要求开始建模、按图建模、用 NX 画出来等时：
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 runtime-config.json；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
-2. 读取 references/drawing-reader.md + references/nx-drawing-rules.md。
-3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 只能一次写出 drawing-evidence.json；它是 immutable first-pass visual evidence artifact。Reader 不得直接创建 semantic-draft.json 或 drawing.json。
-4. evidence 写出后，立即使用 runtime-config 指定 python_exe 执行：python -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>。
-5. 只有 resolve 的 process exit code=0、written=true、ok=true、blocking_unresolved=0、conflicts=0、dimension_closure=closed 全部成立，才允许继续。否则 BLOCKED / STOP；禁止第二次看图、Edit/Rewrite evidence、生成第二版 evidence、修改 draft 后重试、进入 canonicalizer 或 Planner。
-6. Resolve PASS 后立即执行 runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>。只有 process exit code=0、written=true、output_exists=true、gate_a.ok=true 才算 Gate A PASS。
-7. Gate A 失败立即 BLOCKED / STOP。禁止修改 evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
-8. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
-9. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
-10. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
-11. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-12. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
+2. 读取 references/drawing-reader.md + references/reader-capture-contract.md + references/nx-drawing-rules.md。
+3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 只能一次写出 reader-capture.json；它是 immutable first-pass visual evidence artifact。Reader 不得直接创建 drawing-evidence.json、semantic-draft.json 或 drawing.json。
+4. capture 写出后，立即使用 runtime-config 指定 python_exe 执行：python -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>。该步骤只做 deterministic identity linking + Gate 0；禁止重新读取工程图。
+5. 只有 link-capture 的 process exit code=0、written=true、schema_valid=true 才允许继续；否则 BLOCKED / STOP。link-capture 产生 blocking unresolved 可以保留在 drawing-evidence.json，是否闭合由下一步 resolve 判定。
+6. 立即执行：python -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>。
+7. 只有 resolve 的 process exit code=0、written=true、ok=true、blocking_unresolved=0、conflicts=0、dimension_closure=closed 全部成立，才允许继续。否则 BLOCKED / STOP；禁止第二次看图、Edit/Rewrite capture/evidence、生成第二版 capture/evidence、修改 draft 后重试、进入 canonicalizer 或 Planner。
+8. Resolve PASS 后立即执行 runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>。只有 process exit code=0、written=true、output_exists=true、gate_a.ok=true 才算 Gate A PASS。
+9. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
+10. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
+11. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
+12. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
+13. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+14. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
 
 两条链路：
 
@@ -49,6 +51,8 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 → PRT + STEP
 
 二维工程图
+→ reader-capture.json
+→ deterministic identity link / Gate 0
 → drawing-evidence.json
 → deterministic compile / resolve
 → semantic-draft.json
@@ -72,7 +76,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 7. nx_mcp_src 只能取自当前 runtime-config，不得从历史仓库、备份仓库或其它 workspace 推断。
 8. runtime 一旦解析，本轮不得重新发现或切换 runtime。
 
-当前 drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 workspace_root。其它目录中已有文件不能触发 workspace 切换。
+当前 reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 workspace_root。其它目录中已有文件不能触发 workspace 切换。
 
 ## 3. 模式选择优先级
 
@@ -86,12 +90,13 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 ### Evidence Gate
 
-- Reader 一次写出本轮 drawing-evidence.json。
-- Reader 只记录 visual evidence、same-feature identity、physical endpoints、direct values、required targets 与 unresolved evidence。
+- Reader 一次写出本轮 reader-capture.json。
+- Reader 只记录 view-local entities、显式 association claims、physical endpoints、direct values、required fields 与 unresolved evidence；禁止创建最终 physical feature ID。
+- 立即执行 link-capture，确定性生成 drawing-evidence.json。
 - Reader 禁止做 centered global coordinate arithmetic、relation 语义猜测或 Gate A 判定。
-- 立即执行 deterministic resolve，生成 semantic-draft.json。
+- 再执行 deterministic resolve，生成 semantic-draft.json。
 - resolve 非零、blocking_unresolved>0、conflicts>0 或 dimension_closure 非 closed → STOP。
-- 失败时禁止重新看图修答案。
+- 任一前端门禁失败时禁止重新看图修答案、禁止第二版 reader-capture。
 
 ### Gate A
 
@@ -118,7 +123,7 @@ frozen plan 首次落盘前必须完成静态自检。B 阶段 build/check 失�
 - 每个任务最多允许 1 次 Controlled Self-Healing。
 - 只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题。
 - 典型允许：edge/face selection_criteria 过严、Loader 已冻结的类型语义差异。
-- 禁止：重新看图、修改 drawing-evidence、猜尺寸、改图纸、改变主体结构、绕过能力边界、修改 Runner/NX_MCP/Loader。
+- 禁止：重新看图、修改 reader-capture/drawing-evidence、猜尺寸、改图纸、改变主体结构、绕过能力边界、修改 Runner/NX_MCP/Loader。
 - 禁止 geometry / numeric nudge。
 - 修复后必须重新 build/check，并由 Runner 安全 preflight 丢弃本任务自己的失败零件，然后从第 1 步完整重跑。
 - 禁止从失败步骤续跑。

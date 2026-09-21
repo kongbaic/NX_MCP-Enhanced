@@ -14,6 +14,7 @@ from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .resolver import resolve_evidence_graph
+from .stability import compare_evidence_runs
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -103,6 +104,44 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0 if resolution.ok else 2
 
 
+def _cmd_stability(args: argparse.Namespace) -> int:
+    report: dict[str, Any] = {
+        "stable": False,
+        "run_count": 0,
+        "unique_fingerprints": 0,
+        "errors": [],
+    }
+    try:
+        if len(args.evidence) < 2:
+            raise ValueError("stability comparison requires at least two evidence files")
+        graphs = [
+            EvidenceGraph.model_validate(_load_json(str(Path(path).resolve())))
+            for path in args.evidence
+        ]
+        result = compare_evidence_runs(graphs)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        EvidenceCompileError,
+        DraftAssemblyError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report = result.to_dict()
+    if not args.include_snapshots:
+        report.pop("snapshots", None)
+
+    if args.report:
+        _atomic_write_json(args.report, report)
+
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if result.stable else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m nx_mcp.drawing_intelligence",
@@ -117,6 +156,26 @@ def main(argv: list[str] | None = None) -> int:
     resolve.add_argument("evidence")
     resolve.add_argument("out")
     resolve.set_defaults(func=_cmd_resolve)
+
+    stability = sub.add_parser(
+        "stability",
+        help="compare independent drawing-evidence runs for semantic drift",
+    )
+    stability.add_argument(
+        "evidence",
+        nargs="+",
+        help="two or more independent drawing-evidence JSON files",
+    )
+    stability.add_argument(
+        "--report",
+        help="optional JSON path for the stability report",
+    )
+    stability.add_argument(
+        "--include-snapshots",
+        action="store_true",
+        help="include normalized logical snapshots in stdout/report",
+    )
+    stability.set_defaults(func=_cmd_stability)
 
     args = parser.parse_args(argv)
     return args.func(args)

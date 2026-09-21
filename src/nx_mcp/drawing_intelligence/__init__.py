@@ -20,6 +20,12 @@ from .evidence import (
     ViewEvidence,
 )
 from .resolver import ResolutionResult, resolve_evidence_graph
+from .stability import (
+    StabilityReport,
+    compare_evidence_runs,
+    logical_snapshot,
+    snapshot_fingerprint,
+)
 
 __all__ = [
     "CoordinateFact",
@@ -34,8 +40,12 @@ __all__ = [
     "ProjectionEvidence",
     "RelationEvidence",
     "ResolutionResult",
+    "StabilityReport",
     "ViewEvidence",
     "build_semantic_draft",
+    "compare_evidence_runs",
     "compile_evidence_graph",
+    "logical_snapshot",
     "resolve_evidence_graph",
+    "snapshot_fingerprint",
 ]

@@ -1,369 +1,220 @@
-# 二维工程图 Evidence Reader v1
+# 二维工程图 Reader Capture v2
 
-本文件是 nx-agent 的工程图视觉读取 contract。它只负责观察与记录证据，不再负责最终几何求解、全局坐标计算、relation 语义选择或 Gate A 判定。
+本文件是 nx-agent 的二维工程图视觉读取规则。Reader 的职责只到
+**view-local evidence capture** 为止，不再直接创建最终 physical feature
+identity，也不直接写 `drawing-evidence.json`。
 
-references/nx-drawing-rules.md 只提供视觉识别词典，不得覆盖本文件的 evidence identity、endpoint ownership、same-feature association 或 unresolved policy。
+正式字段合同见：
 
-## 1. 目标与边界
+- `references/reader-capture-contract.md`
+- `references/nx-drawing-rules.md` 仅作为通用视觉词典
 
-把当前上传的二维机械工程图一次性转换为 drawing-evidence.json。
+禁止把 benchmark 文档、测试 fixture、旧 evidence、旧 plan 或历史零件答案
+作为当前 Reader 输入。
 
-Reader 的唯一职责是回答：图上实际看到了什么？这些标注、投影、端点分别属于谁？
-
-Reader 不负责根据这些证据计算最终全局坐标；该职责交给 deterministic compiler / resolver。
-
-固定链路：
+## 1. 固定链路
 
 ~~~text
-工程图
+当前上传工程图
 ↓
-Evidence Reader
+Reader
+↓
+reader-capture.json              immutable first-pass
+↓
+link-capture                     deterministic
 ↓
 drawing-evidence.json
 ↓
-python -m nx_mcp.drawing_intelligence resolve
+resolve                          deterministic
 ↓
 semantic-draft.json
 ↓
-runner.py canonicalize-drawing
+canonicalize-drawing / Gate A
 ↓
-drawing.json / Gate A
+Backend v1
 ~~~
 
-Backend v1 不属于本文件职责。
+Reader 只执行第一段：
+
+~~~text
+工程图 → reader-capture.json
+~~~
+
+其余阶段不得重新读取工程图。
 
 ## 2. Reader 允许做什么
 
 Reader 可以：
 
-- 识别标准正投影视图 identity：front / side / top；
-- 为同一物理 feature 的不同投影建立稳定 feature identity；
-- 识别 view-local projection shape：circle、concentric_circles、hidden_parallel、slot_edges、profile、other；
-- 读取明确的尺寸文字、孔径、螺纹规格、数量、feature 类型；
-- 绑定 dimension 的两个物理 endpoints；
-- 标记 dimension measured axis；
-- 当图纸明确表达方向时记录 center-to-center 的 direction；
-- 记录 direct value evidence；
-- 当图纸明确显示 feature center 与零件 overall centerline / center plane 重合时，记录 datum_alignments；不得直接把它手算成 0；
-- 记录 required HARD target；
-- 把证据不足或 identity 冲突写入 unresolved_evidence；
-- 对已经机器可辨且无歧义的 relation 直接写 formal relation，但 v1 优先让 compiler 从 endpoints 编译 relation。
+- 识别 front / side / top 标准视图；
+- 识别每个 view 中的局部实体及 shape；
+- 读取明确尺寸文字、孔径、螺纹、深度、数量、fit、through 等直接信息；
+- 根据真实箭头 / witness / extension line 绑定 dimension endpoint；
+- 记录 measured axis；
+- 记录显式 overall-center coincidence；
+- 在存在充分视觉证据时提交跨视图 association claim；
+- 标出 required modeling fields；
+- 把不能唯一确定的内容写入 unresolved_evidence。
 
-Reader 不可以：
+## 3. Reader 不允许做什么
 
-- 根据 overall size 自己算 centered global coordinate；
-- 把 overall max → center = 24 心算成 Y=-8；
-- 把 bottom → center = 40 心算成 Z=40；
-- 自己选择 edge_offset / center_spacing / center_distance，只因为看起来像；
-- 从无符号中心距任意决定左右方向；
-- 猜孔 axis、start side、depth、termination；
-- 因为邻近、同值、同轴就合并两个不同 feature；
-- 读取旧 plan / old drawing / old report / NX 输出帮助理解当前图纸；
-- 直接写 semantic-draft.json；
-- 直接写 drawing.json；
+Reader 不得：
+
+- 创建 `F_MAIN`、`F_BORE`、`F_HOLE20` 之类最终 physical feature ID；
+- 在不同 view 之间靠命名强行维持同一 feature；
+- 输出任何 `feature:...` final target；
+- 根据 overall dimensions 手算 centered global coordinate；
+- 把 edge distance 手算成绝对坐标；
+- 根据圆形投影自己写最终 axis；
+- 仅因为数字相等、靠得近、都是孔、看起来对称就合并 entity；
+- 猜 start_side / termination / missing dimension；
+- 为了闭合而把 intermediate surface 冒充 overall boundary；
+- 读取旧 capture/evidence/draft/drawing/plan/report/PRT/STEP；
+- 根据 linker / Gate 0 / Resolver / Gate A 错误第二次看图修答案；
+- 直接写 semantic-draft.json / drawing.json；
 - 宣布 Gate A PASS。
 
-## 3. 固定坐标语义
+## 4. View-local entity
 
-项目唯一全局坐标系仍是：
-
-~~~json
-{
-  "origin": "part_center_xy_bottom_z0",
-  "x_positive": "right",
-  "y_positive": "declared side-view positive",
-  "z_positive": "up",
-  "unit": "mm"
-}
-~~~
-
-标准视图到法向轴的确定性映射由 compiler 完成：
-
-- Front → normal Y
-- Side → normal X
-- Top → normal Z
-
-Reader 只写 view kind 与 projection；不得自己把 projection 手工改写成最终 axis，除非 axis 本身有独立直接证据。
-
-## 4. drawing-evidence.json v1
-
-顶层结构：
+每个可建模候选只在当前 view 内建立 local entity：
 
 ~~~json
 {
-  "schema_version": "1.0",
-  "coordinate_system": "part_center_xy_bottom_z0",
-  "overall_dimensions": {
-    "length_x": 40,
-    "width_y": 32,
-    "height_z": 66
-  },
-  "views": [],
-  "projections": [],
-  "dimensions": [],
-  "datum_alignments": [],
-  "direct_values": [],
-  "relations": [],
-  "required_targets": [],
-  "observations": [],
-  "unresolved_evidence": []
+  "id": "E_FRONT_01",
+  "view_id": "V_FRONT",
+  "shape": "circle",
+  "source_ids": ["OBS_FRONT_01"],
+  "required_for_modeling": true
 }
 ~~~
 
-### 4.1 views
+这个 ID 只是本次 capture 的局部引用，不代表物理 feature 名称。
+
+同一物理 feature 在另一个 view 中必须是另一个 local entity。
+
+## 5. Cross-view association
+
+只有当图纸本身提供足够证据时，Reader 才写：
+
+~~~json
+{
+  "id": "A_01",
+  "entity_ids": ["E_FRONT_01", "E_SIDE_02"],
+  "source_ids": ["OBS_SHARED_CENTERLINE"]
+}
+~~~
+
+这只是“这些 view-local observations 很可能是同一物理 feature”的明确证据声明。
+
+最终 physical feature ID 由 deterministic identity linker 生成。
+
+如果不能唯一确认：
+
+- 不 association；
+- 不猜；
+- 如影响建模，写 blocking unresolved。
+
+## 6. Dimension ownership
+
+v2 endpoint 只有：
+
+- overall_min
+- overall_max
+- entity_center
 
 示例：
 
 ~~~json
 {
-  "id": "V_FRONT",
-  "kind": "front",
-  "source_ids": ["OBS_VIEW_FRONT"]
-}
-~~~
-
-kind 只允许 front / side / top。DETAIL / SECTION 可保留在 observations 作为辅助 evidence；v1 不把它们伪装成标准 view kind。
-
-### 4.2 projections
-
-同一 feature 在不同 view 中的投影使用同一个稳定 feature_id：
-
-~~~json
-{
-  "id": "P_MAIN_FRONT",
-  "feature_id": "F_MAIN_HOLE",
-  "view_id": "V_FRONT",
-  "shape": "circle",
-  "source_ids": ["OBS_MAIN_CIRCLE"],
-  "required_for_modeling": true
-}
-~~~
-
-Reader 必须先完成 same-feature identity，再使用相同 feature_id。
-
-如果无法确定两个 projection 是否属于同一 feature：
-
-- 不得强行合并；
-- 写 unresolved_evidence；
-- 不得通过邻近、同值或 axis 猜测消除歧义。
-
-### 4.3 direct_values
-
-只放图纸直接支持的语义值。
-
-~~~json
-{
-  "id": "S_MAIN_KIND",
-  "target": "feature:F_MAIN_HOLE.type",
-  "value": "through_hole",
-  "source_ids": ["OBS_MAIN_HOLE"]
-}
-~~~
-
-典型 direct values：
-
-- feature kind；
-- diameter / hole_diameter；
-- thread spec；
-- count；
-- through；
-- slot width；
-- 明确 datum/ordinate 直接给出的 coordinate；
-- 明确标注的 feature-local dimension。
-
-禁止把通过 overall bbox 或 relation 计算得到的 coordinate 写成 direct value。
-
-### 4.4 datum_alignments
-
-只用于图纸明确显示某个 feature center coordinate 与零件 overall center datum 重合的情况。
-
-示例：某孔中心明确落在零件 Y 向 overall centerline：
-
-~~~json
-{
-  "id": "A_HOLE_Y_CENTER",
-  "target": "feature:F_HOLE.centerline.y",
-  "axis": "Y",
-  "datum": "overall_center",
-  "source_ids": ["OBS_SHARED_OVERALL_CENTERLINE"],
-  "required_for_modeling": true
-}
-~~~
-
-Reader 只记录“重合”这个视觉事实，不写数值。
-
-Compiler 根据固定坐标系确定：
-
-- X overall center → X=0；
-- Y overall center → Y=0；
-- Z overall center plane → Z=height_z/2。
-
-如果 target path 的坐标轴与 axis 不一致，必须 unresolved，不得自动改轴。
-
-不得把“看起来居中”“左右差不多”“零件似乎对称”写成 datum alignment。必须存在明确 centerline / center mark / datum coincidence evidence。
-
-### 4.5 dimensions
-
-dimension 只记录 identity、value、axis、两个 physical endpoints、可选 direction 和 source evidence。
-
-示例：overall max Y boundary → mount hole center = 24
-
-~~~json
-{
-  "id": "D_MOUNT_Y24",
-  "value": 24,
+  "id": "D_01",
+  "value": 15,
   "axis": "Y",
   "endpoints": [
     {"role": "overall_max"},
-    {
-      "role": "feature_center",
-      "target": "feature:F_MOUNT.centerline.y"
-    }
-  ],
-  "source_ids": ["ANN_Y24"],
-  "required_for_modeling": true
-}
-~~~
-
-Reader 不得在这里写 Y=-8。compiler 会固定得到 overall Y max=+16，再从 max 减 24，最终 Y=-8。
-
-示例：两个中心的明确中心距：
-
-~~~json
-{
-  "id": "D_PAIR_SPACING",
-  "value": 20,
-  "axis": "X",
-  "direction": 1,
-  "endpoints": [
-    {
-      "role": "feature_center",
-      "target": "feature:F_PAIR.explicit_centers.0.0"
-    },
-    {
-      "role": "feature_center",
-      "target": "feature:F_PAIR.explicit_centers.1.0"
-    }
+    {"role": "entity_center", "entity_id": "E_TOP_02"}
   ]
 }
 ~~~
 
-如果只有中心距数值但无法从图纸确定正负方向：省略 direction；Resolver 保留 ambiguity，Reader 禁止替它选方向。
+Reader 只记录可见的 physical ownership，不计算结果坐标。
 
-### 4.6 required_targets
+如果箭头落在当前 schema 无法表达的 local/intermediate surface：
 
-列出所有会改变最终实体、但需要 evidence/Resolver 闭合的 HARD target。
+- 不把它改成 overall；
+- 不把它改成 entity center；
+- 直接 unresolved。
 
-例如：
+## 7. Direct value
 
-~~~json
-[
-  "feature:F_MAIN_HOLE.centerline.z",
-  "feature:F_MOUNT.explicit_centers.0.1"
-]
-~~~
-
-如果 required target 最终没有唯一 evidence-backed solution，Resolver 必须输出 blocking unresolved。
-
-### 4.7 unresolved_evidence
-
-任何影响实体且无法唯一确定的内容必须显式记录。
+v2 direct value 写成：
 
 ~~~json
 {
-  "id": "U_M6_START_SIDE",
-  "target": "feature:F_M6.start_side",
-  "reason": "drawing does not uniquely establish start side",
-  "required_for_modeling": true,
-  "evidence": ["OBS_M6_SECTION"]
+  "id": "S_01",
+  "entity_id": "E_FRONT_01",
+  "field": "diameter",
+  "value": 12
 }
 ~~~
 
-禁止同时给该 target 一个猜测 concrete value。
+Reader 不写：
 
-## 5. Physical endpoint ownership
+~~~text
+feature:F_XXX.diameter
+~~~
 
-dimension-bearing annotation 在进入 dimensions 前必须先绑定真实 physical endpoints。
+最终 target 由 linker 生成。
 
-v1 endpoint role：overall_min、overall_max、feature_center。
+## 8. Axis
 
-Reader 必须按箭头、witness、extension line 实际终止 geometry 判断 endpoint，而不是 dimension line 经过哪里、附近有什么 feature、哪个数字看起来刚好能算通。
+标准 view 法向映射全部由 deterministic Compiler 完成：
 
-典型映射：
+- front → Y
+- side → X
+- top → Z
 
-| 图纸物理 endpoints | Reader 输出 |
-|---|---|
-| overall min/max boundary ↔ overall max/min boundary | two overall endpoints |
-| overall min/max boundary ↔ feature center | overall endpoint + feature_center |
-| feature center ↔ feature center | two feature_center endpoints |
+Reader 只记录 view kind 与 projection shape。
 
-v1 尚不能确定性表示 intermediate local surface 时：不得降级成 overall boundary，不得自己计算，写 blocking unresolved。
+如果 axis 本身有独立明确标注，可作为 direct semantic evidence；否则禁止凭经验写最终 axis。
 
-## 6. same-feature association
+## 9. First-pass
 
-Reader 仍然负责这是不是同一个物理 feature 的视觉 association，因为这是视觉 identity，不是数学计算。
+对当前图纸只允许一次视觉读取，输出一次：
 
-允许依据：orthographic projection alignment、shared centerline、matching diameter/spec、leader/witness endpoints、DETAIL/SECTION 明确局部引用、圆形投影与其它正交投影的一致性。
+~~~text
+reader-capture.json
+~~~
 
-单独以下任一项都不足以 association：图上靠得近、数字相同、axis 相同、都是孔、经验上应该是同一个。
-
-发生冲突时写 unresolved_evidence，而不是挑一个。
-
-## 7. HARD feature inventory
-
-Reader 必须穷尽当前图纸中会改变实体的 feature：主体/profile、through hole、threaded hole、counterbore/countersink、slot/slit/cut、step/boss/pocket、明确圆角/倒角、pattern/repeated holes，以及其它当前 certified backend 可建模的 feature。
-
-不能可靠表达但会改变实体时，仍必须保留 required_for_modeling=true 并进入 unresolved；不得静默省略。
-
-## 8. Reader first-write 规则
-
-Reader 对当前上传工程图只允许生成一次 drawing-evidence.json。它是 immutable first-pass visual evidence artifact。
+写出后立即冻结。
 
 Reader 写出前只检查：
 
-- evidence identity 是否稳定；
-- same-feature identity 是否自洽；
-- dimension endpoints 是否已绑定；
-- required HARD inventory 是否无静默遗漏；
-- ambiguity 是否已显式 unresolved；
-- 没有把 deterministic calculation 偷写成 visual direct fact。
+- 每个 view-local entity 是否只属于一个 view；
+- direct value 是否绑定到正确 local entity；
+- dimension endpoint 是否由真实标注 geometry 支持；
+- association 是否有明确跨视图证据；
+- required HARD inventory 是否没有静默遗漏；
+- ambiguity 是否显式 unresolved；
+- 没有 final feature ID；
+- 没有 global-coordinate arithmetic。
 
 写出后 Reader 阶段结束。
 
-失败后禁止第二次看图补答案、根据 compiler/Resolver/Gate A 错误重新解释、编辑旧 evidence 让它过门、读取旧 plan 或 NX model 倒推图纸。
+## 10. Reader-facing benchmark isolation
 
-## 9. deterministic compile / resolve
+Reader benchmark 时只允许看到：
 
-Reader 写出 drawing-evidence.json 后，由固定程序执行：
+- 当前原始工程图；
+- 本文件；
+- reader-capture-contract.md；
+- 通用 nx-drawing-rules.md。
 
-~~~text
-<runtime python> -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>
-~~~
+Reader 不得读取：
 
-程序负责：view kind → axis、overall-center datum alignment → deterministic coordinate、dimension endpoint → edge_offset / center_spacing / center_distance、centered X/Y bounds、Z bottom datum、alignment、tangent、unique coordinate propagation、conflict detection、required target closure、provenance-preserving semantic draft assembly。
+- reader-stability-benchmark.md；
+- tests / fixtures；
+- 任何同图历史 capture/evidence；
+- benchmark expected values；
+- 其它 Agent/Codex 运行结果。
 
-程序不得读取图片。
-
-如果不存在唯一解：exit != 0，semantic-draft.json 可以保留 blocking unresolved，然后 STOP；不得重新调用 Reader 修答案。
-
-只有 exit=0、written=true、ok=true、dimension_closure=closed 才进入 canonicalizer / Gate A。
-
-## 10. 关键 v1 不变量
-
-以下历史问题必须由程序确定性处理：
-
-1. overall Y=32，max-edge→center=24 → Y=-8；
-2. bottom→Ø20 center=40 → Z=40，不允许 48；
-3. front circle → axis Y；
-4. side circle → axis X；
-5. conflicting circular views → unresolved，不选 axis；
-6. unsigned center spacing 无方向 → unresolved；
-7. direct 与 relation 写入冲突 → conflict；
-8. identical evidence input → identical logical resolution output；
-9. explicit overall-center datum alignment：X/Y→0，Z→height_z/2；target axis mismatch → unresolved。
-
-## 11. 外部开源组件边界
-
-v1 Reader / Resolver 不复制第三方项目实现。
-
-后续输入 adapter 可以接 DXF vector parser、PDF vector/text parser、OCR、VLM。adapter 只能产生本合同中的 evidence，不得绕过 Resolver 直接写最终 geometry。
+Reader-facing 文档本身不得包含某一张 benchmark 图的标准答案或 sentinel 数值。

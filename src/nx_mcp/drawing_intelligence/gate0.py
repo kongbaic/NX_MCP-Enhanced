@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from .compiler import EvidenceCompileError, compile_evidence_graph
+from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import (
     DatumAlignmentEvidence,
     DimensionObservation,
@@ -16,6 +18,7 @@ from .evidence import (
     RelationEvidence,
     ViewEvidence,
 )
+from .resolver import resolve_evidence_graph
 
 
 class Gate0Error(ValueError):
@@ -431,86 +434,109 @@ def _validate_header(capture: dict[str, Any]) -> tuple[str, str, OverallDimensio
     return schema_version, coordinate_system, overall
 
 
-def write_strict_evidence(capture: dict[str, Any]) -> Gate0Result:
-    """Convert loose Reader capture into strict EvidenceGraph without inference."""
 
-    if not isinstance(capture, dict):
-        raise Gate0Error("reader capture root must be an object")
 
-    schema_version, coordinate_system, overall = _validate_header(capture)
+def _target_path(target: str) -> tuple[str, tuple[str, ...]]:
+    if target.startswith("feature:"):
+        rest = target[len("feature:") :]
+        feature_id, dot, tail = rest.partition(".")
+        if not feature_id or not dot or not tail:
+            return target, ()
+        return f"feature:{feature_id}", tuple(tail.split("."))
+    return "<root>", tuple(target.split("."))
 
-    observations = _normalize_existing_observations(capture)
-    unresolved = _normalize_existing_unresolved(capture)
-    original_unresolved_count = len(unresolved)
 
-    seen_ids: set[str] = set()
-    accepted: dict[str, list[BaseModel]] = {}
-    passed: dict[str, int] = {}
-    quarantined: dict[str, int] = {}
+def _strict_prefix(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    return len(left) < len(right) and right[: len(left)] == left
 
-    for section, model in _LIST_SECTIONS:
-        accepted_items: list[BaseModel] = []
-        raw_items = _raw_list(
-            capture,
-            section,
-            observations=observations,
-            unresolved=unresolved,
-        )
-        q_before = len(unresolved)
-        for index, record in enumerate(raw_items):
-            parsed = _validate_record(
-                section=section,
-                index=index,
-                record=record,
-                model=model,
-                seen_ids=seen_ids,
-                observations=observations,
-                unresolved=unresolved,
-            )
-            if parsed is not None:
-                accepted_items.append(parsed)
-        accepted[section] = accepted_items
-        passed[section] = len(accepted_items)
-        quarantined[section] = len(unresolved) - q_before
 
-    required_targets = _normalize_required_targets(
-        capture,
+def _materialized_target_conflicts(graph: EvidenceGraph) -> set[str]:
+    """Find target paths that cannot coexist in the frozen draft object tree."""
+
+    compiled = compile_evidence_graph(graph)
+    resolution = resolve_evidence_graph(compiled)
+
+    targets = {
+        item.target
+        for item in compiled.direct_values
+        if isinstance(item.target, str) and item.target
+    }
+    targets.update(
+        target
+        for target in resolution.values
+        if isinstance(target, str) and target
+    )
+
+    by_root: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+    for target in sorted(targets):
+        root, parts = _target_path(target)
+        by_root.setdefault(root, []).append((target, parts))
+
+    conflicting: set[str] = set()
+    for entries in by_root.values():
+        for index, (left_target, left_parts) in enumerate(entries):
+            for right_target, right_parts in entries[index + 1 :]:
+                if _strict_prefix(left_parts, right_parts) or _strict_prefix(
+                    right_parts,
+                    left_parts,
+                ):
+                    conflicting.add(left_target)
+                    conflicting.add(right_target)
+    return conflicting
+
+
+def _strict_graph_from_accepted(
+    *,
+    schema_version: str,
+    coordinate_system: str,
+    overall: OverallDimensions,
+    accepted: dict[str, list[BaseModel]],
+    required_targets: list[str],
+    observations: list[dict[str, Any]],
+    unresolved: list[dict[str, Any]],
+) -> EvidenceGraph:
+    strict = _strict_graph_from_accepted(
+        schema_version=schema_version,
+        coordinate_system=coordinate_system,
+        overall=overall,
+        accepted=accepted,
+        required_targets=required_targets,
         observations=observations,
         unresolved=unresolved,
     )
 
-    output = {
-        "schema_version": schema_version,
-        "coordinate_system": coordinate_system,
-        "overall_dimensions": overall.model_dump(mode="json"),
-        "views": [item.model_dump(mode="json") for item in accepted["views"]],
-        "projections": [
-            item.model_dump(mode="json") for item in accepted["projections"]
-        ],
-        "dimensions": [
-            item.model_dump(mode="json") for item in accepted["dimensions"]
-        ],
-        "datum_alignments": [
-            item.model_dump(mode="json") for item in accepted["datum_alignments"]
-        ],
-        "direct_values": [
-            item.model_dump(mode="json") for item in accepted["direct_values"]
-        ],
-        "relations": [
-            item.model_dump(mode="json") for item in accepted["relations"]
-        ],
-        "required_targets": required_targets,
-        "observations": observations,
-        "unresolved_evidence": unresolved,
-    }
+    removed_path_conflicts = _quarantine_direct_path_conflicts(
+        capture=capture,
+        accepted=accepted,
+        accepted_indices=accepted_indices,
+        graph=strict,
+        observations=observations,
+        unresolved=unresolved,
+    )
+    if removed_path_conflicts:
+        passed["direct_values"] -= removed_path_conflicts
+        quarantined["direct_values"] += removed_path_conflicts
+        strict = _strict_graph_from_accepted(
+            schema_version=schema_version,
+            coordinate_system=coordinate_system,
+            overall=overall,
+            accepted=accepted,
+            required_targets=required_targets,
+            observations=observations,
+            unresolved=unresolved,
+        )
 
-    try:
-        strict = EvidenceGraph.model_validate(output)
-    except ValidationError as exc:
-        raise Gate0Error(
-            "Gate 0 produced invalid strict evidence; this is an internal bug: "
-            f"{exc}"
-        ) from exc
+        # Removing every Reader direct record that participates in the current
+        # prefix conflict is deterministic and fail-closed. Re-check once to
+        # ensure no compiler/resolver-only path conflict remains.
+        remaining_conflicts = _materialized_target_conflicts(strict)
+        if remaining_conflicts:
+            raise Gate0Error(
+                "downstream target-path conflict remains after quarantining "
+                f"Reader direct_values: {sorted(remaining_conflicts)}"
+            )
+
+    _assert_downstream_consumable(strict)
 
     added_unresolved = len(unresolved) - original_unresolved_count
     blocking_added = sum(

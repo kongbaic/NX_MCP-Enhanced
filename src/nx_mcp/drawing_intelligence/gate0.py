@@ -201,11 +201,18 @@ def _direct_target_is_downstream_safe(target: str) -> bool:
     rather than letting them fail later or inventing a mapping.
     """
 
-    return (
-        target.startswith("feature:")
-        or target.startswith("overall_dimensions.")
-        or target.startswith("profile.")
-    )
+    if target.startswith("feature:"):
+        rest = target[len("feature:") :]
+        feature_id, dot, tail = rest.partition(".")
+        return bool(feature_id and dot and tail)
+
+    if target.startswith("overall_dimensions."):
+        return bool(target[len("overall_dimensions.") :])
+
+    if target.startswith("profile."):
+        return bool(target[len("profile.") :])
+
+    return False
 
 def _validate_record(
     *,

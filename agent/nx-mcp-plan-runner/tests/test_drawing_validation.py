@@ -557,8 +557,10 @@ class DrawingGateATests(unittest.TestCase):
             "Eligible derived",
             "Required HARD feature inventory",
             "Semantic draft assembly",
-            "First-write semantic check",
-            "只写一次 `semantic-draft.json`",
+            "First-submission semantic check",
+            "完整 semantic JSON payload",
+            "不得 Write/Edit `semantic-draft.json`",
+            "通过 stdin 一次提交",
             "association 本身不建立不同 feature 之间的数值关系",
             "不得在全局坐标转换时重分类",
             "必须穷尽整图中的 same-feature orthographic candidates",
@@ -591,17 +593,21 @@ class DrawingGateATests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, quick)
         for token in (
-            "Reader 只能一次写出 `semantic-draft.json`",
-            "`drawing.json` 只能由该命令成功生成",
+            "Reader 在内存中形成一次完整 first-pass semantic JSON payload",
+            "runner.py submit-semantic-draft <semantic-draft.json> <drawing.json>",
             "process exit code = 0",
+            "`submission_accepted=true`",
+            "`canonicalization_attempted=true`",
             "`written=true`",
             "`output_exists=true`",
-            "immutable first-pass semantic artifact",
-            "单独调用 `validate-drawing` 绕过 canonicalizer",
+            "禁止第二次 submit",
+            "单独调用 `validate-drawing`",
         ):
             self.assertIn(token, top)
         for token in (
-            "当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
+            "当前上传工程图 → 内存 semantic payload → submit-semantic-draft",
+            "`already_submitted`",
+            "`workspace_not_clean`",
             "其它结果`BLOCKED / STOP`",
             "drawing不存在，STOP",
         ):
@@ -610,12 +616,20 @@ class DrawingGateATests(unittest.TestCase):
             "直接覆盖写入当前 `drawing.json`",
             "当前 drawing interpretation → 当前 drawing.json → validate-drawing",
             "首次 current `drawing.json`",
+            "Reader 只能一次写出 `semantic-draft.json`",
+            "当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
+            "runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>",
+            "semantic-candidate.json",
+            "draft-temp.json",
+            "reader-output.json",
         ):
             self.assertNotIn(forbidden, top + reader + pipeline)
         for token in (
-            "`canonicalize-drawing`成功生成的canonical `drawing.json`",
+            "`submit-semantic-draft`成功生成的canonical `drawing.json`",
             "禁止消费`semantic-draft.json`",
             "Agent手写或仅经独立`validate-drawing`通过的drawing",
+            "`submission_accepted=true`",
+            "`canonicalization_attempted=true`",
             "同轴复合孔 centerline 是不可变输入",
             "不得平移",
             "改正负号",

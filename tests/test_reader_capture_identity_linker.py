@@ -329,3 +329,200 @@ def test_link_capture_cli_refuses_in_place_overwrite(tmp_path: Path):
     report = json.loads(completed.stdout)
     assert report["written"] is False
     assert path.exists()
+
+
+def test_reader_capture_normalizes_string_observations():
+    capture = ReaderCapture.model_validate(
+        {
+            "schema_version": "2.0",
+            "coordinate_system": "part_center_xy_bottom_z0",
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "views": [],
+            "entities": [],
+            "associations": [],
+            "values": [],
+            "dimensions": [],
+            "datum_alignments": [],
+            "required_targets": [],
+            "observations": [
+                "first prose observation",
+                {"kind": "already_structured", "value": 1},
+            ],
+            "unresolved_evidence": [],
+        }
+    )
+
+    assert capture.observations[0] == {
+        "kind": "reader_observation",
+        "text": "first prose observation",
+        "capture_index": 0,
+    }
+    assert capture.observations[1] == {
+        "kind": "already_structured",
+        "value": 1,
+    }
+
+
+def test_identity_collision_placeholders_keep_disconnected_components_distinct():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="hidden_parallel",
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="hidden_parallel",
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPACING",
+                value=24,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_LEFT",
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_RIGHT",
+                    ),
+                ],
+                required_for_modeling=True,
+            )
+        ],
+        unresolved_evidence=[
+            {
+                "id": "U_PAIRING",
+                "reason": "cross-view pairing is not uniquely established",
+                "required_for_modeling": True,
+            }
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    left = result.entity_to_feature["E_LEFT"]
+    right = result.entity_to_feature["E_RIGHT"]
+
+    assert left != right
+    assert left.endswith("_AMB_01")
+    assert right.endswith("_AMB_02")
+    assert result.report["identity_collisions"] == 1
+
+    compiled = compile_evidence_graph(result.evidence)
+    spacing = next(
+        item for item in compiled.relations
+        if item.id == "D_SPACING"
+    )
+
+    assert spacing.kind == "center_distance"
+    assert len(spacing.targets) == 2
+    assert spacing.targets[0] != spacing.targets[1]
+
+
+def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_path: Path):
+    capture = ReaderCapture.model_validate(
+        {
+            "schema_version": "2.0",
+            "coordinate_system": "part_center_xy_bottom_z0",
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "views": [
+                {"id": "V_FRONT", "kind": "front"},
+                {"id": "V_SIDE", "kind": "side"},
+            ],
+            "entities": [
+                {
+                    "id": "E_FRONT_05",
+                    "view_id": "V_FRONT",
+                    "shape": "hidden_parallel",
+                    "required_for_modeling": True,
+                },
+                {
+                    "id": "E_FRONT_06",
+                    "view_id": "V_FRONT",
+                    "shape": "hidden_parallel",
+                    "required_for_modeling": True,
+                },
+            ],
+            "associations": [],
+            "values": [],
+            "dimensions": [
+                {
+                    "id": "D_04",
+                    "value": 24,
+                    "axis": "X",
+                    "endpoints": [
+                        {
+                            "role": "entity_center",
+                            "entity_id": "E_FRONT_05",
+                        },
+                        {
+                            "role": "entity_center",
+                            "entity_id": "E_FRONT_06",
+                        },
+                    ],
+                    "required_for_modeling": True,
+                }
+            ],
+            "datum_alignments": [],
+            "required_targets": [],
+            "observations": [
+                "Two hidden groups are visible in the front view."
+            ],
+            "unresolved_evidence": [
+                {
+                    "id": "U_05",
+                    "reason": "the two candidates cannot be uniquely paired across views",
+                    "required_for_modeling": True,
+                }
+            ],
+        }
+    )
+
+    capture_path = tmp_path / "capture-run-02.json"
+    evidence_path = tmp_path / "linked-run-02.json"
+    capture_path.write_text(
+        json.dumps(capture.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "link-capture",
+            str(capture_path),
+            str(evidence_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["written"] is True
+    assert report["schema_valid"] is True
+    assert report["identity_collisions"] == 1
+    assert evidence_path.exists()

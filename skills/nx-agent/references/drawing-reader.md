@@ -8,7 +8,6 @@
 
 - 清晰标注直接采信；禁止像素、轮廓比例或图纸比例反推尺寸。
 - 多视图中同一 feature 的重复表达合并，不重复计数。
-- DETAIL / SECTION 是局部 geometry 的高优先级证据。
 - 不确定且影响实体的内容进入 blocking `unresolved`，不得猜测、默认或静默省略。
 - 最终只输出一份 `semantic-draft.json`；不得直接创建正式 `drawing.json`。
 
@@ -46,11 +45,10 @@ XY 原点为零件整体外形中心，Z=0 为零件底面。标准正投影视�
 
 第一角/第三角投影只改变视图排布。左右侧视图只改变观察方向，不改变 normal=X。
 
-- 圆形end-view提供axis候选；隐藏线投影提供transverse center、axial range及绑定dimension候选。
+- 先为每个view记录projected geometry与annotation endpoints，再用投影对齐、shared centerline、specification和leader/witness证据合并same-feature identity，最后绑定dimension endpoints。圆形end-view提供axis候选；隐藏线投影提供transverse center、axial range及其尺寸候选。
 - 孔的 transverse coordinates 由轴唯一确定：`axis=X`→Y/Z、axis=Y→X/Z、axis=Z→X/Y。
-- 跨视图候选只按projection alignment、shared centerline、specification和leader/witness endpoints判断same-feature/coaxial identity；邻近、同值或axis相同不足以association。
-- 每个候选先建立 view→projection geometry→annotation endpoints 的记录，再合并 same-feature identity。锁定 axis/每个 transverse center 或宣告 unresolved 前，必须逐项核对该 identity 的全部正交视图记录；任一视图上绑定的 center/spacing annotation 不得因其 feature 在另一视图显示为圆或隐藏线而丢失。
-- start face 只能在 axis 锁定后解释，不得反向决定 axis；看见孔位所在的面也不能代替 orthographic axis evidence。
+- 锁定 axis/每个 transverse center 或宣告 unresolved 前，必须逐项核对该 identity 的全部正交视图记录；邻近、同值或axis相同不足以association。任一视图上绑定的center/spacing不得因另一视图显示为圆或隐藏线而丢失。
+- start face 只能在 axis 锁定后解释，不得反向决定 axis；看见孔位所在的面也不能代替 orthographic axis evidence。start side证据不足时保持缺省/`null`并写blocking unresolved，不得猜值。
 - same-feature association只合并identity；distinct-feature alignment/spacing须建立独立relation并保留evidence/`relation_refs`。
 - slot/cut 分别记录 `width_axis` 与 `through_axis`；两条平行边只能识别 width_axis，不能单独决定 through_axis。
 - center coordinate 与沿轴 start/end/range 分开。side 或 axial range 会改变实体而不能唯一确定时进入 blocking `unresolved`。
@@ -70,11 +68,11 @@ dimension-bearing annotation参与derived/completion/global calculation前必须
 | absolute/ordinate datum → centerline | direct center coordinate |
 | overall min/max boundary → centerline | `edge_offset(value,axis,from,targets)` |
 | intermediate surface → centerline | local measurement source；需要全局 target 时 derived 必须引用该 surface target 与该 source |
-| centerline → centerline | `center_distance / center_spacing`，`between` 为两个真实 center paths |
+| centerline → centerline | `center_distance / center_spacing`，`between` 为两个真实scalar center paths |
 | profile/body boundary → profile/body boundary | `profile_dimension` |
 | slot 两侧 boundary → boundary | `slot_width` |
 
-endpoint 是箭头/extension line 实际终止的 geometry，不是 dimension line、extension line 或视线途中经过的 geometry。只有 witness endpoint 确实终止在 intermediate surface，尺寸才是 local measurement。datum/overall boundary→centerline 的 direct witness 优先于所有 arithmetic：一旦锁定，不得因标注路径经过 plate、pad、step 或 thickness 而改写成 local measurement，也不得叠加 neighboring feature dimension 或 inferred offset。
+endpoint 是箭头/extension line 实际终止的 geometry，不是尺寸线途中经过的edge/surface。两端终止于两个feature centerlines时必须先写`center_spacing/center_distance`，邻近overall edge不得抢占endpoint改写为`edge_offset`。datum/overall boundary→centerline的direct witness锁定后，不得叠加plate、pad、step、thickness、neighboring dimension或inferred offset。
 
 明确属于 `overall_dimensions` 的全局 boundary 使用：
 
@@ -132,38 +130,31 @@ derived仅用于无direct writer/relation coverage且可由已锁定证据唯一
 
 ### 6.4 Closure
 
-`dimension_closure` 只验证已经建立的 geometry：
-
-- 不创建 source；
-- 不创建 writer；
-- 不补 concrete coordinate；
-- 不改变 endpoint ownership；
-- 不推导缺失 geometry。
-
-状态只允许 `closed / incomplete / conflict`。`closed` 字样不能替代 required inventory、coverage、coordinate 和 conflict validation。
+`dimension_closure`只验证既有geometry，不创建source/writer、补coordinate、改变ownership或推导缺失geometry。状态仅为`closed / incomplete / conflict`；`closed`不能替代inventory、coverage、coordinate与conflict validation。
 
 ## 7. Pattern 与数量
 
-- `N×` 是 feature 总实例数，不因 symmetry/mirror 再次翻倍。
-- pattern/symmetry/spacing 只能在 endpoint ownership 已锁定后补全关系明确的 geometry。
-- rectangular/circular pattern 无法可靠分类时保留证据支持的 `explicit_centers`，不得强行分类。
-- symmetry 只约束中点或镜像关系，不自动产生实例或把 edge offset 变成半距。
-- 输出前核对 count 与 `explicit_centers.length` 或 pattern counts；不一致进入 conflict。
+- `N×`是feature总实例数，不因symmetry/mirror翻倍；pattern/symmetry/spacing只在ownership锁定后补全有明确关系的geometry。
+- 无法可靠分类时保留有证据的`explicit_centers`；symmetry不自动产生实例或把edge offset改为半距。输出前核对count与centers/pattern counts，不一致进入conflict。
 
 ## 8. Semantic draft contract
 
-`semantic-draft.json`使用现有drawing结构，携带`overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`与稳定 feature、annotation、source、relation 与 unresolved identity。
+`semantic-draft.json`必须在首次输出就使用当前drawing contract：`features`是带`id`的object array，`profile.segments`是segment array，`centerline`是直接包含横向scalar坐标的object，`explicit_centers`是numeric coordinate arrays。必需root为`overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`。
 
-- feature 必须表达真实 type、axis/center/profile、尺寸、数量和termination；source/relation必须保留 measured quantity与physical endpoint ownership，coordinate 正确不能替代该 ownership。
-- dimension-bearing数值只能通过已识别的source、relation或geometry target参与derived；不得降级为free numeric const。
-- blocking unresolved不得同时带猜测的concrete value；semantic缺失不得用schema convenience掩盖。
-- Reader必须按draft中真实字段发出可解析路径：feature字段使用`feature:<id>.<field>`；单孔中心使用`feature:<id>.centerline.<axis>`；重复孔坐标使用`feature:<id>.explicit_centers.<index>.<coordinate-index>`；profile使用`profile.segments.<index>.<field>`。不得发出抽象的`feature_id.center`，也不得引用对象中不存在的`top_z / z_local / z_to_top`等字段。
-- `center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`；`edge_offset`使用`value + axis + from + targets`；`alignment/coincident`使用`links`；`upper_tangent/lower_tangent`使用`center + diameter + tangent + links`。这些正式relation均位于`source_ledger`，不能只存在于free text或另一个未验证容器。
-- canonicalizer白名单只负责object/list、numeric-string、`range_z.from/to`及可证明的一对一path形状归一化；Reader仍负责选择真实字段和正确semantic，不得把歧义path交给canonicalizer猜测，也不得据Gate A错误试写semantic token。
-- canonicalizer只修representation，不补feature、ownership、relation、derived或unresolved。
+source entry必须有`id + semantic`；direct source用真实scalar `target`，relation source不得用`target`。直接semantic限定为`overall_dimension / profile_dimension / feature_count / diameter / radius / slot_width / depth / thickness / axis / center_position / position_dimension / thread_spec / feature_kind / side / through / pattern_dimension / feature_dimension`；relation semantic限定为`center_distance / center_spacing / edge_offset / symmetry / upper_tangent / lower_tangent / coincident / alignment`。旧`type`字段不是source semantic。
+
+relation的machine shape是：
+
+- `center_spacing/center_distance`: `id + semantic + value + between=[scalar center A, scalar center B]`；
+- `edge_offset`: `id + semantic + value + axis + from(min|max) + targets=[scalar paths]`；
+- `alignment/coincident`: `id + semantic + links=[至少两个相等numeric scalar paths]`；
+- `upper_tangent/lower_tangent`: `id + semantic + center + diameter + tangent + links`，`links`必须包含前三个paths。
+
+derived entry必须是`{"id":...,"target":<scalar path>,"value":<number>,"expr":<object>}`。`expr`只能递归使用`{"target":path}`、`{"source":id}`、纯数学`{"const":number}`或`{"op":"add|sub|mul|div|neg|abs","args":[...]}`；跨feature relation另列`relation_refs`。禁止string arithmetic。`dimension_closure`必须是`{"status":"closed|incomplete|conflict"}`，禁止单独字符串。
+
+
+路径必须落到draft中已存在的scalar leaf：`feature:<id>.centerline.<axis>`、`feature:<id>.explicit_centers.<index>.<coordinate-index>`、`profile.segments.<index>.<field>`。禁止对象容器target、抽象`.center`及不存在的`top_z / z_local / z_to_top`。coordinate正确不能代替measured ownership；blocking unresolved不得与同一字段的猜测concrete value/writer并存。canonicalizer只修无损representation，不猜path/semantic，不补semantic内容。
 
 ## 9. First-write semantic check
 
 首次且唯一一次落盘前只检查semantic truth：HARD inventory无静默遗漏；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；relation/derived有证据；coordinate与ownership一致；blocking ambiguity已写入unresolved。检查失败时仍写明unresolved并停止，不得生成第二版draft或直接写`drawing.json`。
-
-快速视觉识别词典：`references/nx-drawing-rules.md`。

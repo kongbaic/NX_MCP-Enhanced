@@ -435,7 +435,6 @@ def _validate_header(capture: dict[str, Any]) -> tuple[str, str, OverallDimensio
 
 
 
-
 def _target_path(target: str) -> tuple[str, tuple[str, ...]]:
     if target.startswith("feature:"):
         rest = target[len("feature:") :]
@@ -495,6 +494,166 @@ def _strict_graph_from_accepted(
     observations: list[dict[str, Any]],
     unresolved: list[dict[str, Any]],
 ) -> EvidenceGraph:
+    output = {
+        "schema_version": schema_version,
+        "coordinate_system": coordinate_system,
+        "overall_dimensions": overall.model_dump(mode="json"),
+        "views": [item.model_dump(mode="json") for item in accepted["views"]],
+        "projections": [
+            item.model_dump(mode="json") for item in accepted["projections"]
+        ],
+        "dimensions": [
+            item.model_dump(mode="json") for item in accepted["dimensions"]
+        ],
+        "datum_alignments": [
+            item.model_dump(mode="json") for item in accepted["datum_alignments"]
+        ],
+        "direct_values": [
+            item.model_dump(mode="json") for item in accepted["direct_values"]
+        ],
+        "relations": [
+            item.model_dump(mode="json") for item in accepted["relations"]
+        ],
+        "required_targets": required_targets,
+        "observations": observations,
+        "unresolved_evidence": unresolved,
+    }
+    try:
+        return EvidenceGraph.model_validate(output)
+    except ValidationError as exc:
+        raise Gate0Error(
+            "Gate 0 produced invalid strict evidence; this is an internal bug: "
+            f"{exc}"
+        ) from exc
+
+
+def _quarantine_direct_path_conflicts(
+    *,
+    capture: dict[str, Any],
+    accepted: dict[str, list[BaseModel]],
+    accepted_indices: dict[str, list[int]],
+    graph: EvidenceGraph,
+    observations: list[dict[str, Any]],
+    unresolved: list[dict[str, Any]],
+) -> int:
+    conflicts = _materialized_target_conflicts(graph)
+    if not conflicts:
+        return 0
+
+    direct_items = accepted["direct_values"]
+    direct_indices = accepted_indices["direct_values"]
+    to_remove = {
+        index
+        for index, item in enumerate(direct_items)
+        if getattr(item, "target", None) in conflicts
+    }
+
+    if not to_remove:
+        raise Gate0Error(
+            "downstream target-path conflict is not attributable to Reader "
+            f"direct_values: {sorted(conflicts)}"
+        )
+
+    raw_direct = capture.get("direct_values", [])
+    kept_items: list[BaseModel] = []
+    kept_indices: list[int] = []
+    removed = 0
+
+    for local_index, (item, raw_index) in enumerate(
+        zip(direct_items, direct_indices, strict=True)
+    ):
+        if local_index not in to_remove:
+            kept_items.append(item)
+            kept_indices.append(raw_index)
+            continue
+
+        record = (
+            raw_direct[raw_index]
+            if isinstance(raw_direct, list) and raw_index < len(raw_direct)
+            else item.model_dump(mode="json")
+        )
+        _quarantine(
+            section="direct_values",
+            index=raw_index,
+            record=record,
+            reason=(
+                "direct_values target participates in a downstream object-path "
+                f"conflict: {getattr(item, 'target', '')!r}"
+            ),
+            observations=observations,
+            unresolved=unresolved,
+        )
+        removed += 1
+
+    accepted["direct_values"] = kept_items
+    accepted_indices["direct_values"] = kept_indices
+    return removed
+
+
+def _assert_downstream_consumable(graph: EvidenceGraph) -> None:
+    try:
+        compiled = compile_evidence_graph(graph)
+        resolution = resolve_evidence_graph(compiled)
+        build_semantic_draft(compiled, resolution)
+    except (EvidenceCompileError, DraftAssemblyError, ValueError) as exc:
+        raise Gate0Error(
+            "Gate 0 produced schema-valid evidence that the frozen downstream "
+            f"cannot consume: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def write_strict_evidence(capture: dict[str, Any]) -> Gate0Result:
+    """Convert loose Reader capture into strict EvidenceGraph without inference."""
+
+    if not isinstance(capture, dict):
+        raise Gate0Error("reader capture root must be an object")
+
+    schema_version, coordinate_system, overall = _validate_header(capture)
+
+    observations = _normalize_existing_observations(capture)
+    unresolved = _normalize_existing_unresolved(capture)
+    original_unresolved_count = len(unresolved)
+
+    seen_ids: set[str] = set()
+    accepted: dict[str, list[BaseModel]] = {}
+    accepted_indices: dict[str, list[int]] = {}
+    passed: dict[str, int] = {}
+    quarantined: dict[str, int] = {}
+
+    for section, model in _LIST_SECTIONS:
+        accepted_items: list[BaseModel] = []
+        accepted_item_indices: list[int] = []
+        raw_items = _raw_list(
+            capture,
+            section,
+            observations=observations,
+            unresolved=unresolved,
+        )
+        q_before = len(unresolved)
+        for index, record in enumerate(raw_items):
+            parsed = _validate_record(
+                section=section,
+                index=index,
+                record=record,
+                model=model,
+                seen_ids=seen_ids,
+                observations=observations,
+                unresolved=unresolved,
+            )
+            if parsed is not None:
+                accepted_items.append(parsed)
+                accepted_item_indices.append(index)
+        accepted[section] = accepted_items
+        accepted_indices[section] = accepted_item_indices
+        passed[section] = len(accepted_items)
+        quarantined[section] = len(unresolved) - q_before
+
+    required_targets = _normalize_required_targets(
+        capture,
+        observations=observations,
+        unresolved=unresolved,
+    )
+
     strict = _strict_graph_from_accepted(
         schema_version=schema_version,
         coordinate_system=coordinate_system,
@@ -526,9 +685,6 @@ def _strict_graph_from_accepted(
             unresolved=unresolved,
         )
 
-        # Removing every Reader direct record that participates in the current
-        # prefix conflict is deterministic and fail-closed. Re-check once to
-        # ensure no compiler/resolver-only path conflict remains.
         remaining_conflicts = _materialized_target_conflicts(strict)
         if remaining_conflicts:
             raise Gate0Error(

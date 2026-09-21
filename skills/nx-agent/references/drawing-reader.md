@@ -1,16 +1,16 @@
 # 二维工程图读取模块
 
-本文件是 `nx-agent` 唯一的工程图语义决策 contract。`references/nx-drawing-rules.md` 只提供视觉识别词典，不得覆盖本文件的 association、ownership、relation、derived 或 canonical policy。
+本文件是 `nx-agent` 唯一的工程图语义决策 contract。`references/nx-drawing-rules.md` 只提供视觉识别词典，不得覆盖本文件的 association、ownership、relation 或 derived policy。
 
 ## 1. 目标与边界
 
-把二维机械工程图一次性转换为三维 CAD 建模所需的结构化 JSON，只提取会改变最终实体的内容。
+把二维机械工程图一次性转换为三维 CAD 建模所需的 semantic draft，只提取会改变最终实体的内容。
 
 - 清晰标注直接采信；禁止像素、轮廓比例或图纸比例反推尺寸。
 - 多视图中同一 feature 的重复表达合并，不重复计数。
 - DETAIL / SECTION 是局部 geometry 的高优先级证据。
 - 不确定且影响实体的内容进入 blocking `unresolved`，不得猜测、默认或静默省略。
-- 最终只输出一份 drawing JSON。
+- 最终只输出一份 `semantic-draft.json`；不得直接创建正式 `drawing.json`。
 
 ## 2. 唯一 semantic decision chain
 
@@ -21,8 +21,8 @@
 3. **Direct coordinate / evidence-backed relation lock**：直接证据写 direct；alignment、connected、tangent、coincident、spacing、symmetry 等不同 feature 关系必须单独建立并保存 evidence。ownership 和 relation 锁定后不得在全局坐标转换时重分类。
 4. **Eligible derived**：只用已锁定的 source/target 与明确 relation 唯一计算缺失 target。没有 evidence-backed relation 禁止跨 feature derived。
 5. **Required HARD feature inventory**：根据工程图列出总体、主体/profile、明确孔槽及其它会改变实体的必需 feature。无法可靠表达的必需项进入 blocking `unresolved`，不得从 inventory 或输出中静默删除。
-6. **Canonical serialization / validation**：根据 HARD inventory 生成并冻结 canonical shape，收口实际 paths、writers、coverage 和坐标一致性，同时检查 inventory omission。
-7. **Output**：首次落盘前完成验证，然后输出 drawing JSON 交给 Gate A。
+6. **Semantic draft assembly**：把已锁定的 feature、ownership、relation、derived、unresolved 与 HARD inventory 写入现有 drawing 结构；representation spelling 交给 deterministic canonicalizer，不得为适配 schema 改写 semantic truth。
+7. **Output**：完成first-write semantic check后，只写一次 `semantic-draft.json`。不得直接写 `drawing.json`，不得在失败后生成第二版 draft。
 
 ## 3. 视图、association 与坐标系
 
@@ -112,7 +112,7 @@ dimension-bearing annotation 参与 derived、spacing/pattern/projection complet
 - slot/cut 的 width_axis、through_axis；
 - through/depth/termination，以及会改变实体的局部轮廓、圆角和倒角。
 
-主体/profile 或明确 feature 无法唯一表达时，写 blocking `unresolved(required_for_modeling=true)`；不得因为 provenance 或 coverage 麻烦而省略 feature。required inventory 必须在 canonical shape freeze 之前完成。
+主体/profile 或明确 feature 无法唯一表达时，写 blocking `unresolved(required_for_modeling=true)`；不得因为 provenance 或 representation 麻烦而省略 feature。required inventory 必须在 semantic draft 落盘前完成。
 
 ### 6.2 Eligible derived
 
@@ -152,44 +152,18 @@ derived 只在 target 没有 direct writer 或 relation coverage，且可由已�
 - symmetry 只约束中点或镜像关系，不自动产生实例或把 edge offset 变成半距。
 - 输出前核对 count 与 `explicit_centers.length` 或 pattern counts；不一致进入 conflict。
 
-## 8. Canonical JSON contract
+## 8. Semantic draft contract
 
-### 8.1 Required roots 与 geometry shape
+`semantic-draft.json` 继续使用现有 drawing 结构，不创建第二套 schema。它必须携带 `overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`，并保留稳定 feature、annotation、source、relation 与 unresolved identity。
 
-必需根：`overall_dimensions / coordinate_system / features / source_ledger / derived / unresolved / dimension_conflicts / dimension_closure`。
+- feature 必须表达真实 type、axis/center/profile、尺寸、数量和termination；source/relation必须保留 measured quantity与physical endpoint ownership，coordinate 正确不能替代该 ownership。
+- dimension-bearing数值只能通过已识别的source、relation或geometry target参与derived；不得降级为free numeric const。
+- blocking unresolved不得同时带猜测的concrete value；semantic缺失不得用schema convenience掩盖。
+- semantic draft可使用canonicalizer白名单能够无损识别的pre-canonical representation；Reader不承担path prefix、endpoint field spelling、object/list或numeric-string repair，也不得据Gate A错误试写semantic token。
+- canonicalizer只修representation，不补feature、ownership、relation、derived或unresolved。
 
-- `overall_dimensions` 使用正数 `length_x / width_y / height_z`；origin 为 `part_center_xy_bottom_z0`。
-- feature 使用稳定 `id` 和非空 `type`。hole-like feature 给出 `axis` 与两个 transverse center coordinates；slot/slit 给出正 `width` 和不同的 `width_axis / through_axis`。
-- 单中心统一使用 `centerline` 或 `position.center`；多中心使用 `explicit_centers`，禁止自由命名 `centers`。
-- 多中心 canonical path 例如 `feature:F_HOLES.explicit_centers.0.x`；geometry 与 ledger 必须使用同一实际 path，normalizer 不重写 source_ledger / derived references。
-- profile 使用 accepted `profile.segments`；source/relation/derived 只能引用实际存在的 boundary path，例如 `profile.segments.0.y1`。
-- `count` 若输出必须为正整数并与 explicit centers/pattern count 一致；Runner 不要求所有 feature 一律输出 count。
+## 9. First-write semantic check
 
-### 8.2 Source、relation 与 derived schema
-
-- direct source 具有稳定 `id`、compatible `semantic` 和实际可解析的 `target`；若 source 包含 `value`，必须等于 target concrete value。图纸 dimension 得到的 coordinate 必须追溯到保留 measured ownership 的 source/relation；coordinate 正确不能替代该 ownership。
-- HARD leaf 使用兼容 provenance：`type→feature_kind`、axis fields→`axis`、`spec→thread_spec`，count/diameter/depth/through 使用对应 semantic。
-- 螺纹 geometry 的 feature leaf 固定为 `spec`，source semantic 才是 `thread_spec`。
-- relation source 不写 direct `target`。`edge_offset` 使用 `targets`；`center_distance / center_spacing` 使用真实 center paths 的 `between`；非数值 relation 保存 evidence identity。
-- derived expr 原子只使用 provenance-bearing `source`、已有 geometry `target`，或上文限定的无量纲数学系数；组合 op 只使用 `add/sub/mul/div/neg/abs`。
-- `{"value": 8}` 不是 expression node；dimension-bearing value 仍必须保留 source/target identity。
-- 需要非数值 relation 的 derived 必须保存 `relation_refs`。declared value、expr result 和 target concrete value 必须相等。
-- target 已由 direct source 给定时属于 direct-known target，不得再创建 derived writer。
-- blocking unresolved target 不得同时保留 concrete value、默认值或 placeholder `0`。
-- ancestor target 可以覆盖其合法 descendants，不要求每个 profile leaf 独立 source。
-
-## 9. First-pass canonical validation
-
-首次落盘前只验证第2节唯一决策链的结果，不重新定义 inference policy：
-
-1. required HARD feature inventory 中没有静默遗漏；blocking unresolved 与 concrete geometry 不并存。
-2. 所有 direct target、relation `targets/between` 和 derived target 都实际存在。
-3. 本次 Reader first-pass 的 target inventory 中没有 direct+derived 同 target；relation coverage 后没有额外 direct/derived writer。
-4. 每个 HARD field 有 compatible coverage；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；coordinate 可追溯到原 measured ownership。
-5. edge concrete coordinate 满足已锁定 boundary ownership；局部 boundary 未套 overall bbox。
-6. derived 没有 dimension-bearing free const；跨 feature derived 均有 evidence-backed `relation_refs`。
-7. closure 仅验证结果，没有创建或改写 geometry。
-
-这是 Reader first-pass self-consistency validation，不表示 Runner 已实现普遍的 exactly-one-writer 合同。
+首次且唯一一次落盘前只检查semantic truth：HARD inventory无静默遗漏；每个 dimension-bearing annotation 在 numeric use 前已有 identity、feature/view、endpoints 和 source/relation ownership；relation/derived有证据；coordinate与ownership一致；blocking ambiguity已写入unresolved。检查失败时仍写明unresolved并停止，不得生成第二版draft或直接写`drawing.json`。
 
 快速视觉识别词典：`references/nx-drawing-rules.md`。

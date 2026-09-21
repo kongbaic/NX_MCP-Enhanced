@@ -30,23 +30,24 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 6. `nx_mcp_src` 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
 7. runtime 一旦解析，本轮 drawing、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
 
-当前 Mode B 的 drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 `runtime-config.workspace_root`；其它目录中已有 artifact 不能成为切换 workspace 的理由。
+当前 Mode B 的 semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 `runtime-config.workspace_root`；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图读取
 读取 `drawing-reader.md` 与 `nx-drawing-rules.md`。
-只从当前上传工程图生成当前 drawing interpretation，输出结构化 JSON 并落盘。当前请求不得搜索或复用工作区里其它历史 drawing。若 `<workspace_root>\drawing.json` 已存在，必须把它视为 stale output；禁止在本轮 interpretation 前读取、比较或引用其内容。本轮 interpretation 完成后直接覆盖该路径。
 
-门禁：
-- unresolved=0
-- dimension_closure.status="closed"
-- overall_dimensions / coordinate_system / features 均存在
+A1. Reader只从当前上传工程图生成一次`semantic-draft.json`。它是immutable first-pass semantic artifact；Reader不得直接写`drawing.json`。
+A2. 立即执行`runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>`；canonicalizer只做白名单representation normalization与preservation guards。
+A3. Gate A包含在该命令内。只有process exit code = 0、`written=true`、`output_exists=true`同时成立才PASS。
+A4. PASS时`drawing.json`由canonicalizer原子生成，随后才能进入Planner；其它结果`BLOCKED / STOP`，且`drawing.json`不存在。
+A5. 禁止第二版或Edit/Rewrite semantic draft、重新看图、semantic token/schema retry、手写drawing、单独`validate-drawing`绕过canonicalizer，或在失败后进入Planner。
 
-A 失败立即停止，**不允许通过补造 geometry/evidence 自动修复**。只允许 `validate-drawing` 内部执行一次 machine schema-only normalization；Agent/LLM 不得 schema retry，不得读取 `examples/example-output.json` 或其它 example，不得重新看图生成第二版 interpretation，也不得新增或修改 source evidence、derived relation、unresolved、尺寸、axis、center、depth、count、side 或 feature ownership。
-
-Machine normalization 后仍失败时报告 `schema normalization failed` 或 `drawing schema invalid after schema-only normalization`，然后 Gate A BLOCKED。不得再次 validate 新 drawing；首次落盘的 current `drawing.json` 必须保持为原始诊断证据，失败后禁止覆盖。
+三种结果：
+- Reader存在blocking unresolved：draft保留，canonicalizer/Gate A FAIL，drawing不存在，STOP。
+- draft只有白名单内安全schema/path差异：无损normalization后Gate A PASS，drawing生成，进入Planner。
+- draft存在真实semantic/ownership错误：canonicalizer不得修，Gate A FAIL，drawing不存在，STOP。
 
 ## 4. 阶段 B：建模规划
-输入可以是工程图模式 A 阶段 JSON，或文字模式中已经确认完整的结构化建模意图。
+输入可以是工程图模式 A 阶段成功生成的canonical `drawing.json`，或文字模式中已经确认完整的结构化建模意图。
 读取：
 - `modeling-planner.md`
 - `runner-contract.md`
@@ -56,18 +57,18 @@ Machine normalization 后仍失败时报告 `schema normalization failed` 或 `d
 
 正常路径：
 ```text
-当前上传工程图 → 当前 drawing interpretation → 当前 drawing.json → validate-drawing → 根据当前 drawing.json 新生成 frozen plan → runner build --drawing <current-drawing> → runner check → 当前 executable plan
+当前上传工程图 → 当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json → 根据当前 drawing.json 新生成 frozen plan → runner build --drawing <current-drawing> → runner check → 当前 executable plan
 ```
 
 ### 4.1 Mode B 当前请求 artifact isolation
 
-- 新请求开始 interpretation 前，现有 `drawing.json` 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一几何输入是当前上传工程图。
-- Gate A PASS 后必须重新运行 Planner，从本轮当前 drawing JSON 生成新的 frozen plan；已有 `frozen-plan.json` 或 executable 不得作为输入，也不得作为“已规划完成”的依据。
+- 新请求开始 interpretation 前，现有 `semantic-draft.json`、`drawing.json` 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一几何输入是当前上传工程图。
+- canonicalize-drawing成功后必须重新运行Planner，只从本轮canonical `drawing.json`生成新的frozen plan；已有`frozen-plan.json`或executable不得作为输入，也不得作为“已规划完成”的依据。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 `run_history.json`、旧 PRT/STEP，以及其它历史零件的 drawing/frozen/executable。
 - 工作区即使同时存在新 `drawing.json` 与旧 frozen/executable/report/PRT/STEP，也必须忽略旧 artifact，不能直接 build/run 或进入 Runner。
-- 允许覆盖固定输出文件名，但不得先读取已有内容作为规划参考；不得扫描工作区判断是否存在“可用计划”。
+- Planner不得读取semantic draft、previous/latest/first-matching drawing、Agent手写drawing或仅由独立validate-drawing通过的drawing；不得扫描工作区判断是否存在“可用计划”。
 - Mode B build 固定绑定本轮 drawing：`runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`。
-- 只有当前请求刚生成的 drawing、frozen、executable 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
+- 只有当前canonicalizer成功生成的drawing及其后新生成的frozen、executable才能沿本轮流程向后传递；不引入跨任务身份或registry。
 
 runner build/check 任一失败即 B 失败。B 阶段失败**不进入自修复**，禁止修改 frozen plan 后自动重跑。
 

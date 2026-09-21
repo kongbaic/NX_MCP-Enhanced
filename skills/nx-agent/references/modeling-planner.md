@@ -8,7 +8,7 @@
 **输出**：一份可直接执行的 NX_MCP 建模计划 JSON（`mode` + `operations` +
 `final_validation` + `fallbacks`），以及执行阶段的硬性规则。
 
-Mode B 每个新工程图请求必须只消费本轮 Gate A PASS 的当前 drawing JSON，并重新生成 frozen plan。禁止读取、复用或参考工作区旧 frozen/executable/report/PRT/STEP；旧 frozen 存在不能成为跳过 Planner 或直接进入 Runner 的理由。build 必须使用 `--drawing <current-drawing>` 绑定本轮输入。
+Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功生成的canonical `drawing.json`，并重新生成frozen plan。禁止消费`semantic-draft.json`、previous/latest/first-matching drawing、Agent手写或仅经独立`validate-drawing`通过的drawing；禁止读取、复用或参考工作区旧frozen/executable/report/PRT/STEP。build必须使用`--drawing <current-drawing>`绑定本轮输入。
 
 **本模块 不做**：
 - 图片识别、OCR、工程图读取（由工程图读取模块 负责，完成后把结构化 JSON 交给本模块）
@@ -130,7 +130,7 @@ Mode B 每个新工程图请求必须只消费本轮 Gate A PASS 的当前 drawi
   - `through_axis=Z` → XY sketch → 沿 Z subtract。
   禁止把孔中心或槽宽坐标换算后仍沿错误轴执行。
 - **同轴复合孔 centerline 是不可变输入**：Drawing Reader 输出 `type:"coaxial_hole_group"` 时，Planner 可以为了当前工具能力把 members 展开成多个建模 operation，但所有 operation 必须继承组的同一 `axis` 与横向 `centerline`；只允许成员自己的直径、深度、轴向起止侧/范围不同。禁止 Planner 把某个 member 重新绑定到主孔中心、高度或其它邻近几何。
-- Planner 只能消费 `validate-drawing` 已通过的 Gate A 结果，并原样消费 Reader 已闭合的 HARD 几何。若 bbox、中心距、对称、count 或 evidence 检查失败，必须停止。
+- Planner只能消费本轮canonicalizer以exit code = 0、`written=true`、`output_exists=true`生成的drawing，并原样消费其中已闭合的HARD几何。若canonical drawing不存在，或bbox、中心距、对称、count、evidence检查失败，必须停止且不得回退到任何其它drawing。
 - 禁止 Planner 纠正 Reader 坐标：不得平移、自动居中、使用 `abs()`、改正负号、自动镜像，或以“看起来合理”为由改写 profile、axis、center、start/end/range。
 - 图纸明确的左/右对齐或偏置 profile 必须保留；source `count` 已是总数，禁止因 symmetry/mirror 再翻倍。
 - 同轴组成员若需要分别从轴线两侧加工，Planner 必须从 Reader 给出的 side / axial range 生成；这些字段缺失且会改变实体时停止规划，禁止“一个放中心高、一个放 E 派生高”式二次猜测。
@@ -347,7 +347,7 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 ## 12. 生成流程（FAST 正常路径）
 
 ```
-读取输入 A JSON
+读取本轮 canonical drawing.json（Mode B）或已确认结构化意图（Mode A）
 → 检查 unresolved / dimension closure
 → 读取本地冻结契约（runner-contract.md + certified-tool-contract.json）
 → 生成 FAST plan（含版本号）

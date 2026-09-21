@@ -35,19 +35,21 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 `runtime-config.json`；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
 2. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
-3. 当前上传工程图是本轮 interpretation 的唯一几何输入。若 `<workspace_root>\drawing.json` 已存在，禁止在 interpretation 前读取、比较或引用其内容；先从当前上传图独立完成 interpretation，再直接覆盖写入当前 `drawing.json`，并通过门禁 A。
-4. Gate A PASS 后，根据**当前 drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
-5. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
-6. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
-7. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-8. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
+3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 只能一次写出 `semantic-draft.json`；它是 immutable first-pass semantic artifact。Reader 不得直接创建、覆盖或手写 `drawing.json`。
+4. draft 写出后立即执行 `runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>`。只有 process exit code = 0、`written=true`、`output_exists=true` 同时成立，才允许进入 Planner；`drawing.json` 只能由该命令成功生成。
+5. 任一条件不满足即 `BLOCKED / STOP`：禁止 Edit/Rewrite draft、生成第二版 `semantic-draft.json`、重新 interpretation、semantic token retry、手写 `drawing.json`、单独调用 `validate-drawing` 绕过 canonicalizer，或进入 Planner。
+6. Gate A 已包含在 canonicalizer 内。成功后根据**本轮 canonical drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
+7. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
+8. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
+9. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+10. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
 
 两条链路：
 
 ```text
 文字描述 → 建模规划 → Plan Runner → Siemens NX → PRT + STEP
 
-二维工程图 → 工程图读取 → 建模规划 → Plan Runner → Siemens NX → PRT + STEP
+二维工程图 → semantic draft → deterministic canonicalization → 建模规划 → Plan Runner → Siemens NX → PRT + STEP
 ```
 
 ## 2. 运行时与路径
@@ -66,7 +68,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 `python_exe` 必须是 runtime-config 指定且实际存在的文件；禁止 fallback 到 `python` / `python3` / `py`、系统 Python 或 PATH 中其它 Python。`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同，否则 fail closed。`nx_mcp_src` 只能取自当前 runtime-config，不得从历史仓库、备份仓库或其它 workspace 推断。
 
-当前 `drawing.json` / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 `workspace_root`。其它目录中已有文件不能触发 workspace 切换。runtime 一旦解析，本轮不得重新发现或切换 runtime。
+当前 `semantic-draft.json` / `drawing.json` / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 `workspace_root`。其它目录中已有文件不能触发 workspace 切换。runtime 一旦解析，本轮不得重新发现或切换 runtime。
 
 ## 3. 模式选择优先级
 
@@ -79,16 +81,10 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 ## 4. 工程图门禁
 
 ### 门禁 A
-- 先运行 `runner.py validate-drawing <drawing.json>`；机器结果 `source_ownership.status="pass"` 且 `coordinate_sanity.status="pass"`
-- `unresolved = 0`
-- `dimension_closure.status = "closed"`
-- 存在 `overall_dimensions`、`coordinate_system`、`features`
-
-否则立即停止，不进入建模规划。
-
-Gate A 的 schema 处理只允许 `validate-drawing` 内部执行一次 machine schema-only normalization，包括 `dimension → dimensions`、`center → position.center`、无歧义 numeric string 和 object/list 等价转换。Agent/LLM 禁止读取 `examples/example-output.json` 或任何 example 后重写 drawing，禁止重新看图生成第二版 interpretation，也禁止新增或修改尺寸、axis、center、depth、count、side、feature ownership、source evidence、derived relation 或 unresolved。
-
-Machine normalization 后仍有错误时，立即 Gate A BLOCKED，并报告 `schema normalization failed` 或 `drawing schema invalid after schema-only normalization`。不得 retry、不得再次 interpretation、不得再次 validate 新 drawing。首次 current `drawing.json` 必须保持为本轮 Reader 原始输出，失败后禁止 Agent/LLM 覆盖。
+- Reader 一次写出当前 `semantic-draft.json`，随后只调用 `runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>`；该命令执行 deterministic representation-only normalization、preservation guards 与 Gate A。
+- 只有 exit code = 0、`written=true`、`output_exists=true` 才算 Gate A PASS；此时 `drawing.json` 是本轮唯一正式 canonical artifact。
+- 其它结果立即 `BLOCKED / STOP`。失败时保留 immutable semantic draft，`drawing.json` 不存在；禁止 retry、第二版 draft、Edit/Rewrite draft、手写 drawing、单独 `validate-drawing` 或进入 Planner。
+- Canonicalizer 不补 geometry、ownership、relation 或 unresolved。Reader semantic 缺失和真实冲突必须保持失败，不得读取 example 或重新看图修到通过。
 
 ### 门禁 B
 - 当前 frozen plan 必须由本轮 Gate A PASS 的 drawing JSON 新生成

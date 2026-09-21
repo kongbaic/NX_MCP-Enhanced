@@ -541,9 +541,11 @@ class DrawingGateATests(unittest.TestCase):
         self.assertTrue(any("explicit_centers.1.1" in error for error in errors))
 
     def test_reader_and_planner_rules_are_locked(self) -> None:
+        top = (ROOT / "skills" / "nx-agent" / "SKILL.md").read_text(encoding="utf-8")
         reader = (ROOT / "skills" / "nx-agent" / "references" / "drawing-reader.md").read_text(encoding="utf-8")
         quick = (ROOT / "skills" / "nx-agent" / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
         planner = (ROOT / "skills" / "nx-agent" / "references" / "modeling-planner.md").read_text(encoding="utf-8")
+        pipeline = (ROOT / "skills" / "nx-agent" / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
         for token in (
             "唯一 semantic decision chain",
             "Annotation / same-feature projection association",
@@ -551,8 +553,9 @@ class DrawingGateATests(unittest.TestCase):
             "Direct coordinate / evidence-backed relation lock",
             "Eligible derived",
             "Required HARD feature inventory",
-            "Canonical serialization / validation",
-            "7. **Output**",
+            "Semantic draft assembly",
+            "First-write semantic check",
+            "只写一次 `semantic-draft.json`",
             "association 本身不建立不同 feature 之间的数值关系",
             "不得在全局坐标转换时重分类",
             "必须穷尽整图中的 same-feature orthographic candidates",
@@ -584,7 +587,37 @@ class DrawingGateATests(unittest.TestCase):
             "relation coverage 后没有额外 direct/derived writer",
         ):
             self.assertNotIn(forbidden, quick)
-        for token in ("同轴复合孔 centerline 是不可变输入", "不得平移", "改正负号", "自动镜像"):
+        for token in (
+            "Reader 只能一次写出 `semantic-draft.json`",
+            "`drawing.json` 只能由该命令成功生成",
+            "process exit code = 0",
+            "`written=true`",
+            "`output_exists=true`",
+            "immutable first-pass semantic artifact",
+            "单独调用 `validate-drawing` 绕过 canonicalizer",
+        ):
+            self.assertIn(token, top)
+        for token in (
+            "当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
+            "其它结果`BLOCKED / STOP`",
+            "drawing不存在，STOP",
+        ):
+            self.assertIn(token, pipeline)
+        for forbidden in (
+            "直接覆盖写入当前 `drawing.json`",
+            "当前 drawing interpretation → 当前 drawing.json → validate-drawing",
+            "首次 current `drawing.json`",
+        ):
+            self.assertNotIn(forbidden, top + reader + pipeline)
+        for token in (
+            "`canonicalize-drawing`成功生成的canonical `drawing.json`",
+            "禁止消费`semantic-draft.json`",
+            "Agent手写或仅经独立`validate-drawing`通过的drawing",
+            "同轴复合孔 centerline 是不可变输入",
+            "不得平移",
+            "改正负号",
+            "自动镜像",
+        ):
             self.assertIn(token, planner)
 
     def test_validator_does_not_mutate_drawing(self) -> None:

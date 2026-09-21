@@ -103,6 +103,19 @@ Allowed shapes use the existing projection vocabulary:
 - profile
 - other
 
+Canonical shape rules:
+
+- `profile` is reserved for a material/body outline or a true local material
+  profile;
+- an edge-on cylindrical-hole projection represented by a pair of parallel
+  lines is `hidden_parallel`, even when the lines are visible rather than
+  dashed;
+- `circle` / `concentric_circles` are used only for circular end-on
+  projections;
+- an outer body outline that has no supported feature-local value, dimension,
+  datum, or association stays in `observations`; do not create a modeling
+  entity solely to restate the overall silhouette.
+
 Rules:
 
 - an entity belongs to exactly one view;
@@ -168,20 +181,32 @@ final `feature:...` target.
 }
 ~~~
 
-Examples of allowed fields when directly evidenced:
+Canonical direct-value vocabulary:
 
-- type / kind
-- diameter / hole_diameter
-- fit
-- thread_spec / spec
-- depth / thread_depth
-- count
-- through
-- width
-- counterbore_diameter
-- counterbore_depth
-- member.* fields when the visual evidence explicitly supports the compound
-  structure
+- `diameter` — use for cylindrical hole/bore diameter; do not emit
+  `hole_diameter`;
+- `fit`;
+- `thread_spec`;
+- `thread_depth` — use for a thread callout depth such as an explicitly
+  stated thread depth;
+- `depth` — reserve for a non-thread feature depth when the drawing directly
+  distinguishes it from thread depth;
+- `count`;
+- `through`;
+- `width`;
+- `counterbore_diameter`;
+- `counterbore_depth`;
+- `type` only when the drawing explicitly supports a type value.
+
+Do not emit alternate synonyms for the same semantic field. In particular:
+
+- `hole_diameter` → forbidden; use `diameter`;
+- generic `depth` for a threaded feature → forbidden; use
+  `thread_depth`;
+- `spec` for thread specification → forbidden; use `thread_spec`.
+
+The deterministic linker retains compatibility normalization for older
+captures, but a new Reader pass must emit the canonical vocabulary directly.
 
 The Reader must not encode a calculated global coordinate as a direct value.
 
@@ -215,6 +240,15 @@ Allowed endpoint roles:
 The Reader determines endpoint ownership only from actual arrows, witness
 lines, extension lines, center marks, and other visible dimension geometry.
 
+`entity_center` is allowed only when the visible dimension geometry
+unambiguously terminates at the center/centerline/midline of one specific
+view-local entity. Do not use `entity_center` merely because a dimension line
+passes between, near, or symmetrically around hidden lines.
+
+For repeated or overlapping hole projections, if the witness/extension
+geometry does not uniquely identify each member center, keep the dimension
+unresolved rather than assigning member centers by assumption.
+
 If an endpoint is an intermediate/local surface that Capture v2 cannot
 represent, do not coerce it into an overall boundary or entity center. Record
 the dimension as unresolved instead.
@@ -241,18 +275,49 @@ Do not create a datum alignment merely because geometry looks centered.
 
 ## 9. Required targets
 
-Required modeling semantics refer to a local entity plus a relative field:
+For new Capture v2 production runs, the Reader writes:
 
 ~~~json
-{
-  "entity_id": "E_FRONT_01",
-  "field": "centerline.z"
-}
+"required_targets": []
 ~~~
 
-The deterministic linker converts this to the final physical feature target.
+The formal strict-Evidence required-target set is derived deterministically by
+the linker from:
 
-## 10. Unresolved evidence
+- direct values that were actually captured;
+- required dimensions and their axis-specific entity-center endpoints;
+- required datum alignments.
+
+This removes free-form Reader decisions such as `centerline` versus
+`centerline.z` from physical identity and closure.
+
+If a modeling-critical semantic is missing from the available evidence, do
+not invent a required target for it. Put the missing/ambiguous semantic in
+`unresolved_evidence` with `required_for_modeling=true`.
+
+The schema retains `required_targets` only for compatibility/audit of older
+captures; the linker treats Reader-provided entries as advisory provenance,
+not as the formal required set.
+
+## 10. Repeated-feature granularity
+
+Use one canonical representation for quantity callouts:
+
+- if one callout states a quantity such as N identical holes and individual
+  member centers are not independently dimensioned/identified, create one
+  view-local entity and attach `count=N`;
+- if individual members have independently identifiable/dimensioned centers,
+  create separate entities for those members and do not also create a grouped
+  count entity for the same view;
+- do not alternate between one grouped entity and N duplicate entities merely
+  because both are visually plausible;
+- if the drawing does not establish whether visible lines belong to distinct
+  repeated members, keep the member identity/count ambiguity unresolved.
+
+A quantity callout by itself does not authorize guessed member coordinates or
+cross-view pairing.
+
+## 11. Unresolved evidence
 
 Any ambiguity that can change the modeled solid must remain explicit.
 
@@ -267,7 +332,7 @@ Typical reasons:
 
 No unresolved target may simultaneously receive a guessed concrete value.
 
-## 11. First-pass immutability
+## 12. First-pass immutability
 
 The Reader writes exactly one `reader-capture.json` for the current drawing.
 
@@ -282,7 +347,7 @@ After writing it:
 The immutable first-pass artifact for Reader benchmarking is
 `reader-capture.json`, not `drawing-evidence.json`.
 
-## 12. Deterministic identity linker
+## 13. Deterministic identity linker
 
 The linker:
 
@@ -294,7 +359,7 @@ The linker:
 
 The linker never reads the source drawing.
 
-## 13. Gate 0
+## 14. Gate 0
 
 After linking, Gate 0 validates that the generated strict EvidenceGraph is:
 

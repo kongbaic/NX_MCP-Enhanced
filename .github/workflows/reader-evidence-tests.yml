@@ -1,0 +1,27 @@
+name: Reader Evidence Resolver Tests
+
+on:
+  push:
+    branches:
+      - reader-evidence-resolver-v1
+  workflow_dispatch:
+
+jobs:
+  reader-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run evidence resolver tests
+        run: |
+          python -m pytest -q             tests/test_drawing_evidence_resolver.py             tests/test_drawing_evidence_gate_a.py

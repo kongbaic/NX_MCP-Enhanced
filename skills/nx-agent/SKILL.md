@@ -34,15 +34,15 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 用户上传二维机械工程图并要求“开始建模”“按图建模”“用 NX 画出来”等时：
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 `runtime-config.json`；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
-2. 读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`。
+2. 首次 semantic draft 落盘前只读取 `references/drawing-reader.md` + `references/nx-drawing-rules.md`；不得预读 `references/pipeline-contract.md`。
 3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 只能一次写出 `semantic-draft.json`；它是 immutable first-pass semantic artifact。Reader 不得直接创建、覆盖或手写 `drawing.json`。
-4. draft 写出后立即执行 `runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>`。只有 process exit code = 0、`written=true`、`output_exists=true` 同时成立，才允许进入 Planner；`drawing.json` 只能由该命令成功生成。
+4. draft 首次成功落盘后，再读取一次 `references/pipeline-contract.md`，随后立即执行 `runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>`。只有 process exit code = 0、`written=true`、`output_exists=true` 同时成立，才允许进入 Planner；`drawing.json` 只能由该命令成功生成。
 5. 任一条件不满足即 `BLOCKED / STOP`：禁止 Edit/Rewrite draft、生成第二版 `semantic-draft.json`、重新 interpretation、semantic token retry、手写 `drawing.json`、单独调用 `validate-drawing` 绕过 canonicalizer，或进入 Planner。
 6. Gate A 已包含在 canonicalizer 内。成功后根据**本轮 canonical drawing.json 从零生成新的 frozen plan**；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
 7. 固定执行 `runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 check 当前 executable，再调用 Runner。
 8. 本轮 drawing interpretation 开始后，禁止主动读取或把工作区中的旧 frozen/executable plan、旧 report、旧 `run_history.json`、旧 PRT/STEP、其它历史零件的 drawing/plan 当作当前任务输入或规划参考。允许覆盖固定输出文件名，但内容必须由当前请求重新生成。
 9. 禁止扫描工作区寻找“可复用”的历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-10. 总控规则见 `references/pipeline-contract.md`；用户输出规范见 `references/chinese-output.md`。
+10. 用户输出规范见 `references/chinese-output.md`。
 
 两条链路：
 

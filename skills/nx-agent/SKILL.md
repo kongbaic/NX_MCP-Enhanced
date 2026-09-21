@@ -28,7 +28,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 runtime-config.json；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
 2. 读取 references/drawing-reader.md + references/reader-capture-contract.md + references/nx-drawing-rules.md。
-3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 只能一次写出 reader-capture.json；它是 immutable first-pass visual evidence artifact。Reader 不得直接创建 drawing-evidence.json、semantic-draft.json 或 drawing.json。
+3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 在唯一一次写盘前，必须先在内存中使用生产 `ReaderCapture.model_validate(payload)` 完整校验；仅 JSON parse、键数量检查或自定义扫描不算通过。只有生产 schema 校验通过后，才允许一次写出 reader-capture.json；它是 immutable first-pass visual evidence artifact。校验失败则不写文件、不第二次看图修复，立即 BLOCKED / STOP。Reader 不得直接创建 drawing-evidence.json、semantic-draft.json 或 drawing.json。
 4. capture 写出后，立即使用 runtime-config 指定 python_exe 执行：python -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>。该步骤只做 deterministic identity linking + Gate 0；禁止重新读取工程图。
 5. 只有 link-capture 的 process exit code=0、written=true、schema_valid=true 才允许继续；否则 BLOCKED / STOP。link-capture 产生 blocking unresolved 可以保留在 drawing-evidence.json，是否闭合由下一步 resolve 判定。
 6. 立即执行：python -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>。
@@ -90,8 +90,8 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 ### Evidence Gate
 
-- Reader 一次写出本轮 reader-capture.json。
-- Reader 只记录 view-local entities、显式 association claims、physical endpoints、direct values、required fields 与 unresolved evidence；禁止创建最终 physical feature ID。
+- Reader 只允许在生产 `ReaderCapture` schema 校验通过后一次写出本轮 reader-capture.json；overall_dimensions 三轴必须为正数，禁止 null / 缺省 / 0。
+- Reader 只记录 view-local entities、显式 association claims、physical endpoints、direct values 与 unresolved evidence；新 capture 的 required_targets 固定为 []，正式 required targets 由 linker 确定性派生；禁止创建最终 physical feature ID。
 - 立即执行 link-capture，确定性生成 drawing-evidence.json。
 - Reader 禁止做 centered global coordinate arithmetic、relation 语义猜测或 Gate A 判定。
 - 再执行 deterministic resolve，生成 semantic-draft.json。

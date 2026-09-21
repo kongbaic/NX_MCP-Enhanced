@@ -424,3 +424,344 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     }
     assert mount_x0 in unresolved_targets
     assert mount_x1 in unresolved_targets
+
+
+def test_real_shwts20_40_first_pass_resolves_supported_geometry_and_blocks_unanchored_x():
+    """Regression from the real SHWTS20-40 external-dimension drawing."""
+
+    main_z = "feature:F_MAIN_HOLE.centerline.z"
+    mount_x0 = "feature:F_MOUNT_PAIR.explicit_centers.0.0"
+    mount_x1 = "feature:F_MOUNT_PAIR.explicit_centers.1.0"
+    mount_y0 = "feature:F_MOUNT_PAIR.explicit_centers.0.1"
+    mount_y1 = "feature:F_MOUNT_PAIR.explicit_centers.1.1"
+
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=75, width_y=32, height_z=55),
+        views=[
+            ViewEvidence(id="V_SHWTS_FRONT", kind="front"),
+            ViewEvidence(id="V_SHWTS_SIDE", kind="side"),
+            ViewEvidence(id="V_SHWTS_TOP", kind="top"),
+        ],
+        projections=[
+            ProjectionEvidence(
+                id="P_SHWTS_MAIN_FRONT",
+                feature_id="F_MAIN_HOLE",
+                view_id="V_SHWTS_FRONT",
+                shape="circle",
+                source_ids=["REAL_SHWTS_MAIN_BORE"],
+            ),
+            ProjectionEvidence(
+                id="P_SHWTS_M6_SIDE",
+                feature_id="F_M6",
+                view_id="V_SHWTS_SIDE",
+                shape="concentric_circles",
+                source_ids=["REAL_SHWTS_M6_END_VIEW"],
+            ),
+            ProjectionEvidence(
+                id="P_SHWTS_MOUNT_TOP",
+                feature_id="F_MOUNT_PAIR",
+                view_id="V_SHWTS_TOP",
+                shape="concentric_circles",
+                source_ids=["REAL_SHWTS_COUNTERBORE_TOP"],
+            ),
+        ],
+        dimensions=[
+            DimensionObservation(
+                id="D_SHWTS_OVERALL_X75",
+                value=75,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_OVERALL_Y32",
+                value=32,
+                axis="Y",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_OVERALL_Z55",
+                value=55,
+                axis="Z",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_MAIN_Z40",
+                value=40,
+                axis="Z",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="feature_center", target=main_z),
+                ],
+                source_ids=["REAL_SHWTS_BOTTOM_TO_MAIN_CENTER_40"],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_MOUNT_Y17_A",
+                value=17,
+                axis="Y",
+                endpoints=[
+                    DimensionEndpoint(role="overall_max"),
+                    DimensionEndpoint(role="feature_center", target=mount_y0),
+                ],
+                source_ids=["REAL_SHWTS_TOP_EDGE_TO_MOUNT_ROW_17"],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_MOUNT_Y17_B",
+                value=17,
+                axis="Y",
+                endpoints=[
+                    DimensionEndpoint(role="overall_max"),
+                    DimensionEndpoint(role="feature_center", target=mount_y1),
+                ],
+                source_ids=["REAL_SHWTS_TOP_EDGE_TO_MOUNT_ROW_17"],
+            ),
+            DimensionObservation(
+                id="D_SHWTS_MOUNT_X62",
+                value=62,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    DimensionEndpoint(role="feature_center", target=mount_x0),
+                    DimensionEndpoint(role="feature_center", target=mount_x1),
+                ],
+                source_ids=["REAL_SHWTS_MOUNT_CENTER_SPACING_62"],
+            ),
+        ],
+        direct_values=[
+            DirectValueEvidence(
+                id="S_SHWTS_MAIN_D",
+                target="feature:F_MAIN_HOLE.diameter",
+                value=20,
+                source_ids=["REAL_SHWTS_D20_H7"],
+            ),
+            DirectValueEvidence(
+                id="S_SHWTS_M6_SPEC",
+                target="feature:F_M6.spec",
+                value="M6",
+                source_ids=["REAL_SHWTS_M6_DEPTH12"],
+            ),
+            DirectValueEvidence(
+                id="S_SHWTS_M6_DEPTH",
+                target="feature:F_M6.depth",
+                value=12,
+                source_ids=["REAL_SHWTS_M6_DEPTH12"],
+            ),
+            DirectValueEvidence(
+                id="S_SHWTS_MOUNT_D",
+                target="feature:F_MOUNT_PAIR.diameter",
+                value=6.5,
+                source_ids=["REAL_SHWTS_2_D6_5_THRU"],
+            ),
+            DirectValueEvidence(
+                id="S_SHWTS_CB_D",
+                target="feature:F_MOUNT_PAIR.counterbore_diameter",
+                value=11,
+                source_ids=["REAL_SHWTS_CB_D11_DEPTH6_5"],
+            ),
+            DirectValueEvidence(
+                id="S_SHWTS_CB_DEPTH",
+                target="feature:F_MOUNT_PAIR.counterbore_depth",
+                value=6.5,
+                source_ids=["REAL_SHWTS_CB_D11_DEPTH6_5"],
+            ),
+        ],
+        required_targets=[
+            main_z,
+            mount_x0,
+            mount_x1,
+            mount_y0,
+            mount_y1,
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    result = resolve_evidence_graph(compiled)
+
+    axes = {item.target: item.value for item in compiled.direct_values if item.target.endswith(".axis")}
+    assert axes["feature:F_MAIN_HOLE.axis"] == "Y"
+    assert axes["feature:F_M6.axis"] == "X"
+    assert axes["feature:F_MOUNT_PAIR.axis"] == "Z"
+
+    assert result.values[main_z] == 40
+    assert result.values[mount_y0] == -1
+    assert result.values[mount_y1] == -1
+
+    assert mount_x0 not in result.values
+    assert mount_x1 not in result.values
+    assert not result.ok
+    unresolved_targets = {
+        target
+        for item in result.unresolved
+        for target in item.get("targets", [])
+    }
+    assert mount_x0 in unresolved_targets
+    assert mount_x1 in unresolved_targets
+
+
+def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unresolved():
+    """Regression from the mounting-plate drawing.
+
+    The 120 overall X dimension plus explicit 10 mm edge-to-hole-center
+    dimensions uniquely anchors the two side-hole X coordinates. The drawing
+    evidence supplied here intentionally does not claim a Y ordinate, so Y
+    must remain unresolved instead of being inferred from visual symmetry.
+    """
+
+    left_x = "feature:F_SIDE_HOLES.explicit_centers.0.0"
+    right_x = "feature:F_SIDE_HOLES.explicit_centers.1.0"
+    left_y = "feature:F_SIDE_HOLES.explicit_centers.0.1"
+    right_y = "feature:F_SIDE_HOLES.explicit_centers.1.1"
+
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=120, width_y=80, height_z=32),
+        views=[ViewEvidence(id="V_PLATE_TOP", kind="top")],
+        projections=[
+            ProjectionEvidence(
+                id="P_PLATE_SIDE_HOLES",
+                feature_id="F_SIDE_HOLES",
+                view_id="V_PLATE_TOP",
+                shape="circle",
+                source_ids=["REAL_PLATE_TWO_D10_CIRCLES"],
+            ),
+            ProjectionEvidence(
+                id="P_PLATE_CENTER_HOLE",
+                feature_id="F_CENTER_HOLE",
+                view_id="V_PLATE_TOP",
+                shape="circle",
+                source_ids=["REAL_PLATE_CENTER_D12"],
+            ),
+        ],
+        dimensions=[
+            DimensionObservation(
+                id="D_PLATE_X120",
+                value=120,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="D_PLATE_Y80",
+                value=80,
+                axis="Y",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="D_PLATE_LEFT_X10",
+                value=10,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="feature_center", target=left_x),
+                ],
+                source_ids=["REAL_PLATE_LEFT_EDGE_TO_HOLE_10"],
+            ),
+            DimensionObservation(
+                id="D_PLATE_RIGHT_X10",
+                value=10,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(role="overall_max"),
+                    DimensionEndpoint(role="feature_center", target=right_x),
+                ],
+                source_ids=["REAL_PLATE_RIGHT_EDGE_TO_HOLE_10"],
+            ),
+            DimensionObservation(
+                id="D_PLATE_HOLE_SPACING100",
+                value=100,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    DimensionEndpoint(role="feature_center", target=left_x),
+                    DimensionEndpoint(role="feature_center", target=right_x),
+                ],
+                source_ids=["REAL_PLATE_HOLE_CENTER_SPACING_100"],
+            ),
+        ],
+        direct_values=[
+            DirectValueEvidence(
+                id="S_PLATE_SIDE_D",
+                target="feature:F_SIDE_HOLES.diameter",
+                value=10,
+                source_ids=["REAL_PLATE_2_D10"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_SIDE_COUNT",
+                target="feature:F_SIDE_HOLES.count",
+                value=2,
+                source_ids=["REAL_PLATE_2_D10"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_BOSS_D",
+                target="feature:F_BOSS.diameter",
+                value=30,
+                source_ids=["REAL_PLATE_BOSS_D30"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_CENTER_D",
+                target="feature:F_CENTER_HOLE.diameter",
+                value=12,
+                source_ids=["REAL_PLATE_CENTER_D12"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_BASE_T",
+                target="feature:F_BASE.thickness",
+                value=12,
+                source_ids=["REAL_PLATE_BASE_T12"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_BOSS_H",
+                target="feature:F_BOSS.height",
+                value=20,
+                source_ids=["REAL_PLATE_BOSS_H20"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_SLOT_L",
+                target="feature:F_SLOT.length",
+                value=40,
+                source_ids=["REAL_PLATE_SLOT_L40"],
+            ),
+            DirectValueEvidence(
+                id="S_PLATE_SLOT_W",
+                target="feature:F_SLOT.width",
+                value=12,
+                source_ids=["REAL_PLATE_SLOT_W12"],
+            ),
+        ],
+        required_targets=[left_x, right_x, left_y, right_y],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    result = resolve_evidence_graph(compiled)
+
+    axis = next(
+        item.value
+        for item in compiled.direct_values
+        if item.target == "feature:F_SIDE_HOLES.axis"
+    )
+    assert axis == "Z"
+    assert result.values[left_x] == -50
+    assert result.values[right_x] == 50
+
+    assert left_y not in result.values
+    assert right_y not in result.values
+    assert not result.ok
+    unresolved_targets = {
+        target
+        for item in result.unresolved
+        for target in item.get("targets", [])
+    }
+    assert left_y in unresolved_targets
+    assert right_y in unresolved_targets

@@ -23,8 +23,32 @@ class OverallDimensions(BaseModel):
     height_z: float = Field(gt=0)
 
 
+class DirectValueEvidence(BaseModel):
+    """One directly observed semantic value with stable evidence identity.
+
+    The extractor reports the target/value pair. The semantic-draft assembler
+    maps the target shape to the existing Gate A source semantic whenever that
+    mapping is deterministic.
+    """
+
+    id: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    value: Any
+    semantic: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("source_ids")
+    @classmethod
+    def _source_ids_are_unique(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item for item in value if item))
+
+
 class CoordinateFact(BaseModel):
-    """A coordinate directly supported by drawing evidence."""
+    """Legacy/simple numeric coordinate evidence used by the resolver.
+
+    New Evidence Extraction should prefer DirectValueEvidence so the same
+    evidence can also be serialized into the Gate A source ledger.
+    """
 
     target: str = Field(min_length=1)
     axis: Axis
@@ -35,8 +59,8 @@ class CoordinateFact(BaseModel):
 class RelationEvidence(BaseModel):
     """A formal geometry relation extracted from physical drawing evidence.
 
-    The extractor records the relation and its endpoints. It does not solve
-    coordinates. The deterministic resolver owns the arithmetic.
+    The extractor records relation identity and endpoints. It never computes
+    final global coordinates. The deterministic resolver owns the arithmetic.
     """
 
     id: str = Field(min_length=1)
@@ -46,7 +70,7 @@ class RelationEvidence(BaseModel):
     value: float | None = None
     from_side: Literal["min", "max"] | None = None
     direction: Literal[-1, 1] | None = None
-    diameter: float | None = None
+    diameter_target: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -72,9 +96,10 @@ class RelationEvidence(BaseModel):
             if len(self.targets) < 2:
                 raise ValueError("alignment requires at least two targets")
         elif self.kind in {"upper_tangent", "lower_tangent"}:
-            if self.diameter is None or self.diameter <= 0 or len(self.targets) != 2:
+            if len(self.targets) != 2 or not self.diameter_target:
                 raise ValueError(
-                    f"{self.kind} requires diameter > 0 and [center_target, tangent_target]"
+                    f"{self.kind} requires [center_target, tangent_target] "
+                    "and diameter_target"
                 )
         return self
 
@@ -85,6 +110,7 @@ class EvidenceGraph(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
     overall_dimensions: OverallDimensions
+    direct_values: list[DirectValueEvidence] = Field(default_factory=list)
     direct_facts: list[CoordinateFact] = Field(default_factory=list)
     relations: list[RelationEvidence] = Field(default_factory=list)
     required_targets: list[str] = Field(default_factory=list)
@@ -97,3 +123,10 @@ class EvidenceGraph(BaseModel):
         if any(not target for target in value):
             raise ValueError("required targets must be non-empty")
         return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def _stable_ids_are_unique(self) -> "EvidenceGraph":
+        ids = [item.id for item in self.direct_values] + [item.id for item in self.relations]
+        if len(ids) != len(set(ids)):
+            raise ValueError("direct evidence and relation ids must be globally unique")
+        return self

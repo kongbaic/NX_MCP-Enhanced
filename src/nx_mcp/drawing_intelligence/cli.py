@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
+from .gate0 import Gate0Error, write_strict_evidence
 from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
 
@@ -46,6 +47,45 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def _cmd_gate0(args: argparse.Namespace) -> int:
+    capture_path = str(Path(args.capture).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "capture": capture_path,
+        "drawing_evidence": output_path,
+        "written": False,
+        "schema_valid": False,
+        "errors": [],
+    }
+
+    if os.path.normcase(capture_path) == os.path.normcase(output_path):
+        report["errors"].append("reader capture input and strict evidence output must differ")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        raw = _load_json(capture_path)
+        result = write_strict_evidence(raw)
+        output = result.evidence.model_dump(mode="json")
+        _atomic_write_json(output_path, output)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        Gate0Error,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report.update(result.report)
+    report["written"] = True
+    report["schema_valid"] = True
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _cmd_resolve(args: argparse.Namespace) -> int:
@@ -148,6 +188,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    gate0 = sub.add_parser(
+        "gate0",
+        help="convert loose Reader capture into strict schema-valid drawing evidence",
+    )
+    gate0.add_argument("capture")
+    gate0.add_argument("out")
+    gate0.set_defaults(func=_cmd_gate0)
 
     resolve = sub.add_parser(
         "resolve",

@@ -207,14 +207,27 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 }
             )
 
+    collision_component_index: dict[tuple[str, ...], int] = {}
+    for fid in sorted(collision_ids):
+        grouped = sorted(
+            (tuple(component) for component in by_feature_id[fid]),
+            key=lambda component: component,
+        )
+        for ordinal, component in enumerate(grouped, start=1):
+            collision_component_index[component] = ordinal
+
     entity_to_feature: dict[str, str] = {}
     for component, _signature, fid in signatures:
         if fid in collision_ids:
-            # Preserve separate deterministic placeholders without claiming that
-            # their order has physical meaning. Any modeling-dependent use is
-            # blocked by the unresolved collision above.
-            for index, entity_id in enumerate(component):
-                entity_to_feature[entity_id] = f"{fid}_AMB_{index}"
+            # Keep disconnected ambiguous components technically distinct so
+            # downstream relations never collapse two physical candidates into
+            # one target. The suffix is only an intra-capture placeholder; it
+            # carries no physical left/right/order meaning. Modeling remains
+            # blocked by U_IDENTITY_COLLISION_*.
+            ordinal = collision_component_index[tuple(component)]
+            placeholder = f"{fid}_AMB_{ordinal:02d}"
+            for entity_id in component:
+                entity_to_feature[entity_id] = placeholder
             continue
         for entity_id in component:
             entity_to_feature[entity_id] = fid

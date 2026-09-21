@@ -459,12 +459,12 @@ def main() -> None:
         "First-write semantic check",
         "association 本身不建立不同 feature 之间的数值关系",
         "不得在全局坐标转换时重分类",
-        "distinct-feature alignment/connected/spacing",
+        "distinct-feature relation必须有证据",
         "dimension-bearing number 必须通过 `source`",
         "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
-        "required inventory 必须在 semantic draft 落盘前完成",
-        "ownership 必须先于 pattern/symmetry/spacing completion 锁定",
-        "必须穷尽整图中的 same-feature orthographic candidates",
+        "无法唯一表达的必需feature写blocking",
+        "pattern/symmetry/spacing不得删除该ownership",
+        "逐项核对该 identity 的全部正交视图记录",
         "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
         "不得作为裸 numeric operand 或 mental arithmetic 输入",
         "start face 只能在 axis 锁定后解释",
@@ -577,12 +577,14 @@ def main() -> None:
 
     for token in (
         "Semantic draft contract",
-        "现有 drawing 结构",
+        "现有drawing结构",
         "稳定 feature、annotation、source、relation 与 unresolved identity",
         "measured quantity与physical endpoint ownership",
         "dimension-bearing数值只能通过已识别的source",
-        "semantic draft可使用canonicalizer白名单",
-        "Reader不承担path prefix",
+        "Reader必须按draft中真实字段发出可解析路径",
+        "feature:<id>.centerline.<axis>",
+        "feature:<id>.explicit_centers.<index>.<coordinate-index>",
+        "不得把歧义path交给canonicalizer猜测",
         "canonicalizer只修representation",
         "`edge_offset` 不得作为 derived expression",
         "known opposite endpoint target",
@@ -592,15 +594,32 @@ def main() -> None:
         "不得生成第二版draft",
         "`X=[-length_x/2,+length_x/2]`",
         "局部 profile/body/step boundary 不得套 overall bbox",
-        "connected feature identity、relation evidence 与 nominal centerline endpoint",
+        "用 `alignment` 保存共享中心坐标",
         "只描述 drawing semantic，不规定具有非零 width 的实体 cut realization",
         "其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand",
+        "direct witness 优先于所有 arithmetic",
+        "view→projection geometry→annotation endpoints",
+        "不得在同一draft中混入 `0..extent` X/Y frame",
+        "只写 `connected_to / notes / reason / evidence` 不构成 relation coverage",
+        "`upper_tangent` 或 `lower_tangent`",
+        "`center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`",
+        "`edge_offset`使用`value + axis + from + targets`",
+        "看见孔位所在的面也不能代替 orthographic axis evidence",
+        "blocking unresolved不得同时带猜测的concrete value",
         "Closure is validation only",
     ):
         if token not in drawing_reader and token != "Closure is validation only":
             fail(f"consolidated Reader canonical contract regression: missing {token}")
         if token == "Closure is validation only" and token not in drawing_rules:
             fail(f"quick closure boundary regression: missing {token}")
+
+    for forbidden in (
+        "Reader不承担path prefix",
+        "alignment、connected、tangent",
+        "representation spelling 交给 deterministic canonicalizer",
+    ):
+        if forbidden in drawing_reader:
+            fail(f"Reader semantic fidelity conflict returned: {forbidden}")
 
     canonical_fixture_path = RUNNER / "tests" / "fixtures" / "canonical-reader-output.json"
     canonical_fixture = json.loads(canonical_fixture_path.read_text(encoding="utf-8"))

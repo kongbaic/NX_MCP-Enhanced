@@ -564,8 +564,26 @@ class DrawingGateATests(unittest.TestCase):
             "start face 只能在 axis 锁定后解释",
             "coordinate 正确不能替代该 ownership",
             "这些 centers 不要求位于同一个 feature object",
+            "direct witness 优先于所有 arithmetic",
+            "view→projection geometry→annotation endpoints",
+            "不得在同一draft中混入 `0..extent` X/Y frame",
+            "只写 `connected_to / notes / reason / evidence` 不构成 relation coverage",
+            "`upper_tangent` 或 `lower_tangent`",
+            "feature:<id>.centerline.<axis>",
+            "feature:<id>.explicit_centers.<index>.<coordinate-index>",
+            "不得把歧义path交给canonicalizer猜测",
+            "`center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`",
+            "`edge_offset`使用`value + axis + from + targets`",
+            "看见孔位所在的面也不能代替 orthographic axis evidence",
+            "blocking unresolved不得同时带猜测的concrete value",
         ):
             self.assertIn(token, reader)
+        for forbidden in (
+            "Reader不承担path prefix",
+            "alignment、connected、tangent",
+            "representation spelling 交给 deterministic canonicalizer",
+        ):
+            self.assertNotIn(forbidden, reader)
         for token in (
             "只提供视觉识别与制图符号词典",
             "Front / 正视图",

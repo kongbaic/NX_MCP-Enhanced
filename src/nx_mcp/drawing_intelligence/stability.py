@@ -125,6 +125,127 @@ def _unresolved_targets(items: list[dict[str, Any]]) -> list[str]:
     return sorted(targets)
 
 
+
+
+def _endpoint_signature(endpoint: Any) -> Any:
+    if not isinstance(endpoint, dict):
+        return _canon(endpoint)
+    return _canon(
+        {
+            "role": endpoint.get("role"),
+            "target": endpoint.get("target"),
+        }
+    )
+
+
+def _quarantine_raw_signature(raw_record: Any) -> Any:
+    """Normalize Gate 0 raw records while ignoring IDs, sources and prose."""
+
+    if not isinstance(raw_record, dict):
+        return _canon(raw_record)
+
+    signature: dict[str, Any] = {}
+
+    for key in (
+        "value",
+        "axis",
+        "direction",
+        "kind",
+        "type",
+        "target",
+        "feature_id",
+        "from_side",
+        "diameter_target",
+        "required_for_modeling",
+    ):
+        if key in raw_record:
+            signature[key] = _canon(raw_record.get(key))
+
+    endpoints = raw_record.get("endpoints")
+    if isinstance(endpoints, list):
+        signature["endpoints"] = [
+            _endpoint_signature(endpoint)
+            for endpoint in endpoints
+        ]
+    elif "endpoints" in raw_record:
+        signature["endpoints"] = _canon(endpoints)
+    else:
+        signature["endpoints"] = "<missing>"
+
+    targets = raw_record.get("targets")
+    if isinstance(targets, list):
+        signature["targets"] = sorted(
+            (_canon(value) for value in targets),
+            key=lambda value: json.dumps(
+                value,
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+        )
+    elif "targets" in raw_record:
+        signature["targets"] = _canon(targets)
+
+    members = raw_record.get("members")
+    if isinstance(members, list):
+        signature["members"] = sorted(_canon(value) for value in members)
+    elif "members" in raw_record:
+        signature["members"] = _canon(members)
+
+    return _canon(signature)
+
+
+def _gate0_quarantine_signatures(graph: EvidenceGraph) -> list[dict[str, Any]]:
+    """Return semantic signatures for Gate 0 quarantines.
+
+    Gate 0 intentionally preserves raw invalid Reader records inside
+    unresolved_evidence. Stability comparison must not ignore those records
+    merely because endpoint ownership was too incomplete to expose a safe
+    target. At the same time, evidence IDs, source IDs, prose and raw array
+    positions are intentionally excluded.
+    """
+
+    signatures: list[dict[str, Any]] = []
+    for item in graph.unresolved_evidence:
+        raw_record = item.get("raw_record")
+        raw_path = item.get("raw_path")
+        item_id = item.get("id")
+
+        is_gate0 = (
+            isinstance(item_id, str)
+            and item_id.startswith("G0_")
+        ) or (
+            isinstance(raw_path, str)
+            and raw_path.startswith("$.")
+            and raw_record is not None
+        )
+        if not is_gate0:
+            continue
+
+        section = None
+        if isinstance(raw_path, str) and raw_path.startswith("$."):
+            section = raw_path[2:].split("[", 1)[0]
+
+        signatures.append(
+            {
+                "section": section,
+                "target": item.get("target"),
+                "required_for_modeling": item.get(
+                    "required_for_modeling",
+                    True,
+                ),
+                "raw": _quarantine_raw_signature(raw_record),
+            }
+        )
+
+    return sorted(
+        (_canon(item) for item in signatures),
+        key=lambda item: json.dumps(
+            item,
+            sort_keys=True,
+            ensure_ascii=False,
+        ),
+    )
+
 def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     """Return an ID/order-insensitive snapshot of Reader semantics."""
 
@@ -162,6 +283,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
         "required_targets": sorted(graph.required_targets),
         "resolved_values": resolved_values,
         "unresolved_targets": _unresolved_targets(resolution.unresolved),
+        "gate0_quarantines": _gate0_quarantine_signatures(graph),
         "conflicts": conflicts,
         "resolution_ok": resolution.ok,
         "dimension_closure": draft["dimension_closure"]["status"],

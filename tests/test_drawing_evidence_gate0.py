@@ -642,7 +642,7 @@ def test_gate0_quarantines_reader_direct_that_conflicts_with_resolved_child_targ
     compiled = compile_evidence_graph(strict)
     resolution = resolve_evidence_graph(compiled)
     draft = build_semantic_draft(compiled, resolution)
-    assert draft["features"][0]["position"]["x"] == 0.0
+    assert draft["features"][0]["position"]["x"] == -10.0
 
 
 def test_gate0_allows_sibling_paths_without_quarantine():

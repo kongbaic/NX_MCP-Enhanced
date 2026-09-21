@@ -13,6 +13,20 @@ RelationKind = Literal[
     "upper_tangent",
     "lower_tangent",
 ]
+ViewKind = Literal["front", "side", "top"]
+ProjectionShape = Literal[
+    "circle",
+    "concentric_circles",
+    "hidden_parallel",
+    "slot_edges",
+    "profile",
+    "other",
+]
+EndpointRole = Literal[
+    "overall_min",
+    "overall_max",
+    "feature_center",
+]
 
 
 class OverallDimensions(BaseModel):
@@ -56,11 +70,61 @@ class CoordinateFact(BaseModel):
     source_ids: list[str] = Field(default_factory=list)
 
 
+class ViewEvidence(BaseModel):
+    """A standard orthographic view identified by the visual stage."""
+
+    id: str = Field(min_length=1)
+    kind: ViewKind
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class ProjectionEvidence(BaseModel):
+    """One view-local projection observation for a candidate feature identity."""
+
+    id: str = Field(min_length=1)
+    feature_id: str = Field(min_length=1)
+    view_id: str = Field(min_length=1)
+    shape: ProjectionShape
+    source_ids: list[str] = Field(default_factory=list)
+    required_for_modeling: bool = True
+
+
+class DimensionEndpoint(BaseModel):
+    """Physical endpoint identity before relation semantics are assigned."""
+
+    role: EndpointRole
+    target: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_endpoint(self) -> "DimensionEndpoint":
+        if self.role == "feature_center" and not self.target:
+            raise ValueError("feature_center endpoint requires target")
+        if self.role in {"overall_min", "overall_max"} and self.target is not None:
+            raise ValueError(f"{self.role} endpoint must not carry target")
+        return self
+
+
+class DimensionObservation(BaseModel):
+    """Raw dimension ownership evidence.
+
+    The visual stage records physical endpoints and measured axis. It does not
+    choose edge_offset/center_spacing/center_distance semantics.
+    """
+
+    id: str = Field(min_length=1)
+    value: float = Field(gt=0)
+    axis: Axis
+    endpoints: list[DimensionEndpoint] = Field(min_length=2, max_length=2)
+    direction: Literal[-1, 1] | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    required_for_modeling: bool = True
+
+
 class RelationEvidence(BaseModel):
     """A formal geometry relation extracted from physical drawing evidence.
 
-    The extractor records relation identity and endpoints. It never computes
-    final global coordinates. The deterministic resolver owns the arithmetic.
+    Normally these are emitted by the deterministic compiler. They remain in
+    the schema for relations that are already explicit and machine-identifiable.
     """
 
     id: str = Field(min_length=1)
@@ -110,6 +174,9 @@ class EvidenceGraph(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
     overall_dimensions: OverallDimensions
+    views: list[ViewEvidence] = Field(default_factory=list)
+    projections: list[ProjectionEvidence] = Field(default_factory=list)
+    dimensions: list[DimensionObservation] = Field(default_factory=list)
     direct_values: list[DirectValueEvidence] = Field(default_factory=list)
     direct_facts: list[CoordinateFact] = Field(default_factory=list)
     relations: list[RelationEvidence] = Field(default_factory=list)
@@ -126,7 +193,13 @@ class EvidenceGraph(BaseModel):
 
     @model_validator(mode="after")
     def _stable_ids_are_unique(self) -> "EvidenceGraph":
-        ids = [item.id for item in self.direct_values] + [item.id for item in self.relations]
+        ids = (
+            [item.id for item in self.views]
+            + [item.id for item in self.projections]
+            + [item.id for item in self.dimensions]
+            + [item.id for item in self.direct_values]
+            + [item.id for item in self.relations]
+        )
         if len(ids) != len(set(ids)):
-            raise ValueError("direct evidence and relation ids must be globally unique")
+            raise ValueError("evidence ids must be globally unique")
         return self

@@ -349,3 +349,64 @@ def test_stability_detects_gate0_quarantine_value_axis_and_role_drift():
     assert not report.stable
     assert 2 in report.changed_sections
     assert "gate0_quarantines" in report.changed_sections[2]
+
+
+def test_stability_cli_writes_report_on_comparator_error(tmp_path: Path):
+    bad_graph = EvidenceGraph.model_validate(
+        {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "direct_values": [
+                {
+                    "id": "BAD_DATUM",
+                    "target": "datum:A",
+                    "value": 1,
+                }
+            ],
+        }
+    )
+
+    paths = []
+    for index in (1, 2):
+        path = tmp_path / f"bad-run-{index}.json"
+        path.write_text(
+            json.dumps(bad_graph.model_dump(mode="json"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths.append(path)
+
+    report_path = tmp_path / "error-report.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "stability",
+            str(paths[0]),
+            str(paths[1]),
+            "--report",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert report_path.exists()
+
+    stdout_report = json.loads(completed.stdout)
+    file_report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert stdout_report == file_report
+    assert file_report["stable"] is False
+    assert file_report["run_count"] == 0
+    assert file_report["unique_fingerprints"] == 0
+    assert any(
+        "DraftAssemblyError" in error and "datum:A" in error
+        for error in file_report["errors"]
+    )

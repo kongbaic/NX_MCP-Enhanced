@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
     CaptureDimension,
@@ -9,9 +14,14 @@ from nx_mcp.drawing_intelligence import (
     CaptureValue,
     CaptureView,
     ReaderCapture,
+    build_semantic_draft,
+    compile_evidence_graph,
     link_reader_capture,
+    resolve_evidence_graph,
 )
 from nx_mcp.drawing_intelligence.evidence import OverallDimensions
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture:
@@ -205,3 +215,117 @@ def test_identity_linker_output_passes_strict_evidence_schema():
 
     assert validated.schema_version == "1.0"
     assert validated.coordinate_system == "part_center_xy_bottom_z0"
+
+
+def test_link_capture_cli_produces_strict_downstream_consumable_evidence(tmp_path: Path):
+    capture = _capture("CLI")
+    capture_path = tmp_path / "reader-capture.json"
+    evidence_path = tmp_path / "drawing-evidence.json"
+    capture_path.write_text(
+        json.dumps(capture.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "link-capture",
+            str(capture_path),
+            str(evidence_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["written"] is True
+    assert report["schema_valid"] is True
+    assert report["capture_entities"] == 2
+    assert report["physical_components"] == 1
+    assert evidence_path.exists()
+
+    from nx_mcp.drawing_intelligence import EvidenceGraph
+
+    graph = EvidenceGraph.model_validate(
+        json.loads(evidence_path.read_text(encoding="utf-8"))
+    )
+    compiled = compile_evidence_graph(graph)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+
+    assert draft["features"]
+    assert draft["dimension_closure"]["status"] in {
+        "closed",
+        "incomplete",
+        "conflict",
+    }
+
+
+def test_link_capture_cli_feature_identity_is_local_id_independent(tmp_path: Path):
+    feature_ids = []
+
+    for prefix in ("FIRST", "SECOND_COMPLETELY_DIFFERENT"):
+        capture = _capture(prefix)
+        capture_path = tmp_path / f"{prefix}-capture.json"
+        evidence_path = tmp_path / f"{prefix}-evidence.json"
+        capture_path.write_text(
+            json.dumps(capture.model_dump(mode="json"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "nx_mcp.drawing_intelligence",
+                "link-capture",
+                str(capture_path),
+                str(evidence_path),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+
+        raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+        feature_ids.append(
+            sorted({item["feature_id"] for item in raw["projections"]})
+        )
+
+    assert feature_ids[0] == feature_ids[1]
+
+
+def test_link_capture_cli_refuses_in_place_overwrite(tmp_path: Path):
+    capture = _capture("CLI")
+    path = tmp_path / "reader-capture.json"
+    path.write_text(
+        json.dumps(capture.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "link-capture",
+            str(path),
+            str(path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    report = json.loads(completed.stdout)
+    assert report["written"] is False
+    assert path.exists()

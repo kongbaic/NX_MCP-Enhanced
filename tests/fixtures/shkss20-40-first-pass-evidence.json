@@ -1,0 +1,502 @@
+{
+  "schema_version": "1.0",
+  "coordinate_system": "part_center_xy_bottom_z0",
+  "overall_dimensions": {
+    "length_x": 40,
+    "width_y": 32,
+    "height_z": 66
+  },
+  "views": [
+    {
+      "id": "V_FRONT_SHKSS",
+      "kind": "front",
+      "source_ids": [
+        "IMG_SHKSS_FRONT_VIEW"
+      ]
+    },
+    {
+      "id": "V_SIDE_SHKSS",
+      "kind": "side",
+      "source_ids": [
+        "IMG_SHKSS_SIDE_VIEW"
+      ]
+    }
+  ],
+  "projections": [
+    {
+      "id": "P_MAIN_FRONT",
+      "feature_id": "F_MAIN_HOLE",
+      "view_id": "V_FRONT_SHKSS",
+      "shape": "circle",
+      "source_ids": [
+        "IMG_MAIN_D20H7_CIRCLE"
+      ],
+      "required_for_modeling": true
+    },
+    {
+      "id": "P_CLAMP_SIDE",
+      "feature_id": "F_CLAMP_CLEARANCE",
+      "view_id": "V_SIDE_SHKSS",
+      "shape": "concentric_circles",
+      "source_ids": [
+        "IMG_CLAMP_D6_6_D11_CONCENTRIC"
+      ],
+      "required_for_modeling": true
+    }
+  ],
+  "dimensions": [
+    {
+      "id": "D_OVERALL_X40",
+      "value": 40,
+      "axis": "X",
+      "endpoints": [
+        {
+          "role": "overall_min"
+        },
+        {
+          "role": "overall_max"
+        }
+      ],
+      "source_ids": [
+        "IMG_OVERALL_X40"
+      ]
+    },
+    {
+      "id": "D_OVERALL_Y32",
+      "value": 32,
+      "axis": "Y",
+      "endpoints": [
+        {
+          "role": "overall_min"
+        },
+        {
+          "role": "overall_max"
+        }
+      ],
+      "source_ids": [
+        "IMG_OVERALL_Y32"
+      ]
+    },
+    {
+      "id": "D_OVERALL_Z66",
+      "value": 66,
+      "axis": "Z",
+      "endpoints": [
+        {
+          "role": "overall_min"
+        },
+        {
+          "role": "overall_max"
+        }
+      ],
+      "source_ids": [
+        "IMG_OVERALL_Z66"
+      ]
+    },
+    {
+      "id": "D_MAIN_Z40",
+      "value": 40,
+      "axis": "Z",
+      "endpoints": [
+        {
+          "role": "overall_min"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_MAIN_HOLE.centerline.z"
+        }
+      ],
+      "source_ids": [
+        "IMG_BOTTOM_TO_MAIN_CENTER_40_PM_002"
+      ]
+    },
+    {
+      "id": "D_CLAMP_Z18",
+      "value": 18,
+      "axis": "Z",
+      "direction": 1,
+      "endpoints": [
+        {
+          "role": "feature_center",
+          "target": "feature:F_MAIN_HOLE.centerline.z"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_CLAMP_CLEARANCE.centerline.z"
+        }
+      ],
+      "source_ids": [
+        "IMG_MAIN_TO_CLAMP_CENTER_18"
+      ]
+    },
+    {
+      "id": "D_CLAMP_Y8",
+      "value": 8,
+      "axis": "Y",
+      "endpoints": [
+        {
+          "role": "overall_max"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_CLAMP_CLEARANCE.centerline.y"
+        }
+      ],
+      "source_ids": [
+        "IMG_RIGHT_EDGE_TO_CLAMP_CENTER_8"
+      ]
+    },
+    {
+      "id": "D_MOUNT_X24",
+      "value": 24,
+      "axis": "X",
+      "direction": 1,
+      "endpoints": [
+        {
+          "role": "feature_center",
+          "target": "feature:F_MOUNT_PAIR.explicit_centers.0.0"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_MOUNT_PAIR.explicit_centers.1.0"
+        }
+      ],
+      "source_ids": [
+        "IMG_MOUNT_CENTER_SPACING_X24"
+      ]
+    },
+    {
+      "id": "D_MOUNT_Y24_A",
+      "value": 24,
+      "axis": "Y",
+      "endpoints": [
+        {
+          "role": "overall_max"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_MOUNT_PAIR.explicit_centers.0.1"
+        }
+      ],
+      "source_ids": [
+        "IMG_RIGHT_EDGE_TO_MOUNT_ROW_24"
+      ]
+    },
+    {
+      "id": "D_MOUNT_Y24_B",
+      "value": 24,
+      "axis": "Y",
+      "endpoints": [
+        {
+          "role": "overall_max"
+        },
+        {
+          "role": "feature_center",
+          "target": "feature:F_MOUNT_PAIR.explicit_centers.1.1"
+        }
+      ],
+      "source_ids": [
+        "IMG_RIGHT_EDGE_TO_MOUNT_ROW_24"
+      ]
+    }
+  ],
+  "datum_alignments": [
+    {
+      "id": "A_MAIN_X_CENTER",
+      "target": "feature:F_MAIN_HOLE.centerline.x",
+      "axis": "X",
+      "datum": "overall_center",
+      "source_ids": [
+        "IMG_MAIN_SHARED_VERTICAL_CENTERLINE"
+      ],
+      "required_for_modeling": true
+    },
+    {
+      "id": "A_SLOT_X_CENTER",
+      "target": "feature:F_SLOT.centerline.x",
+      "axis": "X",
+      "datum": "overall_center",
+      "source_ids": [
+        "IMG_SLOT_SHARED_VERTICAL_CENTERLINE"
+      ],
+      "required_for_modeling": true
+    }
+  ],
+  "direct_values": [
+    {
+      "id": "S_MAIN_KIND",
+      "target": "feature:F_MAIN_HOLE.type",
+      "value": "through_hole",
+      "source_ids": [
+        "IMG_D20H7"
+      ]
+    },
+    {
+      "id": "S_MAIN_D",
+      "target": "feature:F_MAIN_HOLE.diameter",
+      "value": 20,
+      "source_ids": [
+        "IMG_D20H7"
+      ]
+    },
+    {
+      "id": "S_MAIN_COUNT",
+      "target": "feature:F_MAIN_HOLE.count",
+      "value": 1,
+      "source_ids": [
+        "IMG_D20H7"
+      ]
+    },
+    {
+      "id": "S_MAIN_THRU",
+      "target": "feature:F_MAIN_HOLE.through",
+      "value": true,
+      "source_ids": [
+        "IMG_MAIN_BORE_THROUGH_PROJECTION"
+      ]
+    },
+    {
+      "id": "S_CLAMP_KIND",
+      "target": "feature:F_CLAMP_CLEARANCE.type",
+      "value": "counterbore_hole",
+      "source_ids": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "S_CLAMP_D",
+      "target": "feature:F_CLAMP_CLEARANCE.diameter",
+      "value": 6.6,
+      "source_ids": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "S_CLAMP_CB_D",
+      "target": "feature:F_CLAMP_CLEARANCE.counterbore_diameter",
+      "value": 11,
+      "source_ids": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "S_CLAMP_CB_DEPTH",
+      "target": "feature:F_CLAMP_CLEARANCE.counterbore_depth",
+      "value": 6.5,
+      "source_ids": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "S_CLAMP_COUNT",
+      "target": "feature:F_CLAMP_CLEARANCE.count",
+      "value": 1,
+      "source_ids": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "S_M6_KIND",
+      "target": "feature:F_M6.type",
+      "value": "threaded_hole",
+      "source_ids": [
+        "IMG_M6_DEPTH12"
+      ]
+    },
+    {
+      "id": "S_M6_SPEC",
+      "target": "feature:F_M6.spec",
+      "value": "M6",
+      "source_ids": [
+        "IMG_M6_DEPTH12"
+      ]
+    },
+    {
+      "id": "S_M6_DEPTH",
+      "target": "feature:F_M6.depth",
+      "value": 12,
+      "source_ids": [
+        "IMG_M6_DEPTH12"
+      ]
+    },
+    {
+      "id": "S_M6_AXIS",
+      "target": "feature:F_M6.axis",
+      "value": "X",
+      "source_ids": [
+        "IMG_M6_HORIZONTAL_HIDDEN_AXIS"
+      ]
+    },
+    {
+      "id": "S_MOUNT_KIND",
+      "target": "feature:F_MOUNT_PAIR.type",
+      "value": "through_hole",
+      "source_ids": [
+        "IMG_2_D6_6_THRU"
+      ]
+    },
+    {
+      "id": "S_MOUNT_D",
+      "target": "feature:F_MOUNT_PAIR.diameter",
+      "value": 6.6,
+      "source_ids": [
+        "IMG_2_D6_6_THRU"
+      ]
+    },
+    {
+      "id": "S_MOUNT_COUNT",
+      "target": "feature:F_MOUNT_PAIR.count",
+      "value": 2,
+      "source_ids": [
+        "IMG_2_D6_6_THRU"
+      ]
+    },
+    {
+      "id": "S_MOUNT_THRU",
+      "target": "feature:F_MOUNT_PAIR.through",
+      "value": true,
+      "source_ids": [
+        "IMG_2_D6_6_THRU"
+      ]
+    },
+    {
+      "id": "S_MOUNT_AXIS",
+      "target": "feature:F_MOUNT_PAIR.axis",
+      "value": "Z",
+      "source_ids": [
+        "IMG_MOUNT_VERTICAL_HIDDEN_PROJECTIONS"
+      ]
+    },
+    {
+      "id": "S_SLOT_KIND",
+      "target": "feature:F_SLOT.type",
+      "value": "slot",
+      "source_ids": [
+        "IMG_TOP_SLOT"
+      ]
+    },
+    {
+      "id": "S_SLOT_WIDTH",
+      "target": "feature:F_SLOT.width",
+      "value": 2,
+      "source_ids": [
+        "IMG_SLOT_WIDTH_2"
+      ]
+    },
+    {
+      "id": "S_SLOT_THROUGH_AXIS",
+      "target": "feature:F_SLOT.through_axis",
+      "value": "Y",
+      "source_ids": [
+        "IMG_SLOT_THROUGH_BODY_PROJECTION"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "R_M6_Y_ALIGN",
+      "kind": "alignment",
+      "axis": "Y",
+      "targets": [
+        "feature:F_CLAMP_CLEARANCE.centerline.y",
+        "feature:F_M6.centerline.y"
+      ],
+      "source_ids": [
+        "IMG_CLAMP_COAXIAL_Y"
+      ],
+      "required_for_modeling": true
+    },
+    {
+      "id": "R_M6_Z_ALIGN",
+      "kind": "alignment",
+      "axis": "Z",
+      "targets": [
+        "feature:F_CLAMP_CLEARANCE.centerline.z",
+        "feature:F_M6.centerline.z"
+      ],
+      "source_ids": [
+        "IMG_CLAMP_COAXIAL_Z"
+      ],
+      "required_for_modeling": true
+    },
+    {
+      "id": "R_SLOT_BOTTOM_TANGENT",
+      "kind": "upper_tangent",
+      "axis": "Z",
+      "targets": [
+        "feature:F_MAIN_HOLE.centerline.z",
+        "feature:F_SLOT.bottom_z"
+      ],
+      "diameter_target": "feature:F_MAIN_HOLE.diameter",
+      "source_ids": [
+        "IMG_SLOT_MEETS_MAIN_BORE_TOP"
+      ],
+      "required_for_modeling": true
+    },
+    {
+      "id": "R_SLOT_TOP",
+      "kind": "edge_offset",
+      "axis": "Z",
+      "value": 0,
+      "from_side": "max",
+      "targets": [
+        "feature:F_SLOT.top_z"
+      ],
+      "source_ids": [
+        "IMG_SLOT_OPENS_AT_TOP_SURFACE"
+      ],
+      "required_for_modeling": true
+    }
+  ],
+  "required_targets": [
+    "feature:F_MAIN_HOLE.centerline.x",
+    "feature:F_MAIN_HOLE.centerline.z",
+    "feature:F_CLAMP_CLEARANCE.centerline.y",
+    "feature:F_CLAMP_CLEARANCE.centerline.z",
+    "feature:F_M6.centerline.y",
+    "feature:F_M6.centerline.z",
+    "feature:F_MOUNT_PAIR.explicit_centers.0.0",
+    "feature:F_MOUNT_PAIR.explicit_centers.1.0",
+    "feature:F_MOUNT_PAIR.explicit_centers.0.1",
+    "feature:F_MOUNT_PAIR.explicit_centers.1.1",
+    "feature:F_SLOT.centerline.x",
+    "feature:F_SLOT.bottom_z",
+    "feature:F_SLOT.top_z"
+  ],
+  "observations": [
+    {
+      "id": "OBS_BODY_L_PROFILE",
+      "description": "side view shows L-shaped body with base thickness 8 and upright on the right-hand half; current Evidence v1 lacks a complete intermediate-surface/profile endpoint representation"
+    }
+  ],
+  "unresolved_evidence": [
+    {
+      "id": "U_BODY_PROFILE",
+      "target": "feature:F_BODY.profile",
+      "reason": "current Evidence v1 cannot fully encode the L-shaped intermediate/local-surface profile from this drawing without guessing",
+      "required_for_modeling": true,
+      "evidence": [
+        "OBS_BODY_L_PROFILE"
+      ]
+    },
+    {
+      "id": "U_M6_START_SIDE",
+      "target": "feature:F_M6.start_side",
+      "reason": "drawing shows M6 depth 12 but first-pass evidence does not uniquely establish the threaded-hole start side without conflating it with the separate clearance/counterbore feature",
+      "required_for_modeling": true,
+      "evidence": [
+        "IMG_M6_DEPTH12",
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    },
+    {
+      "id": "U_CLAMP_START_SIDE",
+      "target": "feature:F_CLAMP_CLEARANCE.start_side",
+      "reason": "counterbore orientation/start side is not represented with sufficient first-pass ownership evidence",
+      "required_for_modeling": true,
+      "evidence": [
+        "IMG_D6_6_THRU_D11_CB"
+      ]
+    }
+  ]
+}

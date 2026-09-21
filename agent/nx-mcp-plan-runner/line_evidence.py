@@ -451,6 +451,113 @@ def analyze_image(path: str | os.PathLike[str]) -> dict[str, Any]:
     }
 
 
+def compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable Reader-facing subset without recomputing evidence."""
+    lines_by_id = {item["id"]: item for item in evidence["lines"]}
+    arrows_by_id = {item["id"]: item for item in evidence["arrowheads"]}
+    endpoints_by_arrow = {
+        item["arrow_ref"]: item for item in evidence["endpoint_candidates"]
+    }
+
+    referenced_lines = {
+        item["line_ref"] for item in evidence["dimension_line_candidates"]
+    }
+    referenced_lines.update(
+        candidate["line_ref"]
+        for endpoint in evidence["endpoint_candidates"]
+        for candidate in endpoint["line_candidates"]
+    )
+    referenced_lines.update(
+        ref
+        for ambiguity in evidence["ambiguities"]
+        for ref in ambiguity["refs"]
+        if ref.startswith("L")
+    )
+
+    unknown_refs = sorted(referenced_lines.difference(lines_by_id))
+    if unknown_refs:
+        raise ValueError(f"compact evidence references unknown lines: {unknown_refs}")
+
+    def compact_line(line_id: str) -> dict[str, Any]:
+        line = lines_by_id[line_id]
+        return {
+            "orientation": line["orientation"],
+            "segment_px": line["segment_px"],
+            "style_candidate": {
+                "label": line["style"],
+                "confidence": line["confidence"],
+            },
+        }
+
+    unlinked_uncertain = {
+        item["id"]
+        for item in evidence["lines"]
+        if item["id"] not in referenced_lines and item["confidence"] < 0.60
+    }
+
+    dimensions = [
+        {
+            "id": item["id"],
+            "line_ref": item["line_ref"],
+            "arrow_refs": sorted(item["arrow_refs"]),
+            "confidence": item["confidence"],
+        }
+        for item in sorted(
+            evidence["dimension_line_candidates"], key=lambda item: item["id"]
+        )
+    ]
+
+    arrows: dict[str, dict[str, Any]] = {}
+    for arrow_id in sorted(arrows_by_id):
+        arrow = arrows_by_id[arrow_id]
+        try:
+            endpoint = endpoints_by_arrow[arrow_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"compact evidence is missing endpoint data for {arrow_id}"
+            ) from exc
+        arrows[arrow_id] = {
+            "tip_px": arrow["tip_px"],
+            "confidence": arrow["confidence"],
+            "endpoint_status": endpoint["status"],
+            "candidates": [
+                {
+                    "line_ref": candidate["line_ref"],
+                    "distance_px": candidate["distance_px"],
+                    "orientation_compatible": candidate[
+                        "orientation_compatible"
+                    ],
+                }
+                for candidate in sorted(
+                    endpoint["line_candidates"],
+                    key=lambda candidate: (
+                        candidate["distance_px"],
+                        candidate["line_ref"],
+                    ),
+                )
+            ],
+        }
+
+    return {
+        "image": {
+            "width_px": evidence["image"]["width_px"],
+            "height_px": evidence["image"]["height_px"],
+        },
+        "lines": {
+            "referenced": {
+                line_id: compact_line(line_id)
+                for line_id in sorted(referenced_lines)
+            },
+            "unlinked_uncertain": {
+                line_id: compact_line(line_id)
+                for line_id in sorted(unlinked_uncertain)
+            },
+        },
+        "dimensions": dimensions,
+        "arrows": arrows,
+    }
+
+
 def serialize_evidence(evidence: dict[str, Any]) -> bytes:
     return (json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
@@ -499,13 +606,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_image")
     parser.add_argument("output_json")
+    parser.add_argument("--compact-output")
     parser.add_argument("--debug-overlay")
     args = parser.parse_args(argv)
     try:
+        if args.compact_output and Path(args.compact_output).resolve() == Path(
+            args.output_json
+        ).resolve():
+            raise ValueError("full and compact output paths must differ")
         evidence = analyze_image(args.input_image)
+        compact = compact_evidence(evidence) if args.compact_output else None
         if args.debug_overlay:
             write_debug_overlay(args.input_image, args.debug_overlay, evidence)
         write_evidence(args.output_json, evidence)
+        if args.compact_output:
+            assert compact is not None
+            write_evidence(args.compact_output, compact)
     except Exception as exc:
         print(f"line-evidence failed: {exc.__class__.__name__}: {exc}", file=sys.stderr)
         return 1

@@ -9,6 +9,7 @@ from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import (
     CoordinateFact,
+    DatumAlignmentEvidence,
     DimensionEndpoint,
     DimensionObservation,
     DirectValueEvidence,
@@ -22,6 +23,7 @@ from .resolver import ResolutionResult, resolve_evidence_graph
 
 __all__ = [
     "CoordinateFact",
+    "DatumAlignmentEvidence",
     "DimensionEndpoint",
     "DimensionObservation",
     "DirectValueEvidence",

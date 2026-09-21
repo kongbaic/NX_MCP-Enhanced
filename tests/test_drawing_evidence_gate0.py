@@ -533,3 +533,29 @@ def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
     assert strict.direct_values[0].target == target
     assert result.report["passed_direct_values"] == 1
     assert result.report["quarantined_direct_values"] == 0
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "feature:F_PAIR",
+        "feature:",
+        "overall_dimensions.",
+        "profile.",
+    ],
+)
+def test_gate0_quarantines_incomplete_downstream_target_paths(target):
+    record = {
+        "id": "DV_INCOMPLETE_TARGET",
+        "target": target,
+        "value": 1,
+        "source_ids": ["OBS_INCOMPLETE"],
+    }
+
+    result, strict = _gate0(_capture(direct_values=[record]))
+    added, _ = _gate0_items(result)
+
+    assert strict.direct_values == []
+    assert result.report["quarantined_direct_values"] == 1
+    assert len(added) == 1
+    assert added[0]["raw_record"] == record

@@ -526,3 +526,253 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
     assert report["schema_valid"] is True
     assert report["identity_collisions"] == 1
     assert evidence_path.exists()
+
+
+def test_identity_linker_canonicalizes_hole_diameter_alias():
+    first = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="V_SIDE", kind="side")],
+        entities=[
+            CaptureEntity(
+                id="E_SIDE_A",
+                view_id="V_SIDE",
+                shape="hidden_parallel",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S_DIA_A",
+                entity_id="E_SIDE_A",
+                field="hole_diameter",
+                value=20,
+            )
+        ],
+    )
+    second = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="V_SIDE", kind="side")],
+        entities=[
+            CaptureEntity(
+                id="E_SIDE_B",
+                view_id="V_SIDE",
+                shape="hidden_parallel",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S_DIA_B",
+                entity_id="E_SIDE_B",
+                field="diameter",
+                value=20,
+            )
+        ],
+    )
+
+    linked_a = link_reader_capture(first)
+    linked_b = link_reader_capture(second)
+
+    assert set(linked_a.entity_to_feature.values()) == set(
+        linked_b.entity_to_feature.values()
+    )
+    assert linked_a.evidence.direct_values[0].target.endswith(".diameter")
+    assert linked_b.evidence.direct_values[0].target.endswith(".diameter")
+
+
+def test_identity_linker_canonicalizes_thread_depth_alias():
+    first = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_THREAD_A",
+                view_id="V_FRONT",
+                shape="hidden_parallel",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S_THREAD_SPEC_A",
+                entity_id="E_THREAD_A",
+                field="thread_spec",
+                value="M6",
+            ),
+            CaptureValue(
+                id="S_DEPTH_A",
+                entity_id="E_THREAD_A",
+                field="depth",
+                value=12,
+            ),
+        ],
+    )
+    second = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_THREAD_B",
+                view_id="V_FRONT",
+                shape="hidden_parallel",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S_THREAD_SPEC_B",
+                entity_id="E_THREAD_B",
+                field="thread_spec",
+                value="M6",
+            ),
+            CaptureValue(
+                id="S_DEPTH_B",
+                entity_id="E_THREAD_B",
+                field="thread_depth",
+                value=12,
+            ),
+        ],
+    )
+
+    linked_a = link_reader_capture(first)
+    linked_b = link_reader_capture(second)
+
+    assert set(linked_a.entity_to_feature.values()) == set(
+        linked_b.entity_to_feature.values()
+    )
+    assert {
+        item.target.rsplit(".", 1)[1]
+        for item in linked_a.evidence.direct_values
+    } == {"thread_spec", "thread_depth"}
+
+
+def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
+    first = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EFC", view_id="VF", shape="circle"),
+            CaptureEntity(id="ESA", view_id="VS", shape="hidden_parallel"),
+        ],
+        associations=[
+            AssociationClaim(id="A1", entity_ids=["EFC", "ESA"])
+        ],
+        values=[
+            CaptureValue(id="S1", entity_id="ESA", field="diameter", value=20)
+        ],
+    )
+    second = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EFC2", view_id="VF", shape="circle"),
+            CaptureEntity(id="ESB", view_id="VS", shape="profile"),
+        ],
+        associations=[
+            AssociationClaim(id="A2", entity_ids=["EFC2", "ESB"])
+        ],
+        values=[
+            CaptureValue(id="S2", entity_id="ESB", field="diameter", value=20)
+        ],
+    )
+
+    linked_a = link_reader_capture(first)
+    linked_b = link_reader_capture(second)
+
+    assert set(linked_a.entity_to_feature.values()) == set(
+        linked_b.entity_to_feature.values()
+    )
+    side_shapes_a = {
+        item.shape
+        for item in linked_a.evidence.projections
+        if item.view_id == "VS"
+    }
+    side_shapes_b = {
+        item.shape
+        for item in linked_b.evidence.projections
+        if item.view_id == "VS"
+    }
+    assert side_shapes_a == {"hidden_parallel"}
+    assert side_shapes_b == {"hidden_parallel"}
+
+
+def test_identity_linker_ignores_unreferenced_outer_profile():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="VS", kind="side")],
+        entities=[
+            CaptureEntity(id="E_PROFILE", view_id="VS", shape="profile"),
+            CaptureEntity(id="E_HOLE", view_id="VS", shape="hidden_parallel"),
+        ],
+        values=[
+            CaptureValue(
+                id="S_HOLE",
+                entity_id="E_HOLE",
+                field="diameter",
+                value=6.6,
+            )
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    assert "E_PROFILE" not in result.entity_to_feature
+    assert "E_HOLE" in result.entity_to_feature
+    assert result.report["ignored_orphan_profiles"] == 1
+    assert all(
+        item.source_ids[0] != "E_PROFILE"
+        for item in result.evidence.projections
+    )
+
+
+def test_identity_linker_derives_formal_required_targets():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(id="E1", view_id="VF", shape="circle")
+        ],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="hole_diameter",
+                value=20,
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(role="overall_max"),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E1",
+                    ),
+                ],
+                required_for_modeling=True,
+            )
+        ],
+        required_targets=[
+            CaptureRequiredTarget(
+                entity_id="E1",
+                field="centerline",
+            )
+        ],
+    )
+
+    result = link_reader_capture(capture)
+    feature_id = result.entity_to_feature["E1"]
+
+    assert result.evidence.required_targets == [
+        f"feature:{feature_id}.centerline.z",
+        f"feature:{feature_id}.diameter",
+    ]
+    assert any(
+        item.get("kind") == "reader_required_targets_advisory"
+        for item in result.evidence.observations
+    )

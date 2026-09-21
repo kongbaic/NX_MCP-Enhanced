@@ -23,5 +23,4 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run evidence resolver tests
-        run: |
-          python -m pytest -q             tests/test_drawing_evidence_resolver.py             tests/test_drawing_evidence_gate_a.py
+        run: python -m pytest -q tests/test_drawing_evidence_resolver.py tests/test_drawing_evidence_gate_a.py tests/test_drawing_evidence_cli.py

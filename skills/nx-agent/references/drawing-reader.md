@@ -47,14 +47,15 @@ Reader 只执行第一段：
 Reader 可以：
 
 - 识别 front / side / top 标准视图；
-- 识别每个 view 中的局部实体及 shape；
-- 读取明确尺寸文字、孔径、螺纹、深度、数量、fit、through 等直接信息；
+- 识别每个 view 中的局部实体及 canonical shape；
+- 读取明确尺寸文字、孔径、螺纹、深度、数量、fit、through 等直接信息，并使用固定 canonical field；
 - 根据真实箭头 / witness / extension line 绑定 dimension endpoint；
 - 记录 measured axis；
 - 记录显式 overall-center coincidence；
 - 在存在充分视觉证据时提交跨视图 association claim；
-- 标出 required modeling fields；
+- 对重复特征使用固定 grouped/member 粒度规则；
 - 把不能唯一确定的内容写入 unresolved_evidence。
+- 新 capture 的 required_targets 固定写空数组，由 linker 确定性派生。
 
 ## 3. Reader 不允许做什么
 
@@ -69,6 +70,10 @@ Reader 不得：
 - 仅因为数字相等、靠得近、都是孔、看起来对称就合并 entity；
 - 猜 start_side / termination / missing dimension；
 - 为了闭合而把 intermediate surface 冒充 overall boundary；
+- 在 `diameter` / `hole_diameter`、`depth` / `thread_depth` 等同义表达之间自由选择；
+- 把 hole 的 edge-on 平行线投影写成 body `profile`；
+- 同一 quantity callout 在 grouped entity 与多个 duplicate entity 之间任意切换；
+- 自由填写 `centerline` / `centerline.z` 等 required_targets；
 - 读取旧 capture/evidence/draft/drawing/plan/report/PRT/STEP；
 - 根据 linker / Gate 0 / Resolver / Gate A 错误第二次看图修答案；
 - 直接写 semantic-draft.json / drawing.json；
@@ -138,6 +143,15 @@ v2 endpoint 只有：
 
 Reader 只记录可见的 physical ownership，不计算结果坐标。
 
+`entity_center` 只有在箭头 / witness / extension line 明确落到某一个 local
+entity 的 center mark、centerline 或可唯一识别的 midline 时才能使用。
+
+对于重复孔、重叠投影、hidden parallel groups：
+
+- 不能因为“看起来应该在中间”就绑定 entity_center；
+- 不能根据对称关系反推成员中心；
+- member center 不能唯一对应时直接 unresolved。
+
 如果箭头落在当前 schema 无法表达的 local/intermediate surface：
 
 - 不把它改成 overall；
@@ -164,6 +178,32 @@ feature:F_XXX.diameter
 ~~~
 
 最终 target 由 linker 生成。
+
+新 Reader 必须使用固定字段：
+
+~~~text
+diameter
+fit
+thread_spec
+thread_depth
+depth          # 仅非线程深度
+count
+through
+width
+counterbore_diameter
+counterbore_depth
+~~~
+
+禁止输出 `hole_diameter`；线程“深 N”必须写 `thread_depth`。
+
+重复特征固定规则：
+
+- 一个数量标注、成员没有独立中心定位 → 一个 entity + count=N；
+- 成员中心分别有明确尺寸/标识 → 分成独立 entities；
+- 同一 view 禁止同时输出 grouped entity 和同组 member entities。
+
+外轮廓若只是 overall silhouette、没有被 feature-local value/dimension/association
+引用，只放 observations，不额外创建 profile modeling entity。
 
 ## 8. Axis
 
@@ -193,7 +233,8 @@ Reader 写出前只检查：
 - direct value 是否绑定到正确 local entity；
 - dimension endpoint 是否由真实标注 geometry 支持；
 - association 是否有明确跨视图证据；
-- required HARD inventory 是否没有静默遗漏；
+- required_targets 是否为 []；
+- modeling-critical 缺失语义是否进入 unresolved_evidence；
 - ambiguity 是否显式 unresolved；
 - 没有 final feature ID；
 - 没有 global-coordinate arithmetic。

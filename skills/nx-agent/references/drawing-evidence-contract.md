@@ -41,6 +41,7 @@ Allowed:
 - OCR / dimension text
 - leader, witness and extension-line endpoints
 - centerline / center-mark observations
+- explicit overall-center datum coincidence observations
 - hidden-line and circular-projection observations
 - feature candidates
 - same-feature candidate links with supporting observation IDs
@@ -69,6 +70,9 @@ The Resolver owns deterministic operations such as:
   - Z = [0, height_z]
 - edge_offset
 - direct datum/boundary offset
+- overall-center datum alignment compilation:
+  - X/Y overall center → 0
+  - Z overall center plane → height_z/2
 - alignment/coaxial coordinate propagation
 - center spacing/distance only when the signed solution is unique
 - upper/lower tangent calculations
@@ -87,6 +91,8 @@ The following historical SHKSS failures must be deterministic:
 3. conflicting direct and relation writers are rejected as conflict.
 4. unsigned center spacing with only one known endpoint remains unresolved.
 5. identical evidence input produces byte-equivalent logical resolution output.
+6. explicit overall-center datum alignment maps X/Y to 0 and Z to height_z/2.
+7. datum target-axis mismatch remains unresolved and is never silently reinterpreted.
 
 ## 6. External code policy
 

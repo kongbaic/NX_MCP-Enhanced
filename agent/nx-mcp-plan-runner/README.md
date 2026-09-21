@@ -55,7 +55,6 @@ nx-mcp-plan-runner/
 ## 用法
 
 ```text
-python runner.py submit-semantic-draft <semantic-draft.json> <drawing.json>  # payload on stdin
 python runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
 python runner.py validate-drawing <drawing.json>
 python runner.py run   <executable-plan.json> [--workspace DIR] [--report out.json]
@@ -66,12 +65,6 @@ python runner.py build <frozen-plan.json> <out.json> [--drawing <current-drawing
 python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 ```
 
-- `submit-semantic-draft`：从stdin接收本轮第一次正式semantic payload，以exclusive
-  create写入指定`semantic-draft.json`并flush/fsync，然后在同一进程中立即复用
-  `canonicalize-drawing`的normalization、preservation、Gate A与atomic drawing写出逻辑。
-  draft一旦存在，后续submission一律nonzero拒绝且不会再次canonicalize；首次payload即使
-  malformed或Gate A失败也原样保留，失败时不生成drawing。命令要求draft与drawing均不
-  预先存在，不提供reset/retry/reopen。
 - `canonicalize-drawing`：只执行白名单schema/path等价转换并同步引用；在内存中
   通过现有Gate A后才以临时文件+atomic replace写出canonical drawing。调用开始时
   先失效精确指定的旧output；失败时返回nonzero、output不存在，也不覆盖semantic
@@ -83,11 +76,6 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 - `check`：不触 NX 的静态检查（工具合法性、参数合法性、引用可解析、占位符
   清零、selection criteria 语法）。
 - `build`：冻结 → 可执行转换（无 NX）。
-
-`submit-semantic-draft`只保证：通过该入口提交时，第一次正式submission之后不能再通过
-该入口重写。它不能阻止拥有任意Write/Shell权限的Agent直接覆盖或删除draft、手写drawing、
-或绕过CLI；绝对first-write immutability仍需要外层tool harness限制这些路径。fresh run的
-清理由外层harness负责。
 
 ### 命令计时
 

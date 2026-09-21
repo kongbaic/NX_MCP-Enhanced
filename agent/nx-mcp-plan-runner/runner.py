@@ -9,7 +9,6 @@ This Runner is PART-AGNOSTIC and PLAN-AGNOSTIC:
 - it never invents repairs: a failed step stops the run (declared retries only).
 
 Modes:
-  python runner.py submit-semantic-draft <semantic-draft.json> <drawing.json>  # payload on stdin
   python runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
   python runner.py validate-drawing <drawing.json>  # Gate A structural/evidence check, no NX
   python runner.py run   <plan.json> [--workspace DIR] [--report OUT.json]
@@ -3600,11 +3599,10 @@ def _invalidate_canonical_output(path: str) -> None:
         raise PlanError(f"failed to invalidate pre-existing canonical drawing: {path}")
 
 
-def _canonicalize_drawing(
-    draft_path: str,
-    output_path: str,
-    timing_state: dict,
-) -> tuple[int, dict]:
+def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
+    timing_state = _begin_command_timing("A3_CANONICALIZE", args.draft)
+    draft_path = os.path.abspath(args.draft)
+    output_path = os.path.abspath(args.out)
     errors: list[str] = []
     normalization_errors: list[str] = []
     gate_errors: list[str] = []
@@ -3660,159 +3658,8 @@ def _canonicalize_drawing(
 
     result["output_exists"] = os.path.lexists(output_path)
     _attach_command_timing(result, timing_state)
-    return (0 if result["ok"] else 1), result
-
-
-def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
-    draft_path = os.path.abspath(args.draft)
-    output_path = os.path.abspath(args.out)
-    return_code, result = _canonicalize_drawing(
-        draft_path,
-        output_path,
-        _begin_command_timing("A3_CANONICALIZE", draft_path),
-    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return return_code
-
-
-def _submission_failure_result(
-    draft_path: str,
-    output_path: str,
-    errors: list[str],
-    *,
-    submission_accepted: bool = False,
-    already_submitted: bool = False,
-    workspace_not_clean: bool = False,
-) -> dict:
-    return {
-        "semantic_draft": draft_path,
-        "canonical_drawing": output_path,
-        "submission_accepted": submission_accepted,
-        "already_submitted": already_submitted,
-        "workspace_not_clean": workspace_not_clean,
-        "canonicalization_attempted": False,
-        "normalization": {"changes": [], "errors": []},
-        "gate_a": {"attempted": False, "errors": [], "ok": False},
-        "source_ownership": {"status": "fail"},
-        "coordinate_sanity": {"status": "fail"},
-        "errors": errors,
-        "written": False,
-        "ok": False,
-        "output_exists": os.path.lexists(output_path),
-    }
-
-
-def _cmd_submit_semantic_draft(args: argparse.Namespace) -> int:
-    draft_path = os.path.abspath(args.draft)
-    output_path = os.path.abspath(args.out)
-    timing_state = _begin_command_timing("A2_SUBMIT", draft_path)
-
-    if os.path.normcase(draft_path) == os.path.normcase(output_path):
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            ["semantic draft and canonical drawing output must be different paths"],
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    if os.path.lexists(draft_path):
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            ["semantic draft already submitted"],
-            already_submitted=True,
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    if os.path.lexists(output_path):
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            ["submission workspace is not clean: canonical drawing already exists"],
-            workspace_not_clean=True,
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    stdin = getattr(sys.stdin, "buffer", sys.stdin)
-    try:
-        payload = stdin.read()
-        if isinstance(payload, str):
-            payload = payload.encode("utf-8")
-    except Exception as exc:
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            [f"failed to read semantic submission ({type(exc).__name__}): {exc}"],
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    submission_accepted = False
-    try:
-        with open(draft_path, "xb") as handle:
-            submission_accepted = True
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except FileExistsError:
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            ["semantic draft already submitted"],
-            already_submitted=True,
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-    except OSError as exc:
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            [str(exc)],
-            submission_accepted=submission_accepted,
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    try:
-        return_code, result = _canonicalize_drawing(
-            draft_path,
-            output_path,
-            _begin_command_timing("A3_CANONICALIZE", draft_path),
-        )
-    except Exception as exc:
-        cleanup_errors: list[str] = []
-        try:
-            _invalidate_canonical_output(output_path)
-        except (OSError, PlanError) as cleanup_exc:
-            cleanup_errors.append(str(cleanup_exc))
-        result = _submission_failure_result(
-            draft_path,
-            output_path,
-            [
-                f"canonicalizer internal error ({type(exc).__name__}): {exc}",
-                *cleanup_errors,
-            ],
-            submission_accepted=True,
-        )
-        _attach_command_timing(result, timing_state)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
-    result["submission_accepted"] = True
-    result["already_submitted"] = False
-    result["workspace_not_clean"] = False
-    result["canonicalization_attempted"] = True
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return return_code
+    return 0 if result["ok"] else 1
 
 
 # --------------------------------------------------------------------------
@@ -4042,14 +3889,6 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")
     pd.add_argument("drawing")
     pd.set_defaults(func=_cmd_validate_drawing)
-
-    psubmit = sub.add_parser(
-        "submit-semantic-draft",
-        help="accept exactly one semantic draft from stdin and immediately canonicalize it",
-    )
-    psubmit.add_argument("draft")
-    psubmit.add_argument("out")
-    psubmit.set_defaults(func=_cmd_submit_semantic_draft)
 
     pcan = sub.add_parser(
         "canonicalize-drawing",

@@ -3531,7 +3531,10 @@ def check_drawing_json(data: dict) -> list[str]:
     if isinstance(conflicts, list) and conflicts:
         errors.append(f"dimension_conflicts={len(conflicts)}")
 
-    if (data.get("dimension_closure") or {}).get("status") != "closed":
+    dimension_closure = data.get("dimension_closure")
+    if not isinstance(dimension_closure, dict):
+        errors.append("dimension_closure must be an object")
+    elif dimension_closure.get("status") != "closed":
         errors.append("dimension_closure.status must be closed")
 
     return errors
@@ -3617,7 +3620,12 @@ def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
             errors.extend(normalization_errors)
             if not errors:
                 gate_attempted = True
-                gate_errors = check_drawing_json(drawing)
+                try:
+                    gate_errors = check_drawing_json(drawing)
+                except Exception as exc:
+                    gate_errors = [
+                        f"Gate A internal error ({type(exc).__name__}): {exc}"
+                    ]
                 errors.extend(gate_errors)
         except (OSError, ValueError, PlanError) as exc:
             errors.append(str(exc))

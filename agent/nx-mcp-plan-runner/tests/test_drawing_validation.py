@@ -928,6 +928,65 @@ class DrawingSchemaNormalizationTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(original, draft.read_text(encoding="utf-8"))
 
+    def test_canonicalize_cli_rejects_invalid_dimension_closure_types(self) -> None:
+        for value in ("incomplete", None, [], 1):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                data = self.gate_a_range_alias_data()
+                data["dimension_closure"] = value
+                draft = Path(tmp) / "semantic-draft.json"
+                output = Path(tmp) / "drawing.json"
+                draft.write_text(json.dumps(data), encoding="utf-8")
+                result, report = self.run_canonicalize(draft, output)
+                self.assertEqual(1, result)
+                self.assertTrue(report["gate_a"]["attempted"])
+                self.assertIn(
+                    "dimension_closure must be an object",
+                    report["gate_a"]["errors"],
+                )
+                self.assertFalse(report["written"])
+                self.assertFalse(report["output_exists"])
+                self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_keeps_incomplete_closure_as_gate_failure(self) -> None:
+        data = self.gate_a_range_alias_data()
+        data["dimension_closure"] = {"status": "incomplete"}
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertFalse(any(
+                "dimension_closure" in change
+                for change in report["normalization"]["changes"]
+            ))
+            self.assertIn(
+                "dimension_closure.status must be closed",
+                report["gate_a"]["errors"],
+            )
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
+    def test_canonicalize_cli_wraps_unexpected_gate_exception(self) -> None:
+        data = self.gate_a_range_alias_data()
+        with tempfile.TemporaryDirectory() as tmp:
+            draft = Path(tmp) / "semantic-draft.json"
+            output = Path(tmp) / "drawing.json"
+            draft.write_text(json.dumps(data), encoding="utf-8")
+            with mock.patch.object(
+                R, "check_drawing_json", side_effect=AttributeError("bad shape")
+            ):
+                result, report = self.run_canonicalize(draft, output)
+            self.assertEqual(1, result)
+            self.assertEqual(
+                ["Gate A internal error (AttributeError): bad shape"],
+                report["gate_a"]["errors"],
+            )
+            self.assertFalse(report["written"])
+            self.assertFalse(report["output_exists"])
+            self.assertFalse(output.exists())
+
     def test_canonicalize_cli_gate_failure_removes_stale_output(self) -> None:
         data = self.gate_a_range_alias_data()
         data["source_ledger"] = [

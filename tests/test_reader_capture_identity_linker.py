@@ -1848,3 +1848,126 @@ def test_feature_id_ignores_direct_value_and_datum_payload():
     second = link_reader_capture(changed)
 
     assert first.entity_to_feature["E1"] == second.entity_to_feature["E2"]
+
+def test_stability_is_permutation_invariant_within_identity_collision_group():
+    def make_capture(thread_id: str, left_id: str, right_id: str) -> ReaderCapture:
+        return ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[CaptureView(id="VF", kind="front")],
+            entities=[
+                CaptureEntity(
+                    id=thread_id,
+                    view_id="VF",
+                    shape="hidden_parallel",
+                ),
+                CaptureEntity(
+                    id=left_id,
+                    view_id="VF",
+                    shape="hidden_parallel",
+                ),
+                CaptureEntity(
+                    id=right_id,
+                    view_id="VF",
+                    shape="hidden_parallel",
+                ),
+            ],
+            values=[
+                CaptureValue(
+                    id="THREAD_SPEC",
+                    entity_id=thread_id,
+                    field="thread_spec",
+                    value="M6",
+                ),
+                CaptureValue(
+                    id="THREAD_DEPTH",
+                    entity_id=thread_id,
+                    field="thread_depth",
+                    value=12,
+                ),
+                CaptureValue(
+                    id="LEFT_DIA",
+                    entity_id=left_id,
+                    field="diameter",
+                    value=6.6,
+                ),
+                CaptureValue(
+                    id="RIGHT_DIA",
+                    entity_id=right_id,
+                    field="diameter",
+                    value=6.6,
+                ),
+            ],
+            dimensions=[
+                CaptureDimension(
+                    id="D_SPACING",
+                    value=24,
+                    axis="X",
+                    endpoints=[
+                        CaptureDimensionEndpoint(
+                            role="entity_center",
+                            entity_id=left_id,
+                            basis="centerline",
+                        ),
+                        CaptureDimensionEndpoint(
+                            role="entity_center",
+                            entity_id=right_id,
+                            basis="centerline",
+                        ),
+                    ],
+                )
+            ],
+        )
+
+    first = link_reader_capture(
+        make_capture("A_THREAD", "B_LEFT", "C_RIGHT")
+    ).evidence
+    second = link_reader_capture(
+        make_capture("Z_THREAD", "A_LEFT", "B_RIGHT")
+    ).evidence
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable
+    assert report.unique_fingerprints == 1
+
+
+def test_stability_still_detects_real_value_drift_inside_collision_group():
+    def make_capture(diameter: float) -> ReaderCapture:
+        return ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[CaptureView(id="VF", kind="front")],
+            entities=[
+                CaptureEntity(id="E1", view_id="VF", shape="hidden_parallel"),
+                CaptureEntity(id="E2", view_id="VF", shape="hidden_parallel"),
+            ],
+            values=[
+                CaptureValue(
+                    id="V1",
+                    entity_id="E1",
+                    field="diameter",
+                    value=diameter,
+                ),
+                CaptureValue(
+                    id="V2",
+                    entity_id="E2",
+                    field="diameter",
+                    value=6.6,
+                ),
+            ],
+        )
+
+    first = link_reader_capture(make_capture(6.6)).evidence
+    second = link_reader_capture(make_capture(8.0)).evidence
+
+    report = compare_evidence_runs([first, second])
+
+    assert not report.stable
+    assert report.unique_fingerprints == 2

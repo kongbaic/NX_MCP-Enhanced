@@ -335,7 +335,7 @@ def _unresolved_semantic_drift(
 
 
 
-_AMBIGUOUS_FEATURE_RE = re.compile(r"(F_[A-F0-9]+)_AMB_\\d+")
+_AMBIGUOUS_FEATURE_RE = re.compile(r"(F_[A-F0-9]+)_AMB_\d+")
 
 
 def _walk_strings(value: Any) -> list[str]:
@@ -378,7 +378,7 @@ def _member_footprint(
     base_id: str,
     member_id: str,
 ) -> str:
-    group_pattern = re.compile(rf"{re.escape(base_id)}_AMB_\\d+")
+    group_pattern = re.compile(rf"{re.escape(base_id)}_AMB_\d+")
 
     def transform(value: Any) -> Any:
         def replace_string(text: str) -> str:

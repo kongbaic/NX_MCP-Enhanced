@@ -19,6 +19,9 @@ class CaptureView(_StrictCaptureModel):
     source_ids: list[str] = Field(default_factory=list)
 
 
+CaptureCrossViewDisposition = Literal["associated", "unresolved", "single_view"]
+
+
 class CaptureEntity(_StrictCaptureModel):
     """One view-local visual entity.
 
@@ -29,6 +32,7 @@ class CaptureEntity(_StrictCaptureModel):
     id: str = Field(min_length=1)
     view_id: str = Field(min_length=1)
     shape: ProjectionShape
+    cross_view_disposition: CaptureCrossViewDisposition | None = None
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
 
@@ -78,7 +82,12 @@ class CaptureValue(_StrictCaptureModel):
     source_ids: list[str] = Field(default_factory=list)
 
 
-CaptureEndpointRole = Literal["overall_min", "overall_max", "entity_center"]
+CaptureEndpointRole = Literal[
+    "overall_min",
+    "overall_max",
+    "entity_center",
+    "unresolved",
+]
 DimensionEndpointEvidenceKind = Literal[
     "centerline",
     "center_mark",
@@ -89,16 +98,39 @@ DimensionEndpointEvidenceKind = Literal[
 class CaptureDimensionEndpoint(_StrictCaptureModel):
     role: CaptureEndpointRole
     entity_id: str | None = None
+    candidate_entity_ids: list[str] = Field(default_factory=list)
     basis: DimensionEndpointEvidenceKind | None = None
+
+    @field_validator("candidate_entity_ids")
+    @classmethod
+    def _unique_candidate_entity_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("dimension endpoint candidate_entity_ids must be unique")
+        return value
 
     @model_validator(mode="after")
     def _shape(self) -> "CaptureDimensionEndpoint":
-        if self.role == "entity_center" and not self.entity_id:
-            raise ValueError("entity_center endpoint requires entity_id")
-        if self.role in {"overall_min", "overall_max"} and self.entity_id is not None:
-            raise ValueError(f"{self.role} endpoint must not carry entity_id")
-        if self.role in {"overall_min", "overall_max"} and self.basis is not None:
-            raise ValueError(f"{self.role} endpoint must not carry center basis")
+        if self.role == "entity_center":
+            if not self.entity_id:
+                raise ValueError("entity_center endpoint requires entity_id")
+            if self.candidate_entity_ids:
+                raise ValueError(
+                    "entity_center endpoint must not carry candidate_entity_ids"
+                )
+        elif self.role in {"overall_min", "overall_max"}:
+            if self.entity_id is not None:
+                raise ValueError(f"{self.role} endpoint must not carry entity_id")
+            if self.basis is not None:
+                raise ValueError(f"{self.role} endpoint must not carry center basis")
+            if self.candidate_entity_ids:
+                raise ValueError(
+                    f"{self.role} endpoint must not carry candidate_entity_ids"
+                )
+        else:
+            if self.entity_id is not None:
+                raise ValueError("unresolved endpoint must not carry entity_id")
+            if self.basis is not None:
+                raise ValueError("unresolved endpoint must not carry center basis")
         return self
 
 
@@ -107,9 +139,26 @@ class CaptureDimension(_StrictCaptureModel):
     value: float = Field(gt=0)
     axis: Axis
     endpoints: list[CaptureDimensionEndpoint] = Field(min_length=2, max_length=2)
+    unresolved_reason: str | None = None
     direction: Literal[-1, 1] | None = None
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
+
+    @model_validator(mode="after")
+    def _unresolved_shape(self) -> "CaptureDimension":
+        has_unresolved = any(
+            endpoint.role == "unresolved"
+            for endpoint in self.endpoints
+        )
+        if has_unresolved and not self.unresolved_reason:
+            raise ValueError(
+                "dimension with unresolved endpoint requires unresolved_reason"
+            )
+        if not has_unresolved and self.unresolved_reason is not None:
+            raise ValueError(
+                "resolved dimension must not carry unresolved_reason"
+            )
+        return self
 
 
 class CaptureDatumAlignment(_StrictCaptureModel):
@@ -278,6 +327,16 @@ class ReaderCapture(_StrictCaptureModel):
                     raise ValueError(
                         f"dimension {dimension.id!r} references unknown entity "
                         f"{endpoint.entity_id!r}"
+                    )
+                missing_candidates = [
+                    item
+                    for item in endpoint.candidate_entity_ids
+                    if item not in entity_set
+                ]
+                if missing_candidates:
+                    raise ValueError(
+                        f"dimension {dimension.id!r} references unknown candidate "
+                        f"entities {missing_candidates}"
                     )
 
         for alignment in self.datum_alignments:

@@ -97,12 +97,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                 ],
             )
         ],
-        required_targets=[
-            CaptureRequiredTarget(
-                entity_id=front,
-                field="centerline.z",
-            )
-        ],
+        required_targets=[],
     )
 
 
@@ -499,7 +494,9 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
             "unresolved_evidence": [
                 {
                     "id": "U_05",
+                    "kind": "member_identity",
                     "reason": "the two candidates cannot be uniquely paired across views",
+                    "entity_ids": ["E_FRONT_05", "E_FRONT_06"],
                     "required_for_modeling": True,
                 }
             ],
@@ -948,3 +945,88 @@ def test_targetless_unresolved_semantic_drift_changes_fingerprint():
     assert report.unique_fingerprints == 2
     assert report.unresolved_semantic_drift
     assert "unresolved_semantics" in report.changed_sections[2]
+
+
+def test_check_capture_cli_is_authoritative_contract_gate(tmp_path: Path):
+    valid = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="circle")],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="diameter",
+                value=10,
+            )
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="termination",
+                reason="termination is not directly established",
+                entity_ids=["E1"],
+                field="termination",
+                required_for_modeling=True,
+            )
+        ],
+    )
+    valid_path = tmp_path / "valid-capture.json"
+    valid_path.write_text(
+        json.dumps(valid.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "check-capture",
+            str(valid_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["schema_valid"] is True
+    assert report["contract_valid"] is True
+
+    invalid = valid.model_dump(mode="json")
+    invalid["values"][0]["field"] = "hole_diameter"
+    invalid_path = tmp_path / "invalid-capture.json"
+    invalid_path.write_text(
+        json.dumps(invalid, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    failed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "check-capture",
+            str(invalid_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert failed.returncode == 1
+    failed_report = json.loads(failed.stdout)
+    assert failed_report["schema_valid"] is True
+    assert failed_report["contract_valid"] is False
+    assert any(
+        "non-canonical field" in item
+        for item in failed_report["errors"]
+    )

@@ -269,7 +269,14 @@ The Reader must not encode a calculated global coordinate as a direct value.
 
 ## 7. Dimensions
 
-Dimension endpoints refer to overall boundaries or view-local entity centers.
+Every modeling-critical visible dimension callout must be represented exactly
+once in `dimensions[]`.
+
+Do not choose between a formal `dimensions[]` record and a separate
+`dimension_endpoint` unresolved record. Endpoint ambiguity stays inside the
+same dimension record.
+
+A fully owned dimension uses resolved endpoints:
 
 ~~~json
 {
@@ -291,40 +298,66 @@ Dimension endpoints refer to overall boundaries or view-local entity centers.
 
 Allowed endpoint roles:
 
-- overall_min
-- overall_max
-- entity_center
+- `overall_min`
+- `overall_max`
+- `entity_center`
+- `unresolved`
 
 The Reader determines endpoint ownership only from actual arrows, witness
 lines, extension lines, center marks, and other visible dimension geometry.
 
 `entity_center` is allowed only when the visible dimension geometry
-unambiguously terminates at one specific view-local center reference.
-
-Every `entity_center` endpoint must include exactly one structured `basis`:
+unambiguously terminates at one specific view-local center reference. Every
+`entity_center` endpoint must include exactly one structured `basis`:
 
 - `centerline`;
 - `center_mark`;
 - `explicit_midline`.
 
-Do not use `entity_center` merely because a dimension line passes between,
-near, or symmetrically around hidden lines.
+If one endpoint is not uniquely owned, keep the callout in `dimensions[]`
+and use an unresolved endpoint:
 
-For repeated or overlapping hole projections, if the witness/extension
-geometry does not uniquely identify each member center, keep the dimension
-unresolved rather than assigning member centers by assumption.
+~~~json
+{
+  "id": "D_02",
+  "value": 12,
+  "axis": "Y",
+  "endpoints": [
+    {"role": "overall_max"},
+    {
+      "role": "unresolved",
+      "candidate_entity_ids": ["E_SIDE_01", "E_SIDE_02"]
+    }
+  ],
+  "unresolved_reason": "visible witness geometry does not uniquely own one center",
+  "source_ids": ["OBS_DIM_02"],
+  "required_for_modeling": true
+}
+~~~
 
-If an endpoint is an intermediate/local surface that Capture v2 cannot
-represent, do not coerce it into an overall boundary or entity center. Record
-the dimension as unresolved instead.
+For `role="unresolved"`:
+
+- `entity_id` is forbidden;
+- `basis` is forbidden;
+- `candidate_entity_ids` may list only candidates supported by the visible
+  annotation geometry;
+- `candidate_entity_ids` may be empty when the endpoint is a local or
+  intermediate surface Capture v2 cannot identify;
+- the enclosing dimension must include `unresolved_reason`.
+
+For repeated or overlapping projections, do not assign member centers by
+symmetry or engineering expectation. Use an unresolved endpoint when visible
+dimension geometry does not uniquely establish ownership.
+
+The deterministic linker converts any dimension containing an unresolved
+endpoint into blocking unresolved evidence. It does not choose an endpoint.
 
 The Reader records the measured axis but does not calculate the resulting
 coordinate.
 
 Mapping a standard-view dimension to its canonical part axis is allowed and
-required. For example, a directly read overall horizontal dimension in a side
-view is a Y-axis dimension. This mapping does not authorize calculating a new
-numeric value; the numeric value must still come directly from the drawing.
+required. This mapping does not authorize calculating a new numeric value; the
+numeric value must still come directly from the drawing.
 
 ## 8. Datum alignments
 

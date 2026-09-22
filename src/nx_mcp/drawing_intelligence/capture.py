@@ -47,6 +47,17 @@ AssociationEvidenceKind = Literal[
 ]
 
 
+def _association_basis_sufficient(basis: list[AssociationEvidenceKind]) -> bool:
+    kinds = set(basis)
+    if "explicit_section_correspondence" in kinds:
+        return True
+    identity_support = {
+        "matching_specification",
+        "leader_correspondence",
+    }
+    return "projection_alignment" in kinds and bool(kinds & identity_support)
+
+
 class AssociationClaim(_StrictCaptureModel):
     """Visual evidence that view-local entities may depict one physical feature."""
 
@@ -305,11 +316,42 @@ class ReaderCapture(_StrictCaptureModel):
                     f"entity {entity.id!r} references unknown view {entity.view_id!r}"
                 )
 
+        association_owner: dict[str, str] = {}
+        entities_by_id = {item.id: item for item in self.entities}
         for association in self.associations:
             missing = [item for item in association.entity_ids if item not in entity_set]
             if missing:
                 raise ValueError(
                     f"association {association.id!r} references unknown entities {missing}"
+                )
+
+            if not _association_basis_sufficient(association.basis):
+                raise ValueError(
+                    f"association {association.id!r} lacks identity-sufficient visual basis"
+                )
+
+            by_view: dict[str, list[str]] = {}
+            for entity_id in association.entity_ids:
+                view_id = entities_by_id[entity_id].view_id
+                by_view.setdefault(view_id, []).append(entity_id)
+
+                previous = association_owner.get(entity_id)
+                if previous is not None:
+                    raise ValueError(
+                        f"entity {entity_id!r} appears in multiple associations "
+                        f"{previous!r} and {association.id!r}"
+                    )
+                association_owner[entity_id] = association.id
+
+            duplicate_views = {
+                view_id: ids
+                for view_id, ids in by_view.items()
+                if len(ids) > 1
+            }
+            if duplicate_views:
+                raise ValueError(
+                    f"association {association.id!r} contains multiple entities "
+                    f"from the same view: {duplicate_views}"
                 )
 
         for value in self.values:
@@ -418,10 +460,42 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
         for entity_id in item.entity_ids
     }
 
+    association_owner: dict[str, str] = {}
+    entities_by_id = {item.id: item for item in capture.entities}
     for association in capture.associations:
         if not association.basis:
             errors.append(
                 f"association {association.id!r} requires structured visual basis"
+            )
+        elif not _association_basis_sufficient(association.basis):
+            errors.append(
+                f"association {association.id!r} lacks identity-sufficient visual basis"
+            )
+
+        by_view: dict[str, list[str]] = {}
+        for entity_id in association.entity_ids:
+            previous = association_owner.get(entity_id)
+            if previous is not None:
+                errors.append(
+                    f"entity {entity_id!r} appears in multiple associations "
+                    f"{previous!r} and {association.id!r}"
+                )
+            else:
+                association_owner[entity_id] = association.id
+
+            entity = entities_by_id.get(entity_id)
+            if entity is not None:
+                by_view.setdefault(entity.view_id, []).append(entity_id)
+
+        duplicate_views = {
+            view_id: ids
+            for view_id, ids in by_view.items()
+            if len(ids) > 1
+        }
+        if duplicate_views:
+            errors.append(
+                f"association {association.id!r} contains multiple entities "
+                f"from the same view: {duplicate_views}"
             )
 
     if len(capture.views) > 1:

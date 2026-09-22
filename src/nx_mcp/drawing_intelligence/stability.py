@@ -343,6 +343,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     direct_values = {
         item.target: _canon(item.value)
         for item in sorted(compiled.direct_values, key=lambda item: item.target)
+        if not item.target.startswith("overall_dimensions.")
     }
 
     relations = sorted(
@@ -353,6 +354,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     resolved_values = {
         key: _canon(value)
         for key, value in sorted(resolution.values.items())
+        if not key.startswith("overall_dimensions.")
     }
 
     conflicts = sorted(

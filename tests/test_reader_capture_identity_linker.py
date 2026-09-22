@@ -1229,14 +1229,24 @@ def test_identity_linker_does_not_collapse_conflicting_direct_values():
         for item in result.evidence.direct_values
         if item.target.endswith(".diameter")
     ]
-    assert len(diameter) == 2
+    assert diameter == []
+
+    conflicts = [
+        item
+        for item in result.evidence.unresolved_evidence
+        if item.get("kind") == "direct_value_conflict"
+    ]
+    assert len(conflicts) == 1
+    assert conflicts[0]["required_for_modeling"] is True
+    assert conflicts[0]["candidates"] == [
+        {"value": 10, "semantic": None},
+        {"value": 11, "semantic": None},
+    ]
 
     compiled = compile_evidence_graph(result.evidence)
-    assert any(
-        item.get("target") == diameter[0].target
-        and "disagrees" in str(item.get("reason"))
-        for item in compiled.unresolved_evidence
-    )
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+    assert draft["dimension_closure"]["status"] == "incomplete"
 
 
 def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
@@ -1286,4 +1296,62 @@ def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
         for item in result.evidence.direct_values
         if item.target.endswith(".diameter")
     ]
-    assert len(diameter) == 2
+    assert diameter == []
+
+    conflicts = [
+        item
+        for item in result.evidence.unresolved_evidence
+        if item.get("kind") == "direct_value_conflict"
+    ]
+    assert len(conflicts) == 1
+    assert conflicts[0]["candidates"] == [
+        {"value": 10, "semantic": "diameter"},
+        {"value": 10, "semantic": "feature_dimension"},
+    ]
+
+
+def test_stability_detects_different_direct_conflict_candidates():
+    def build(second_value: int):
+        capture = ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=100,
+                width_y=50,
+                height_z=20,
+            ),
+            views=[
+                CaptureView(id="VF", kind="front"),
+                CaptureView(id="VS", kind="side"),
+            ],
+            entities=[
+                CaptureEntity(id="EF", view_id="VF", shape="circle"),
+                CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
+            ],
+            associations=[
+                AssociationClaim(
+                    id="A1",
+                    entity_ids=["EF", "ES"],
+                    basis=["projection_alignment", "shared_centerline"],
+                )
+            ],
+            values=[
+                CaptureValue(
+                    id="V1",
+                    entity_id="EF",
+                    field="diameter",
+                    value=10,
+                ),
+                CaptureValue(
+                    id="V2",
+                    entity_id="ES",
+                    field="diameter",
+                    value=second_value,
+                ),
+            ],
+        )
+        return link_reader_capture(capture).evidence
+
+    report = compare_evidence_runs([build(11), build(12)])
+
+    assert report.stable is False
+    assert "unresolved_semantics" in report.changed_sections[2]
+    assert report.unresolved_semantic_drift

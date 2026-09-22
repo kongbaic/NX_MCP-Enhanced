@@ -177,6 +177,12 @@ one physical feature, record an association claim:
 The Reader reports the evidence-backed claim; it does not create the final
 feature identity.
 
+Association claims are disjoint identity candidates:
+- one CaptureEntity may appear in at most one association claim;
+- one association claim may contain at most one entity from each view;
+- if one entity has multiple plausible counterparts, do not emit overlapping
+  association claims; use cross_view_identity/member_identity unresolved.
+
 Allowed `basis` values are:
 
 - `projection_alignment`;
@@ -190,14 +196,21 @@ The Reader records these visual facts; it does not decide the final merge.
 The deterministic linker applies the merge policy.
 
 For standard orthographic views, `projection_alignment` alone is insufficient.
-A merge requires `projection_alignment` plus at least one of:
+`shared_centerline` and `shared_center_mark` are corroborating alignment /
+coaxiality evidence only; neither is identity-sufficient.
 
-- `shared_centerline`;
-- `shared_center_mark`;
+A same-physical-feature merge requires `projection_alignment` plus at least one
+identity-specific basis:
+
 - `matching_specification`;
 - `leader_correspondence`.
 
 `explicit_section_correspondence` is a standalone strong basis.
+
+`matching_specification` means one explicit specification can be traced to the
+same physical item across the projections. Different but coaxial machining
+semantics (for example thread versus counterbore families) are not
+`matching_specification` merely because they share a centerline.
 
 Insufficient by itself:
 
@@ -305,6 +318,10 @@ Allowed endpoint roles:
 
 The Reader determines endpoint ownership only from actual arrows, witness
 lines, extension lines, center marks, and other visible dimension geometry.
+Each endpoint must be traced independently from the dimension line/arrow
+through its actual witness/extension geometry to the measured geometry.
+Nearby centerlines, matching numeric spacing, symmetry, count, or expected
+pattern geometry do not substitute for that trace.
 
 `entity_center` is allowed only when the visible dimension geometry
 unambiguously terminates at one specific view-local center reference. Every
@@ -346,8 +363,10 @@ For `role="unresolved"`:
 - the enclosing dimension must include `unresolved_reason`.
 
 For repeated or overlapping projections, do not assign member centers by
-symmetry or engineering expectation. Use an unresolved endpoint when visible
-dimension geometry does not uniquely establish ownership.
+symmetry, count, matching pitch/span values, or engineering expectation.
+A member-center-to-member-center dimension requires an independently traceable
+visible endpoint for each member center. Use an unresolved endpoint whenever
+either endpoint is not uniquely established by the annotation geometry.
 
 The deterministic linker converts any dimension containing an unresolved
 endpoint into blocking unresolved evidence. It does not choose an endpoint.
@@ -375,6 +394,12 @@ center datum:
 ~~~
 
 Do not create a datum alignment merely because geometry looks centered.
+
+Before the single capture write, perform a datum/center-reference census over
+all modeling-critical entities. Every explicit centerline/center mark must be
+checked for an explicit overall-center coincidence. Record every positive
+evidence-backed alignment in `datum_alignments[]`; do not silently omit a
+positive alignment and do not infer one from appearance alone.
 
 ## 9. Required targets
 
@@ -409,11 +434,15 @@ Use one canonical representation for quantity callouts:
 - if one callout states a quantity such as N identical holes and individual
   member centers are not independently dimensioned/identified, create one
   view-local entity and attach `count=N`;
-- if individual members have independently identifiable/dimensioned centers,
-  create separate entities for those members and do not also create a grouped
-  count entity for the same view;
+- if individual members have independently identifiable/dimensioned centers
+  with separately traceable annotation geometry, create separate entities for
+  those members and do not also create a grouped count entity for the same view;
 - do not alternate between one grouped entity and N duplicate entities merely
   because both are visually plausible;
+- if one view is grouped while another view exposes individual members, never
+  associate the grouped entity separately to multiple members;
+- when unique one-to-one member correspondence is not established, preserve the
+  view-local granularity and emit member_identity unresolved;
 - if the drawing does not establish whether visible lines belong to distinct
   repeated members, keep the member identity/count ambiguity unresolved.
 

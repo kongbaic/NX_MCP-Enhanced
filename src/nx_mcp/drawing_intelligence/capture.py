@@ -502,23 +502,6 @@ def _dimension_chain_errors(capture: "ReaderCapture") -> list[str]:
         )[side].append(dimension)
 
     errors: list[str] = []
-
-    errors.extend(_dimension_chain_errors(capture))
-
-    entity_fields_for_shape: dict[str, set[str]] = {}
-    for item in capture.values:
-        entity_fields_for_shape.setdefault(item.entity_id, set()).add(item.field)
-    for entity in capture.entities:
-        fields = entity_fields_for_shape.get(entity.id, set())
-        if (
-            entity.required_for_modeling
-            and entity.shape == "other"
-            and fields & CYLINDRICAL_CAPTURE_VALUE_FIELDS
-        ):
-            errors.append(
-                f"modeling-critical cylindrical entity {entity.id!r} must use "
-                "circle/concentric_circles/hidden_parallel, not 'other'"
-            )
     for (entity_id, axis), sides in sorted(by_center_axis.items()):
         mins = sides["overall_min"]
         maxs = sides["overall_max"]
@@ -569,6 +552,23 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
     """
 
     errors: list[str] = []
+
+    errors.extend(_dimension_chain_errors(capture))
+
+    entity_fields_for_shape: dict[str, set[str]] = {}
+    for item in capture.values:
+        entity_fields_for_shape.setdefault(item.entity_id, set()).add(item.field)
+    for entity in capture.entities:
+        fields = entity_fields_for_shape.get(entity.id, set())
+        if (
+            entity.required_for_modeling
+            and entity.shape == "other"
+            and fields & CYLINDRICAL_CAPTURE_VALUE_FIELDS
+        ):
+            errors.append(
+                f"modeling-critical cylindrical entity {entity.id!r} must use "
+                "circle/concentric_circles/hidden_parallel, not 'other'"
+            )
 
     if capture.required_targets:
         errors.append("required_targets must be [] for new Capture v2 output")

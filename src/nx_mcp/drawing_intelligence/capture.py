@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -428,8 +430,118 @@ class ReaderCapture(_StrictCaptureModel):
         if len(ids) != len(set(ids)):
             raise ValueError("capture evidence ids must be unique")
 
+        entity_fields: dict[str, set[str]] = {}
+        for item in self.values:
+            entity_fields.setdefault(item.entity_id, set()).add(item.field)
+
+        for entity in self.entities:
+            fields = entity_fields.get(entity.id, set())
+            if (
+                entity.required_for_modeling
+                and entity.shape == "other"
+                and fields & CYLINDRICAL_CAPTURE_VALUE_FIELDS
+            ):
+                raise ValueError(
+                    f"modeling-critical cylindrical entity {entity.id!r} "
+                    "must use circle/concentric_circles/hidden_parallel, not 'other'"
+                )
+
+        chain_errors = _dimension_chain_errors(self)
+        if chain_errors:
+            raise ValueError("; ".join(chain_errors))
+
         return self
 
+
+
+
+CYLINDRICAL_CAPTURE_VALUE_FIELDS = frozenset(
+    {
+        "diameter",
+        "fit",
+        "thread_spec",
+        "thread_depth",
+        "through",
+        "counterbore_diameter",
+        "counterbore_depth",
+    }
+)
+
+_AXIS_EXTENT_FIELD = {
+    "X": "length_x",
+    "Y": "width_y",
+    "Z": "height_z",
+}
+
+
+def _dimension_center_overall_side(
+    dimension: CaptureDimension,
+) -> tuple[str, str] | None:
+    centers = [item for item in dimension.endpoints if item.role == "entity_center"]
+    boundaries = [
+        item
+        for item in dimension.endpoints
+        if item.role in {"overall_min", "overall_max"}
+    ]
+    if len(centers) != 1 or len(boundaries) != 1:
+        return None
+    return centers[0].entity_id, boundaries[0].role
+
+
+def _dimension_chain_errors(capture: "ReaderCapture") -> list[str]:
+    by_center_axis: dict[tuple[str, str], dict[str, list[CaptureDimension]]] = {}
+    for dimension in capture.dimensions:
+        owned = _dimension_center_overall_side(dimension)
+        if owned is None:
+            continue
+        entity_id, side = owned
+        key = (entity_id, dimension.axis)
+        by_center_axis.setdefault(
+            key,
+            {"overall_min": [], "overall_max": []},
+        )[side].append(dimension)
+
+    errors: list[str] = []
+
+    errors.extend(_dimension_chain_errors(capture))
+
+    entity_fields_for_shape: dict[str, set[str]] = {}
+    for item in capture.values:
+        entity_fields_for_shape.setdefault(item.entity_id, set()).add(item.field)
+    for entity in capture.entities:
+        fields = entity_fields_for_shape.get(entity.id, set())
+        if (
+            entity.required_for_modeling
+            and entity.shape == "other"
+            and fields & CYLINDRICAL_CAPTURE_VALUE_FIELDS
+        ):
+            errors.append(
+                f"modeling-critical cylindrical entity {entity.id!r} must use "
+                "circle/concentric_circles/hidden_parallel, not 'other'"
+            )
+    for (entity_id, axis), sides in sorted(by_center_axis.items()):
+        mins = sides["overall_min"]
+        maxs = sides["overall_max"]
+        if not mins or not maxs:
+            continue
+
+        extent = getattr(capture.overall_dimensions, _AXIS_EXTENT_FIELD[axis])
+        for min_dimension in mins:
+            for max_dimension in maxs:
+                if not math.isclose(
+                    min_dimension.value + max_dimension.value,
+                    extent,
+                    rel_tol=1e-9,
+                    abs_tol=1e-6,
+                ):
+                    errors.append(
+                        "resolved overall-boundary dimensions for "
+                        f"entity {entity_id!r} axis {axis} are inconsistent: "
+                        f"{min_dimension.id}={min_dimension.value} from overall_min + "
+                        f"{max_dimension.id}={max_dimension.value} from overall_max "
+                        f"!= overall extent {extent}"
+                    )
+    return errors
 
 
 CANONICAL_CAPTURE_VALUE_FIELDS = frozenset(

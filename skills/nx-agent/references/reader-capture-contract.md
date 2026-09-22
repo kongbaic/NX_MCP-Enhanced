@@ -280,6 +280,16 @@ captures, but a new Reader pass must emit the canonical vocabulary directly.
 
 The Reader must not encode a calculated global coordinate as a direct value.
 
+Direct-value ownership is local and annotation-backed:
+
+- record a value only on the view-local entity directly identified by the
+  visible callout/leader/specification;
+- do not copy one callout across views while physical identity is unresolved;
+- when a quantity/group specification directly annotates one grouped projection,
+  attach the specification and count to that grouped local entity;
+- do not expand one grouped quantity callout into duplicate per-member values
+  unless each member has its own independently traceable local annotation.
+
 ## 7. Dimensions
 
 Every modeling-critical visible dimension callout must be represented exactly
@@ -368,6 +378,16 @@ A member-center-to-member-center dimension requires an independently traceable
 visible endpoint for each member center. Use an unresolved endpoint whenever
 either endpoint is not uniquely established by the annotation geometry.
 
+A grouped repeated entity may nevertheless own an `entity_center` endpoint
+when the current view contains an explicit shared projected centerline/center
+mark for the overlapping group and the dimension witness/extension geometry
+unambiguously terminates on that shared center reference. `count>1` alone does
+not make such a projected-center endpoint ambiguous.
+
+If a witness terminates on a profile/intermediate face, do not add a nearby
+feature to `candidate_entity_ids` merely because a centerline is close to the
+witness.
+
 The deterministic linker converts any dimension containing an unresolved
 endpoint into blocking unresolved evidence. It does not choose an endpoint.
 
@@ -395,11 +415,17 @@ center datum:
 
 Do not create a datum alignment merely because geometry looks centered.
 
+`overall_center` requires explicit evidence that binds the feature center to
+the overall midpoint, for example an explicit symmetry/equidistance dimension,
+an explicit overall-center datum/reference, or another directly traceable
+center-to-overall-center annotation. A centerline that visually bisects the
+outline, shares a line with another feature, aligns with a slot, or merely
+appears halfway across an overall extent is not sufficient.
+
 Before the single capture write, perform a datum/center-reference census over
-all modeling-critical entities. Every explicit centerline/center mark must be
-checked for an explicit overall-center coincidence. Record every positive
-evidence-backed alignment in `datum_alignments[]`; do not silently omit a
-positive alignment and do not infer one from appearance alone.
+all modeling-critical entities. Record every positive evidence-backed
+alignment in `datum_alignments[]`; otherwise leave it absent rather than
+inferring one from appearance.
 
 ## 9. Required targets
 
@@ -487,6 +513,18 @@ Allowed `kind` values in the schema are retained for compatibility:
 
 For `required_for_modeling=true`, new production capture must not use
 `kind="other"`.
+
+Use unresolved kinds by semantic question:
+
+- `cross_view_identity` — whether view-local entities across views represent
+  the same physical identity cannot be uniquely established;
+- `member_identity` — repeated/grouped members cannot be uniquely paired;
+- `feature_value` — physical/local identity is already established, but one
+  specific semantic field value itself is missing/ambiguous.
+
+A production `feature_value` unresolved record must contain exactly one
+`entity_id` and a non-empty `field`. Do not use field-less
+`feature_value` records as a substitute for identity ambiguity.
 
 A blocking `cross_view_identity` or `member_identity` record must include
 the affected `entity_ids`. Those entities must declare

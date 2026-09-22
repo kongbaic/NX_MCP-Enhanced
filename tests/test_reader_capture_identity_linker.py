@@ -146,8 +146,32 @@ def test_identity_linker_without_association_keeps_view_entities_separate():
     assert len(set(result.entity_to_feature.values())) == 2
 
 
-def test_identity_linker_rejects_same_view_multi_entity_association_as_unresolved():
-    capture = ReaderCapture(
+def test_production_capture_rejects_same_view_multi_entity_association():
+    with pytest.raises(ValidationError, match="multiple entities from the same view"):
+        ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[CaptureView(id="VF", kind="front")],
+            entities=[
+                CaptureEntity(id="E1", view_id="VF", shape="circle"),
+                CaptureEntity(id="E2", view_id="VF", shape="circle"),
+            ],
+            associations=[
+                AssociationClaim(
+                    id="A_BAD",
+                    entity_ids=["E1", "E2"],
+                    basis=["explicit_section_correspondence"],
+                    required_for_modeling=True,
+                )
+            ],
+        )
+
+
+def test_identity_linker_quarantines_legacy_same_view_multi_entity_association():
+    capture = ReaderCapture.model_construct(
         overall_dimensions=OverallDimensions(
             length_x=40,
             width_y=32,
@@ -162,9 +186,18 @@ def test_identity_linker_rejects_same_view_multi_entity_association_as_unresolve
             AssociationClaim(
                 id="A_BAD",
                 entity_ids=["E1", "E2"],
+                basis=["explicit_section_correspondence"],
                 required_for_modeling=True,
             )
         ],
+        values=[],
+        dimensions=[],
+        datum_alignments=[],
+        required_targets=[],
+        observations=[],
+        unresolved_evidence=[],
+        schema_version="2.0",
+        coordinate_system="part_center_xy_bottom_z0",
     )
 
     result = link_reader_capture(capture)

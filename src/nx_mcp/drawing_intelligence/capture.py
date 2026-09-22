@@ -33,11 +33,22 @@ class CaptureEntity(_StrictCaptureModel):
     required_for_modeling: bool = True
 
 
+AssociationEvidenceKind = Literal[
+    "projection_alignment",
+    "shared_centerline",
+    "shared_center_mark",
+    "leader_correspondence",
+    "matching_specification",
+    "explicit_section_correspondence",
+]
+
+
 class AssociationClaim(_StrictCaptureModel):
-    """Explicit evidence that view-local entities depict one physical feature."""
+    """Visual evidence that view-local entities may depict one physical feature."""
 
     id: str = Field(min_length=1)
     entity_ids: list[str] = Field(min_length=2)
+    basis: list[AssociationEvidenceKind] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
 
@@ -46,6 +57,13 @@ class AssociationClaim(_StrictCaptureModel):
     def _unique_entities(cls, value: list[str]) -> list[str]:
         if len(set(value)) != len(value):
             raise ValueError("association entity_ids must be unique")
+        return value
+
+    @field_validator("basis")
+    @classmethod
+    def _unique_basis(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("association basis entries must be unique")
         return value
 
 
@@ -61,11 +79,17 @@ class CaptureValue(_StrictCaptureModel):
 
 
 CaptureEndpointRole = Literal["overall_min", "overall_max", "entity_center"]
+DimensionEndpointEvidenceKind = Literal[
+    "centerline",
+    "center_mark",
+    "explicit_midline",
+]
 
 
 class CaptureDimensionEndpoint(_StrictCaptureModel):
     role: CaptureEndpointRole
     entity_id: str | None = None
+    basis: DimensionEndpointEvidenceKind | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> "CaptureDimensionEndpoint":
@@ -73,6 +97,8 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
             raise ValueError("entity_center endpoint requires entity_id")
         if self.role in {"overall_min", "overall_max"} and self.entity_id is not None:
             raise ValueError(f"{self.role} endpoint must not carry entity_id")
+        if self.role in {"overall_min", "overall_max"} and self.basis is not None:
+            raise ValueError(f"{self.role} endpoint must not carry center basis")
         return self
 
 
@@ -320,6 +346,20 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
 
     if capture.required_targets:
         errors.append("required_targets must be [] for new Capture v2 output")
+
+    for association in capture.associations:
+        if not association.basis:
+            errors.append(
+                f"association {association.id!r} requires structured visual basis"
+            )
+
+    for dimension in capture.dimensions:
+        for endpoint in dimension.endpoints:
+            if endpoint.role == "entity_center" and endpoint.basis is None:
+                errors.append(
+                    f"dimension {dimension.id!r} entity_center endpoint "
+                    "requires centerline/center_mark/explicit_midline basis"
+                )
 
     entity_fields: dict[str, set[str]] = {}
     for item in capture.values:

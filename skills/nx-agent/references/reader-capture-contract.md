@@ -425,28 +425,28 @@ cross-view pairing.
 Any ambiguity that can change the modeled solid must remain explicit and
 machine-comparable.
 
-A blocking unresolved record must not be only free-text prose. Use the
-structured form:
+For new production Capture v2 output, dimension-endpoint ambiguity is represented
+inside `dimensions[]` with `role="unresolved"`; do not create a standalone
+`kind="dimension_endpoint"` unresolved record.
+
+Other blocking ambiguity uses structured `unresolved_evidence`, for example:
 
 ~~~json
 {
   "id": "U_01",
-  "kind": "dimension_endpoint",
+  "kind": "cross_view_identity",
   "reason": "human-readable audit note",
-  "entity_ids": ["E_FRONT_01"],
-  "dimension_id": "D_LOCAL_01",
-  "dimension_value": 12,
-  "field": "centerline.z",
-  "axis": "Z",
-  "source_ids": ["OBS_DIM_LOCAL_01"],
+  "entity_ids": ["E_FRONT_01", "E_SIDE_02"],
+  "source_ids": ["OBS_ASSOC_CANDIDATE"],
   "required_for_modeling": true
 }
 ~~~
 
-Allowed `kind` values:
+Allowed `kind` values in the schema are retained for compatibility:
 
 - `cross_view_identity`;
-- `dimension_endpoint`;
+- `dimension_endpoint` — legacy/read compatibility only; forbidden for new
+  production capture by the contract checker;
 - `feature_inventory`;
 - `feature_value`;
 - `member_identity`;
@@ -459,21 +459,13 @@ Allowed `kind` values:
 For `required_for_modeling=true`, new production capture must not use
 `kind="other"`.
 
-For `kind="dimension_endpoint"`:
-
-- `dimension_value` is required;
-- `axis` is required;
-- `dimension_id` is optional and may name the visual annotation even when the
-  dimension cannot enter formal `dimensions[]`.
-
-Use `entity_ids` whenever the ambiguity is tied to one or more local
-entities. The linker maps those local IDs to deterministic physical feature
-IDs before stability comparison.
+A blocking `cross_view_identity` or `member_identity` record must include
+the affected `entity_ids`. Those entities must declare
+`cross_view_disposition="unresolved"`.
 
 Typical unresolved cases include:
 
 - cross-view identity not uniquely supported;
-- physical dimension endpoint not uniquely owned;
 - start side not established;
 - termination not established;
 - repeated members cannot be distinguished;

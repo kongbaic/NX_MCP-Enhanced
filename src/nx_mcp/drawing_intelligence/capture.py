@@ -219,6 +219,19 @@ class CaptureUnresolvedEvidence(_StrictCaptureModel):
             raise ValueError("unresolved entity_ids must be unique")
         return value
 
+    @model_validator(mode="after")
+    def _semantic_shape(self) -> "CaptureUnresolvedEvidence":
+        if self.kind == "feature_value":
+            if len(self.entity_ids) != 1:
+                raise ValueError(
+                    "feature_value unresolved requires exactly one local entity"
+                )
+            if not self.field:
+                raise ValueError(
+                    "feature_value unresolved requires the ambiguous field"
+                )
+        return self
+
 
 class ReaderCapture(_StrictCaptureModel):
     """Reader Capture v2: visual observations before physical feature identity."""
@@ -572,6 +585,16 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
                 f"dimension unresolved {item.id!r} must be represented by "
                 "dimensions[] with an endpoint role='unresolved'"
             )
+        if item.kind == "feature_value":
+            if len(item.entity_ids) != 1:
+                errors.append(
+                    f"feature_value unresolved {item.id!r} requires exactly one "
+                    "local entity"
+                )
+            if not item.field:
+                errors.append(
+                    f"feature_value unresolved {item.id!r} requires field"
+                )
         if (
             item.required_for_modeling
             and item.kind in {"cross_view_identity", "member_identity"}

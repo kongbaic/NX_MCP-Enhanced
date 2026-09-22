@@ -220,8 +220,6 @@ def _association_basis_sufficient(basis: list[str]) -> bool:
         return True
 
     supporting = {
-        "shared_centerline",
-        "shared_center_mark",
         "matching_specification",
         "leader_correspondence",
     }

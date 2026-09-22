@@ -155,6 +155,7 @@ def _cmd_link_capture(args: argparse.Namespace) -> int:
             "capture_entities": linked.report["capture_entities"],
             "physical_components": linked.report["physical_components"],
             "association_claims": linked.report["association_claims"],
+            "rejected_associations": linked.report["rejected_associations"],
             "identity_collisions": linked.report["identity_collisions"],
             "linker_blocking_unresolved": linked.report["blocking_unresolved"],
             "gate0_added_blocking_unresolved": gate0.report[

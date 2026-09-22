@@ -108,6 +108,7 @@ identity.
   "id": "E_FRONT_01",
   "view_id": "V_FRONT",
   "shape": "circle",
+  "cross_view_disposition": "associated",
   "source_ids": ["OBS_FRONT_CIRCLE_01"],
   "required_for_modeling": true
 }
@@ -142,6 +143,21 @@ Rules:
 - entity IDs carry no physical meaning;
 - entity IDs must not encode an assumed final feature name;
 - the deterministic linker, not the Reader, creates physical feature IDs.
+
+For a modeling-critical entity on a drawing with more than one standard view,
+`cross_view_disposition` is mandatory. Allowed values are:
+
+- `associated` — the entity participates in an explicit `associations[]` claim;
+- `unresolved` — a plausible cross-view/member correspondence exists but is
+  not uniquely supported; the entity must be referenced by blocking
+  `cross_view_identity` or `member_identity` unresolved evidence;
+- `single_view` — after checking the other standard views, no plausible
+  modeling-relevant counterpart is present.
+
+This is a completeness ledger, not a physical merge decision. For every
+modeling-critical entity, the Reader must explicitly record one of these
+three outcomes. Leaving the decision implicit by writing neither an
+association nor an unresolved record is not valid.
 
 ## 5. Association claims
 
@@ -195,10 +211,17 @@ If association is not uniquely supported:
 
 - do not create the association;
 - keep the entities separate;
-- add blocking `unresolved_evidence` when modeling depends on the identity.
+- mark the affected entity/entities `cross_view_disposition="unresolved"`;
+- add blocking `cross_view_identity` or `member_identity`
+  `unresolved_evidence`.
+
+If no plausible counterpart exists after checking the other standard views,
+mark the entity `cross_view_disposition="single_view"`.
 
 The linker rejects an association that tries to merge multiple distinct
-view-local entities from the same standard view.
+view-local entities from the same standard view. The production contract also
+rejects dispositions that do not match the actual association/unresolved
+records.
 
 ## 6. Direct values
 

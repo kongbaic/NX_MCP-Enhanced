@@ -53,9 +53,10 @@ Reader 可以：
 - 记录 measured axis；
 - 把图纸直接标出的 overall extent 按标准视图轴映射写入 length_x / width_y / height_z；
 - 记录显式 overall-center coincidence；
-- 在存在充分视觉证据时提交跨视图 association claim；
+- 对跨视图候选只记录结构化 association visual basis，由 deterministic linker 决定是否 merge；
+- 对 entity_center endpoint 记录 centerline / center_mark / explicit_midline basis；
 - 对重复特征使用固定 grouped/member 粒度规则；
-- 把不能唯一确定的内容写入 unresolved_evidence。
+- 把不能唯一确定的内容写入 structured unresolved_evidence。
 - 新 capture 的 required_targets 固定写空数组，由 linker 确定性派生。
 
 ## 3. Reader 不允许做什么
@@ -101,25 +102,41 @@ Reader 不得：
 
 ## 5. Cross-view association
 
-只有当图纸本身提供足够证据时，Reader 才写：
+Reader 不直接下“这两个就是同一 physical feature”的最终结论。
+
+Reader 只记录标准化 visual basis：
 
 ~~~json
 {
   "id": "A_01",
   "entity_ids": ["E_FRONT_01", "E_SIDE_02"],
-  "source_ids": ["OBS_SHARED_CENTERLINE"]
+  "basis": ["projection_alignment", "shared_centerline"],
+  "source_ids": ["OBS_ALIGNMENT", "OBS_CENTERLINE"]
 }
 ~~~
 
-这只是“这些 view-local observations 很可能是同一物理 feature”的明确证据声明。
+允许的 basis：
 
-最终 physical feature ID 由 deterministic identity linker 生成。
+- projection_alignment
+- shared_centerline
+- shared_center_mark
+- leader_correspondence
+- matching_specification
+- explicit_section_correspondence
 
-如果不能唯一确认：
+最终是否 merge 由 deterministic identity linker 决定。
 
-- 不 association；
-- 不猜；
-- 如影响建模，写 blocking unresolved。
+标准正交视图中：
+
+- projection_alignment 单独不够；
+- 必须是 projection_alignment + 至少一个独立支持 basis；
+- explicit_section_correspondence 可作为独立强证据。
+
+证据不足：
+
+- 不靠 AI 主观补 merge；
+- linker 保持实体分离；
+- 如影响建模，进入 blocking unresolved。
 
 ## 6. Dimension ownership
 
@@ -138,7 +155,7 @@ v2 endpoint 只有：
   "axis": "Y",
   "endpoints": [
     {"role": "overall_max"},
-    {"role": "entity_center", "entity_id": "E_TOP_02"}
+    {"role": "entity_center", "entity_id": "E_TOP_02", "basis": "centerline"}
   ]
 }
 ~~~
@@ -146,7 +163,13 @@ v2 endpoint 只有：
 Reader 只记录可见的 physical ownership，不计算结果坐标。
 
 `entity_center` 只有在箭头 / witness / extension line 明确落到某一个 local
-entity 的 center mark、centerline 或可唯一识别的 midline 时才能使用。
+entity 的 center reference 时才能使用，而且必须写 basis：
+
+- centerline
+- center_mark
+- explicit_midline
+
+没有 basis 的 entity_center 不属于有效的新 Capture contract。
 
 对于重复孔、重叠投影、hidden parallel groups：
 
@@ -278,7 +301,9 @@ Reader 写出前还要检查：
 - dimension endpoint 是否由真实标注 geometry 支持；
 - association 是否有明确跨视图证据；
 - required_targets 是否为 []；
-- modeling-critical 缺失语义是否进入 unresolved_evidence；
+- modeling-critical 缺失语义是否进入 structured unresolved_evidence；
+- blocking unresolved 是否使用明确 kind，而不是只写自由文本 reason；
+- dimension_endpoint unresolved 是否含 dimension_value + axis；
 - ambiguity 是否显式 unresolved；
 - 没有 final feature ID；
 - 没有 global-coordinate arithmetic。

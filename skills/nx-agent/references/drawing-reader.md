@@ -127,6 +127,12 @@ Reader 只记录标准化 visual basis：
 
 最终是否 merge 由 deterministic identity linker 决定。
 
+一个 association claim 表示一个候选 physical identity component。新 Capture 中：
+- 同一个 entity 只能属于一个 association claim；
+- 一个 association claim 在同一个 view 中最多只能包含一个 entity；
+- 如果一个 entity 对应多个 plausible counterparts，不得创建多条重叠 association，
+  必须改为 cross_view_identity / member_identity unresolved。
+
 对于包含多个标准视图的图纸，每个 modeling-critical local entity 都必须完成一次
 cross-view census，并显式写入 `cross_view_disposition`：
 
@@ -140,8 +146,15 @@ cross-view census，并显式写入 `cross_view_disposition`：
 标准正交视图中：
 
 - projection_alignment 单独不够；
-- 必须是 projection_alignment + 至少一个独立支持 basis；
-- explicit_section_correspondence 可作为独立强证据。
+- shared_centerline / shared_center_mark 只证明对齐、同轴或共线候选，
+  不能单独证明 same physical identity；
+- same physical identity 必须是 projection_alignment +
+  matching_specification / leader_correspondence 之一；
+- explicit_section_correspondence 可作为独立强证据；
+- matching_specification 指同一个明确 specification 对两个投影形成可追踪对应，
+  不是“两个对象都是孔”或两个互补但不同的加工语义；
+- 只有 shared_centerline/shared_center_mark、但无法排除 coaxial group /
+  overlapping members 时，必须 unresolved，不得 merge。
 
 证据不足：
 
@@ -181,6 +194,10 @@ resolved 示例：
 
 Reader 只记录可见的 physical ownership，不计算结果坐标。
 
+每个 endpoint 必须从 dimension line / arrow 出发，沿实际 witness / extension
+geometry 单独追踪到被测 geometry。仅仅看到附近存在 centerline、数值正好等于
+某个孔距、或根据对称/数量关系推断，都不能把 endpoint 绑定为 entity_center。
+
 `entity_center` 只有在箭头 / witness / extension line 明确落到某一个 local
 entity 的 center reference 时才能使用，而且必须写 basis：
 
@@ -205,7 +222,10 @@ entity 的 center reference 时才能使用，而且必须写 basis：
 对于 repeated holes、重叠投影、hidden parallel groups：
 
 - 不能因为“看起来应该在中间”就绑定 entity_center；
-- 不能根据对称关系反推成员中心；
+- 不能根据对称关系、count、pitch/span 数值反推成员中心；
+- 若一条尺寸被解释成 member-center ↔ member-center，两个 endpoint 都必须各自有
+  独立可追踪的 witness/extension → center reference；
+- 任一端无法独立追踪时，该端必须 unresolved；
 - member center 不能唯一对应时使用 unresolved endpoint；
 - candidate_entity_ids 只列 visible annotation geometry 真正支持的候选。
 
@@ -261,8 +281,12 @@ counterbore_depth
 重复特征固定规则：
 
 - 一个数量标注、成员没有独立中心定位 → 一个 entity + count=N；
-- 成员中心分别有明确尺寸/标识 → 分成独立 entities；
-- 同一 view 禁止同时输出 grouped entity 和同组 member entities。
+- 成员中心分别有明确、逐成员可追踪的尺寸/标识 → 分成独立 entities；
+- 同一 view 禁止同时输出 grouped entity 和同组 member entities；
+- 如果一个 view 是 grouped entity、另一个 view 是 individual members，
+  禁止把 grouped entity 分别 association 到多个 members；
+- 如果无法建立唯一的一对一 member correspondence，保留各 view-local 表示并写
+  member_identity unresolved，不得靠 association 把粒度差异压成一个 feature。
 
 外轮廓若只是 overall silhouette、没有被 feature-local value/dimension/association
 引用，只放 observations，不额外创建 profile modeling entity。
@@ -333,6 +357,9 @@ ReaderCapture.model_validate(payload)
 Reader 写出前还要检查：
 
 - overall_dimensions 三轴是否均为正数且来自图纸直接标注；
+- 对每个 modeling-critical entity 的可见 centerline / center mark 完成 datum census：
+  只有明确与 overall center datum 重合时才写 datum_alignments，所有明确 positive
+  alignment 不得遗漏；仅“看起来居中”不得写；
 - 每个 view-local entity 是否只属于一个 view；
 - 每个 modeling-critical entity 是否有 cross_view_disposition；
 - associated / unresolved / single_view 是否和 association / unresolved evidence 自洽；

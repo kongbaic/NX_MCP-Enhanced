@@ -1971,3 +1971,46 @@ def test_stability_still_detects_real_value_drift_inside_collision_group():
 
     assert not report.stable
     assert report.unique_fingerprints == 2
+
+def test_production_feature_value_unresolved_requires_one_entity_and_field():
+    base_kwargs = dict(
+        id="U_VALUE",
+        kind="feature_value",
+        reason="value is not uniquely readable",
+        required_for_modeling=True,
+    )
+
+    with pytest.raises(ValidationError, match="exactly one local entity"):
+        CaptureUnresolvedEvidence(
+            **base_kwargs,
+            entity_ids=[],
+            field="diameter",
+        )
+
+    with pytest.raises(ValidationError, match="requires the ambiguous field"):
+        CaptureUnresolvedEvidence(
+            **base_kwargs,
+            entity_ids=["E1"],
+        )
+
+    valid = CaptureUnresolvedEvidence(
+        **base_kwargs,
+        entity_ids=["E1"],
+        field="diameter",
+    )
+
+    assert valid.entity_ids == ["E1"]
+    assert valid.field == "diameter"
+
+
+def test_identity_ambiguity_remains_fieldless_cross_view_unresolved():
+    item = CaptureUnresolvedEvidence(
+        id="U_ID",
+        kind="cross_view_identity",
+        reason="same physical identity is not uniquely established",
+        entity_ids=["E_FRONT", "E_SIDE"],
+        required_for_modeling=True,
+    )
+
+    assert item.field is None
+    assert item.entity_ids == ["E_FRONT", "E_SIDE"]

@@ -19,7 +19,8 @@ Before starting a smoke or formal benchmark, freeze and record:
 
 - repository branch and exact Git HEAD;
 - exact source-drawing bytes and SHA256;
-- exact benchmark prompt template revision/hash;
+- exact benchmark prompt template revision/hash from
+  `docs/benchmarks/reader-first-pass-prompt-template.md`;
 - exact allowed Reader document revisions;
 - benchmark run count;
 - output directory.

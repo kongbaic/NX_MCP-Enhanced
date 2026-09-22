@@ -316,6 +316,57 @@ def _association_components(
     )
 
 
+def _direct_value_key(item: DirectValueEvidence) -> str:
+    return json.dumps(
+        {
+            "target": item.target,
+            "value": _canon(item.value),
+            "semantic": item.semantic,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _collapse_equivalent_direct_values(
+    items: list[DirectValueEvidence],
+) -> list[DirectValueEvidence]:
+    """Collapse cross-view duplicate confirmations without hiding conflicts.
+
+    Only target/value/semantic-identical writers are equivalent. Different
+    values or explicit semantics remain separate so frozen downstream conflict
+    handling can see them.
+    """
+
+    grouped: dict[str, list[DirectValueEvidence]] = defaultdict(list)
+    for item in items:
+        grouped[_direct_value_key(item)].append(item)
+
+    collapsed: list[DirectValueEvidence] = []
+    for key in sorted(grouped):
+        group = sorted(grouped[key], key=lambda item: item.id)
+        first = group[0].model_copy(deep=True)
+        if len(group) > 1:
+            first.id = (
+                "L_DIRECT_"
+                + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16].upper()
+            )
+            first.source_ids = list(
+                dict.fromkeys(
+                    source_id
+                    for item in group
+                    for source_id in [item.id, *item.source_ids]
+                )
+            )
+        collapsed.append(first)
+
+    return sorted(
+        collapsed,
+        key=lambda item: (item.target, item.id),
+    )
+
+
 def _linked_reader_unresolved(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
@@ -448,20 +499,22 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         if item.id in entity_to_feature
     ]
 
-    direct_values = [
-        DirectValueEvidence(
-            id=item.id,
-            target=(
-                f"feature:{entity_to_feature[item.entity_id]}."
-                f"{_canonical_field(capture, item.entity_id, item.field)}"
-            ),
-            value=item.value,
-            semantic=item.semantic,
-            source_ids=item.source_ids,
-        )
-        for item in capture.values
-        if item.entity_id in entity_to_feature
-    ]
+    direct_values = _collapse_equivalent_direct_values(
+        [
+            DirectValueEvidence(
+                id=item.id,
+                target=(
+                    f"feature:{entity_to_feature[item.entity_id]}."
+                    f"{_canonical_field(capture, item.entity_id, item.field)}"
+                ),
+                value=item.value,
+                semantic=item.semantic,
+                source_ids=item.source_ids,
+            )
+            for item in capture.values
+            if item.entity_id in entity_to_feature
+        ]
+    )
 
     dimensions: list[DimensionObservation] = []
     for item in capture.dimensions:

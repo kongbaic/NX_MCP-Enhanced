@@ -240,7 +240,13 @@ capture 交付，而不是写 null 后宣称验证通过。
 
 ## 9. First-pass
 
-对当前图纸只允许一次视觉读取，输出一次：
+First-pass 指一个独立、连续的 drawing interpretation session，不是“只能看图片一眼”。
+
+在唯一一次写盘之前，Reader 可以对当前原始工程图进行必要的反复查看、放大、
+分区核对和标注追踪，只要几何输入始终只有当前原图，且没有读取任何 downstream
+结果、历史 artifact 或 expected answer。
+
+本 session 最终只允许输出一次：
 
 ~~~text
 reader-capture.json

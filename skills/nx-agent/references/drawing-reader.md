@@ -153,6 +153,15 @@ cross-view census，并显式写入 `cross_view_disposition`：
 - explicit_section_correspondence 可作为独立强证据；
 - matching_specification 指同一个明确 specification 对两个投影形成可追踪对应，
   不是“两个对象都是孔”或两个互补但不同的加工语义；
+- specification 文本不要求在两个视图重复出现。若某一视图的 callout/leader
+  明确标注一个 cylindrical feature，另一标准视图中只有一个几何上兼容、
+  projection-aligned 的 counterpart，则该同一 specification 可以通过正交投影
+  追踪到 counterpart；
+- 当完整 cross-view census 后恰好只有一个 plausible counterpart，并且满足
+  identity-sufficient basis 时，必须写 association；不得在 associated 与
+  unresolved/single_view 之间自由选择；
+- unresolved 只用于：存在多个 plausible counterparts，或 identity-sufficient
+  basis 本身仍不成立；
 - 只有 shared_centerline/shared_center_mark、但无法排除 coaxial group /
   overlapping members 时，必须 unresolved，不得 merge。
 
@@ -246,6 +255,15 @@ entity 的 center reference 时才能使用，而且必须写 basis：
 linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking
 unresolved，不会替 Reader 猜 endpoint。
 
+写盘前还必须做 resolved dimension-chain consistency census：
+
+- 若同一个 entity center、同一 axis 同时被一条 overall_min→center 尺寸和一条
+  center→overall_max 尺寸约束，则两者数值之和必须等于该 axis 的 overall extent；
+- 若不相等，说明至少一个 witness/endpoint ownership 判断错误；在唯一写盘前重新
+  追踪 visible witness geometry，并把不能确定的 endpoint 改为 unresolved；
+- 这个检查只验证已经声称 resolved 的 visible dimensions 是否互相自洽，不用于
+  推导新的尺寸值。
+
 ## 7. Direct value
 
 v2 direct value 写成：
@@ -316,6 +334,12 @@ feature 轴向的标准 view 法向映射由 deterministic Compiler 完成：
 - top → Z
 
 Reader 不根据圆形投影自行写最终 feature axis。
+
+modeling-critical cylindrical entity 一旦带有 diameter / fit / thread_spec /
+thread_depth / through / counterbore_* 之一，不得使用 shape="other"。必须按当前
+视图的直接几何表现使用 circle / concentric_circles / hidden_parallel；若这些
+canonical shapes 都不适用，应保留 unsupported_representation unresolved，而不是
+用 "other" 逃避分类。
 
 但 dimension / overall extent 的 measured axis 必须在 Capture 阶段按标准视图
 方向写成 canonical X/Y/Z。这个动作只是轴映射，不是坐标计算：

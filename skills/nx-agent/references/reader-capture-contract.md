@@ -132,6 +132,13 @@ Canonical shape rules:
   dashed;
 - `circle` / `concentric_circles` are used only for circular end-on
   projections;
+- a modeling-critical entity carrying cylindrical semantics
+  (`diameter`, `fit`, `thread_spec`, `thread_depth`, `through`,
+  `counterbore_diameter`, `counterbore_depth`) must not use
+  `shape="other"`; classify the direct projection as
+  `circle`, `concentric_circles`, or `hidden_parallel`. If no canonical
+  cylindrical projection shape is supported, use structured
+  `unsupported_representation` unresolved evidence instead;
 - an outer body outline that has no supported feature-local value, dimension,
   datum, or association stays in `observations`; do not create a modeling
   entity solely to restate the overall silhouette.
@@ -390,6 +397,14 @@ witness.
 
 The deterministic linker converts any dimension containing an unresolved
 endpoint into blocking unresolved evidence. It does not choose an endpoint.
+
+Before the single write, resolved overall-boundary dimensions must pass a
+dimension-chain consistency check. If the same entity center on one axis is
+measured once from overall_min and once from overall_max, the two direct
+dimension values must sum to that axis overall extent. If they do not, at least
+one endpoint ownership is wrong: re-trace the visible witness/extension
+geometry during the same first-pass session and leave the uncertain endpoint
+unresolved. Do not preserve an internally contradictory resolved chain.
 
 The Reader records the measured axis but does not calculate the resulting
 coordinate.

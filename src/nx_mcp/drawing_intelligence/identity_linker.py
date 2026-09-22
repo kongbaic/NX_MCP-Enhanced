@@ -245,8 +245,8 @@ def _association_components(
         for item in capture.entities
         if item.id not in ignored_orphan_profiles
     }
-    uf = _UnionFind(list(entities))
     unresolved: list[dict[str, Any]] = []
+    admissible: list[AssociationClaim] = []
 
     for association in capture.associations:
         if any(entity_id not in entities for entity_id in association.entity_ids):
@@ -302,6 +302,75 @@ def _association_components(
             )
             continue
 
+        admissible.append(association)
+
+    # Validate connected association components before committing any physical
+    # merge. Pairwise-valid claims can still create a transitive component that
+    # contains multiple entities from the same view (A_front1↔B_side and
+    # A_front2↔B_side). Choosing one edge would be order-dependent, so quarantine
+    # the whole ambiguous component instead.
+    candidate_uf = _UnionFind(list(entities))
+    for association in admissible:
+        first = association.entity_ids[0]
+        for entity_id in association.entity_ids[1:]:
+            candidate_uf.union(first, entity_id)
+
+    candidate_components: dict[str, list[str]] = defaultdict(list)
+    for entity_id in entities:
+        candidate_components[candidate_uf.find(entity_id)].append(entity_id)
+
+    conflicting_roots: set[str] = set()
+    for root, component_entity_ids in candidate_components.items():
+        by_view: dict[str, list[str]] = defaultdict(list)
+        for entity_id in component_entity_ids:
+            by_view[entities[entity_id].view_id].append(entity_id)
+        duplicate_views = {
+            view_id: sorted(ids)
+            for view_id, ids in by_view.items()
+            if len(ids) > 1
+        }
+        if not duplicate_views:
+            continue
+
+        conflicting_roots.add(root)
+        component_associations = [
+            association
+            for association in admissible
+            if candidate_uf.find(association.entity_ids[0]) == root
+        ]
+        evidence = sorted(
+            {
+                token
+                for association in component_associations
+                for token in [association.id, *association.source_ids]
+            }
+        )
+        component_ids = sorted(component_entity_ids)
+        component_hash = hashlib.sha256(
+            "|".join(component_ids).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        unresolved.append(
+            {
+                "id": f"U_ASSOC_COMPONENT_{component_hash}",
+                "kind": "association_structure",
+                "reason": (
+                    "transitive association component contains multiple "
+                    f"view-local entities from the same view: {duplicate_views}"
+                ),
+                "entity_ids": component_ids,
+                "required_for_modeling": any(
+                    association.required_for_modeling
+                    for association in component_associations
+                ),
+                "evidence": evidence,
+            }
+        )
+
+    uf = _UnionFind(list(entities))
+    for association in admissible:
+        root = candidate_uf.find(association.entity_ids[0])
+        if root in conflicting_roots:
+            continue
         first = association.entity_ids[0]
         for entity_id in association.entity_ids[1:]:
             uf.union(first, entity_id)

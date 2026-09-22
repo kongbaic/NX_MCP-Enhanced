@@ -1638,3 +1638,81 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
     resolution = resolve_evidence_graph(compiled)
     draft = build_semantic_draft(compiled, resolution)
     assert draft["dimension_closure"]["status"] == "incomplete"
+
+
+def test_identity_linker_quarantines_transitive_same_view_collision_order_independently():
+    def make_capture(reverse: bool) -> ReaderCapture:
+        associations = [
+            AssociationClaim(
+                id="A_LEFT",
+                entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
+                basis=["projection_alignment", "matching_specification"],
+            ),
+            AssociationClaim(
+                id="A_RIGHT",
+                entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
+                basis=["projection_alignment", "matching_specification"],
+            ),
+        ]
+        if reverse:
+            associations.reverse()
+        return ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=10,
+            ),
+            views=[
+                CaptureView(id="VF", kind="front"),
+                CaptureView(id="VS", kind="side"),
+            ],
+            entities=[
+                CaptureEntity(
+                    id="E_FRONT_LEFT",
+                    view_id="VF",
+                    shape="hidden_parallel",
+                    cross_view_disposition="associated",
+                ),
+                CaptureEntity(
+                    id="E_FRONT_RIGHT",
+                    view_id="VF",
+                    shape="hidden_parallel",
+                    cross_view_disposition="associated",
+                ),
+                CaptureEntity(
+                    id="E_SIDE_GROUP",
+                    view_id="VS",
+                    shape="hidden_parallel",
+                    cross_view_disposition="associated",
+                ),
+            ],
+            associations=associations,
+        )
+
+    first_capture = make_capture(False)
+    second_capture = make_capture(True)
+    assert validate_reader_capture_contract(first_capture) == []
+    assert validate_reader_capture_contract(second_capture) == []
+
+    first = link_reader_capture(first_capture)
+    second = link_reader_capture(second_capture)
+
+    assert first.report["physical_components"] == 3
+    assert second.report["physical_components"] == 3
+    assert first.entity_to_feature == second.entity_to_feature
+    assert len(set(first.entity_to_feature.values())) == 3
+
+    first_blockers = [
+        item
+        for item in first.evidence.unresolved_evidence
+        if item.get("kind") == "association_structure"
+    ]
+    second_blockers = [
+        item
+        for item in second.evidence.unresolved_evidence
+        if item.get("kind") == "association_structure"
+    ]
+    assert len(first_blockers) == 1
+    assert len(second_blockers) == 1
+    assert first_blockers[0]["feature_ids"] == second_blockers[0]["feature_ids"]
+    assert "transitive association component" in first_blockers[0]["reason"]

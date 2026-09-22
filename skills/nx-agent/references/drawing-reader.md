@@ -156,13 +156,16 @@ cross-view census，并显式写入 `cross_view_disposition`：
 
 ## 6. Dimension ownership
 
-v2 endpoint 只有：
+每个 modeling-critical 可见尺寸标注必须在 `dimensions[]` 中出现且只出现一次。
+
+v2 endpoint 允许：
 
 - overall_min
 - overall_max
 - entity_center
+- unresolved
 
-示例：
+resolved 示例：
 
 ~~~json
 {
@@ -187,17 +190,35 @@ entity 的 center reference 时才能使用，而且必须写 basis：
 
 没有 basis 的 entity_center 不属于有效的新 Capture contract。
 
-对于重复孔、重叠投影、hidden parallel groups：
+如果 endpoint 不能唯一归属，不把整条尺寸移到另一套 unresolved 容器。
+仍然保留同一个 `dimensions[]` record，把该 endpoint 写成：
+
+~~~json
+{
+  "role": "unresolved",
+  "candidate_entity_ids": ["E_SIDE_01", "E_SIDE_02"]
+}
+~~~
+
+并在 enclosing dimension 写 `unresolved_reason`。
+
+对于 repeated holes、重叠投影、hidden parallel groups：
 
 - 不能因为“看起来应该在中间”就绑定 entity_center；
 - 不能根据对称关系反推成员中心；
-- member center 不能唯一对应时直接 unresolved。
+- member center 不能唯一对应时使用 unresolved endpoint；
+- candidate_entity_ids 只列 visible annotation geometry 真正支持的候选。
 
 如果箭头落在当前 schema 无法表达的 local/intermediate surface：
 
 - 不把它改成 overall；
 - 不把它改成 entity center；
-- 直接 unresolved。
+- 使用 unresolved endpoint；
+- candidate_entity_ids 可以为空；
+- 用 unresolved_reason 说明 visible ownership 为什么不可表达。
+
+linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking
+unresolved，不会替 Reader 猜 endpoint。
 
 ## 7. Direct value
 
@@ -313,13 +334,17 @@ Reader 写出前还要检查：
 
 - overall_dimensions 三轴是否均为正数且来自图纸直接标注；
 - 每个 view-local entity 是否只属于一个 view；
+- 每个 modeling-critical entity 是否有 cross_view_disposition；
+- associated / unresolved / single_view 是否和 association / unresolved evidence 自洽；
 - direct value 是否绑定到正确 local entity；
+- 每个 modeling-critical 可见尺寸是否在 dimensions[] 中恰好出现一次；
 - dimension endpoint 是否由真实标注 geometry 支持；
+- 不确定 endpoint 是否使用 role="unresolved" + unresolved_reason；
 - association 是否有明确跨视图证据；
 - required_targets 是否为 []；
 - modeling-critical 缺失语义是否进入 structured unresolved_evidence；
 - blocking unresolved 是否使用明确 kind，而不是只写自由文本 reason；
-- dimension_endpoint unresolved 是否含 dimension_value + axis；
+- 新 capture 是否没有 standalone kind="dimension_endpoint" unresolved；
 - ambiguity 是否显式 unresolved；
 - 没有 final feature ID；
 - 没有 global-coordinate arithmetic。

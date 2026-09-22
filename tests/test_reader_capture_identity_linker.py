@@ -65,6 +65,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
             AssociationClaim(
                 id=f"{prefix}_ASSOC",
                 entity_ids=association_entities,
+                basis=["projection_alignment", "matching_specification"],
                 source_ids=[f"{prefix}_SRC_ASSOC"],
             )
         ],
@@ -93,6 +94,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                     CaptureDimensionEndpoint(
                         role="entity_center",
                         entity_id=front,
+                        basis="centerline",
                     ),
                 ],
             )
@@ -477,10 +479,12 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                         {
                             "role": "entity_center",
                             "entity_id": "E_FRONT_05",
+                            "basis": "centerline",
                         },
                         {
                             "role": "entity_center",
                             "entity_id": "E_FRONT_06",
+                            "basis": "centerline",
                         },
                     ],
                     "required_for_modeling": True,
@@ -659,7 +663,11 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             CaptureEntity(id="ESA", view_id="VS", shape="hidden_parallel"),
         ],
         associations=[
-            AssociationClaim(id="A1", entity_ids=["EFC", "ESA"])
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EFC", "ESA"],
+                basis=["projection_alignment", "matching_specification"],
+            )
         ],
         values=[
             CaptureValue(id="S1", entity_id="ESA", field="diameter", value=20)
@@ -676,7 +684,11 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             CaptureEntity(id="ESB", view_id="VS", shape="profile"),
         ],
         associations=[
-            AssociationClaim(id="A2", entity_ids=["EFC2", "ESB"])
+            AssociationClaim(
+                id="A2",
+                entity_ids=["EFC2", "ESB"],
+                basis=["projection_alignment", "matching_specification"],
+            )
         ],
         values=[
             CaptureValue(id="S2", entity_id="ESB", field="diameter", value=20)
@@ -1030,3 +1042,80 @@ def test_check_capture_cli_is_authoritative_contract_gate(tmp_path: Path):
         "non-canonical field" in item
         for item in failed_report["errors"]
     )
+
+
+def test_association_requires_deterministically_sufficient_visual_basis():
+    weak = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EF", view_id="VF", shape="circle"),
+            CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_WEAK",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment"],
+            )
+        ],
+    )
+
+    weak_result = link_reader_capture(weak)
+
+    assert weak_result.report["physical_components"] == 2
+    assert weak_result.report["rejected_associations"] == 1
+    assert any(
+        item.get("kind") == "association_evidence"
+        for item in weak_result.evidence.unresolved_evidence
+    )
+
+    strong = weak.model_copy(deep=True)
+    strong.associations[0].basis = [
+        "projection_alignment",
+        "shared_centerline",
+    ]
+
+    strong_result = link_reader_capture(strong)
+
+    assert strong_result.report["physical_components"] == 1
+    assert strong_result.report["rejected_associations"] == 0
+
+
+def test_current_capture_contract_requires_entity_center_visual_basis():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="VF", shape="circle")],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=10,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(role="overall_min"),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E1",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+    assert any("requires centerline/center_mark/explicit_midline basis" in item for item in errors)
+
+    capture.dimensions[0].endpoints[1].basis = "center_mark"
+    assert validate_reader_capture_contract(capture) == []

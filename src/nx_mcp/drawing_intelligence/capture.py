@@ -406,11 +406,59 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
     if capture.required_targets:
         errors.append("required_targets must be [] for new Capture v2 output")
 
+    association_entities = {
+        entity_id
+        for association in capture.associations
+        for entity_id in association.entity_ids
+    }
+    cross_view_unresolved_entities = {
+        entity_id
+        for item in capture.unresolved_evidence
+        if item.kind in {"cross_view_identity", "member_identity"}
+        for entity_id in item.entity_ids
+    }
+
     for association in capture.associations:
         if not association.basis:
             errors.append(
                 f"association {association.id!r} requires structured visual basis"
             )
+
+    if len(capture.views) > 1:
+        for entity in capture.entities:
+            if not entity.required_for_modeling:
+                continue
+            disposition = entity.cross_view_disposition
+            if disposition is None:
+                errors.append(
+                    f"modeling-critical entity {entity.id!r} requires "
+                    "cross_view_disposition"
+                )
+                continue
+            if disposition == "associated" and entity.id not in association_entities:
+                errors.append(
+                    f"entity {entity.id!r} declares associated but is not "
+                    "referenced by an association claim"
+                )
+            elif (
+                disposition == "unresolved"
+                and entity.id not in cross_view_unresolved_entities
+            ):
+                errors.append(
+                    f"entity {entity.id!r} declares unresolved cross-view identity "
+                    "but has no cross_view_identity/member_identity unresolved record"
+                )
+            elif disposition == "single_view":
+                if entity.id in association_entities:
+                    errors.append(
+                        f"entity {entity.id!r} declares single_view but is "
+                        "referenced by an association claim"
+                    )
+                if entity.id in cross_view_unresolved_entities:
+                    errors.append(
+                        f"entity {entity.id!r} declares single_view but is "
+                        "referenced by a cross-view unresolved record"
+                    )
 
     for dimension in capture.dimensions:
         for endpoint in dimension.endpoints:
@@ -446,13 +494,17 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
                 f"blocking unresolved {item.id!r} must use a structured kind"
             )
         if item.kind == "dimension_endpoint":
-            if item.dimension_value is None:
-                errors.append(
-                    f"dimension unresolved {item.id!r} requires dimension_value"
-                )
-            if item.axis is None:
-                errors.append(
-                    f"dimension unresolved {item.id!r} requires axis"
-                )
+            errors.append(
+                f"dimension unresolved {item.id!r} must be represented by "
+                "dimensions[] with an endpoint role='unresolved'"
+            )
+        if (
+            item.required_for_modeling
+            and item.kind in {"cross_view_identity", "member_identity"}
+            and not item.entity_ids
+        ):
+            errors.append(
+                f"cross-view unresolved {item.id!r} requires entity_ids"
+            )
 
     return errors

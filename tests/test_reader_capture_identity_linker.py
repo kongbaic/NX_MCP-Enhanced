@@ -499,8 +499,8 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                 "height_z": 66,
             },
             "views": [
-                {"id": "V_FRONT", "kind": "front"},
-                {"id": "V_SIDE", "kind": "side"},
+                {"id": "V_FRONT", "kind": "front", "source_ids": ["OBS_V_FRONT"]},
+                {"id": "V_SIDE", "kind": "side", "source_ids": ["OBS_V_SIDE"]},
             ],
             "entities": [
                 {
@@ -508,6 +508,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                     "view_id": "V_FRONT",
                     "shape": "hidden_parallel",
                     "cross_view_disposition": "unresolved",
+                    "source_ids": ["OBS_E_FRONT_05"],
                     "required_for_modeling": True,
                 },
                 {
@@ -515,6 +516,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                     "view_id": "V_FRONT",
                     "shape": "hidden_parallel",
                     "cross_view_disposition": "unresolved",
+                    "source_ids": ["OBS_E_FRONT_06"],
                     "required_for_modeling": True,
                 },
             ],
@@ -537,6 +539,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                             "basis": "centerline",
                         },
                     ],
+                    "source_ids": ["OBS_DIM_D04"],
                     "required_for_modeling": True,
                 }
             ],
@@ -551,6 +554,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                     "kind": "member_identity",
                     "reason": "the two candidates cannot be uniquely paired across views",
                     "entity_ids": ["E_FRONT_05", "E_FRONT_06"],
+                    "source_ids": ["OBS_MEMBER_IDENTITY"],
                     "required_for_modeling": True,
                 }
             ],
@@ -1438,8 +1442,8 @@ def test_contract_accepts_consistent_cross_view_dispositions():
             height_z=66,
         ),
         views=[
-            CaptureView(id="VF", kind="front"),
-            CaptureView(id="VS", kind="side"),
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
         ],
         entities=[
             CaptureEntity(
@@ -1447,24 +1451,35 @@ def test_contract_accepts_consistent_cross_view_dispositions():
                 view_id="VF",
                 shape="circle",
                 cross_view_disposition="associated",
+                source_ids=["OBS_EA"],
             ),
             CaptureEntity(
                 id="EB",
                 view_id="VS",
                 shape="hidden_parallel",
                 cross_view_disposition="associated",
+                source_ids=["OBS_EB"],
             ),
             CaptureEntity(
                 id="EC",
                 view_id="VF",
                 shape="slot_edges",
                 cross_view_disposition="single_view",
+                source_ids=["OBS_EC"],
             ),
             CaptureEntity(
                 id="ED",
                 view_id="VS",
                 shape="hidden_parallel",
                 cross_view_disposition="unresolved",
+                source_ids=["OBS_ED"],
+            ),
+            CaptureEntity(
+                id="EE",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="unresolved",
+                source_ids=["OBS_EE"],
             ),
         ],
         associations=[
@@ -1472,14 +1487,17 @@ def test_contract_accepts_consistent_cross_view_dispositions():
                 id="A1",
                 entity_ids=["EA", "EB"],
                 basis=["projection_alignment", "matching_specification"],
+                source_ids=["OBS_A1"],
             )
         ],
         unresolved_evidence=[
             CaptureUnresolvedEvidence(
                 id="U1",
                 kind="cross_view_identity",
-                reason="candidate correspondence is not uniquely supported",
-                entity_ids=["ED"],
+                reason="alignment exists but identity-specific evidence is insufficient",
+                entity_ids=["ED", "EE"],
+                basis=["projection_alignment", "shared_centerline"],
+                source_ids=["OBS_U1"],
             )
         ],
     )
@@ -1534,8 +1552,8 @@ def test_unresolved_dimension_endpoint_is_normalized_by_linker():
             height_z=66,
         ),
         views=[
-            CaptureView(id="VF", kind="front"),
-            CaptureView(id="VS", kind="side"),
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
         ],
         entities=[
             CaptureEntity(
@@ -1543,6 +1561,7 @@ def test_unresolved_dimension_endpoint_is_normalized_by_linker():
                 view_id="VF",
                 shape="hidden_parallel",
                 cross_view_disposition="single_view",
+                source_ids=["OBS_E1"],
             ),
         ],
         dimensions=[
@@ -1558,6 +1577,7 @@ def test_unresolved_dimension_endpoint_is_normalized_by_linker():
                     ),
                 ],
                 unresolved_reason="visible endpoint does not uniquely own a center",
+                source_ids=["OBS_D1"],
             )
         ],
     )
@@ -1615,8 +1635,8 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
             height_z=20,
         ),
         views=[
-            CaptureView(id="VF", kind="front"),
-            CaptureView(id="VS", kind="side"),
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
         ],
         entities=[
             CaptureEntity(
@@ -1624,12 +1644,14 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
                 view_id="VF",
                 shape="circle",
                 cross_view_disposition="associated",
+                source_ids=["OBS_EF"],
             ),
             CaptureEntity(
                 id="ES",
                 view_id="VS",
                 shape="hidden_parallel",
                 cross_view_disposition="associated",
+                source_ids=["OBS_ES"],
             ),
         ],
         associations=[
@@ -1637,6 +1659,7 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
                 id="A1",
                 entity_ids=["EF", "ES"],
                 basis=["projection_alignment", "matching_specification"],
+                source_ids=["OBS_A1"],
             )
         ],
         dimensions=[
@@ -1656,6 +1679,7 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
                         basis="centerline",
                     ),
                 ],
+                source_ids=["OBS_D_COLLAPSE"],
             )
         ],
     )

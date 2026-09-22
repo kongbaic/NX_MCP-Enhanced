@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -333,6 +334,135 @@ def _unresolved_semantic_drift(
     return drift
 
 
+
+_AMBIGUOUS_FEATURE_RE = re.compile(r"(F_[A-F0-9]+)_AMB_\\d+")
+
+
+def _walk_strings(value: Any) -> list[str]:
+    result: list[str] = []
+    if isinstance(value, str):
+        result.append(value)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            result.extend(_walk_strings(key))
+            result.extend(_walk_strings(item))
+    elif isinstance(value, list):
+        for item in value:
+            result.extend(_walk_strings(item))
+    return result
+
+
+def _replace_ambiguous_ids(value: Any, mapping: dict[str, str]) -> Any:
+    def replace_string(text: str) -> str:
+        return _AMBIGUOUS_FEATURE_RE.sub(
+            lambda match: mapping.get(match.group(0), match.group(0)),
+            text,
+        )
+
+    if isinstance(value, str):
+        return replace_string(value)
+    if isinstance(value, list):
+        return [_replace_ambiguous_ids(item, mapping) for item in value]
+    if isinstance(value, dict):
+        return {
+            replace_string(key) if isinstance(key, str) else key:
+            _replace_ambiguous_ids(item, mapping)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _member_footprint(
+    snapshot: dict[str, Any],
+    *,
+    base_id: str,
+    member_id: str,
+) -> str:
+    group_pattern = re.compile(rf"{re.escape(base_id)}_AMB_\\d+")
+
+    def transform(value: Any) -> Any:
+        def replace_string(text: str) -> str:
+            return group_pattern.sub(
+                lambda match: (
+                    f"{base_id}_AMB_SELF"
+                    if match.group(0) == member_id
+                    else f"{base_id}_AMB_PEER"
+                ),
+                text,
+            )
+
+        if isinstance(value, str):
+            return replace_string(value)
+        if isinstance(value, list):
+            return [transform(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                replace_string(key) if isinstance(key, str) else key:
+                transform(item)
+                for key, item in value.items()
+            }
+        return value
+
+    return json.dumps(
+        _canon(transform(snapshot)),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _canonicalize_ambiguous_placeholders(
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Make collision placeholders permutation-invariant across Reader runs."""
+
+    groups: dict[str, set[str]] = {}
+    for text in _walk_strings(snapshot):
+        for match in _AMBIGUOUS_FEATURE_RE.finditer(text):
+            groups.setdefault(match.group(1), set()).add(match.group(0))
+
+    mapping: dict[str, str] = {}
+    for base_id, members in sorted(groups.items()):
+        ranked = sorted(
+            members,
+            key=lambda member_id: (
+                _member_footprint(
+                    snapshot,
+                    base_id=base_id,
+                    member_id=member_id,
+                ),
+                member_id,
+            ),
+        )
+        for ordinal, member_id in enumerate(ranked, start=1):
+            mapping[member_id] = f"{base_id}_AMB_{ordinal:02d}"
+
+    normalized = _replace_ambiguous_ids(snapshot, mapping)
+
+    for key in (
+        "projections",
+        "datum_alignments",
+        "relations",
+        "required_targets",
+        "unresolved_targets",
+        "unresolved_semantics",
+        "gate0_quarantines",
+        "conflicts",
+    ):
+        items = normalized.get(key)
+        if isinstance(items, list):
+            normalized[key] = sorted(
+                items,
+                key=lambda item: json.dumps(
+                    _canon(item),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            )
+
+    return normalized
+
+
 def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     """Return an ID/order-insensitive snapshot of Reader semantics."""
 
@@ -362,7 +492,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
         key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
     )
 
-    return {
+    snapshot = {
         "overall_dimensions": _canon(graph.overall_dimensions.model_dump()),
         "coordinate_system": graph.coordinate_system,
         "projections": _projection_signatures(graph),
@@ -378,6 +508,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
         "resolution_ok": resolution.ok,
         "dimension_closure": draft["dimension_closure"]["status"],
     }
+    return _canonicalize_ambiguous_placeholders(snapshot)
 
 
 def snapshot_fingerprint(snapshot: dict[str, Any]) -> str:

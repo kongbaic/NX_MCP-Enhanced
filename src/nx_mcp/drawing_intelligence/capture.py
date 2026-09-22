@@ -211,6 +211,7 @@ class CaptureUnresolvedEvidence(_StrictCaptureModel):
     dimension_value: float | None = Field(default=None, gt=0)
     field: str | None = None
     axis: Axis | None = None
+    basis: list[AssociationEvidenceKind] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
 
@@ -219,6 +220,13 @@ class CaptureUnresolvedEvidence(_StrictCaptureModel):
     def _unique_entity_ids(cls, value: list[str]) -> list[str]:
         if len(set(value)) != len(value):
             raise ValueError("unresolved entity_ids must be unique")
+        return value
+
+    @field_validator("basis")
+    @classmethod
+    def _unique_basis(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("unresolved basis entries must be unique")
         return value
 
     @model_validator(mode="after")
@@ -573,6 +581,48 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
     if capture.required_targets:
         errors.append("required_targets must be [] for new Capture v2 output")
 
+    multi_view = len(capture.views) > 1
+    if multi_view:
+        for view in capture.views:
+            if not view.source_ids:
+                errors.append(
+                    f"view {view.id!r} requires non-empty source_ids in multi-view capture"
+                )
+        for entity in capture.entities:
+            if entity.required_for_modeling and not entity.source_ids:
+                errors.append(
+                    f"modeling-critical entity {entity.id!r} requires non-empty "
+                    "source_ids in multi-view capture"
+                )
+        for association in capture.associations:
+            if association.required_for_modeling and not association.source_ids:
+                errors.append(
+                    f"association {association.id!r} requires non-empty source_ids"
+                )
+        for value in capture.values:
+            if not value.source_ids:
+                errors.append(
+                    f"value {value.id!r} requires non-empty source_ids in multi-view capture"
+                )
+        for dimension in capture.dimensions:
+            if dimension.required_for_modeling and not dimension.source_ids:
+                errors.append(
+                    f"modeling-critical dimension {dimension.id!r} requires "
+                    "non-empty source_ids in multi-view capture"
+                )
+        for alignment in capture.datum_alignments:
+            if alignment.required_for_modeling and not alignment.source_ids:
+                errors.append(
+                    f"modeling-critical datum alignment {alignment.id!r} requires "
+                    "non-empty source_ids in multi-view capture"
+                )
+        for unresolved in capture.unresolved_evidence:
+            if unresolved.required_for_modeling and not unresolved.source_ids:
+                errors.append(
+                    f"blocking unresolved {unresolved.id!r} requires non-empty "
+                    "source_ids in multi-view capture"
+                )
+
     association_entities = {
         entity_id
         for association in capture.associations
@@ -688,6 +738,43 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
             )
 
     for item in capture.unresolved_evidence:
+        if item.kind == "cross_view_identity":
+            if len(item.entity_ids) < 2:
+                errors.append(
+                    f"cross_view_identity unresolved {item.id!r} must list at least "
+                    "two candidate entities"
+                )
+            candidate_views = {
+                entities_by_id[entity_id].view_id
+                for entity_id in item.entity_ids
+                if entity_id in entities_by_id
+            }
+            if len(candidate_views) < 2:
+                errors.append(
+                    f"cross_view_identity unresolved {item.id!r} must span at least "
+                    "two standard views"
+                )
+            if not item.basis:
+                errors.append(
+                    f"cross_view_identity unresolved {item.id!r} requires "
+                    "structured visual basis"
+                )
+            elif (
+                len(item.entity_ids) == 2
+                and len(candidate_views) == 2
+                and _association_basis_sufficient(item.basis)
+            ):
+                errors.append(
+                    f"cross_view_identity unresolved {item.id!r} has one unique "
+                    "cross-view pair with identity-sufficient basis; emit an "
+                    "association claim instead"
+                )
+        elif item.kind == "member_identity" and len(item.entity_ids) < 2:
+            errors.append(
+                f"member_identity unresolved {item.id!r} must list at least two "
+                "candidate/member entities"
+            )
+
         if item.required_for_modeling and item.kind == "other":
             errors.append(
                 f"blocking unresolved {item.id!r} must use a structured kind"

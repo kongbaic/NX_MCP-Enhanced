@@ -166,6 +166,12 @@ modeling-critical entity, the Reader must explicitly record one of these
 three outcomes. Leaving the decision implicit by writing neither an
 association nor an unresolved record is not valid.
 
+For production multi-view Capture v2, evidence traceability is mandatory.
+Every view, modeling-critical entity, association, direct value,
+modeling-critical dimension, modeling-critical datum alignment, and blocking
+unresolved record must carry non-empty `source_ids`. A prose-only conclusion
+with no source token is not a valid production decision.
+
 ## 5. Association claims
 
 If the drawing explicitly supports that view-local entities are projections of
@@ -234,6 +240,14 @@ If association is not uniquely supported:
 - mark the affected entity/entities `cross_view_disposition="unresolved"`;
 - add blocking `cross_view_identity` or `member_identity`
   `unresolved_evidence`.
+
+A `cross_view_identity` unresolved record must list the actual candidate
+entities from at least two standard views and must record the structured
+visual `basis` used by the census. If exactly one cross-view pair remains
+and that basis is already identity-sufficient under the rules above, the
+result is not unresolved: emit an association claim. `member_identity`
+remains the fail-closed representation for grouped/member granularity
+mismatches or multiple plausible member correspondences.
 
 If no plausible counterpart exists after checking the other standard views,
 mark the entity `cross_view_disposition="single_view"`.
@@ -507,6 +521,7 @@ Other blocking ambiguity uses structured `unresolved_evidence`, for example:
   "kind": "cross_view_identity",
   "reason": "human-readable audit note",
   "entity_ids": ["E_FRONT_01", "E_SIDE_02"],
+  "basis": ["projection_alignment", "shared_centerline"],
   "source_ids": ["OBS_ASSOC_CANDIDATE"],
   "required_for_modeling": true
 }

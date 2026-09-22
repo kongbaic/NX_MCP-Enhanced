@@ -514,6 +514,8 @@ def _linked_reader_unresolved(
             record["field"] = item.field
         if item.axis is not None:
             record["axis"] = item.axis
+        if item.basis:
+            record["basis"] = sorted(item.basis)
 
         result.append(record)
 

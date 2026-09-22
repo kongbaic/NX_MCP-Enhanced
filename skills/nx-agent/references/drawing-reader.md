@@ -162,6 +162,9 @@ cross-view census，并显式写入 `cross_view_disposition`：
   unresolved/single_view 之间自由选择；
 - unresolved 只用于：存在多个 plausible counterparts，或 identity-sufficient
   basis 本身仍不成立；
+- cross_view_identity unresolved 必须列出至少两个跨标准视图的候选 local
+  entities，并记录本次 census 的结构化 basis；如果只剩唯一一对候选且 basis
+  已满足 identity-sufficient 条件，必须 association，禁止继续 unresolved；
 - 只有 shared_centerline/shared_center_mark、但无法排除 coaxial group /
   overlapping members 时，必须 unresolved，不得 merge。
 
@@ -396,6 +399,10 @@ ReaderCapture.model_validate(payload)
 
 Reader 写出前还要检查：
 
+- 多标准视图 capture 的 views、modeling-critical entities、associations、
+  direct values、modeling-critical dimensions、modeling-critical datum
+  alignments 与 blocking unresolved 是否都有非空 source_ids；没有证据标签的
+  判断不得写成 production Capture；
 - overall_dimensions 三轴是否均为正数且来自图纸直接标注；
 - 对每个 modeling-critical entity 的可见 centerline / center mark 完成 datum census：
   只有图纸明确把 feature center 与 overall midpoint 建立关系时才写

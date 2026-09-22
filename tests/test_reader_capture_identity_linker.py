@@ -47,8 +47,16 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
             height_z=66,
         ),
         views=[
-            CaptureView(id=f"{prefix}_VF", kind="front"),
-            CaptureView(id=f"{prefix}_VS", kind="side"),
+            CaptureView(
+                id=f"{prefix}_VF",
+                kind="front",
+                source_ids=[f"{prefix}_SRC_VIEW_FRONT"],
+            ),
+            CaptureView(
+                id=f"{prefix}_VS",
+                kind="side",
+                source_ids=[f"{prefix}_SRC_VIEW_SIDE"],
+            ),
         ],
         entities=[
             CaptureEntity(
@@ -56,12 +64,14 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                 view_id=f"{prefix}_VF",
                 shape="circle",
                 cross_view_disposition="associated",
+                source_ids=[f"{prefix}_SRC_FRONT"],
             ),
             CaptureEntity(
                 id=side,
                 view_id=f"{prefix}_VS",
                 shape="hidden_parallel",
                 cross_view_disposition="associated",
+                source_ids=[f"{prefix}_SRC_SIDE"],
             ),
         ],
         associations=[
@@ -85,6 +95,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                 entity_id=front,
                 field="fit",
                 value="H7",
+                source_ids=[f"{prefix}_SRC_FIT"],
             ),
         ],
         dimensions=[
@@ -100,6 +111,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                         basis="centerline",
                     ),
                 ],
+                source_ids=[f"{prefix}_SRC_Z40"],
             )
         ],
         required_targets=[],
@@ -2141,3 +2153,212 @@ def test_reader_capture_rejects_other_shape_for_cylindrical_semantics():
                 )
             ],
         )
+
+
+
+def test_production_multiview_contract_requires_traceable_sources():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EF",
+                view_id="VF",
+                shape="circle",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="ES",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "matching_specification"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="ES",
+                field="diameter",
+                value=20,
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(role="overall_max"),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="EF",
+                        basis="centerline",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any("view 'VF' requires non-empty source_ids" in item for item in errors)
+    assert any("modeling-critical entity 'EF' requires non-empty" in item for item in errors)
+    assert any("association 'A1' requires non-empty source_ids" in item for item in errors)
+    assert any("value 'S1' requires non-empty source_ids" in item for item in errors)
+    assert any("modeling-critical dimension 'D1' requires" in item for item in errors)
+
+
+def test_cross_view_identity_unique_sufficient_pair_must_be_association():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EF",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="unresolved",
+                source_ids=["OBS_EF"],
+            ),
+            CaptureEntity(
+                id="ES",
+                view_id="VS",
+                shape="concentric_circles",
+                cross_view_disposition="unresolved",
+                source_ids=["OBS_ES"],
+            ),
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="cross_view_identity",
+                reason="only one candidate pair remains",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "matching_specification"],
+                source_ids=["OBS_PAIR"],
+                required_for_modeling=True,
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any(
+        "one unique cross-view pair with identity-sufficient basis" in item
+        for item in errors
+    )
+
+
+def test_cross_view_identity_insufficient_basis_may_remain_unresolved():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EF",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="unresolved",
+                source_ids=["OBS_EF"],
+            ),
+            CaptureEntity(
+                id="ES",
+                view_id="VS",
+                shape="concentric_circles",
+                cross_view_disposition="unresolved",
+                source_ids=["OBS_ES"],
+            ),
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="cross_view_identity",
+                reason="alignment is visible but identity-specific evidence is absent",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "shared_centerline"],
+                source_ids=["OBS_PAIR"],
+                required_for_modeling=True,
+            )
+        ],
+    )
+
+    assert validate_reader_capture_contract(capture) == []
+
+
+def test_unresolved_basis_is_preserved_and_compared():
+    def make(basis):
+        capture = ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[
+                CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+                CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+            ],
+            entities=[
+                CaptureEntity(
+                    id="EF",
+                    view_id="VF",
+                    shape="hidden_parallel",
+                    cross_view_disposition="unresolved",
+                    source_ids=["OBS_EF"],
+                ),
+                CaptureEntity(
+                    id="ES",
+                    view_id="VS",
+                    shape="hidden_parallel",
+                    cross_view_disposition="unresolved",
+                    source_ids=["OBS_ES"],
+                ),
+            ],
+            unresolved_evidence=[
+                CaptureUnresolvedEvidence(
+                    id="U1",
+                    kind="cross_view_identity",
+                    reason="identity remains unresolved",
+                    entity_ids=["EF", "ES"],
+                    basis=basis,
+                    source_ids=["OBS_PAIR"],
+                )
+            ],
+        )
+        return link_reader_capture(capture).evidence
+
+    first = make(["projection_alignment", "shared_centerline"])
+    second = make(["projection_alignment", "shared_center_mark"])
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable is False
+    assert "unresolved_semantics" in report.changed_sections[2]
+    assert report.unresolved_semantic_drift

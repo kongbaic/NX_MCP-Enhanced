@@ -91,6 +91,7 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
         for endpoint in item.endpoints:
             if endpoint.entity_id:
                 referenced.add(endpoint.entity_id)
+            referenced.update(endpoint.candidate_entity_ids)
 
     for item in capture.datum_alignments:
         referenced.add(item.entity_id)
@@ -589,11 +590,39 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
 
     dimensions: list[DimensionObservation] = []
     for item in capture.dimensions:
+        if any(endpoint.role == "unresolved" for endpoint in item.endpoints):
+            related_entity_ids = sorted(
+                {
+                    entity_id
+                    for endpoint in item.endpoints
+                    for entity_id in (
+                        ([endpoint.entity_id] if endpoint.entity_id else [])
+                        + endpoint.candidate_entity_ids
+                    )
+                }
+            )
+            unresolved.append(
+                {
+                    "id": f"U_DIM_{item.id}",
+                    "kind": "dimension_endpoint",
+                    "reason": item.unresolved_reason
+                    or "dimension endpoint ownership is unresolved",
+                    "required_for_modeling": item.required_for_modeling,
+                    "entity_ids": related_entity_ids,
+                    "capture_dimension_id": item.id,
+                    "dimension_value": item.value,
+                    "axis": item.axis,
+                    "source_ids": item.source_ids,
+                }
+            )
+            continue
+
         endpoints: list[DimensionEndpoint] = []
         for endpoint in item.endpoints:
             if endpoint.role in {"overall_min", "overall_max"}:
                 endpoints.append(DimensionEndpoint(role=endpoint.role))
             else:
+                assert endpoint.role == "entity_center"
                 assert endpoint.entity_id is not None
                 axis_leaf = item.axis.lower()
                 endpoints.append(

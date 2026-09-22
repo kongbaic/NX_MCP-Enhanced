@@ -54,11 +54,13 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                 id=front,
                 view_id=f"{prefix}_VF",
                 shape="circle",
+                cross_view_disposition="associated",
             ),
             CaptureEntity(
                 id=side,
                 view_id=f"{prefix}_VS",
                 shape="hidden_parallel",
+                cross_view_disposition="associated",
             ),
         ],
         associations=[
@@ -1355,3 +1357,205 @@ def test_stability_detects_different_direct_conflict_candidates():
     assert report.stable is False
     assert "unresolved_semantics" in report.changed_sections[2]
     assert report.unresolved_semantic_drift
+
+
+def test_contract_requires_cross_view_disposition_for_modeling_entity():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="circle",
+            ),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any("requires cross_view_disposition" in error for error in errors)
+
+
+def test_contract_accepts_consistent_cross_view_dispositions():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EA",
+                view_id="VF",
+                shape="circle",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="EB",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="EC",
+                view_id="VF",
+                shape="slot_edges",
+                cross_view_disposition="single_view",
+            ),
+            CaptureEntity(
+                id="ED",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="unresolved",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EA", "EB"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="cross_view_identity",
+                reason="candidate correspondence is not uniquely supported",
+                entity_ids=["ED"],
+            )
+        ],
+    )
+
+    assert validate_reader_capture_contract(capture) == []
+
+
+def test_contract_rejects_inconsistent_cross_view_disposition():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EA",
+                view_id="VF",
+                shape="circle",
+                cross_view_disposition="single_view",
+            ),
+            CaptureEntity(
+                id="EB",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EA", "EB"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any("declares single_view" in error for error in errors)
+
+
+def test_unresolved_dimension_endpoint_is_normalized_by_linker():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=16,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(role="overall_max"),
+                    CaptureDimensionEndpoint(
+                        role="unresolved",
+                        candidate_entity_ids=["E1"],
+                    ),
+                ],
+                unresolved_reason="visible endpoint does not uniquely own a center",
+            )
+        ],
+    )
+
+    assert validate_reader_capture_contract(capture) == []
+
+    result = link_reader_capture(capture)
+
+    assert result.evidence.dimensions == []
+    unresolved = [
+        item
+        for item in result.evidence.unresolved_evidence
+        if item.get("kind") == "dimension_endpoint"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0]["capture_dimension_id"] == "D1"
+    assert unresolved[0]["dimension_value"] == 16
+    assert unresolved[0]["axis"] == "Y"
+    assert unresolved[0]["required_for_modeling"] is True
+    assert unresolved[0]["feature_ids"]
+
+
+def test_contract_rejects_legacy_dimension_endpoint_unresolved_container():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U_DIM_OLD",
+                kind="dimension_endpoint",
+                reason="legacy split-container dimension ambiguity",
+                dimension_value=16,
+                axis="Y",
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any(
+        "must be represented by dimensions[]" in error
+        for error in errors
+    )

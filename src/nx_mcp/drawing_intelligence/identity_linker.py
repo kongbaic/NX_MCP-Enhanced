@@ -618,12 +618,14 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             continue
 
         endpoints: list[DimensionEndpoint] = []
+        local_endpoint_entities: list[str] = []
         for endpoint in item.endpoints:
             if endpoint.role in {"overall_min", "overall_max"}:
                 endpoints.append(DimensionEndpoint(role=endpoint.role))
             else:
                 assert endpoint.role == "entity_center"
                 assert endpoint.entity_id is not None
+                local_endpoint_entities.append(endpoint.entity_id)
                 axis_leaf = item.axis.lower()
                 endpoints.append(
                     DimensionEndpoint(
@@ -634,6 +636,33 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                         ),
                     )
                 )
+
+        feature_center_targets = [
+            endpoint.target
+            for endpoint in endpoints
+            if endpoint.role == "feature_center" and endpoint.target
+        ]
+        if (
+            len(feature_center_targets) == 2
+            and feature_center_targets[0] == feature_center_targets[1]
+        ):
+            unresolved.append(
+                {
+                    "id": f"U_DIM_COLLAPSE_{item.id}",
+                    "kind": "dimension_endpoint",
+                    "reason": (
+                        "dimension endpoints collapse to the same physical "
+                        "center target after identity linking"
+                    ),
+                    "required_for_modeling": item.required_for_modeling,
+                    "entity_ids": sorted(set(local_endpoint_entities)),
+                    "capture_dimension_id": item.id,
+                    "dimension_value": item.value,
+                    "axis": item.axis,
+                    "source_ids": item.source_ids,
+                }
+            )
+            continue
 
         dimensions.append(
             DimensionObservation(

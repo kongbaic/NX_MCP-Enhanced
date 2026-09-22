@@ -1,212 +1,280 @@
-# Reader First-Pass Stability Benchmark v2
+# Reader First-Pass Stability Benchmark
 
 ## 1. Purpose
 
-Measure whether the visual Reader produces logically stable immutable first-pass
-`reader-capture.json` artifacts for the same engineering drawing after deterministic
-identity linking and Gate 0 normalization.
+Measure whether independent visual Reader sessions produce the same logical
+engineering-drawing semantics after deterministic Capture validation,
+identity linking, Gate 0, compilation and resolution.
 
-This benchmark measures **Reader stability**, not Resolver determinism and not
-NX backend stability.
+This benchmark measures Reader/front-end stability. It does not measure
+Planner, Runner, Loader or NX stability.
 
-## 2. Required isolation
+Stability and correctness are separate gates. A Reader can be consistently
+wrong; therefore stability PASS never substitutes for a source-drawing
+correctness audit.
 
-A valid benchmark run must satisfy all of the following:
+## 2. Benchmark revision freeze
 
-1. Use the exact same source drawing bytes for every run.
-2. Use the exact same Reader contract revision.
-3. Each Reader pass starts in a fresh independent model/session context.
-4. The Reader receives only:
-   - the current source drawing;
-   - the current `drawing-reader.md`;
-   - the current `reader-capture-contract.md`;
-   - the visual vocabulary/rules explicitly required by those contracts.
-5. The Reader must not receive or read:
-   - this benchmark/operator document itself;
-   - another run's capture or evidence JSON;
-   - old semantic-draft/drawing JSON;
-   - frozen/executable plans;
-   - Runner reports;
-   - PRT/STEP output;
-   - benchmark expected answers.
-6. Each Reader pass writes exactly one immutable first-pass `reader-capture.json` file.
-7. No second-look repair, retry, rewrite, or Gate A feedback is allowed.
+Before starting a smoke or formal benchmark, freeze and record:
 
-If these isolation requirements are not met, the result is not an independent
-Reader stability benchmark.
+- repository branch and exact Git HEAD;
+- exact source-drawing bytes and SHA256;
+- exact benchmark prompt template revision/hash;
+- exact allowed Reader document revisions;
+- benchmark run count;
+- output directory.
 
-## 3. Recommended run count
+The only prompt substitutions allowed between independent runs are:
 
-Minimum:
+- RUN_ID;
+- OUTPUT_PATH.
 
-```text
-10 independent Reader runs
-```
+Do not change examples, wording, hints, expected values or troubleshooting
+instructions between runs.
 
-For a difficult regression drawing, 20 runs may be used.
+A protocol/document/code change creates a new benchmark revision. Results from
+different revisions must not be mixed in one stability report.
 
-File naming:
+## 3. Reader isolation
 
-```text
-reader-stability/
-  capture-run-01.json
-  capture-run-02.json
-  ...
-  capture-run-10.json
-  linked/
-    run-01.json
-    ...
-    run-10.json
-```
+Each run starts in a fresh independent Agent/model session.
 
-The numeric suffix is execution order only and must not affect the Reader prompt.
+The Reader may receive only:
 
-## 4. Deterministic normalization and comparison
+- the exact current source drawing;
+- `skills/nx-agent/SKILL.md`;
+- `skills/nx-agent/references/drawing-reader.md`;
+- `skills/nx-agent/references/reader-capture-contract.md`;
+- `skills/nx-agent/references/nx-drawing-rules.md`;
+- the generic benchmark prompt for the frozen revision.
 
-For every immutable first-pass capture, run exactly once:
+The Reader must not receive or read:
+
+- this benchmark/operator document;
+- tests or fixtures;
+- another run's capture/evidence;
+- historical captures/evidence/drafts/drawings/plans/reports;
+- PRT/STEP outputs;
+- expected answers or regression sentinels;
+- repository search results for the benchmark part/drawing;
+- another Agent/Codex result.
+
+The benchmark prompt and Reader-visible documents must not contain
+source-specific expected dimensions, feature names, answers or historical
+failure values.
+
+## 4. First-pass definition
+
+First-pass means one independent, continuous drawing-interpretation session.
+
+Before the single capture write, the Reader may repeatedly inspect, zoom and
+cross-check regions of the current source drawing. This is still one first
+pass.
+
+The Reader must not:
+
+- read downstream output and reinterpret the drawing;
+- read another run;
+- repair after `check-capture`, `link-capture`, Resolver or Gate A feedback;
+- write a second capture.
+
+The first immutable artifact is `reader-capture.json`.
+
+## 5. Capture production gate
+
+Before its single write, the Reader contract requires in-memory production
+schema validation with `ReaderCapture.model_validate(payload)`.
+
+After the capture is written, the authoritative external gate is:
+
+~~~text
+python -m nx_mcp.drawing_intelligence check-capture <reader-capture.json>
+~~~
+
+A valid run requires:
+
+~~~text
+process exit code = 0
+schema_valid = true
+contract_valid = true
+errors = []
+~~~
+
+Agent self-reported validation is informational only and must not be used as
+the benchmark verdict.
+
+If `check-capture` fails, that run is FAIL for the current benchmark
+revision. Do not edit, rewrite, repair or replace that run in-place.
+
+## 6. Deterministic link gate
+
+For each capture that passes `check-capture`, run exactly once:
 
 ~~~text
 python -m nx_mcp.drawing_intelligence link-capture \
-  reader-stability/capture-run-01.json \
-  reader-stability/linked/run-01.json
+  <reader-capture.json> \
+  <linked-evidence.json>
 ~~~
 
-Repeat for all runs without editing either the capture or linked output.
+A valid linked run requires:
 
-Then compare the linked strict evidence:
+~~~text
+process exit code = 0
+written = true
+schema_valid = true
+contract_valid = true
+errors = []
+~~~
+
+Do not edit either the capture or linked evidence.
+
+## 7. Two-run smoke
+
+Every new benchmark revision first runs exactly two fresh independent Reader
+sessions.
+
+The smoke passes stability only when both runs pass Sections 5 and 6 and the
+comparator returns:
+
+~~~text
+stable = true
+run_count = 2
+unique_fingerprints = 1
+changed_sections = {}
+value_drift = {}
+unresolved_presence = {}
+unresolved_semantic_drift = []
+~~~
+
+If either capture is invalid, link fails, or semantic drift exists, stop.
+Do not run eight more sessions merely to confirm the same failure.
+
+After a protocol/code/document fix, start a new smoke revision with two new
+sessions. Do not combine pre-fix and post-fix runs.
+
+## 8. Correctness audit
+
+After a two-run smoke is stable, perform an independent correctness audit
+against the original source drawing before starting the formal ten-run test.
+
+The correctness audit checks that the stable linked semantics are actually
+supported by the source drawing.
+
+Expected answers used by the correctness auditor must remain hidden from the
+Reader sessions and must never be copied into Reader-visible documents or the
+benchmark prompt.
+
+Do not feed correctness findings back into either frozen smoke capture.
+
+A stable-but-wrong result fails the correctness gate.
+
+## 9. Formal ten-run benchmark
+
+Only after:
+
+- two-run smoke stability PASS; and
+- source correctness audit PASS
+
+start ten new independent Reader sessions under the exact same frozen
+benchmark revision.
+
+The formal comparison command is:
 
 ~~~text
 python -m nx_mcp.drawing_intelligence stability \
-  reader-stability/linked/run-01.json \
-  reader-stability/linked/run-02.json \
+  linked/run-01.json \
+  linked/run-02.json \
   ... \
-  reader-stability/linked/run-10.json \
-  --report reader-stability/report.json
+  linked/run-10.json \
+  --report report.json
 ~~~
 
-The identity linker is deterministic and must not read the source image.
+Formal Reader stability PASS requires:
 
-The comparator intentionally ignores:
-
-- evidence IDs;
-- source IDs;
-- source ordering;
-- JSON ordering;
-- free-text observation wording.
-
-It compares logical semantics after deterministic compilation/resolution.
-
-## 5. Strict PASS criteria
-
-Reader stability PASS requires:
-
-```text
+~~~text
 stable = true
+run_count = 10
 unique_fingerprints = 1
+changed_sections = {}
 value_drift = {}
 unresolved_presence = {}
-changed_sections = {}
-```
+unresolved_semantic_drift = []
+~~~
 
-All runs must therefore agree after deterministic identity linking on:
+Reader-local entity IDs, evidence IDs, source IDs, JSON ordering and free-text
+observation wording do not need to match.
 
-- overall dimensions;
-- physical feature semantic signatures;
-- feature direct semantic values;
-- view/projection-derived axes;
-- dimension ownership/relation semantics;
-- datum alignments;
-- required HARD targets;
-- resolved coordinates;
-- blocking unresolved target set;
-- conflict state;
-- dimension_closure state.
+## 10. Unresolved semantics
 
-Reader-local entity IDs, evidence IDs, source IDs, and association record IDs are not required to match. Physical feature identities produced from equivalent normalized evidence must match.
+`unresolved_presence` reports unresolved target presence that differs across
+runs. The comparator intentionally removes a target from this diagnostic when
+it is unresolved in every run.
 
-## 6. Failure interpretation
+`unresolved_semantic_drift` compares structured Reader/linker unresolved
+semantics, including targetless ambiguity.
 
-### VALUE-DRIFT
+Therefore:
 
-Example:
+- a consistent unresolved condition can be stable;
+- a run-dependent unresolved condition is stability drift;
+- stable unresolved does not mean the drawing is closed or modelable.
 
-```text
-feature:F_MAIN_HOLE.centerline.z
-run 1 = 40
-run 2 = 48
-```
+Resolver/Gate A remain responsible for closure after the Reader stability
+benchmark.
 
-This is a Reader semantic stability failure.
+## 11. Exit-code interpretation
 
-### AXIS-DRIFT
+`check-capture`:
 
-Example:
+- exit 0 = schema + current Capture contract valid;
+- exit 1 = invalid capture/input/runtime error.
 
-```text
-feature:F_MAIN_HOLE.axis
-Y ↔ X
-```
+`link-capture`:
 
-This is a Reader projection/association failure.
+- exit 0 = deterministic link/Gate0 output written;
+- exit 1 = input/link/Gate0/runtime error.
 
-### OWNERSHIP-DRIFT
+`stability`:
 
-The same annotation compiles to different relation semantics or targets across
-runs.
+- exit 0 = comparator completed and all fingerprints are identical;
+- exit 2 = comparator completed and true semantic drift exists;
+- exit 1 = comparator/input/runtime error.
 
-This is a dimension endpoint/ownership failure.
+Never label exit 1 as semantic drift.
 
-### UNRESOLVED-DRIFT
+## 12. Timing
 
-A HARD target is unresolved in only some runs.
+Reader latency is measured only by an external wall clock controlled by the
+operator.
 
-This means the Reader is changing its confidence/association decision across
-independent passes.
+Agent self-reported elapsed time is not authoritative.
 
-### CONSISTENT-UNRESOLVED
+Use the same timing boundary for every run in a benchmark revision. Recommended
+boundary:
 
-A HARD target is unresolved in every run.
+- start: benchmark prompt submitted to the fresh Reader session;
+- stop: first immutable capture write completes / the Reader task ends without
+  a valid capture.
 
-This is **stable behavior**, not Reader drift. It indicates a consistent
-capability/evidence gap that should be addressed separately, without guessing.
+Do not compare latency across different benchmark revisions as if conditions
+were identical.
 
-## 7. SHKSS20-40 regression targets
+## 13. No replacement runs
 
-For the current SHKSS20-40 regression drawing, the following values are
-especially important drift sentinels:
+A run that fails schema/contract, produces no capture, rewrites its capture,
+reads forbidden history, requires a follow-up prompt to reinterpret the
+drawing, or otherwise violates isolation remains a failed run.
 
-- main bore axis remains Y;
-- main bore center Z remains 40;
-- clamp/clearance axis remains X;
-- clamp center Z remains 58;
-- clamp center Y remains 8;
-- mounting-hole row Y remains -8;
-- slot centerline X remains 0;
-- unsupported mounting-hole absolute X positions must not randomly appear.
+Do not discard it and insert a replacement while claiming the original
+benchmark run count.
 
-Current known capability gaps such as unsupported absolute mount-hole X
-anchoring or incomplete L-body profile evidence must remain explicit unresolved
-until the contract gains a fully evidence-backed representation.
+For a smoke test, fix the protocol and restart both smoke runs as a new
+revision. For a formal ten-run benchmark, a protocol defect invalidates the
+formal batch and requires a new frozen revision.
 
-The benchmark must never convert a known unresolved target into a concrete
-number merely to improve PASS rate.
+## 14. Backend boundary
 
-## 8. What this benchmark does not test
-
-It does not test:
-
-- Planner quality;
-- Runner stability;
-- Loader/NX behavior;
-- PRT/STEP export;
-- repair behavior;
-- post-NX geometry validation.
-
-Those belong to the frozen Backend v1 benchmark.
-
-## 9. Backend boundary
-
-A Reader stability failure must not be repaired by changing:
+Reader benchmark failures must not be hidden by changing:
 
 - Planner;
 - Runner;
@@ -214,4 +282,19 @@ A Reader stability failure must not be repaired by changing:
 - NX core;
 - Gate A acceptance strictness.
 
-Fix Reader Capture extraction / association claims / deterministic identity linking, or leave the target unresolved.
+Fix only the Reader Capture contract/extraction, deterministic front-end
+normalization/linking/comparison, or preserve ambiguity as unresolved.
+
+## 15. What this benchmark does not test
+
+It does not test:
+
+- full drawing closure;
+- Planner quality;
+- Runner stability;
+- Loader/NX behavior;
+- PRT/STEP export;
+- controlled repair;
+- post-NX geometry validation.
+
+Those are separate downstream gates after Reader stability and correctness.

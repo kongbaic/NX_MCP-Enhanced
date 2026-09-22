@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from .capture import ReaderCapture
+from .capture import AssociationClaim, ReaderCapture
 from .evidence import (
     DatumAlignmentEvidence,
     DimensionEndpoint,

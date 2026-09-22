@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
     CaptureDimension,
@@ -19,7 +22,12 @@ from nx_mcp.drawing_intelligence import (
     link_reader_capture,
     resolve_evidence_graph,
 )
+from nx_mcp.drawing_intelligence.capture import (
+    CaptureUnresolvedEvidence,
+    validate_reader_capture_contract,
+)
 from nx_mcp.drawing_intelligence.evidence import OverallDimensions
+from nx_mcp.drawing_intelligence.stability import compare_evidence_runs
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -776,3 +784,167 @@ def test_identity_linker_derives_formal_required_targets():
         item.get("kind") == "reader_required_targets_advisory"
         for item in result.evidence.observations
     )
+
+
+def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
+    with pytest.raises(ValidationError):
+        ReaderCapture.model_validate(
+            {
+                "schema_version": "2.0",
+                "coordinate_system": "part_center_xy_bottom_z0",
+                "overall_dimensions": {
+                    "length_x": 100,
+                    "width_y": 50,
+                    "height_z": 20,
+                },
+                "views": [],
+                "entities": [],
+                "associations": [],
+                "values": [],
+                "dimensions": [],
+                "datum_alignments": [],
+                "required_targets": [],
+                "observations": [],
+                "unresolved_evidence": [],
+                "unexpected": 1,
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ReaderCapture.model_validate(
+            {
+                "schema_version": "2.0",
+                "coordinate_system": "part_center_xy_bottom_z0",
+                "overall_dimensions": {
+                    "length_x": 100,
+                    "width_y": 50,
+                    "height_z": 20,
+                    "unexpected": 1,
+                },
+                "views": [],
+                "entities": [],
+                "associations": [],
+                "values": [],
+                "dimensions": [],
+                "datum_alignments": [],
+                "required_targets": [],
+                "observations": [],
+                "unresolved_evidence": [],
+            }
+        )
+
+
+def test_reader_capture_rejects_non_numeric_overall_scalar():
+    with pytest.raises(ValidationError):
+        ReaderCapture.model_validate(
+            {
+                "schema_version": "2.0",
+                "coordinate_system": "part_center_xy_bottom_z0",
+                "overall_dimensions": {
+                    "length_x": 100,
+                    "width_y": "50",
+                    "height_z": 20,
+                },
+                "views": [],
+                "entities": [],
+                "associations": [],
+                "values": [],
+                "dimensions": [],
+                "datum_alignments": [],
+                "required_targets": [],
+                "observations": [],
+                "unresolved_evidence": [],
+            }
+        )
+
+
+def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocker():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="circle")],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="hole_diameter",
+                value=10,
+            )
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                reason="modeling-critical ambiguity",
+                required_for_modeling=True,
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any("non-canonical field" in item for item in errors)
+    assert any("structured kind" in item for item in errors)
+
+
+def _unresolved_capture(prefix: str, kind: str) -> ReaderCapture:
+    entity_id = f"{prefix}_ENTITY"
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id=f"{prefix}_VIEW", kind="front")],
+        entities=[
+            CaptureEntity(
+                id=entity_id,
+                view_id=f"{prefix}_VIEW",
+                shape="hidden_parallel",
+            )
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id=f"{prefix}_U",
+                kind=kind,
+                reason="wording may differ between runs",
+                entity_ids=[entity_id],
+                field="termination",
+                required_for_modeling=True,
+            )
+        ],
+    )
+
+
+def test_structured_unresolved_is_stable_across_local_id_changes():
+    first = link_reader_capture(
+        _unresolved_capture("RUN_A", "termination")
+    ).evidence
+    second = link_reader_capture(
+        _unresolved_capture("RUN_B", "termination")
+    ).evidence
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable is True
+    assert report.unique_fingerprints == 1
+    assert report.unresolved_semantic_drift == []
+
+
+def test_targetless_unresolved_semantic_drift_changes_fingerprint():
+    first = link_reader_capture(
+        _unresolved_capture("RUN_A", "termination")
+    ).evidence
+    second = link_reader_capture(
+        _unresolved_capture("RUN_B", "start_side")
+    ).evidence
+
+    report = compare_evidence_runs([first, second])
+
+    assert report.stable is False
+    assert report.unique_fingerprints == 2
+    assert report.unresolved_semantic_drift
+    assert "unresolved_semantics" in report.changed_sections[2]

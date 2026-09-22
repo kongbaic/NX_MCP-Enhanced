@@ -1119,3 +1119,171 @@ def test_current_capture_contract_requires_entity_center_visual_basis():
 
     capture.dimensions[0].endpoints[1].basis = "center_mark"
     assert validate_reader_capture_contract(capture) == []
+
+
+def test_identity_linker_collapses_equivalent_cross_view_direct_writers():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EF", view_id="VF", shape="circle"),
+            CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="VF_DIA",
+                entity_id="EF",
+                field="diameter",
+                value=10,
+                source_ids=["SRC_FRONT"],
+            ),
+            CaptureValue(
+                id="VS_DIA",
+                entity_id="ES",
+                field="diameter",
+                value=10,
+                source_ids=["SRC_SIDE"],
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    diameter = [
+        item
+        for item in result.evidence.direct_values
+        if item.target.endswith(".diameter")
+    ]
+    assert len(diameter) == 1
+    assert diameter[0].value == 10
+    assert diameter[0].id.startswith("L_DIRECT_")
+    assert diameter[0].source_ids == [
+        "VF_DIA",
+        "SRC_FRONT",
+        "VS_DIA",
+        "SRC_SIDE",
+    ]
+
+    compiled = compile_evidence_graph(result.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+    assert draft["features"]
+
+
+def test_identity_linker_does_not_collapse_conflicting_direct_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EF", view_id="VF", shape="circle"),
+            CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="VF_DIA",
+                entity_id="EF",
+                field="diameter",
+                value=10,
+            ),
+            CaptureValue(
+                id="VS_DIA",
+                entity_id="ES",
+                field="diameter",
+                value=11,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    diameter = [
+        item
+        for item in result.evidence.direct_values
+        if item.target.endswith(".diameter")
+    ]
+    assert len(diameter) == 2
+
+    compiled = compile_evidence_graph(result.evidence)
+    assert any(
+        item.get("target") == diameter[0].target
+        and "disagrees" in str(item.get("reason"))
+        for item in compiled.unresolved_evidence
+    )
+
+
+def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(id="EF", view_id="VF", shape="circle"),
+            CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="VF_DIA",
+                entity_id="EF",
+                field="diameter",
+                value=10,
+                semantic="diameter",
+            ),
+            CaptureValue(
+                id="VS_DIA",
+                entity_id="ES",
+                field="diameter",
+                value=10,
+                semantic="feature_dimension",
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    diameter = [
+        item
+        for item in result.evidence.direct_values
+        if item.target.endswith(".diameter")
+    ]
+    assert len(diameter) == 2

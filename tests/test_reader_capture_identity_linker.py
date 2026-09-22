@@ -1561,3 +1561,80 @@ def test_contract_rejects_legacy_dimension_endpoint_unresolved_container():
         "must be represented by dimensions[]" in error
         for error in errors
     )
+
+
+def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="EF",
+                view_id="VF",
+                shape="circle",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="ES",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A1",
+                entity_ids=["EF", "ES"],
+                basis=["projection_alignment", "shared_centerline"],
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_COLLAPSE",
+                value=12,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="EF",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="ES",
+                        basis="centerline",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    assert validate_reader_capture_contract(capture) == []
+
+    result = link_reader_capture(capture)
+
+    assert result.evidence.dimensions == []
+    collapsed = [
+        item
+        for item in result.evidence.unresolved_evidence
+        if item.get("id") == "U_DIM_COLLAPSE_D_COLLAPSE"
+    ]
+    assert len(collapsed) == 1
+    assert collapsed[0]["kind"] == "dimension_endpoint"
+    assert collapsed[0]["dimension_value"] == 12
+    assert collapsed[0]["axis"] == "X"
+    assert collapsed[0]["required_for_modeling"] is True
+    assert collapsed[0]["feature_ids"]
+    assert len(collapsed[0]["feature_ids"]) == 1
+
+    compiled = compile_evidence_graph(result.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+    assert draft["dimension_closure"]["status"] == "incomplete"

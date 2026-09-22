@@ -1048,8 +1048,8 @@ def test_check_capture_cli_is_authoritative_contract_gate(tmp_path: Path):
     )
 
 
-def test_association_requires_deterministically_sufficient_visual_basis():
-    weak = ReaderCapture(
+def test_production_capture_rejects_alignment_only_association_basis():
+    common = dict(
         overall_dimensions=OverallDimensions(
             length_x=100,
             width_y=50,
@@ -1063,35 +1063,33 @@ def test_association_requires_deterministically_sufficient_visual_basis():
             CaptureEntity(id="EF", view_id="VF", shape="circle"),
             CaptureEntity(id="ES", view_id="VS", shape="hidden_parallel"),
         ],
+    )
+
+    with pytest.raises(ValidationError, match="identity-sufficient visual basis"):
+        ReaderCapture(
+            **common,
+            associations=[
+                AssociationClaim(
+                    id="A_ALIGN_ONLY",
+                    entity_ids=["EF", "ES"],
+                    basis=["projection_alignment", "shared_centerline"],
+                )
+            ],
+        )
+
+    strong = ReaderCapture(
+        **common,
         associations=[
             AssociationClaim(
-                id="A_WEAK",
+                id="A_STRONG",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
     )
-
-    weak_result = link_reader_capture(weak)
-
-    assert weak_result.report["physical_components"] == 2
-    assert weak_result.report["rejected_associations"] == 1
-    assert any(
-        item.get("kind") == "association_evidence"
-        for item in weak_result.evidence.unresolved_evidence
-    )
-
-    strong = weak.model_copy(deep=True)
-    strong.associations[0].basis = [
-        "projection_alignment",
-        "shared_centerline",
-    ]
-
-    strong_result = link_reader_capture(strong)
-
-    assert strong_result.report["physical_components"] == 1
-    assert strong_result.report["rejected_associations"] == 0
-
+    result = link_reader_capture(strong)
+    assert result.report["physical_components"] == 1
+    assert result.report["rejected_associations"] == 0
 
 def test_current_capture_contract_requires_entity_center_visual_basis():
     capture = ReaderCapture(
@@ -1144,7 +1142,7 @@ def test_identity_linker_collapses_equivalent_cross_view_direct_writers():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
         values=[
@@ -1207,7 +1205,7 @@ def test_identity_linker_does_not_collapse_conflicting_direct_values():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
         values=[
@@ -1272,7 +1270,7 @@ def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
         values=[
@@ -1334,7 +1332,7 @@ def test_stability_detects_different_direct_conflict_candidates():
                 AssociationClaim(
                     id="A1",
                     entity_ids=["EF", "ES"],
-                    basis=["projection_alignment", "shared_centerline"],
+                    basis=["projection_alignment", "matching_specification"],
                 )
             ],
             values=[
@@ -1427,7 +1425,7 @@ def test_contract_accepts_consistent_cross_view_dispositions():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
         unresolved_evidence=[
@@ -1472,7 +1470,7 @@ def test_contract_rejects_inconsistent_cross_view_disposition():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
     )
@@ -1592,7 +1590,7 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "shared_centerline"],
+                basis=["projection_alignment", "matching_specification"],
             )
         ],
         dimensions=[
@@ -1640,23 +1638,21 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
     assert draft["dimension_closure"]["status"] == "incomplete"
 
 
-def test_identity_linker_quarantines_transitive_same_view_collision_order_independently():
-    def make_capture(reverse: bool) -> ReaderCapture:
-        associations = [
-            AssociationClaim(
-                id="A_LEFT",
-                entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
-                basis=["projection_alignment", "matching_specification"],
-            ),
-            AssociationClaim(
-                id="A_RIGHT",
-                entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
-                basis=["projection_alignment", "matching_specification"],
-            ),
-        ]
-        if reverse:
-            associations.reverse()
-        return ReaderCapture(
+def test_production_capture_rejects_overlapping_association_claims():
+    associations = [
+        AssociationClaim(
+            id="A_LEFT",
+            entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
+            basis=["projection_alignment", "matching_specification"],
+        ),
+        AssociationClaim(
+            id="A_RIGHT",
+            entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
+            basis=["projection_alignment", "matching_specification"],
+        ),
+    ]
+    with pytest.raises(ValidationError, match="appears in multiple associations"):
+        ReaderCapture(
             overall_dimensions=OverallDimensions(
                 length_x=40,
                 width_y=32,
@@ -1689,30 +1685,70 @@ def test_identity_linker_quarantines_transitive_same_view_collision_order_indepe
             associations=associations,
         )
 
-    first_capture = make_capture(False)
-    second_capture = make_capture(True)
-    assert validate_reader_capture_contract(first_capture) == []
-    assert validate_reader_capture_contract(second_capture) == []
 
-    first = link_reader_capture(first_capture)
-    second = link_reader_capture(second_capture)
+def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
+    entities = [
+        CaptureEntity(
+            id="E_FRONT_LEFT",
+            view_id="VF",
+            shape="hidden_parallel",
+            cross_view_disposition="associated",
+        ),
+        CaptureEntity(
+            id="E_FRONT_RIGHT",
+            view_id="VF",
+            shape="hidden_parallel",
+            cross_view_disposition="associated",
+        ),
+        CaptureEntity(
+            id="E_SIDE_GROUP",
+            view_id="VS",
+            shape="hidden_parallel",
+            cross_view_disposition="associated",
+        ),
+    ]
+    associations = [
+        AssociationClaim(
+            id="A_LEFT",
+            entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
+            basis=["projection_alignment", "matching_specification"],
+        ),
+        AssociationClaim(
+            id="A_RIGHT",
+            entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
+            basis=["projection_alignment", "matching_specification"],
+        ),
+    ]
+    capture = ReaderCapture.model_construct(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front"),
+            CaptureView(id="VS", kind="side"),
+        ],
+        entities=entities,
+        associations=associations,
+        values=[],
+        dimensions=[],
+        datum_alignments=[],
+        required_targets=[],
+        observations=[],
+        unresolved_evidence=[],
+        schema_version="2.0",
+        coordinate_system="part_center_xy_bottom_z0",
+    )
 
-    assert first.report["physical_components"] == 3
-    assert second.report["physical_components"] == 3
-    assert first.entity_to_feature == second.entity_to_feature
-    assert len(set(first.entity_to_feature.values())) == 3
+    result = link_reader_capture(capture)
 
-    first_blockers = [
+    assert result.report["physical_components"] == 3
+    assert len(set(result.entity_to_feature.values())) == 3
+    blockers = [
         item
-        for item in first.evidence.unresolved_evidence
+        for item in result.evidence.unresolved_evidence
         if item.get("kind") == "association_structure"
     ]
-    second_blockers = [
-        item
-        for item in second.evidence.unresolved_evidence
-        if item.get("kind") == "association_structure"
-    ]
-    assert len(first_blockers) == 1
-    assert len(second_blockers) == 1
-    assert first_blockers[0]["feature_ids"] == second_blockers[0]["feature_ids"]
-    assert "transitive association component" in first_blockers[0]["reason"]
+    assert len(blockers) == 1
+    assert "transitive association component" in blockers[0]["reason"]

@@ -43,7 +43,7 @@ endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、
 
 | 符号/写法 | 含义 |
 |---|---|
-| `Ø20` | 直径 20 |
+| `Ø13` | 直径 13 |
 | `R8` / `4×R8` | 半径 8，数量由前缀给出 |
 | `C2×45°` / `C2` | 明确绑定边时表示倒角 |
 | `THRU` / `通孔` | 贯穿 |
@@ -51,7 +51,7 @@ endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、
 | `PCD Ø44` / `分布圆Ø44` | 圆周阵列分布圆直径 |
 | `⌴` / Counterbore / `沉孔` | 平底沉孔，通常另有直径与深度 |
 | `⌵` / Countersink / `沉头孔` | 锥形沉头，通常另有直径与角度 |
-| `M6` / `M6深12` | 公制螺纹规格 / 螺纹深度 |
+| `M8` / `M8深10` | 公制螺纹规格 / 螺纹深度 |
 | `2×` / `4×` | 紧随 feature 的总数量 |
 | `☐` / `▢` | 方形截面或方台尺寸 |
 
@@ -85,7 +85,7 @@ endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、
 - Section 的剖面线区域和边界用于识别内部开口、板厚、台阶与壳体壁。
 - 两侧明确轮廓及其标注可识别 wall-thickness annotation；无标注时不得按像素估算。
 - DETAIL/SECTION 明确表达的局部轮廓优先于主视图中被遮挡的外观。
-- 主体/profile 或明确 feature 看得出存在但无法可靠表达时，交由 required HARD inventory 记录 blocking unresolved，不得静默省略。
+- 主体/profile 或明确 feature 看得出存在但无法可靠表达时，记录 blocking `unresolved_evidence`，不得静默省略。
 
 ## 8. 重复标注与冲突识别
 
@@ -99,6 +99,6 @@ endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、
 Closure is validation only：不创建 source/writer，不补 concrete coordinate，不改变 endpoint ownership，不推导缺失 geometry。具体状态和 canonical validation 由 `drawing-reader.md` 定义。
 
 - 整图一次读取；禁止像素比例、轮廓测量、Hough/OpenCV 二次估算。
-- 图纸未定义且不影响唯一实体的信息可为 `null / required_for_modeling=false`。
+- 只有 schema 本身允许为空、且确实不影响唯一实体的可选信息，才可为 `null / required_for_modeling=false`；不得把此规则用于 `ReaderCapture.overall_dimensions.length_x / width_y / height_z` 等生产 schema 要求为正数的必填字段。
 - 影响实体且无法读取的内容必须交由 HARD inventory 进入 blocking unresolved。
 - 不输出 bbox 标注图、HTML、图例、质量报告或额外文档。

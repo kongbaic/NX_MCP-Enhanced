@@ -152,6 +152,7 @@ one physical feature, record an association claim:
 {
   "id": "A_01",
   "entity_ids": ["E_FRONT_01", "E_SIDE_03"],
+  "basis": ["projection_alignment", "shared_centerline"],
   "source_ids": ["OBS_SHARED_CENTERLINE", "OBS_PROJECTION_ALIGNMENT"],
   "required_for_modeling": true
 }
@@ -160,13 +161,27 @@ one physical feature, record an association claim:
 The Reader reports the evidence-backed claim; it does not create the final
 feature identity.
 
-Allowed association evidence includes combinations of:
+Allowed `basis` values are:
 
-- orthographic projection alignment;
-- shared centerline / center mark;
-- a leader or witness clearly referring to the same physical item;
-- matching explicit callout/specification;
-- explicit DETAIL/SECTION correspondence.
+- `projection_alignment`;
+- `shared_centerline`;
+- `shared_center_mark`;
+- `leader_correspondence`;
+- `matching_specification`;
+- `explicit_section_correspondence`.
+
+The Reader records these visual facts; it does not decide the final merge.
+The deterministic linker applies the merge policy.
+
+For standard orthographic views, `projection_alignment` alone is insufficient.
+A merge requires `projection_alignment` plus at least one of:
+
+- `shared_centerline`;
+- `shared_center_mark`;
+- `matching_specification`;
+- `leader_correspondence`.
+
+`explicit_section_correspondence` is a standalone strong basis.
 
 Insufficient by itself:
 
@@ -242,7 +257,8 @@ Dimension endpoints refer to overall boundaries or view-local entity centers.
     {"role": "overall_min"},
     {
       "role": "entity_center",
-      "entity_id": "E_FRONT_01"
+      "entity_id": "E_FRONT_01",
+      "basis": "centerline"
     }
   ],
   "source_ids": ["OBS_DIM_01"],
@@ -260,9 +276,16 @@ The Reader determines endpoint ownership only from actual arrows, witness
 lines, extension lines, center marks, and other visible dimension geometry.
 
 `entity_center` is allowed only when the visible dimension geometry
-unambiguously terminates at the center/centerline/midline of one specific
-view-local entity. Do not use `entity_center` merely because a dimension line
-passes between, near, or symmetrically around hidden lines.
+unambiguously terminates at one specific view-local center reference.
+
+Every `entity_center` endpoint must include exactly one structured `basis`:
+
+- `centerline`;
+- `center_mark`;
+- `explicit_midline`.
+
+Do not use `entity_center` merely because a dimension line passes between,
+near, or symmetrically around hidden lines.
 
 For repeated or overlapping hole projections, if the witness/extension
 geometry does not uniquely identify each member center, keep the dimension
@@ -343,18 +366,64 @@ cross-view pairing.
 
 ## 11. Unresolved evidence
 
-Any ambiguity that can change the modeled solid must remain explicit.
+Any ambiguity that can change the modeled solid must remain explicit and
+machine-comparable.
 
-Typical reasons:
+A blocking unresolved record must not be only free-text prose. Use the
+structured form:
+
+~~~json
+{
+  "id": "U_01",
+  "kind": "dimension_endpoint",
+  "reason": "human-readable audit note",
+  "entity_ids": ["E_FRONT_01"],
+  "dimension_id": "D_LOCAL_01",
+  "dimension_value": 12,
+  "field": "centerline.z",
+  "axis": "Z",
+  "source_ids": ["OBS_DIM_LOCAL_01"],
+  "required_for_modeling": true
+}
+~~~
+
+Allowed `kind` values:
+
+- `cross_view_identity`;
+- `dimension_endpoint`;
+- `feature_inventory`;
+- `feature_value`;
+- `member_identity`;
+- `start_side`;
+- `termination`;
+- `local_surface`;
+- `unsupported_representation`;
+- `other`.
+
+For `required_for_modeling=true`, new production capture must not use
+`kind="other"`.
+
+For `kind="dimension_endpoint"`:
+
+- `dimension_value` is required;
+- `axis` is required;
+- `dimension_id` is optional and may name the visual annotation even when the
+  dimension cannot enter formal `dimensions[]`.
+
+Use `entity_ids` whenever the ambiguity is tied to one or more local
+entities. The linker maps those local IDs to deterministic physical feature
+IDs before stability comparison.
+
+Typical unresolved cases include:
 
 - cross-view identity not uniquely supported;
 - physical dimension endpoint not uniquely owned;
 - start side not established;
 - termination not established;
-- two candidate entities cannot be distinguished;
+- repeated members cannot be distinguished;
 - a local surface cannot be represented by Capture v2.
 
-No unresolved target may simultaneously receive a guessed concrete value.
+No unresolved semantic may simultaneously receive a guessed concrete value.
 
 ## 12. First-pass immutability
 

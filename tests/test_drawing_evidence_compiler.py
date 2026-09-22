@@ -831,7 +831,7 @@ def test_datum_alignment_axis_mismatch_is_unresolved_not_silently_reinterpreted(
     assert any(item.get("target") == target for item in compiled.unresolved_evidence)
 
 
-def test_matching_overall_dimension_observations_do_not_duplicate_direct_writers():
+def test_matching_overall_dimension_observations_remain_available_to_downstream():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
         dimensions=_overall_dimension_observations(),
@@ -839,8 +839,14 @@ def test_matching_overall_dimension_observations_do_not_duplicate_direct_writers
 
     compiled = compile_evidence_graph(graph)
 
-    assert not any(
-        item.target.startswith("overall_dimensions.")
+    targets = {
+        item.target
         for item in compiled.direct_values
-    )
+        if item.target.startswith("overall_dimensions.")
+    }
+    assert targets == {
+        "overall_dimensions.length_x",
+        "overall_dimensions.width_y",
+        "overall_dimensions.height_z",
+    }
     assert compiled.unresolved_evidence == []

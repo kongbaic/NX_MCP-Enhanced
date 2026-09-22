@@ -120,6 +120,7 @@ class CaptureUnresolvedEvidence(_StrictCaptureModel):
     reason: str = Field(min_length=1)
     entity_ids: list[str] = Field(default_factory=list)
     dimension_id: str | None = None
+    dimension_value: float | None = Field(default=None, gt=0)
     field: str | None = None
     axis: Axis | None = None
     source_ids: list[str] = Field(default_factory=list)
@@ -148,6 +149,33 @@ class ReaderCapture(_StrictCaptureModel):
     required_targets: list[CaptureRequiredTarget] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_evidence: list[CaptureUnresolvedEvidence] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strict_overall_dimensions(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        overall = value.get("overall_dimensions")
+        if not isinstance(overall, dict):
+            return value
+
+        allowed = {"length_x", "width_y", "height_z"}
+        extra = sorted(set(overall) - allowed)
+        if extra:
+            raise ValueError(
+                f"overall_dimensions contains unexpected fields {extra}"
+            )
+
+        for key in sorted(allowed):
+            if key not in overall:
+                continue
+            raw = overall[key]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(
+                    f"overall_dimensions.{key} must be a numeric scalar"
+                )
+        return value
 
     @field_validator("observations", mode="before")
     @classmethod
@@ -239,7 +267,6 @@ class ReaderCapture(_StrictCaptureModel):
                     f"required target references unknown entity {target.entity_id!r}"
                 )
 
-        dimension_set = {item.id for item in self.dimensions}
         for unresolved in self.unresolved_evidence:
             missing = [
                 item
@@ -249,14 +276,6 @@ class ReaderCapture(_StrictCaptureModel):
             if missing:
                 raise ValueError(
                     f"unresolved {unresolved.id!r} references unknown entities {missing}"
-                )
-            if (
-                unresolved.dimension_id is not None
-                and unresolved.dimension_id not in dimension_set
-            ):
-                raise ValueError(
-                    f"unresolved {unresolved.id!r} references unknown dimension "
-                    f"{unresolved.dimension_id!r}"
                 )
 
         ids = (
@@ -327,5 +346,14 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
             errors.append(
                 f"blocking unresolved {item.id!r} must use a structured kind"
             )
+        if item.kind == "dimension_endpoint":
+            if item.dimension_value is None:
+                errors.append(
+                    f"dimension unresolved {item.id!r} requires dimension_value"
+                )
+            if item.axis is None:
+                errors.append(
+                    f"dimension unresolved {item.id!r} requires axis"
+                )
 
     return errors

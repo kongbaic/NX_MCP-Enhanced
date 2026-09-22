@@ -48,6 +48,7 @@ async def test_stdio_entrypoint_negotiates_without_nx(tmp_path, mode):
         "NX_MCP_WORKSPACE": str(tmp_path),
         "NX_MCP_ENABLE_EXPERIMENTAL": "0",
         "NX_MCP_ENABLE_JOURNAL": "0",
+        "NX_MCP_BACKEND": "python",
     }
     parameters = StdioServerParameters(
         command=sys.executable,
@@ -82,6 +83,7 @@ async def test_stdio_structured_success_through_bridge(tmp_path, mode):
         "NX_MCP_WORKSPACE": str(tmp_path),
         "NX_MCP_ENABLE_EXPERIMENTAL": "0",
         "NX_MCP_ENABLE_JOURNAL": "0",
+        "NX_MCP_BACKEND": "python",
     }
     parameters = StdioServerParameters(
         command=sys.executable,

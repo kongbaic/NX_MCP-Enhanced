@@ -410,3 +410,54 @@ def test_stability_cli_writes_report_on_comparator_error(tmp_path: Path):
         "DraftAssemblyError" in error and "datum:A" in error
         for error in file_report["errors"]
     )
+
+
+def test_stability_ignores_duplicate_overall_dimension_observations():
+    base = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+    )
+    repeated = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        dimensions=[
+            DimensionObservation(
+                id="DX",
+                value=40,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="DY",
+                value=32,
+                axis="Y",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+            DimensionObservation(
+                id="DZ",
+                value=66,
+                axis="Z",
+                endpoints=[
+                    DimensionEndpoint(role="overall_min"),
+                    DimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+    )
+
+    report = compare_evidence_runs([base, repeated])
+
+    assert report.stable
+    assert report.unique_fingerprints == 1

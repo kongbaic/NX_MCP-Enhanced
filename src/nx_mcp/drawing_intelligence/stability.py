@@ -283,6 +283,7 @@ def _reader_unresolved_signatures(graph: EvidenceGraph) -> list[dict[str, Any]]:
             "axis": item.get("axis"),
             "target": item.get("target"),
             "targets": sorted(item.get("targets") or []),
+            "candidates": _canon(item.get("candidates")),
             "required_for_modeling": item.get(
                 "required_for_modeling",
                 True,

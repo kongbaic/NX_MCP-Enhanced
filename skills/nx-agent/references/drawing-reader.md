@@ -62,7 +62,7 @@ Reader 可以：
 
 Reader 不得：
 
-- 创建 `F_MAIN`、`F_BORE`、`F_HOLE20` 之类最终 physical feature ID；
+- 创建任何最终 physical feature ID（例如自行命名的 `F_FINAL_01`）；
 - 在不同 view 之间靠命名强行维持同一 feature；
 - 输出任何 `feature:...` final target；
 - 根据 overall dimensions 手算 centered global coordinate；

@@ -94,7 +94,7 @@ python_exe -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <dr
 
 该程序不得读取工程图，不得访问旧 plan / report / NX model。
 
-只有 process exit code=0、written=true、schema_valid=true 才进入 A4。
+只有 process exit code=0、written=true、schema_valid=true、contract_valid=true 才进入 A4。
 blocking unresolved 可以保留在 drawing-evidence.json，由 resolve 正式判定 closure。
 
 如果 link-capture 返回非零：

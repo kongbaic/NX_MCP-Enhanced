@@ -98,6 +98,9 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     for item in capture.required_targets:
         referenced.add(item.entity_id)
 
+    for item in capture.unresolved_evidence:
+        referenced.update(item.entity_ids)
+
     return referenced
 
 
@@ -271,6 +274,44 @@ def _association_components(
         unresolved,
         ignored_orphan_profiles,
     )
+
+
+def _linked_reader_unresolved(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+
+    for item in capture.unresolved_evidence:
+        feature_ids = sorted(
+            {
+                entity_to_feature[entity_id]
+                for entity_id in item.entity_ids
+                if entity_id in entity_to_feature
+            }
+        )
+        record: dict[str, Any] = {
+            "id": item.id,
+            "kind": item.kind,
+            "reason": item.reason,
+            "required_for_modeling": item.required_for_modeling,
+            "source_ids": item.source_ids,
+        }
+
+        if feature_ids:
+            record["feature_ids"] = feature_ids
+        if item.dimension_id is not None:
+            record["capture_dimension_id"] = item.dimension_id
+        if item.dimension_value is not None:
+            record["dimension_value"] = item.dimension_value
+        if item.field is not None:
+            record["field"] = item.field
+        if item.axis is not None:
+            record["axis"] = item.axis
+
+        result.append(record)
+
+    return result
 
 
 def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
@@ -470,7 +511,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             },
         ],
         unresolved_evidence=[
-            *capture.unresolved_evidence,
+            *_linked_reader_unresolved(capture, entity_to_feature),
             *unresolved,
         ],
     )

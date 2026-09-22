@@ -41,7 +41,7 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
-读取 drawing-reader.md 与 nx-drawing-rules.md。
+读取 drawing-reader.md、reader-capture-contract.md 与 nx-drawing-rules.md。
 
 ### A1. Reader Capture
 
@@ -49,12 +49,32 @@ Reader 只从当前上传工程图生成一次 reader-capture.json。
 
 - reader-capture.json 是 immutable first-pass visual evidence artifact；
 - Reader 只创建 view-local entity，不创建最终 physical feature ID；
-- Reader 只在有明确视觉证据时写 association claim；
+- Reader 对 cross-view association 只记录结构化 visual basis，由 deterministic linker 决定是否足够 merge；
+- entity_center endpoint 必须记录 centerline / center_mark / explicit_midline visual basis；
+- blocking unresolved 必须使用 structured unresolved kind；不能只写自由文本 reason；
+- 新 capture 的 required_targets 固定为 []；
 - Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json；
 - Reader 不做 centered global coordinate arithmetic；
-- Reader 不从 linker / Gate 0 / Resolver / Gate A 错误反向修正 capture。
+- Reader 不从 check-capture / linker / Gate 0 / Resolver / Gate A 错误反向修正 capture。
 
-### A2. Deterministic identity link + Gate 0
+### A2. Authoritative Capture check
+
+capture 写出后立即执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence check-capture <reader-capture.json>
+~~~
+
+只有以下条件全部成立才进入 A3：
+
+- process exit code = 0；
+- schema_valid = true；
+- contract_valid = true；
+- errors = []。
+
+其它结果立即 BLOCKED / STOP；禁止重新看图、重写 capture 或生成第二版 capture。
+
+### A3. Deterministic identity link + Gate 0
 
 立即使用 runtime-config 指定的 python_exe 执行：
 
@@ -74,7 +94,7 @@ python_exe -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <dr
 
 该程序不得读取工程图，不得访问旧 plan / report / NX model。
 
-只有 process exit code=0、written=true、schema_valid=true 才进入 A3。
+只有 process exit code=0、written=true、schema_valid=true 才进入 A4。
 blocking unresolved 可以保留在 drawing-evidence.json，由 resolve 正式判定 closure。
 
 如果 link-capture 返回非零：
@@ -86,7 +106,7 @@ blocking unresolved 可以保留在 drawing-evidence.json，由 resolve 正式�
 - 禁止 Edit/Rewrite capture/evidence；
 - 禁止继续 Resolver / Gate A / Planner。
 
-### A3. Deterministic compile / resolve
+### A4. Deterministic compile / resolve
 
 立即使用 runtime-config 指定的 python_exe 执行：
 
@@ -104,7 +124,7 @@ python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <seman
 
 该程序不得读取工程图，不得访问旧 plan / report / NX model。
 
-只有以下条件全部成立才进入 A4：
+只有以下条件全部成立才进入 A5：
 - process exit code = 0；
 - written = true；
 - ok = true；
@@ -121,7 +141,7 @@ python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <seman
 - 禁止 Edit/Rewrite capture、evidence 或 draft；
 - 禁止继续 canonicalizer / Planner。
 
-### A4. Canonicalizer + Gate A
+### A5. Canonicalizer + Gate A
 
 只在 A3 PASS 后执行：
 
@@ -168,6 +188,7 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 ~~~text
 当前上传工程图
 → reader-capture.json
+→ check-capture
 → deterministic identity link / Gate 0
 → drawing-evidence.json
 → deterministic resolve

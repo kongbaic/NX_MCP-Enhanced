@@ -212,6 +212,24 @@ def _feature_id(signature: dict[str, Any]) -> str:
     return "F_" + hashlib.sha256(payload).hexdigest()[:16].upper()
 
 
+def _association_basis_sufficient(basis: list[str]) -> bool:
+    kinds = set(basis)
+
+    if "explicit_section_correspondence" in kinds:
+        return True
+
+    supporting = {
+        "shared_centerline",
+        "shared_center_mark",
+        "matching_specification",
+        "leader_correspondence",
+    }
+    return (
+        "projection_alignment" in kinds
+        and bool(kinds & supporting)
+    )
+
+
 def _association_components(
     capture: ReaderCapture,
 ) -> tuple[list[list[str]], list[dict[str, Any]], list[str]]:
@@ -248,10 +266,32 @@ def _association_components(
             unresolved.append(
                 {
                     "id": f"U_ASSOC_{association.id}",
+                    "kind": "association_structure",
                     "reason": (
                         "association contains multiple view-local entities from "
                         f"the same view: {duplicate_views}"
                     ),
+                    "entity_ids": list(association.entity_ids),
+                    "required_for_modeling": association.required_for_modeling,
+                    "evidence": [
+                        association.id,
+                        *association.source_ids,
+                    ],
+                }
+            )
+            continue
+
+        if not _association_basis_sufficient(association.basis):
+            unresolved.append(
+                {
+                    "id": f"U_ASSOC_EVIDENCE_{association.id}",
+                    "kind": "association_evidence",
+                    "reason": (
+                        "association visual basis is insufficient for "
+                        "deterministic physical merge"
+                    ),
+                    "basis": sorted(association.basis),
+                    "entity_ids": list(association.entity_ids),
                     "required_for_modeling": association.required_for_modeling,
                     "evidence": [
                         association.id,
@@ -512,7 +552,25 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         ],
         unresolved_evidence=[
             *_linked_reader_unresolved(capture, entity_to_feature),
-            *unresolved,
+            *[
+                {
+                    **item,
+                    **(
+                        {
+                            "feature_ids": sorted(
+                                {
+                                    entity_to_feature[entity_id]
+                                    for entity_id in item.get("entity_ids", [])
+                                    if entity_id in entity_to_feature
+                                }
+                            )
+                        }
+                        if item.get("entity_ids")
+                        else {}
+                    ),
+                }
+                for item in unresolved
+            ],
         ],
     )
 
@@ -520,6 +578,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         "capture_entities": len(capture.entities),
         "physical_components": len(components),
         "association_claims": len(capture.associations),
+        "rejected_associations": sum(
+            1
+            for item in unresolved
+            if str(item.get("id", "")).startswith("U_ASSOC")
+        ),
         "ignored_orphan_profiles": len(ignored_orphan_profiles),
         "identity_collisions": len(collision_ids),
         "blocking_unresolved": sum(

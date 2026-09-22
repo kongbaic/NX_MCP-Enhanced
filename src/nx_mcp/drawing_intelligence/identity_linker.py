@@ -647,6 +647,21 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     )
                 }
             )
+            unresolved_kinds = sorted(
+                {
+                    endpoint.unresolved_kind
+                    for endpoint in item.endpoints
+                    if (
+                        endpoint.role == "unresolved"
+                        and endpoint.unresolved_kind is not None
+                    )
+                }
+            )
+            endpoint_source_ids = [
+                source_id
+                for endpoint in item.endpoints
+                for source_id in endpoint.source_ids
+            ]
             unresolved.append(
                 {
                     "id": f"U_DIM_{item.id}",
@@ -658,7 +673,10 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     "capture_dimension_id": item.id,
                     "dimension_value": item.value,
                     "axis": item.axis,
-                    "source_ids": item.source_ids,
+                    "endpoint_unresolved_kinds": unresolved_kinds,
+                    "source_ids": list(
+                        dict.fromkeys([*item.source_ids, *endpoint_source_ids])
+                    ),
                 }
             )
             continue
@@ -710,6 +728,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             )
             continue
 
+        endpoint_source_ids = [
+            source_id
+            for endpoint in item.endpoints
+            for source_id in endpoint.source_ids
+        ]
         dimensions.append(
             DimensionObservation(
                 id=item.id,
@@ -717,7 +740,9 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 axis=item.axis,
                 endpoints=endpoints,
                 direction=item.direction,
-                source_ids=item.source_ids,
+                source_ids=list(
+                    dict.fromkeys([*item.source_ids, *endpoint_source_ids])
+                ),
                 required_for_modeling=item.required_for_modeling,
             )
         )

@@ -347,6 +347,13 @@ Allowed endpoint roles:
 - `entity_center`
 - `unresolved`
 
+Every endpoint of a modeling-critical dimension in a multi-view production
+capture must carry its own non-empty `source_ids`. Dimension-level
+`source_ids` identify the callout as a whole; endpoint `source_ids` identify
+the actual witness / extension / center-reference evidence used for that
+specific endpoint. A dimension-level source token does not substitute for
+endpoint witness provenance.
+
 The Reader determines endpoint ownership only from actual arrows, witness
 lines, extension lines, center marks, and other visible dimension geometry.
 Each endpoint must be traced independently from the dimension line/arrow
@@ -387,11 +394,21 @@ For `role="unresolved"`:
 
 - `entity_id` is forbidden;
 - `basis` is forbidden;
+- production multi-view capture must set one structured `unresolved_kind`:
+  - `intermediate_surface` — witness terminates on a visible local/intermediate
+    surface that is not an overall boundary or feature center;
+  - `ambiguous_owner` — witness could belong to more than one supported
+    view-local center candidate;
+  - `unsupported_reference` — witness terminates on a clear reference that
+    Capture v2 cannot otherwise encode;
+- `ambiguous_owner` requires non-empty `candidate_entity_ids`;
+- `intermediate_surface` and `unsupported_reference` must keep
+  `candidate_entity_ids=[]`; do not attach a nearby feature merely because it
+  is geometrically convenient;
 - `candidate_entity_ids` may list only candidates supported by the visible
   annotation geometry;
-- `candidate_entity_ids` may be empty when the endpoint is a local or
-  intermediate surface Capture v2 cannot identify;
-- the enclosing dimension must include `unresolved_reason`.
+- the enclosing dimension must include `unresolved_reason`;
+- every unresolved endpoint still requires its own non-empty `source_ids`.
 
 For repeated or overlapping projections, do not assign member centers by
 symmetry, count, matching pitch/span values, or engineering expectation.

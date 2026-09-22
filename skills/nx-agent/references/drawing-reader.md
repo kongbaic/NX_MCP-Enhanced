@@ -225,7 +225,9 @@ entity 的 center reference 时才能使用，而且必须写 basis：
 ~~~json
 {
   "role": "unresolved",
-  "candidate_entity_ids": ["E_SIDE_01", "E_SIDE_02"]
+  "unresolved_kind": "ambiguous_owner",
+  "candidate_entity_ids": ["E_SIDE_01", "E_SIDE_02"],
+  "source_ids": ["OBS_DIM_WITNESS"]
 }
 ~~~
 
@@ -252,8 +254,17 @@ entity 的 center reference 时才能使用，而且必须写 basis：
 - 不把它改成 overall；
 - 不把它改成 entity center；
 - 使用 unresolved endpoint；
-- candidate_entity_ids 可以为空；
+- visible intermediate surface 使用
+  `unresolved_kind="intermediate_surface"`；
+- 其它 schema 无法表达但清晰可见的 reference 使用
+  `unresolved_kind="unsupported_reference"`；
+- candidate_entity_ids 必须为空；
+- 每个 endpoint 写自己的 source_ids，指向实际 witness / extension geometry；
 - 用 unresolved_reason 说明 visible ownership 为什么不可表达。
+
+如果是多个 center owner 之间无法唯一选择，则使用
+`unresolved_kind="ambiguous_owner"`，并只列出真实 witness geometry 支持的
+candidate_entity_ids。
 
 linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking
 unresolved，不会替 Reader 猜 endpoint。
@@ -414,8 +425,10 @@ Reader 写出前还要检查：
 - associated / unresolved / single_view 是否和 association / unresolved evidence 自洽；
 - direct value 是否绑定到正确 local entity；
 - 每个 modeling-critical 可见尺寸是否在 dimensions[] 中恰好出现一次；
+- 每个 modeling-critical dimension endpoint 是否有自己的非空 source_ids；
 - dimension endpoint 是否由真实标注 geometry 支持；
-- 不确定 endpoint 是否使用 role="unresolved" + unresolved_reason；
+- 不确定 endpoint 是否使用 role="unresolved" + unresolved_kind +
+  unresolved_reason；
 - association 是否有明确跨视图证据；
 - required_targets 是否为 []；
 - modeling-critical 缺失语义是否进入 structured unresolved_evidence；

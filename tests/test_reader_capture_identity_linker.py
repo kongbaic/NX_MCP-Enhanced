@@ -104,11 +104,15 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
                 value=40,
                 axis="Z",
                 endpoints=[
-                    CaptureDimensionEndpoint(role="overall_min"),
+                    CaptureDimensionEndpoint(
+                        role="overall_min",
+                        source_ids=[f"{prefix}_SRC_Z40_MIN"],
+                    ),
                     CaptureDimensionEndpoint(
                         role="entity_center",
                         entity_id=front,
                         basis="centerline",
+                        source_ids=[f"{prefix}_SRC_Z40_CENTER"],
                     ),
                 ],
                 source_ids=[f"{prefix}_SRC_Z40"],
@@ -532,11 +536,13 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
                             "role": "entity_center",
                             "entity_id": "E_FRONT_05",
                             "basis": "centerline",
+                            "source_ids": ["OBS_D04_LEFT"],
                         },
                         {
                             "role": "entity_center",
                             "entity_id": "E_FRONT_06",
                             "basis": "centerline",
+                            "source_ids": ["OBS_D04_RIGHT"],
                         },
                     ],
                     "source_ids": ["OBS_DIM_D04"],
@@ -1570,10 +1576,15 @@ def test_unresolved_dimension_endpoint_is_normalized_by_linker():
                 value=16,
                 axis="Y",
                 endpoints=[
-                    CaptureDimensionEndpoint(role="overall_max"),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["OBS_D1_OVERALL_MAX"],
+                    ),
                     CaptureDimensionEndpoint(
                         role="unresolved",
                         candidate_entity_ids=["E1"],
+                        unresolved_kind="ambiguous_owner",
+                        source_ids=["OBS_D1_AMBIGUOUS"],
                     ),
                 ],
                 unresolved_reason="visible endpoint does not uniquely own a center",
@@ -1672,11 +1683,13 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
                         role="entity_center",
                         entity_id="EF",
                         basis="centerline",
+                        source_ids=["OBS_D_COLLAPSE_FRONT"],
                     ),
                     CaptureDimensionEndpoint(
                         role="entity_center",
                         entity_id="ES",
                         basis="centerline",
+                        source_ids=["OBS_D_COLLAPSE_SIDE"],
                     ),
                 ],
                 source_ids=["OBS_D_COLLAPSE"],
@@ -2386,3 +2399,155 @@ def test_unresolved_basis_is_preserved_and_compared():
     assert report.stable is False
     assert "unresolved_semantics" in report.changed_sections[2]
     assert report.unresolved_semantic_drift
+
+
+
+def test_multiview_dimension_endpoint_witness_contract_is_structured():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+                source_ids=["OBS_E1"],
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="unresolved",
+                        unresolved_kind="intermediate_surface",
+                        source_ids=["OBS_STEP_WITNESS"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["OBS_OUTER_WITNESS"],
+                    ),
+                ],
+                unresolved_reason="first witness terminates on intermediate surface",
+                source_ids=["OBS_DIM_8"],
+            )
+        ],
+    )
+
+    assert validate_reader_capture_contract(capture) == []
+
+    linked = link_reader_capture(capture)
+    item = next(
+        entry
+        for entry in linked.evidence.unresolved_evidence
+        if entry.get("kind") == "dimension_endpoint"
+    )
+    assert item["endpoint_unresolved_kinds"] == ["intermediate_surface"]
+    assert "OBS_STEP_WITNESS" in item["source_ids"]
+    assert "OBS_OUTER_WITNESS" in item["source_ids"]
+
+
+def test_multiview_dimension_endpoint_contract_rejects_untraceable_or_malformed_unresolved():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+                source_ids=["OBS_E1"],
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="unresolved",
+                        candidate_entity_ids=["E1"],
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+                unresolved_reason="ownership not resolved",
+                source_ids=["OBS_DIM_8"],
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any("endpoint 0 requires non-empty source_ids" in item for item in errors)
+    assert any("endpoint 1 requires non-empty source_ids" in item for item in errors)
+    assert any("unresolved endpoint 0 requires unresolved_kind" in item for item in errors)
+
+
+def test_intermediate_surface_endpoint_cannot_carry_feature_candidates():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["OBS_VF"]),
+            CaptureView(id="VS", kind="side", source_ids=["OBS_VS"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+                source_ids=["OBS_E1"],
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D1",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="unresolved",
+                        unresolved_kind="intermediate_surface",
+                        candidate_entity_ids=["E1"],
+                        source_ids=["OBS_STEP_WITNESS"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["OBS_OUTER_WITNESS"],
+                    ),
+                ],
+                unresolved_reason="witness terminates on intermediate surface",
+                source_ids=["OBS_DIM_8"],
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert any(
+        "intermediate_surface endpoint 0 must not carry candidate_entity_ids" in item
+        for item in errors
+    )

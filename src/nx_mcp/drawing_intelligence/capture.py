@@ -106,6 +106,11 @@ DimensionEndpointEvidenceKind = Literal[
     "center_mark",
     "explicit_midline",
 ]
+CaptureEndpointUnresolvedKind = Literal[
+    "intermediate_surface",
+    "ambiguous_owner",
+    "unsupported_reference",
+]
 
 
 class CaptureDimensionEndpoint(_StrictCaptureModel):
@@ -113,6 +118,8 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
     entity_id: str | None = None
     candidate_entity_ids: list[str] = Field(default_factory=list)
     basis: DimensionEndpointEvidenceKind | None = None
+    unresolved_kind: CaptureEndpointUnresolvedKind | None = None
+    source_ids: list[str] = Field(default_factory=list)
 
     @field_validator("candidate_entity_ids")
     @classmethod
@@ -130,6 +137,10 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
                 raise ValueError(
                     "entity_center endpoint must not carry candidate_entity_ids"
                 )
+            if self.unresolved_kind is not None:
+                raise ValueError(
+                    "entity_center endpoint must not carry unresolved_kind"
+                )
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_id is not None:
                 raise ValueError(f"{self.role} endpoint must not carry entity_id")
@@ -138,6 +149,10 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
             if self.candidate_entity_ids:
                 raise ValueError(
                     f"{self.role} endpoint must not carry candidate_entity_ids"
+                )
+            if self.unresolved_kind is not None:
+                raise ValueError(
+                    f"{self.role} endpoint must not carry unresolved_kind"
                 )
         else:
             if self.entity_id is not None:
@@ -610,6 +625,31 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
                     f"modeling-critical dimension {dimension.id!r} requires "
                     "non-empty source_ids in multi-view capture"
                 )
+            if dimension.required_for_modeling:
+                for endpoint_index, endpoint in enumerate(dimension.endpoints):
+                    if not endpoint.source_ids:
+                        errors.append(
+                            f"modeling-critical dimension {dimension.id!r} endpoint "
+                            f"{endpoint_index} requires non-empty source_ids"
+                        )
+                    if endpoint.role == "unresolved":
+                        if endpoint.unresolved_kind is None:
+                            errors.append(
+                                f"dimension {dimension.id!r} unresolved endpoint "
+                                f"{endpoint_index} requires unresolved_kind"
+                            )
+                        elif endpoint.unresolved_kind == "ambiguous_owner":
+                            if not endpoint.candidate_entity_ids:
+                                errors.append(
+                                    f"dimension {dimension.id!r} ambiguous_owner "
+                                    f"endpoint {endpoint_index} requires candidate_entity_ids"
+                                )
+                        elif endpoint.candidate_entity_ids:
+                            errors.append(
+                                f"dimension {dimension.id!r} "
+                                f"{endpoint.unresolved_kind} endpoint {endpoint_index} "
+                                "must not carry candidate_entity_ids"
+                            )
         for alignment in capture.datum_alignments:
             if alignment.required_for_modeling and not alignment.source_ids:
                 errors.append(

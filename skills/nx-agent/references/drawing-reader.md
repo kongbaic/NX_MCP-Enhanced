@@ -91,6 +91,7 @@ Reader 不得：
   "id": "E_FRONT_01",
   "view_id": "V_FRONT",
   "shape": "circle",
+  "cross_view_disposition": "associated",
   "source_ids": ["OBS_FRONT_01"],
   "required_for_modeling": true
 }
@@ -126,6 +127,16 @@ Reader 只记录标准化 visual basis：
 
 最终是否 merge 由 deterministic identity linker 决定。
 
+对于包含多个标准视图的图纸，每个 modeling-critical local entity 都必须完成一次
+cross-view census，并显式写入 `cross_view_disposition`：
+
+- `associated`：该 entity 已进入一个有结构化 basis 的 association；
+- `unresolved`：存在合理候选，但不能唯一确认，并且必须进入
+  `cross_view_identity` / `member_identity` blocking unresolved；
+- `single_view`：已经检查其它标准视图，没有合理的 modeling-relevant counterpart。
+
+不能用“associations 里没写东西”代替 cross-view 判断结果。
+
 标准正交视图中：
 
 - projection_alignment 单独不够；
@@ -136,7 +147,12 @@ Reader 只记录标准化 visual basis：
 
 - 不靠 AI 主观补 merge；
 - linker 保持实体分离；
-- 如影响建模，进入 blocking unresolved。
+- affected entity 标记 `cross_view_disposition="unresolved"`；
+- 如影响建模，进入 `cross_view_identity` / `member_identity`
+  blocking unresolved。
+
+如果完整检查其它标准视图后不存在合理 counterpart，则明确标记
+`cross_view_disposition="single_view"`。
 
 ## 6. Dimension ownership
 

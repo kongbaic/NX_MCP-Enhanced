@@ -110,6 +110,13 @@ The Reader must not:
 
 The first immutable artifact is `reader-capture.json`.
 
+The capture artifact is authoritative for benchmark completion. Agent/chat final
+text is not authoritative. In particular, absence of a final
+`FIRST_PASS_FROZEN = YES` message does not by itself fail or invalidate a run.
+
+Do not send a follow-up prompt merely to obtain a missing final acknowledgement.
+If the target capture exists, continue with the external artifact checks below.
+
 ## 5. Capture production gate
 
 Before its single write, the Reader contract requires in-memory production
@@ -290,6 +297,9 @@ boundary:
 - stop: first immutable capture write completes / the Reader task ends without
   a valid capture.
 
+A delayed, missing, truncated or suppressed Agent final response does not extend
+the Reader timing boundary after the immutable capture has already been written.
+
 Do not compare latency across different benchmark revisions as if conditions
 were identical.
 
@@ -298,6 +308,10 @@ were identical.
 A run that fails schema/contract, produces no capture, rewrites its capture,
 reads forbidden history, requires a follow-up prompt to reinterpret the
 drawing, or otherwise violates isolation remains a failed run.
+
+A missing Agent final acknowledgement alone is not a failed run. Do not replace
+or rerun a valid immutable capture merely because the chat UI did not display
+the expected final line.
 
 Do not discard it and insert a replacement while claiming the original
 benchmark run count.

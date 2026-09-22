@@ -2014,3 +2014,130 @@ def test_identity_ambiguity_remains_fieldless_cross_view_unresolved():
 
     assert item.field is None
     assert item.entity_ids == ["E_FRONT", "E_SIDE"]
+
+def test_reader_capture_rejects_inconsistent_opposite_overall_dimension_chain():
+    with pytest.raises(
+        ValidationError,
+        match="resolved overall-boundary dimensions",
+    ):
+        ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[CaptureView(id="VF", kind="front")],
+            entities=[
+                CaptureEntity(
+                    id="E_CENTER",
+                    view_id="VF",
+                    shape="circle",
+                )
+            ],
+            dimensions=[
+                CaptureDimension(
+                    id="D_FROM_MIN",
+                    value=40,
+                    axis="Z",
+                    endpoints=[
+                        CaptureDimensionEndpoint(role="overall_min"),
+                        CaptureDimensionEndpoint(
+                            role="entity_center",
+                            entity_id="E_CENTER",
+                            basis="centerline",
+                        ),
+                    ],
+                ),
+                CaptureDimension(
+                    id="D_FROM_MAX",
+                    value=18,
+                    axis="Z",
+                    endpoints=[
+                        CaptureDimensionEndpoint(
+                            role="entity_center",
+                            entity_id="E_CENTER",
+                            basis="centerline",
+                        ),
+                        CaptureDimensionEndpoint(role="overall_max"),
+                    ],
+                ),
+            ],
+        )
+
+
+def test_reader_capture_accepts_consistent_opposite_overall_dimension_chain():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_CENTER",
+                view_id="VF",
+                shape="circle",
+            )
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_FROM_MIN",
+                value=48,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(role="overall_min"),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_CENTER",
+                        basis="centerline",
+                    ),
+                ],
+            ),
+            CaptureDimension(
+                id="D_FROM_MAX",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_CENTER",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+    )
+
+    assert len(capture.dimensions) == 2
+
+
+def test_reader_capture_rejects_other_shape_for_cylindrical_semantics():
+    with pytest.raises(
+        ValidationError,
+        match="must use circle/concentric_circles/hidden_parallel",
+    ):
+        ReaderCapture(
+            overall_dimensions=OverallDimensions(
+                length_x=40,
+                width_y=32,
+                height_z=66,
+            ),
+            views=[CaptureView(id="VF", kind="front")],
+            entities=[
+                CaptureEntity(
+                    id="E_HOLE",
+                    view_id="VF",
+                    shape="other",
+                )
+            ],
+            values=[
+                CaptureValue(
+                    id="S_THREAD",
+                    entity_id="E_HOLE",
+                    field="thread_spec",
+                    value="M6",
+                )
+            ],
+        )

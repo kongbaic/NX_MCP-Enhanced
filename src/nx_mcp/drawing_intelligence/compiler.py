@@ -235,17 +235,11 @@ def _compile_overall_dimension(
             evidence=[observation.id, *observation.source_ids],
         )
         return True
-    _append_direct(
-        direct,
-        unresolved,
-        DirectValueEvidence(
-            id=observation.id,
-            target=target,
-            value=observation.value,
-            semantic="overall_dimension",
-            source_ids=observation.source_ids,
-        ),
-    )
+    # The top-level overall_dimensions object is the canonical writer.
+    # A matching overall-min↔overall-max observation is corroborating evidence,
+    # not a second semantic writer. Keeping it out of direct_values makes
+    # captures that repeat the printed overall callout equivalent to captures
+    # that record the same extent only in overall_dimensions.
     return True
 
 

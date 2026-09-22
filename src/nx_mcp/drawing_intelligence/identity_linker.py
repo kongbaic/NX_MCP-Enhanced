@@ -167,39 +167,16 @@ def _component_signature(
         key=lambda item: json.dumps(item, sort_keys=True),
     )
 
-    values = sorted(
-        [
-            {
-                "field": _canonical_field(
-                    capture,
-                    item.entity_id,
-                    item.field,
-                ),
-                "value": _canon(item.value),
-                "semantic": item.semantic,
-            }
-            for item in capture.values
-            if item.entity_id in entity_set
-        ],
-        key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
-    )
-
-    datums = sorted(
-        [
-            {
-                "axis": item.axis,
-                "datum": item.datum,
-            }
-            for item in capture.datum_alignments
-            if item.entity_id in entity_set
-        ],
-        key=lambda item: json.dumps(item, sort_keys=True),
-    )
-
+    # Physical identity must not depend on semantic payload that stability
+    # comparison is itself trying to measure. Direct values and datum
+    # alignments can legitimately be missing or disputed between independent
+    # Reader runs; including them in the feature-id hash turns value/datum drift
+    # into artificial identity churn. Projection topology is the structural
+    # identity signature. Structurally indistinguishable disconnected
+    # components are handled separately by the identity-collision fail-closed
+    # path below.
     return {
         "projections": projections,
-        "values": values,
-        "datums": datums,
     }
 
 

@@ -36,7 +36,7 @@
 | hidden line | 不可见边或孔的轴向投影候选 |
 | datum symbol | datum/boundary endpoint 候选 |
 
-邻近文字、相同数字和视觉距离不能替代 endpoint/leader evidence。实际 ownership 只按 `drawing-reader.md` 的 endpoint decision table 判定。
+邻近文字、相同数字和视觉距离不能替代 endpoint/leader evidence。实际 ownership 只按 `drawing-reader.md` 的 endpoint decision table 判定。重复特征在某一视图重叠投影时，明确共享中心线可以作为该 grouped projection 的 projected center reference，但不能据此猜测各 member 在被投影掉的轴向坐标。
 
 endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、profile boundary↔profile boundary；这些词汇不在本文件决定 direct/relation/derived representation。
 

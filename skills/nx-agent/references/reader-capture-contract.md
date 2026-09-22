@@ -10,7 +10,7 @@ Reader Capture v2 separates three concerns that must not be mixed:
 
 The visual Reader records only view-local observations and explicit visual
 association evidence. It does not invent final physical feature IDs such as
-`F_MAIN_HOLE`, does not calculate global coordinates, and does not choose a
+`F_FINAL_01`, does not calculate global coordinates, and does not choose a
 geometric solution.
 
 The fixed front-end chain is:

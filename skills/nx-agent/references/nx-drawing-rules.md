@@ -98,7 +98,7 @@ endpoint pair 识别词汇包括 datum→centerline、centerline↔centerline、
 
 Closure is validation only：不创建 source/writer，不补 concrete coordinate，不改变 endpoint ownership，不推导缺失 geometry。具体状态和 canonical validation 由 `drawing-reader.md` 定义。
 
-- 整图一次读取；禁止像素比例、轮廓测量、Hough/OpenCV 二次估算。
+- benchmark 的 first-pass 是一个连续 interpretation session；写盘前可对当前原图反复查看、放大和分区核对，但禁止读取 downstream/历史结果后重新 interpretation；禁止像素比例、轮廓测量、Hough/OpenCV 估算。
 - 只有 schema 本身允许为空、且确实不影响唯一实体的可选信息，才可为 `null / required_for_modeling=false`；不得把此规则用于 `ReaderCapture.overall_dimensions.length_x / width_y / height_z` 等生产 schema 要求为正数的必填字段。
 - 影响实体且无法读取的内容必须交由 HARD inventory 进入 blocking unresolved。
 - 不输出 bbox 标注图、HTML、图例、质量报告或额外文档。

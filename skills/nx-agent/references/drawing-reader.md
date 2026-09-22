@@ -227,7 +227,13 @@ entity 的 center reference 时才能使用，而且必须写 basis：
   独立可追踪的 witness/extension → center reference；
 - 任一端无法独立追踪时，该端必须 unresolved；
 - member center 不能唯一对应时使用 unresolved endpoint；
-- candidate_entity_ids 只列 visible annotation geometry 真正支持的候选。
+- grouped repeated entity 若在当前 view 中表现为重叠投影，并且 visible
+  dimension witness/extension line 明确落到该组共享投影 centerline/center mark，
+  允许把该 grouped entity 作为 entity_center；count>1 本身不使该 endpoint
+  失效；
+- candidate_entity_ids 只列 visible annotation geometry 真正支持的候选；
+- witness 若落在 profile/intermediate face，则不要因为附近有 feature centerline
+  就把该 feature 填进 candidate_entity_ids。
 
 如果箭头落在当前 schema 无法表达的 local/intermediate surface：
 
@@ -260,6 +266,16 @@ feature:F_XXX.diameter
 ~~~
 
 最终 target 由 linker 生成。
+
+Direct value 只绑定到“该可见 callout / leader / specification 直接标注”的
+view-local entity：
+
+- 同一个 callout 不跨视图复制到另一个 local entity；
+- identity 尚未唯一建立时，不把一侧的 value 传播到另一侧候选；
+- 数量/组规格（例如 N×同规格孔）若直接标注 grouped projection，则 value 与
+  count 只写在该 grouped local entity 上；
+- 不能把 grouped callout 自动展开成 N 个 individual-member direct values，
+  除非每个 member 都有独立、可追踪的本地标注证据。
 
 新 Reader 必须使用固定字段：
 
@@ -358,8 +374,10 @@ Reader 写出前还要检查：
 
 - overall_dimensions 三轴是否均为正数且来自图纸直接标注；
 - 对每个 modeling-critical entity 的可见 centerline / center mark 完成 datum census：
-  只有明确与 overall center datum 重合时才写 datum_alignments，所有明确 positive
-  alignment 不得遗漏；仅“看起来居中”不得写；
+  只有图纸明确把 feature center 与 overall midpoint 建立关系时才写
+  datum_alignments；可接受证据包括明确的对称/等距尺寸、明确总体中心基准或其它
+  可追踪的中心绑定标注。仅视觉居中、共享中心线、与槽/轮廓对齐、或因为 overall
+  width 看起来被二等分，都不得写 overall_center datum；
 - 每个 view-local entity 是否只属于一个 view；
 - 每个 modeling-critical entity 是否有 cross_view_disposition；
 - associated / unresolved / single_view 是否和 association / unresolved evidence 自洽；
@@ -371,6 +389,10 @@ Reader 写出前还要检查：
 - required_targets 是否为 []；
 - modeling-critical 缺失语义是否进入 structured unresolved_evidence；
 - blocking unresolved 是否使用明确 kind，而不是只写自由文本 reason；
+- 若不确定的是“两个/多个 local entities 是否属于同一 physical identity”，是否
+  使用 cross_view_identity / member_identity，而不是 feature_value；
+- feature_value 是否只用于 identity 已确定、但某一个明确 field 的值本身仍不确定，
+  并且包含 exactly one entity_id + field；
 - 新 capture 是否没有 standalone kind="dimension_endpoint" unresolved；
 - ambiguity 是否显式 unresolved；
 - 没有 final feature ID；

@@ -103,3 +103,18 @@ Closure is validation only：不创建 source/writer，不补 concrete coordinat
 - 只有 schema 本身允许为空、且确实不影响唯一实体的可选信息，才可为 `null / required_for_modeling=false`；不得把此规则用于 `ReaderCapture.overall_dimensions.length_x / width_y / height_z` 等生产 schema 要求为正数的必填字段。
 - 影响实体且无法读取的内容必须交由 HARD inventory 进入 blocking unresolved。
 - 不输出 bbox 标注图、HTML、图例、质量报告或额外文档。
+
+
+## Orthographic identity completion
+
+For cylindrical features across standard orthographic views, a specification
+printed in one view may support the counterpart in another view when the
+projection census yields exactly one geometrically compatible, aligned
+counterpart. The callout need not be textually duplicated in both views.
+Complementary but different machining semantics remain identity-ambiguous and
+must not be treated as matching specifications.
+
+Resolved dimensions that locate the same center from opposite overall
+boundaries must be numerically consistent with the corresponding overall
+extent. An inconsistent chain is evidence that endpoint ownership was
+misread, not permission to choose one derived coordinate arbitrarily.

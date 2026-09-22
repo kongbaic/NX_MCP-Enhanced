@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .capture import ReaderCapture
+from .capture import ReaderCapture, validate_reader_capture_contract
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
@@ -52,6 +52,51 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
 
 
 
+def _cmd_check_capture(args: argparse.Namespace) -> int:
+    capture_path = str(Path(args.capture).resolve())
+    report: dict[str, Any] = {
+        "capture": capture_path,
+        "schema_valid": False,
+        "contract_valid": False,
+        "errors": [],
+    }
+
+    try:
+        raw = _load_json(capture_path)
+        capture = ReaderCapture.model_validate(raw)
+        report["schema_valid"] = True
+        contract_errors = validate_reader_capture_contract(capture)
+        if contract_errors:
+            report["errors"].extend(contract_errors)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
+        report["contract_valid"] = True
+        report.update(
+            {
+                "views": len(capture.views),
+                "entities": len(capture.entities),
+                "associations": len(capture.associations),
+                "values": len(capture.values),
+                "dimensions": len(capture.dimensions),
+                "datum_alignments": len(capture.datum_alignments),
+                "required_targets": len(capture.required_targets),
+                "unresolved_evidence": len(capture.unresolved_evidence),
+            }
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_link_capture(args: argparse.Namespace) -> int:
     capture_path = str(Path(args.capture).resolve())
     evidence_path = str(Path(args.out).resolve())
@@ -60,6 +105,7 @@ def _cmd_link_capture(args: argparse.Namespace) -> int:
         "drawing_evidence": evidence_path,
         "written": False,
         "schema_valid": False,
+        "contract_valid": False,
         "errors": [],
     }
 
@@ -73,6 +119,15 @@ def _cmd_link_capture(args: argparse.Namespace) -> int:
     try:
         raw = _load_json(capture_path)
         capture = ReaderCapture.model_validate(raw)
+        report["schema_valid"] = True
+
+        contract_errors = validate_reader_capture_contract(capture)
+        if contract_errors:
+            report["errors"].extend(contract_errors)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
+        report["contract_valid"] = True
+
         linked = link_reader_capture(capture)
 
         gate0 = write_strict_evidence(
@@ -96,6 +151,7 @@ def _cmd_link_capture(args: argparse.Namespace) -> int:
         {
             "written": True,
             "schema_valid": True,
+            "contract_valid": True,
             "capture_entities": linked.report["capture_entities"],
             "physical_components": linked.report["physical_components"],
             "association_claims": linked.report["association_claims"],
@@ -256,6 +312,13 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    check_capture = sub.add_parser(
+        "check-capture",
+        help="validate Reader Capture v2 schema and current production contract",
+    )
+    check_capture.add_argument("capture")
+    check_capture.set_defaults(func=_cmd_check_capture)
 
     link_capture = sub.add_parser(
         "link-capture",

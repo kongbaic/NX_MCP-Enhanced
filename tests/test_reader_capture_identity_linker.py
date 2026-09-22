@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
+    CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
     CaptureEntity,
@@ -1785,3 +1786,65 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
     ]
     assert len(blockers) == 1
     assert "transitive association component" in blockers[0]["reason"]
+
+
+def test_feature_id_ignores_direct_value_and_datum_payload():
+    base = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="circle",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="diameter",
+                value=20,
+            )
+        ],
+    )
+    changed = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF2", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E2",
+                view_id="VF2",
+                shape="circle",
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="S2",
+                entity_id="E2",
+                field="diameter",
+                value=25,
+            )
+        ],
+        datum_alignments=[
+            CaptureDatumAlignment(
+                id="DA1",
+                entity_id="E2",
+                axis="X",
+                datum="overall_center",
+            )
+        ],
+    )
+
+    first = link_reader_capture(base)
+    second = link_reader_capture(changed)
+
+    assert first.entity_to_feature["E1"] == second.entity_to_feature["E2"]

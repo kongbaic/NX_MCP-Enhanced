@@ -316,10 +316,9 @@ def _association_components(
     )
 
 
-def _direct_value_key(item: DirectValueEvidence) -> str:
+def _direct_value_equivalence_key(item: DirectValueEvidence) -> str:
     return json.dumps(
         {
-            "target": item.target,
             "value": _canon(item.value),
             "semantic": item.semantic,
         },
@@ -329,41 +328,112 @@ def _direct_value_key(item: DirectValueEvidence) -> str:
     )
 
 
-def _collapse_equivalent_direct_values(
+def _normalize_direct_values(
     items: list[DirectValueEvidence],
-) -> list[DirectValueEvidence]:
-    """Collapse cross-view duplicate confirmations without hiding conflicts.
+) -> tuple[list[DirectValueEvidence], list[dict[str, Any]]]:
+    """Normalize Reader direct writers without guessing.
 
-    Only target/value/semantic-identical writers are equivalent. Different
-    values or explicit semantics remain separate so frozen downstream conflict
-    handling can see them.
+    Equivalent cross-view confirmations collapse into one writer. Multiple
+    non-equivalent writers for the same physical target are quarantined as a
+    blocking unresolved record so frozen downstream never receives duplicate
+    writers and no candidate value is chosen.
     """
 
-    grouped: dict[str, list[DirectValueEvidence]] = defaultdict(list)
+    by_target: dict[str, list[DirectValueEvidence]] = defaultdict(list)
     for item in items:
-        grouped[_direct_value_key(item)].append(item)
+        by_target[item.target].append(item)
 
-    collapsed: list[DirectValueEvidence] = []
-    for key in sorted(grouped):
-        group = sorted(grouped[key], key=lambda item: item.id)
-        first = group[0].model_copy(deep=True)
-        if len(group) > 1:
+    normalized: list[DirectValueEvidence] = []
+    unresolved: list[dict[str, Any]] = []
+
+    for target in sorted(by_target):
+        target_items = sorted(by_target[target], key=lambda item: item.id)
+        by_equivalence: dict[str, list[DirectValueEvidence]] = defaultdict(list)
+        for item in target_items:
+            by_equivalence[_direct_value_equivalence_key(item)].append(item)
+
+        if len(by_equivalence) > 1:
+            candidate_records = sorted(
+                [
+                    {
+                        "value": _canon(group[0].value),
+                        "semantic": group[0].semantic,
+                    }
+                    for group in by_equivalence.values()
+                ],
+                key=lambda item: json.dumps(
+                    item,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            )
+            conflict_key = json.dumps(
+                {
+                    "target": target,
+                    "candidates": candidate_records,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            unresolved.append(
+                {
+                    "id": (
+                        "U_DIRECT_CONFLICT_"
+                        + hashlib.sha256(
+                            conflict_key.encode("utf-8")
+                        ).hexdigest()[:16].upper()
+                    ),
+                    "kind": "direct_value_conflict",
+                    "reason": (
+                        "multiple non-equivalent direct observations target "
+                        "the same physical property"
+                    ),
+                    "target": target,
+                    "candidates": candidate_records,
+                    "required_for_modeling": True,
+                    "evidence": list(
+                        dict.fromkeys(
+                            evidence_id
+                            for item in target_items
+                            for evidence_id in [item.id, *item.source_ids]
+                        )
+                    ),
+                }
+            )
+            continue
+
+        equivalence_group = next(iter(by_equivalence.values()))
+        first = equivalence_group[0].model_copy(deep=True)
+        if len(equivalence_group) > 1:
+            merge_key = json.dumps(
+                {
+                    "target": target,
+                    "value": _canon(first.value),
+                    "semantic": first.semantic,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
             first.id = (
                 "L_DIRECT_"
-                + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16].upper()
+                + hashlib.sha256(
+                    merge_key.encode("utf-8")
+                ).hexdigest()[:16].upper()
             )
             first.source_ids = list(
                 dict.fromkeys(
                     source_id
-                    for item in group
+                    for item in equivalence_group
                     for source_id in [item.id, *item.source_ids]
                 )
             )
-        collapsed.append(first)
+        normalized.append(first)
 
-    return sorted(
-        collapsed,
-        key=lambda item: (item.target, item.id),
+    return (
+        sorted(normalized, key=lambda item: (item.target, item.id)),
+        unresolved,
     )
 
 
@@ -499,7 +569,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         if item.id in entity_to_feature
     ]
 
-    direct_values = _collapse_equivalent_direct_values(
+    direct_values, direct_unresolved = _normalize_direct_values(
         [
             DirectValueEvidence(
                 id=item.id,
@@ -515,6 +585,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             if item.entity_id in entity_to_feature
         ]
     )
+    unresolved.extend(direct_unresolved)
 
     dimensions: list[DimensionObservation] = []
     for item in capture.dimensions:

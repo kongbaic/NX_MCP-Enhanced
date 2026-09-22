@@ -246,6 +246,92 @@ def _gate0_quarantine_signatures(graph: EvidenceGraph) -> list[dict[str, Any]]:
         ),
     )
 
+def _reader_unresolved_signatures(graph: EvidenceGraph) -> list[dict[str, Any]]:
+    """Normalize Reader/linker unresolved semantics without prose or local IDs."""
+
+    signatures: list[dict[str, Any]] = []
+    for item in graph.unresolved_evidence:
+        item_id = item.get("id")
+        raw_path = item.get("raw_path")
+        raw_record = item.get("raw_record")
+        is_gate0 = (
+            isinstance(item_id, str)
+            and item_id.startswith("G0_")
+        ) or (
+            isinstance(raw_path, str)
+            and raw_path.startswith("$.")
+            and raw_record is not None
+        )
+        if is_gate0:
+            continue
+
+        feature_ids = item.get("feature_ids")
+        if isinstance(feature_ids, list):
+            normalized_feature_ids = sorted(
+                value
+                for value in feature_ids
+                if isinstance(value, str) and value
+            )
+        else:
+            normalized_feature_ids = []
+
+        signature = {
+            "kind": item.get("kind") or "unstructured",
+            "feature_ids": normalized_feature_ids,
+            "dimension_value": _canon(item.get("dimension_value")),
+            "field": item.get("field"),
+            "axis": item.get("axis"),
+            "target": item.get("target"),
+            "targets": sorted(item.get("targets") or []),
+            "required_for_modeling": item.get(
+                "required_for_modeling",
+                True,
+            ),
+        }
+        signatures.append(_canon(signature))
+
+    return sorted(
+        signatures,
+        key=lambda item: json.dumps(
+            item,
+            sort_keys=True,
+            ensure_ascii=False,
+        ),
+    )
+
+
+def _unresolved_semantic_drift(
+    snapshots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    counters: list[dict[str, int]] = []
+    signature_by_key: dict[str, dict[str, Any]] = {}
+
+    for snapshot in snapshots:
+        counter: dict[str, int] = {}
+        for signature in snapshot["unresolved_semantics"]:
+            key = json.dumps(
+                _canon(signature),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            signature_by_key[key] = signature
+            counter[key] = counter.get(key, 0) + 1
+        counters.append(counter)
+
+    drift: list[dict[str, Any]] = []
+    for key in sorted(signature_by_key):
+        counts = [counter.get(key, 0) for counter in counters]
+        if len(set(counts)) > 1:
+            drift.append(
+                {
+                    "signature": signature_by_key[key],
+                    "counts": counts,
+                }
+            )
+    return drift
+
+
 def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
     """Return an ID/order-insensitive snapshot of Reader semantics."""
 
@@ -283,6 +369,7 @@ def logical_snapshot(graph: EvidenceGraph) -> dict[str, Any]:
         "required_targets": sorted(graph.required_targets),
         "resolved_values": resolved_values,
         "unresolved_targets": _unresolved_targets(resolution.unresolved),
+        "unresolved_semantics": _reader_unresolved_signatures(graph),
         "gate0_quarantines": _gate0_quarantine_signatures(graph),
         "conflicts": conflicts,
         "resolution_ok": resolution.ok,
@@ -317,6 +404,7 @@ class StabilityReport:
     changed_sections: dict[int, list[str]]
     value_drift: dict[str, list[Any]]
     unresolved_presence: dict[str, list[int]]
+    unresolved_semantic_drift: list[dict[str, Any]]
     snapshots: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
@@ -331,6 +419,7 @@ class StabilityReport:
             },
             "value_drift": self.value_drift,
             "unresolved_presence": self.unresolved_presence,
+            "unresolved_semantic_drift": self.unresolved_semantic_drift,
             "snapshots": self.snapshots,
         }
 
@@ -398,6 +487,8 @@ def compare_evidence_runs(graphs: list[EvidenceGraph]) -> StabilityReport:
         if len(runs) != len(snapshots)
     }
 
+    unresolved_semantic_drift = _unresolved_semantic_drift(snapshots)
+
     stable = len(set(fingerprints)) == 1
     return StabilityReport(
         stable=stable,
@@ -407,5 +498,6 @@ def compare_evidence_runs(graphs: list[EvidenceGraph]) -> StabilityReport:
         changed_sections=changed_sections,
         value_drift=value_drift,
         unresolved_presence=unresolved_presence,
+        unresolved_semantic_drift=unresolved_semantic_drift,
         snapshots=snapshots,
     )

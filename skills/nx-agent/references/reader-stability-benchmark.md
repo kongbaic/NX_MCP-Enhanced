@@ -15,13 +15,18 @@ correctness audit.
 
 ## 2. Benchmark revision freeze
 
-Before starting a smoke or formal benchmark, freeze and record:
+Reader stability uses two separately recorded revisions.
 
-- repository branch and exact Git HEAD;
+### 2.1 Capture revision
+
+Before starting a smoke or formal Reader batch, freeze and record:
+
+- repository branch and capture HEAD;
 - exact source-drawing bytes and SHA256;
 - exact benchmark prompt template revision/hash from
   `docs/benchmarks/reader-first-pass-prompt-template.md`;
 - exact allowed Reader document revisions;
+- production `capture.py` revision;
 - benchmark run count;
 - output directory.
 
@@ -33,8 +38,32 @@ The only prompt substitutions allowed between independent runs are:
 Do not change examples, wording, hints, expected values or troubleshooting
 instructions between runs.
 
-A protocol/document/code change creates a new benchmark revision. Results from
-different revisions must not be mixed in one stability report.
+Any change to the source drawing, benchmark prompt, Reader-visible documents,
+or production Capture schema creates a new **capture revision** and requires
+fresh Reader sessions.
+
+### 2.2 Normalizer revision
+
+Record separately the exact Git HEAD used for deterministic:
+
+- `check-capture`;
+- identity linking;
+- Gate 0;
+- compiler/resolver/draft consumability checks;
+- stability comparison.
+
+A deterministic normalizer/comparator-only code change does **not** invalidate
+already frozen captures when the capture revision is unchanged.
+
+In that case:
+
+- keep the original immutable captures;
+- record the original capture HEAD;
+- record the new normalizer HEAD;
+- rerun only the deterministic post-capture stages;
+- never edit or replace the capture files.
+
+Do not mix captures from different capture revisions in one stability report.
 
 ## 3. Reader isolation
 
@@ -150,8 +179,12 @@ unresolved_semantic_drift = []
 If either capture is invalid, link fails, or semantic drift exists, stop.
 Do not run eight more sessions merely to confirm the same failure.
 
-After a protocol/code/document fix, start a new smoke revision with two new
-sessions. Do not combine pre-fix and post-fix runs.
+After a capture-revision fix, start a new smoke revision with two new Reader
+sessions.
+
+After a deterministic normalizer/comparator-only fix, replay the same immutable
+captures under the new normalizer revision. Do not rerun Reader merely because
+post-capture deterministic code changed.
 
 ## 8. Correctness audit
 
@@ -269,9 +302,13 @@ drawing, or otherwise violates isolation remains a failed run.
 Do not discard it and insert a replacement while claiming the original
 benchmark run count.
 
-For a smoke test, fix the protocol and restart both smoke runs as a new
-revision. For a formal ten-run benchmark, a protocol defect invalidates the
-formal batch and requires a new frozen revision.
+For a smoke test, a defect in the capture revision requires restarting both
+Reader runs. A defect only in deterministic post-capture normalization permits
+replay of the same immutable captures under a new normalizer revision.
+
+For a formal ten-run benchmark, the same rule applies: capture/input defects
+invalidate the Reader batch; deterministic normalizer/comparator defects do
+not invalidate immutable captures and may be corrected by replay.
 
 ## 14. Backend boundary
 

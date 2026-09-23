@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from nx_mcp.drawing_intelligence.capture import (
@@ -24,6 +29,9 @@ from nx_mcp.drawing_intelligence.evidence import (
 )
 from nx_mcp.drawing_intelligence.identity_linker import link_reader_capture
 from nx_mcp.drawing_intelligence.resolver import resolve_evidence_graph
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _graph() -> EvidenceGraph:
@@ -274,3 +282,100 @@ def test_unconfirmable_blocker_disables_human_gate():
                 ],
             },
         )
+
+
+def test_confirmation_cli_e2e_closes_dimension(tmp_path: Path):
+    evidence_path = tmp_path / "drawing-evidence.json"
+    request_path = tmp_path / "confirmation-request.json"
+    answers_path = tmp_path / "user-confirmations.json"
+    confirmed_path = tmp_path / "drawing-evidence-confirmed.json"
+    draft_path = tmp_path / "semantic-draft-confirmed.json"
+
+    evidence_path.write_text(
+        json.dumps(_graph().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    request_run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "request-confirmations",
+            str(evidence_path),
+            str(request_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert request_run.returncode == 0, request_run.stdout + request_run.stderr
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert request["eligible_for_user_confirmation"] is True
+
+    question = request["questions"][0]
+    endpoint = next(
+        item
+        for item in question["endpoints"]
+        if item["requires_confirmation"]
+    )
+    feature_option = next(
+        item
+        for item in endpoint["options"]
+        if item.get("target") == "feature:F1.centerline.y"
+    )
+    answers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "answers": [
+                    {
+                        "confirmation_id": question["confirmation_id"],
+                        "selected_option_ids": [feature_option["option_id"]],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    apply_run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "apply-confirmations",
+            str(evidence_path),
+            str(answers_path),
+            str(confirmed_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert apply_run.returncode == 0, apply_run.stdout + apply_run.stderr
+
+    resolve_run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "resolve",
+            str(confirmed_path),
+            str(draft_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resolve_run.returncode == 0, resolve_run.stdout + resolve_run.stderr
+    report = json.loads(resolve_run.stdout)
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    assert report["ok"] is True
+    assert report["blocking_unresolved"] == 0
+    assert report["conflicts"] == 0
+    assert report["dimension_closure"] == "closed"
+    assert draft["dimension_closure"] == {"status": "closed"}

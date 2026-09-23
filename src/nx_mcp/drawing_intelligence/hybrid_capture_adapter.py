@@ -125,7 +125,7 @@ def _coverage_unresolved(
         )
         unresolved.append(
             ObservationUnresolved(
-                kind="other",
+                kind="unsupported_representation",
                 reason=(
                     "Hybrid whole/local OCR disagreement: "
                     f"whole={item.get('token')!r}, "
@@ -149,7 +149,7 @@ def _coverage_unresolved(
         )
         unresolved.append(
             ObservationUnresolved(
-                kind="other",
+                kind="unsupported_representation",
                 reason=(
                     "Whole OCR linear observation was associated with a DG "
                     "but was not selected as that DG's global proposal: "
@@ -167,7 +167,7 @@ def _coverage_unresolved(
             continue
         unresolved.append(
             ObservationUnresolved(
-                kind="other",
+                kind="unsupported_representation",
                 reason=(
                     "Whole OCR found a standalone linear token with no unique "
                     f"DG assignment: token={item.get('token')!r}."
@@ -184,7 +184,7 @@ def _coverage_unresolved(
         candidate_id = str(item.get("candidate_id") or "")
         unresolved.append(
             ObservationUnresolved(
-                kind="other",
+                kind="unsupported_representation",
                 reason=(
                     "Wide local OCR found a linear token without a matching "
                     f"whole-drawing assignment: token={item.get('token')!r}."

@@ -196,6 +196,16 @@ Optional `direction` is `-1` or `1`.
 
 Optional `entity_keys` may list local entities only.
 
+`dimension_key` may be present only when it exactly names a `kind="dimension"`
+fact declared in the same query file. Do not use `dimension_key` to point at a
+`kind="value"` fact.
+
+When an unsupported or unresolved representation belongs to a direct value rather
+than a dimension fact, identify the affected local entity with `entity_keys` and
+name the affected property with `field`; leave `dimension_key` null/omitted.
+The deterministic assembler must not invent a dimension merely to satisfy a
+reference.
+
 Every fact may optionally set `required_for_modeling`; default is true.
 
 Do not construct nested endpoint objects. Do not construct strict

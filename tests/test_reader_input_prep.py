@@ -74,15 +74,11 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     assert payload["schema"] == "reader-input-v1"
     assert payload["source_drawing_authoritative"] is True
-    assert payload["semantics_policy"] == (
-        "geometry_only_no_engineering_claims"
-    )
+    assert payload["semantics_policy"] == ("geometry_only_no_engineering_claims")
     assert payload["summary"]["region_count"] >= 1
     assert payload["summary"]["bucket_count"] >= 1
     assert payload["summary"]["crop_count"] == (
-        1
-        + payload["summary"]["region_count"]
-        + payload["summary"]["bucket_count"]
+        1 + payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
     )
 
     assert payload["reader_contract"] == {

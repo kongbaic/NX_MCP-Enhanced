@@ -30,17 +30,21 @@ The dataset must contain examples of:
 
 Performance gate:
 
-- CPU warm-run <= 5 seconds per image.
+- CPU warm-run <= 5 seconds per image;
+- model/engine initialization is reported separately and excluded from warm-run inference time.
 
 Correctness gate:
 
 - wrong engineering tokens must not be silently accepted;
-- exact-token recall and precision are reported separately;
+- exact-token recall is always reported;
+- exact-token precision is reported only when the manifest declares a complete token inventory;
 - preserve or normalize common diameter glyph variants to `Ø`;
 - a missed token is preferable to a wrong token passed downstream.
 
 The bake-off does not select a production engine automatically. Results are
-reviewed before any text-to-DG association code is written.
+reviewed before any text-to-DG association code is written. A partial
+`expected_tokens` list must set `complete_token_inventory=false`; unrelated
+title-block or note text is then not mislabeled as a false positive.
 
 ## Initial candidates
 

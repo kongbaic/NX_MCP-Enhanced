@@ -5,6 +5,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .evidence import Axis
+from .reader_candidate_queries import (
+    CandidateDimensionTarget,
+    CandidateRegionQuery,
+    ReaderCandidateQueryPlan,
+)
 from .reader_semantic_answers import (
     PartialReaderObservations,
     ReaderSemanticAnswers,
@@ -14,11 +19,6 @@ from .reader_semantic_answers import (
     RegionObservationAnswer,
     RegionUnresolvedAnswer,
     merge_region_semantic_answers,
-)
-from .reader_candidate_queries import (
-    CandidateDimensionTarget,
-    CandidateRegionQuery,
-    ReaderCandidateQueryPlan,
 )
 from .reader_semantic_queries import (
     ReaderSemanticQueryPlan,
@@ -50,11 +50,7 @@ class CandidateTargetAnswer(_StrictCandidateAnswerModel):
                 raise ValueError(
                     "dimension candidate answer requires value and two endpoint tokens"
                 )
-        elif (
-            self.value is not None
-            or self.endpoint_a is not None
-            or self.endpoint_b is not None
-        ):
+        elif self.value is not None or self.endpoint_a is not None or self.endpoint_b is not None:
             raise ValueError(
                 "non-dimension/uncertain candidate answer must not carry value or endpoints"
             )
@@ -135,9 +131,7 @@ def _bbox_endpoint(
                 role="overall_max",
                 evidence=[evidence],
             )
-        raise ReaderCandidateAnswerError(
-            f"horizontal dimension cannot use bbox endpoint {ref!r}"
-        )
+        raise ReaderCandidateAnswerError(f"horizontal dimension cannot use bbox endpoint {ref!r}")
 
     if suffix == "bottom":
         return RegionDimensionEndpointAnswer(
@@ -149,9 +143,7 @@ def _bbox_endpoint(
             role="overall_max",
             evidence=[evidence],
         )
-    raise ReaderCandidateAnswerError(
-        f"vertical dimension cannot use bbox endpoint {ref!r}"
-    )
+    raise ReaderCandidateAnswerError(f"vertical dimension cannot use bbox endpoint {ref!r}")
 
 
 def _endpoint(
@@ -179,17 +171,13 @@ def _endpoint(
     if normalized.startswith("bbox:"):
         ref = normalized.removeprefix("bbox:")
         if kinds.get(ref) != "region_bbox_edge":
-            raise ReaderCandidateAnswerError(
-                f"endpoint token uses unavailable bbox anchor {ref!r}"
-            )
+            raise ReaderCandidateAnswerError(f"endpoint token uses unavailable bbox anchor {ref!r}")
         return _bbox_endpoint(target, ref, evidence)
 
     if normalized.startswith("circle:"):
         parts = normalized.split(":")
         if len(parts) != 3:
-            raise ReaderCandidateAnswerError(
-                "circle endpoint token must be circle:<ref>:<basis>"
-            )
+            raise ReaderCandidateAnswerError("circle endpoint token must be circle:<ref>:<basis>")
         ref, basis = parts[1], parts[2]
         if kinds.get(ref) != "circle_center_axis":
             raise ReaderCandidateAnswerError(
@@ -203,9 +191,7 @@ def _endpoint(
         elif basis == "explicit_midline":
             center_basis = "explicit_midline"
         else:
-            raise ReaderCandidateAnswerError(
-                f"unsupported circle endpoint basis {basis!r}"
-            )
+            raise ReaderCandidateAnswerError(f"unsupported circle endpoint basis {basis!r}")
         entity_key = _circle_entity_from_ref(query, ref)
         return RegionDimensionEndpointAnswer(
             role="entity_center",

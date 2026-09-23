@@ -16,6 +16,28 @@ Gate A, Planner, Runner or NX.
 Do not read historical artifacts, tests, fixtures, expected answers, benchmark
 operator documents, previous Agent results, or downstream outputs.
 
+### Optional deterministic visual aid
+
+The current engineering drawing remains the sole authoritative geometry source.
+
+Reader may additionally read exactly one current `reader-visual-aid.json` only when
+the pipeline generated it immediately before this first-pass from the current uploaded
+raster drawing. It is a deterministic geometry aid, not a second semantic source.
+
+- do not read `raw-evidence.json` directly during Reader interpretation;
+- do not read any historical or pre-existing visual-aid file;
+- use only bounded candidate buckets; an `overflow` bucket has no candidate list and
+  must be handled from the source drawing itself;
+- candidate buckets may narrow visual search by region, line orientation and normalized
+  position band only;
+- witness anchors may indicate nearby region edges, circle-center axes or detected
+  linear-pattern axes only;
+- never match a dimension by numeric/pixel-scale coincidence;
+- never create or merge a physical feature, assign a numeric label, or decide endpoint
+  ownership solely from the visual aid;
+- if the aid is absent or unusable, continue the same first-pass from the source drawing
+  without searching for another aid or restarting interpretation.
+
 ## 2. Runtime discipline
 
 Use one continuous interpretation pass:

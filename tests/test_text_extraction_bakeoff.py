@@ -25,12 +25,14 @@ def test_normalize_token_handles_engineering_glyph_variants():
     assert bakeoff._normalize_token("40 ± 0.02") == "40±0.02"
 
 
-def test_bbox_orientation_reports_horizontal_and_vertical():
+def test_bbox_orientation_reports_long_text_axis():
     horizontal = [[0.0, 0.0], [10.0, 0.0], [10.0, 3.0], [0.0, 3.0]]
-    vertical = [[0.0, 0.0], [0.0, 10.0], [3.0, 10.0], [3.0, 0.0]]
+    vertical = [[0.0, 0.0], [3.0, 0.0], [3.0, 10.0], [0.0, 10.0]]
+    square = [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]
 
     assert bakeoff._bbox_orientation_deg(horizontal) == 0.0
     assert bakeoff._bbox_orientation_deg(vertical) == 90.0
+    assert bakeoff._bbox_orientation_deg(square) is None
 
 
 def test_score_reports_exact_token_precision_and_recall():
@@ -66,6 +68,83 @@ def test_score_reports_exact_token_precision_and_recall():
     assert report["exact_token_precision"] == pytest.approx(2 / 3)
     assert report["missed"] == ["R5"]
     assert report["extra_text"] == ["noise"]
+
+
+def test_engineering_score_recovers_composite_and_split_tokens():
+    items = [
+        bakeoff.OcrItem(
+            text="∅20 H7",
+            bbox=[[0.0, 0.0], [20.0, 0.0], [20.0, 8.0], [0.0, 8.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+        bakeoff.OcrItem(
+            text="06.6通孔",
+            bbox=[[30.0, 0.0], [60.0, 0.0], [60.0, 8.0], [30.0, 8.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+        bakeoff.OcrItem(
+            text="R",
+            bbox=[[0.0, 20.0], [8.0, 20.0], [8.0, 30.0], [0.0, 30.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+        bakeoff.OcrItem(
+            text="100",
+            bbox=[[0.0, 29.0], [18.0, 29.0], [18.0, 39.0], [0.0, 39.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+        bakeoff.OcrItem(
+            text="-180.00",
+            bbox=[[80.0, 0.0], [110.0, 0.0], [110.0, 8.0], [80.0, 8.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+    ]
+
+    report = bakeoff._score(
+        ["20", "H7", "6.6", "R100", "180.00"],
+        items,
+        complete_token_inventory=False,
+    )
+
+    assert report["engineering_token_recall"] == 1.0
+    assert report["engineering_missed"] == []
+
+
+def test_engineering_score_does_not_invent_diameter_from_zero():
+    items = [
+        bakeoff.OcrItem(
+            text="012",
+            bbox=[[0.0, 0.0], [20.0, 0.0], [20.0, 8.0], [0.0, 8.0]],
+            confidence=0.99,
+            orientation_deg=0.0,
+        )
+    ]
+
+    report = bakeoff._score(
+        ["Ø12"],
+        items,
+        complete_token_inventory=False,
+    )
+
+    assert report["engineering_token_recall"] == 0.0
+    assert report["engineering_missed"] == ["Ø12"]
+
+
+def test_setup_script_uses_ascii_codepoints_for_engineering_glyphs():
+    script = (
+        ROOT / "benchmarks" / "text_extraction" / "setup_bakeoff.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "[char]0x00B1" in script
+    assert "[char]0x00B0" in script
+    assert "[char]0x00D8" in script
+    assert "40±0.02" not in script
+    assert "10°" not in script
+    assert "Ø12" not in script
 
 
 def test_partial_inventory_does_not_treat_unlisted_text_as_false_positive():

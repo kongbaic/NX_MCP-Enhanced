@@ -236,11 +236,11 @@ def main() -> None:
         "只能读取",
         "runtime configuration missing",
         "禁止自动寻找其它 runtime-config",
-        "禁止 fallback 到 `python` / `python3` / `py`",
-        "`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同",
-        "`nx_mcp_src` 只能取自当前 runtime-config",
+        "禁止 fallback 到 python / python3 / py",
+        "workspace_root 与 NX_MCP_WORKSPACE 规范化后必须相同",
+        "nx_mcp_src 只能取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json` / `drawing.json` / frozen plan / executable plan / report / PRT / STEP",
+        "当前 reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
     ):
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")
@@ -280,10 +280,10 @@ def main() -> None:
         "只能读取这一份",
         "runtime configuration missing",
         "规范化后必须相同",
-        "禁止 fallback 到 `python`、`python3`、`py`",
-        "`nx_mcp_src` 必须原样取自当前 runtime-config",
+        "禁止 fallback 到 python、python3、py",
+        "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")

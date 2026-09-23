@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -159,3 +164,41 @@ def test_unknown_entity_reference_rejected_before_assembly():
 
     with pytest.raises(ValidationError, match="unknown entity key"):
         ReaderObservations.model_validate(payload)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_assemble_reader_capture_cli_e2e(tmp_path: Path):
+    observations_path = tmp_path / "reader-observations.json"
+    capture_path = tmp_path / "reader-capture.json"
+    observations_path.write_text(
+        json.dumps(_base_observations(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "assemble-reader-capture",
+            str(observations_path),
+            str(capture_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    report = json.loads(run.stdout)
+    assert report["written"] is True
+    assert report["schema"] == "reader-observations-v1"
+    assert report["capture_schema_version"] == "2.0"
+    assert capture_path.is_file()
+
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    assert capture["schema_version"] == "2.0"
+    assert capture["required_targets"] == []

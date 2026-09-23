@@ -29,6 +29,7 @@ from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .resolver import resolve_evidence_graph
 from .raster_evidence import extract_raw_evidence
+from .reader_visual_aid import build_reader_visual_aid
 from .stability import compare_evidence_runs
 
 
@@ -91,6 +92,51 @@ def _cmd_extract_raster_evidence(args: argparse.Namespace) -> int:
     report["region_count"] = summary.get("region_count", 0)
     report["dimension_geometry_candidate_count"] = summary.get(
         "dimension_geometry_candidate_count",
+        0,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_build_reader_visual_aid(args: argparse.Namespace) -> int:
+    raw_path = str(Path(args.raw_evidence).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "raw_evidence": raw_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "bucket_count": 0,
+        "overflow_bucket_count": 0,
+        "max_bucket_candidate_count": 0,
+        "errors": [],
+    }
+
+    try:
+        raw = _load_json(raw_path)
+        output = build_reader_visual_aid(raw)
+        _atomic_write_json(output_path, output)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        RuntimeError,
+        ValueError,
+        ValidationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = output.get("schema")
+    summary = output.get("summary", {})
+    report["bucket_count"] = summary.get("bucket_count", 0)
+    report["overflow_bucket_count"] = summary.get(
+        "overflow_bucket_count",
+        0,
+    )
+    report["max_bucket_candidate_count"] = summary.get(
+        "max_bucket_candidate_count",
         0,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -568,6 +614,14 @@ def main(argv: list[str] | None = None) -> int:
     extract_raster.add_argument("image")
     extract_raster.add_argument("out")
     extract_raster.set_defaults(func=_cmd_extract_raster_evidence)
+
+    build_visual_aid = sub.add_parser(
+        "build-reader-visual-aid",
+        help="build bounded geometry-only Reader aid from RawEvidence v1",
+    )
+    build_visual_aid.add_argument("raw_evidence")
+    build_visual_aid.add_argument("out")
+    build_visual_aid.set_defaults(func=_cmd_build_reader_visual_aid)
 
     check_capture = sub.add_parser(
         "check-capture",

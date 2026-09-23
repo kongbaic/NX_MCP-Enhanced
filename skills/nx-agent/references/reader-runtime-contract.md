@@ -21,16 +21,20 @@ operator documents, previous Agent results, or downstream outputs.
 The current engineering drawing remains the sole authoritative geometry source.
 
 When the pipeline successfully generated the current `reader-input.json` from the
-explicit runtime-local path of the current uploaded raster drawing, Reader may read:
+explicit runtime-local path of the current uploaded raster drawing, Reader normally reads:
 
 - the current source drawing;
 - exactly one current `reader-input.json`;
-- only the crop files explicitly listed by that manifest.
+- exactly one current `reader-contact-sheet.png`.
+
+Do not open all individual crops sequentially. Only when one specific contact-sheet
+panel is unreadable may Reader open the corresponding already-listed crop from the
+manifest, then return to the same first-pass.
 
 Hard boundaries:
 
 - do not read `raw-evidence.json` or `reader-visual-aid.json` directly;
-- do not read historical or pre-existing Reader input/crop files;
+- do not read historical or pre-existing Reader input/contact-sheet/crop files;
 - do not scan the workspace, chat history, repository, or user directories;
 - do not create additional crops, PowerShell image scripts, PIL/.NET image helpers, or
   alternate image preprocessing during Reader interpretation;
@@ -59,9 +63,11 @@ Use one continuous interpretation pass:
 9. if valid, write the target capture once and stop;
 10. if invalid, do not repair or create a second payload in the same run.
 
-Inspect the source drawing and the manifest-listed crops directly. Do not create
-new crops or preprocessing scripts, restart interpretation, reread the whole drawing
-merely to satisfy bookkeeping, or perform an open-ended self-audit loop.
+Inspect the source drawing and the contact sheet directly. Do not open every listed
+crop as a checklist. Open at most the specific existing crop needed for an unreadable
+contact-sheet panel. Do not create new crops or preprocessing scripts, restart
+interpretation, reread the whole drawing merely to satisfy bookkeeping, or perform an
+open-ended self-audit loop.
 
 ## 3. Capture shape
 

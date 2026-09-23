@@ -102,13 +102,14 @@ def _compact_fragments(
     groups: list[dict],
     image_width: int,
     image_height: int,
+    region: dict,
     *,
-    limit: int = 4,
+    limit: int = 8,
 ) -> list[dict]:
     scored: list[dict] = []
     for group in groups:
         score = _fragment_score(group)
-        if score < 0.45:
+        if score < 0.30:
             continue
 
         orientation = group["orientation"]
@@ -122,6 +123,26 @@ def _compact_fragments(
         span_start = min(start for start, _ in segments)
         span_end = max(end for _, end in segments)
 
+        region_x = int(region["x"])
+        region_y = int(region["y"])
+        region_width = int(region["width"])
+        region_height = int(region["height"])
+        local_axis = (
+            (float(group["axis_px"]) - region_y) / region_height
+            if orientation == "horizontal"
+            else (float(group["axis_px"]) - region_x) / region_width
+        )
+        local_span_start = (
+            (span_start - region_x) / region_width
+            if orientation == "horizontal"
+            else (span_start - region_y) / region_height
+        )
+        local_span_end = (
+            (span_end - region_x) / region_width
+            if orientation == "horizontal"
+            else (span_end - region_y) / region_height
+        )
+
         scored.append(
             {
                 "orientation": orientation,
@@ -134,6 +155,11 @@ def _compact_fragments(
                 "span_norm": [
                     _norm(span_start, span_denominator),
                     _norm(span_end, span_denominator),
+                ],
+                "local_axis_norm": round(local_axis, 5),
+                "local_span_norm": [
+                    round(local_span_start, 5),
+                    round(local_span_end, 5),
                 ],
                 "segment_count": len(segments),
                 "gap_count": len(group.get("positive_gaps_px", [])),
@@ -160,6 +186,18 @@ def adapt(probe: dict) -> dict:
             int(bbox[key])
             for key in ("x", "y", "width", "height")
         )
+        circle_groups = _cluster_rings(
+            region.get("circle_evidence", []),
+            image_width,
+            image_height,
+        )
+        for circle_group in circle_groups:
+            cx, cy = circle_group["center_px"]
+            circle_group["center_local_norm"] = [
+                round((cx - x) / width, 5),
+                round((cy - y) / height, 5),
+            ]
+
         regions.append(
             {
                 "region_id": region["region_id"],
@@ -170,15 +208,12 @@ def adapt(probe: dict) -> dict:
                     _norm(width, image_width),
                     _norm(height, image_height),
                 ],
-                "circle_groups": _cluster_rings(
-                    region.get("circle_evidence", []),
-                    image_width,
-                    image_height,
-                ),
+                "circle_groups": circle_groups,
                 "linear_pattern_candidates": _compact_fragments(
                     region.get("fragment_groups", []),
                     image_width,
                     image_height,
+                    bbox,
                 ),
             }
         )

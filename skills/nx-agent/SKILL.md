@@ -33,9 +33,12 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 5. check-capture PASS 后立即执行：python -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>。该步骤只做 deterministic identity linking + Gate 0；禁止重新读取工程图。
 6. 只有 link-capture 的 process exit code=0、written=true、schema_valid=true、contract_valid=true 才允许继续；否则 BLOCKED / STOP。link-capture 产生 blocking unresolved 可以保留在 drawing-evidence.json，是否闭合由下一步 resolve 判定。
 7. 立即执行：python -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <semantic-draft.json>。
-8. 只有 resolve 的 process exit code=0、written=true、ok=true、blocking_unresolved=0、conflicts=0、dimension_closure=closed 全部成立，才允许继续。否则 BLOCKED / STOP；禁止第二次看图、Edit/Rewrite capture/evidence、生成第二版 capture/evidence、修改 draft 后重试、进入 canonicalizer 或 Planner。
-9. Resolve PASS 后立即执行 runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>。只有 process exit code=0、written=true、output_exists=true、gate_a.ok=true 才算 Gate A PASS。
-10. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
+8. resolve 若 process exit code=0、written=true、ok=true、blocking_unresolved=0、conflicts=0、dimension_closure=closed，则直接继续 Gate A。若 resolve 失败且 conflicts>0，立即 BLOCKED / STOP。
+9. resolve 仅因 blocking unresolved 失败时，允许且只允许执行一次：python -m nx_mcp.drawing_intelligence request-confirmations <drawing-evidence.json> <confirmation-request.json>。只有 eligible_for_user_confirmation=true、unconfirmable_blocking_ids=[]、question_count 在 1..3 内，才可向用户展示这些结构化尺寸端点问题；其它情况立即 BLOCKED / STOP。
+10. 用户确认后，把选择写成 user-confirmations.json，并执行一次：python -m nx_mcp.drawing_intelligence apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>。不得覆盖原始 drawing-evidence.json，不得修改尺寸数值，不得手写陌生 target。
+11. 对 drawing-evidence-confirmed.json 只允许再执行一次 resolve，输出 semantic-draft-confirmed.json。只有第二次 resolve 完全 PASS 才允许继续；否则立即 BLOCKED / STOP。禁止第二轮用户确认、禁止重新看图、禁止重写 Reader Capture。
+12. Resolve PASS 后立即执行 runner.py canonicalize-drawing <semantic-draft.json 或 semantic-draft-confirmed.json> <drawing.json>。只有 process exit code=0、written=true、output_exists=true、gate_a.ok=true 才算 Gate A PASS。
+13. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
 11. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
 12. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
 13. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
@@ -57,7 +60,8 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 → deterministic identity link / Gate 0
 → drawing-evidence.json
 → deterministic compile / resolve
-→ semantic-draft.json
+→ [仅当可确认尺寸阻塞] Human Confirmation Gate
+→ semantic-draft.json / semantic-draft-confirmed.json
 → canonicalize / Gate A
 → 建模规划
 → Plan Runner
@@ -98,7 +102,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 - check-capture PASS 后立即执行 link-capture，确定性生成 drawing-evidence.json。
 - Reader 禁止做 centered global coordinate arithmetic、relation 语义猜测或 Gate A 判定。
 - 再执行 deterministic resolve，生成 semantic-draft.json。
-- resolve 非零、blocking_unresolved>0、conflicts>0 或 dimension_closure 非 closed → STOP。
+- resolve PASS 直接进入 Gate A；仅当 conflicts=0 且全部 blocking unresolved 都是最多 3 个可确认的 dimension endpoint 时，允许一次 Human Confirmation Gate；其它失败 → STOP。
 - 任一前端门禁失败时禁止重新看图修答案、禁止第二版 reader-capture。
 
 ### Gate A

@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .capture import CaptureEndpointUnresolvedKind, DimensionEndpointEvidenceKind
+from .capture import CaptureEndpointUnresolvedKind
 from .evidence import Axis, ProjectionShape, ViewKind
 from .reader_semantic_answers import (
     PartialReaderObservations,
@@ -64,9 +64,13 @@ class CompactSemanticFact(_StrictCompactModel):
     required_for_modeling: bool = True
 
     @model_validator(mode="after")
-    def _required_fields(self) -> "CompactSemanticFact":
+    def _required_fields(self) -> CompactSemanticFact:
         if self.kind == "overall":
-            if self.axis is None or not isinstance(self.value, (int, float)) or self.value <= 0:
+            if (
+                self.axis is None
+                or not isinstance(self.value, (int, float))
+                or self.value <= 0
+            ):
                 raise ValueError("overall fact requires positive numeric value and axis")
         elif self.kind == "entity":
             if not self.key or not self.shape:
@@ -135,9 +139,14 @@ def _shape(value: str) -> ProjectionShape:
 
 def _endpoint(token: str, evidence: str) -> RegionDimensionEndpointAnswer:
     normalized = token.strip()
-    if normalized in {"overall_min", "overall_max"}:
+    if normalized == "overall_min":
         return RegionDimensionEndpointAnswer(
-            role=normalized,
+            role="overall_min",
+            evidence=[evidence],
+        )
+    if normalized == "overall_max":
+        return RegionDimensionEndpointAnswer(
+            role="overall_max",
             evidence=[evidence],
         )
 
@@ -148,10 +157,17 @@ def _endpoint(token: str, evidence: str) -> RegionDimensionEndpointAnswer:
                 "center endpoint must be center:<entity_key>:"
                 "<centerline|center_mark|explicit_midline>"
             )
+        basis = parts[2]
+        if basis == "centerline":
+            center_basis = "centerline"
+        elif basis == "center_mark":
+            center_basis = "center_mark"
+        else:
+            center_basis = "explicit_midline"
         return RegionDimensionEndpointAnswer(
             role="entity_center",
             entity_key=parts[1],
-            basis=parts[2],
+            basis=center_basis,
             evidence=[evidence],
         )
 
@@ -234,6 +250,7 @@ def build_reader_semantic_answers_from_regions(
                 )
 
             if fact.kind == "overall":
+                assert fact.axis is not None
                 overall.append(
                     RegionOverallDimensionFact(
                         axis=fact.axis,
@@ -242,6 +259,7 @@ def build_reader_semantic_answers_from_regions(
                     )
                 )
             elif fact.kind == "entity":
+                assert fact.key is not None
                 entities.append(
                     RegionEntityAnswer(
                         key=fact.key,
@@ -251,6 +269,8 @@ def build_reader_semantic_answers_from_regions(
                     )
                 )
             elif fact.kind == "value":
+                assert fact.entity_key is not None
+                assert fact.field is not None
                 values.append(
                     RegionValueAnswer(
                         entity_key=fact.entity_key,
@@ -261,6 +281,8 @@ def build_reader_semantic_answers_from_regions(
                     )
                 )
             elif fact.kind == "dimension":
+                assert fact.key is not None
+                assert fact.axis is not None
                 endpoints = [
                     _endpoint(fact.endpoint_a or "", fact.evidence),
                     _endpoint(fact.endpoint_b or "", fact.evidence),
@@ -281,6 +303,8 @@ def build_reader_semantic_answers_from_regions(
                     )
                 )
             elif fact.kind == "datum":
+                assert fact.entity_key is not None
+                assert fact.axis is not None
                 datum.append(
                     RegionDatumAlignmentAnswer(
                         entity_key=fact.entity_key,
@@ -290,6 +314,8 @@ def build_reader_semantic_answers_from_regions(
                     )
                 )
             else:
+                assert fact.category is not None
+                assert fact.reason is not None
                 unresolved.append(
                     RegionUnresolvedAnswer(
                         kind=fact.category,

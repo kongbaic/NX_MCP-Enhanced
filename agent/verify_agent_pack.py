@@ -332,14 +332,14 @@ def main() -> None:
             if token not in visual_aid_texts[name]:
                 fail(f"Reader visual-aid contract regression in {name}: missing {token}")
 
-    drawing_cli_source = (
-        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
-    ).read_text(encoding="utf-8")
+    drawing_cli_source = (ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py").read_text(
+        encoding="utf-8"
+    )
     for token in ("extract-raster-evidence", "build-reader-visual-aid"):
         if token not in drawing_cli_source:
             fail(f"Reader visual-aid CLI regression: missing {token}")
 
-    for token in ('import cv2, numpy', 'pip install -e "$RepoRoot[drawing]"'):
+    for token in ("import cv2, numpy", 'pip install -e "$RepoRoot[drawing]"'):
         if token not in install_agent:
             fail(f"Reader raster dependency install regression: missing {token}")
 

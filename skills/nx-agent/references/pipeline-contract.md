@@ -37,11 +37,30 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 6. nx_mcp_src 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
 7. runtime 一旦解析，本轮 drawing、Evidence、Resolver、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
 
-当前 Mode B 的 reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
+当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
 读取 drawing-reader.md、reader-capture-contract.md 与 nx-drawing-rules.md。
+
+### A0.5. Optional deterministic Reader visual aid
+
+当前上传工程图始终是本轮唯一权威几何输入。只有当当前请求环境**明确提供本轮上传工程图的 runtime-local raster 文件路径**时，才允许在 Reader first-pass 前使用 runtime-config 指定的 `python_exe` 依次执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence extract-raster-evidence <current-raster-path> <workspace_root>\raw-evidence.json
+python_exe -m nx_mcp.drawing_intelligence build-reader-visual-aid <workspace_root>\raw-evidence.json <workspace_root>\reader-visual-aid.json
+~~~
+
+硬规则：
+
+- 禁止扫描 workspace、用户目录、历史聊天目录或仓库去寻找/猜测当前上传图的文件路径；
+- 没有明确 runtime-local raster path、输入不是 raster，或任一命令失败时，不得寻找替代文件；直接跳过 visual aid，进入 A1 原始 Reader first-pass；
+- 只有本轮命令实际返回 `written=true` 且 schema 分别为 `raw-evidence-v1` / `reader-visual-aid-v1` 时，本轮 Reader 才允许读取当前 `reader-visual-aid.json`；
+- `raw-evidence.json` 只作为 deterministic 中间 artifact，Reader 不得直接读取；
+- `reader-visual-aid.json` 只提供 geometry-only 的 region / orientation / normalized band / witness-anchor 辅助，不提供尺寸数字、feature identity 或 endpoint ownership；
+- `overflow` bucket 不得截断或猜测；Reader 对该 bucket 只能回到当前原图进行正常视觉判断；
+- visual aid 不可用时是**辅助层降级**，不是 Gate failure；不得因此重启 Reader、重复 interpretation 或切换 runtime。
 
 ### A1. Reader Capture
 
@@ -245,6 +264,7 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ~~~text
 当前上传工程图
+→ [可选：本轮 raster → raw-evidence.json → reader-visual-aid.json]
 → reader-capture.json
 → check-capture
 → deterministic identity link / Gate 0
@@ -261,7 +281,8 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ### 4.1 Mode B 当前请求 artifact isolation
 
-- 新请求开始 interpretation 前，现有 reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一几何输入是当前上传工程图。
+- 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
+- 旧 raw-evidence.json / reader-visual-aid.json 不得复用；只有本轮从当前明确 raster path 成功生成的 reader-visual-aid.json 才能作为 Reader 的非权威 geometry-only 辅助。
 - Reader 必须从当前图纸重新生成 reader-capture.json；旧 capture 不得复用。
 - link-capture 必须只读取本轮 reader-capture.json 并生成本轮 drawing-evidence.json；旧 evidence 不得复用。
 - resolve 必须只读取本轮 drawing-evidence.json；不得读取历史 semantic draft、drawing 或 plan。

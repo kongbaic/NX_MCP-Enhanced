@@ -11,6 +11,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from .capture import ReaderCapture, validate_reader_capture_contract
+from .confirmation import (
+    ConfirmationAnswers,
+    ConfirmationError,
+    apply_confirmation_answers,
+    build_confirmation_request,
+)
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
@@ -262,6 +268,94 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0 if resolution.ok else 2
 
 
+def _cmd_request_confirmations(args: argparse.Namespace) -> int:
+    evidence_path = str(Path(args.evidence).resolve())
+    request_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "evidence": evidence_path,
+        "confirmation_request": request_path,
+        "written": False,
+        "question_count": 0,
+        "errors": [],
+    }
+
+    if os.path.normcase(evidence_path) == os.path.normcase(request_path):
+        report["errors"].append(
+            "evidence input and confirmation request output must differ"
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        graph = EvidenceGraph.model_validate(_load_json(evidence_path))
+        request = build_confirmation_request(graph)
+        _atomic_write_json(request_path, request)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        ConfirmationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["question_count"] = request["question_count"]
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_apply_confirmations(args: argparse.Namespace) -> int:
+    evidence_path = str(Path(args.evidence).resolve())
+    answers_path = str(Path(args.answers).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "evidence": evidence_path,
+        "answers": answers_path,
+        "confirmed_evidence": output_path,
+        "written": False,
+        "applied_confirmations": 0,
+        "remaining_confirmation_questions": 0,
+        "errors": [],
+    }
+
+    if os.path.normcase(evidence_path) == os.path.normcase(output_path):
+        report["errors"].append(
+            "evidence input and confirmed evidence output must differ"
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        graph = EvidenceGraph.model_validate(_load_json(evidence_path))
+        answers = ConfirmationAnswers.model_validate(_load_json(answers_path))
+        confirmed = apply_confirmation_answers(graph, answers)
+        _atomic_write_json(
+            output_path,
+            confirmed.model_dump(mode="json"),
+        )
+        before = build_confirmation_request(graph)["question_count"]
+        after = build_confirmation_request(confirmed)["question_count"]
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        ConfirmationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["applied_confirmations"] = max(0, before - after)
+    report["remaining_confirmation_questions"] = after
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_stability(args: argparse.Namespace) -> int:
     report: dict[str, Any] = {
         "stable": False,
@@ -347,6 +441,23 @@ def main(argv: list[str] | None = None) -> int:
     resolve.add_argument("evidence")
     resolve.add_argument("out")
     resolve.set_defaults(func=_cmd_resolve)
+
+    request_confirmations = sub.add_parser(
+        "request-confirmations",
+        help="write bounded human questions for unresolved dimension endpoints",
+    )
+    request_confirmations.add_argument("evidence")
+    request_confirmations.add_argument("out")
+    request_confirmations.set_defaults(func=_cmd_request_confirmations)
+
+    apply_confirmations = sub.add_parser(
+        "apply-confirmations",
+        help="apply validated human endpoint choices to evidence",
+    )
+    apply_confirmations.add_argument("evidence")
+    apply_confirmations.add_argument("answers")
+    apply_confirmations.add_argument("out")
+    apply_confirmations.set_defaults(func=_cmd_apply_confirmations)
 
     stability = sub.add_parser(
         "stability",

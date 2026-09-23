@@ -248,7 +248,7 @@ def main() -> None:
         "workspace_root 与 NX_MCP_WORKSPACE 规范化后必须相同",
         "nx_mcp_src 只能取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-crops / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
+        "当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
     ):
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")

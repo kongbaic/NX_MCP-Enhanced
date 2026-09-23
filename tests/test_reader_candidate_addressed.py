@@ -225,10 +225,11 @@ def test_candidate_contract_forbids_unaddressed_inventory():
         ROOT / "skills" / "nx-agent" / "references" / "reader-candidate-addressed-contract.md"
     ).read_text(encoding="utf-8")
 
+    normalized_contract = " ".join(contract.split())
     assert "Do not search the region for additional" in contract
     assert "every listed `dimension_target` exactly once" in contract
     assert "candidate-overlay `image_path`" in contract
-    assert "Locator marks carry no engineering semantics" in contract
+    assert "Locator marks carry no engineering semantics" in normalized_contract
     for forbidden in ("SHKSS", "main_bore", "center_height", "40±0.02"):
         assert forbidden not in contract
 

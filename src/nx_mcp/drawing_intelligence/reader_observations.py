@@ -217,6 +217,7 @@ class ReaderObservations(_StrictObservationModel):
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved: list[ObservationUnresolved] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -339,7 +340,7 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
         "dimensions": [],
         "datum_alignments": [],
         "required_targets": [],
-        "observations": [],
+        "observations": observations.observations,
         "unresolved_evidence": [],
     }
 

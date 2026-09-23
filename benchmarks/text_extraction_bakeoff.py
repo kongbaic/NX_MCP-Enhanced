@@ -245,10 +245,7 @@ def _canonical_expected_semantic_token(text: str) -> str:
     normalized = _normalize_token(text).upper()
     tolerance = re.fullmatch(r"(\d+(?:\.\d+)?)±(\d+(?:\.\d+)?)", normalized)
     if tolerance:
-        return (
-            f"{_canonical_number(tolerance.group(1))}±"
-            f"{_canonical_number(tolerance.group(2))}"
-        )
+        return f"{_canonical_number(tolerance.group(1))}±{_canonical_number(tolerance.group(2))}"
     for prefix in ("Ø", "R", "M"):
         match = re.fullmatch(rf"{prefix}(\d+(?:\.\d+)?)", normalized)
         if match:
@@ -284,24 +281,11 @@ def _score(
 
     recall = len(matched) / len(expected_normalized) if expected_normalized else 1.0
 
-    expected_semantic = [
-        _canonical_expected_semantic_token(item)
-        for item in expected
-    ]
+    expected_semantic = [_canonical_expected_semantic_token(item) for item in expected]
     observed_semantic = _stitched_engineering_tokens(items)
-    semantic_matched = [
-        token for token in expected_semantic
-        if token in observed_semantic
-    ]
-    semantic_missed = [
-        token for token in expected_semantic
-        if token not in observed_semantic
-    ]
-    semantic_recall = (
-        len(semantic_matched) / len(expected_semantic)
-        if expected_semantic
-        else 1.0
-    )
+    semantic_matched = [token for token in expected_semantic if token in observed_semantic]
+    semantic_missed = [token for token in expected_semantic if token not in observed_semantic]
+    semantic_recall = len(semantic_matched) / len(expected_semantic) if expected_semantic else 1.0
 
     precision: float | None = None
     extra_text: list[str] | None = None
@@ -406,8 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         elapsed_values = [item["elapsed_s"] for item in engine_cases]
         recall_values = [item["score"]["exact_token_recall"] for item in engine_cases]
         engineering_recall_values = [
-            item["score"]["engineering_token_recall"]
-            for item in engine_cases
+            item["score"]["engineering_token_recall"] for item in engine_cases
         ]
         precision_values = [
             item["score"]["exact_token_precision"]

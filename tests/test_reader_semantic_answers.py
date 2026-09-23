@@ -239,6 +239,18 @@ def test_bounded_contract_lists_answer_enum_values():
         assert f"`{value}`" in contract
 
 
+def test_bounded_contract_times_answer_write_and_rejects_stale_answers():
+    contract = (
+        ROOT / "skills" / "nx-agent" / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+
+    assert "visual_semantic_end" in contract
+    assert "fully written" in contract
+    assert "smoke_wall_elapsed" in contract
+    assert "delete only" in contract
+    assert "Do not read, patch, edit, diff" in contract
+
+
 def test_merge_reader_semantic_answers_cli_e2e(tmp_path: Path):
     plan_path = tmp_path / "reader-semantic-queries.json"
     answers_path = tmp_path / "reader-semantic-answers.json"

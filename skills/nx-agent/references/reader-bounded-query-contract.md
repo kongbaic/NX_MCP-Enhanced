@@ -158,6 +158,73 @@ Overall dimension facts are local directly visible facts only:
 
 Do not derive missing extents by arithmetic.
 
+### Strict answer-schema rules
+
+`reader-semantic-answers-v1` is strict. Do not invent fields, aliases, wrapper
+objects, or alternate shapes. Every object may contain only the fields shown by
+this contract.
+
+The exact allowed fields are:
+
+- answer: `query_id`, `view_kind`, `evidence`,
+  `overall_dimension_facts`, `entities`, `values`, `dimensions`,
+  `datum_alignments`, `unresolved`;
+- entity: `key`, `shape`, `evidence`, `required_for_modeling`;
+- direct value: `entity_key`, `field`, `value`, `semantic`, `evidence`;
+- dimension: `key`, `value`, `axis`, `endpoints`,
+  `unresolved_reason`, `direction`, `evidence`,
+  `required_for_modeling`;
+- dimension endpoint: `role`, `entity_key`, `candidate_entity_keys`,
+  `basis`, `unresolved_kind`, `evidence`;
+- datum alignment: `entity_key`, `axis`, `evidence`,
+  `required_for_modeling`;
+- unresolved: `kind`, `reason`, `entity_keys`, `dimension_key`,
+  `dimension_value`, `field`, `axis`, `evidence`,
+  `required_for_modeling`.
+
+For unresolved items, `kind` must be one of:
+
+- `feature_inventory`
+- `feature_value`
+- `start_side`
+- `termination`
+- `local_surface`
+- `unsupported_representation`
+- `other`
+
+If a visible engineering fact cannot be represented by the fields above, do not
+extend the schema. Preserve it as `kind="unsupported_representation"`.
+
+This applies in this smoke to facts such as a tolerance attached to a dimension,
+a datum letter/identifier, surface roughness such as Ra, or a GD&T frame whose
+full semantics are not represented by this answer schema.
+
+Example for a visible dimension tolerance that the current smoke schema cannot
+carry directly:
+
+~~~json
+{
+  "kind": "unsupported_representation",
+  "reason": "Visible tolerance ±0.02 is not represented by the bounded answer dimension schema.",
+  "entity_keys": [],
+  "dimension_key": "center_height",
+  "dimension_value": 40,
+  "field": "tolerance",
+  "axis": "Z",
+  "evidence": ["R1.vertical.right"],
+  "required_for_modeling": true
+}
+~~~
+
+`dimension_key` may be used only when that local dimension is present in the same
+answer. Otherwise leave it null. `entity_keys` may contain only local entities
+declared in the same answer.
+
+Do not read Python source code to discover or repair the answer shape during this
+performance smoke. This contract is the complete Agent-facing answer contract.
+If the answer cannot be written conformingly from this contract alone, report the
+failure and stop.
+
 ## 5. Deterministic merge
 
 After writing answers once, run exactly once:
@@ -177,7 +244,9 @@ The merge only:
 
 It does not perform cross-view association or dimension ownership inference.
 
-If merge fails, stop. Do not reread images or write a second answer file.
+If merge fails, stop. Do not reread images, inspect implementation source, reshape
+the answer, modify the same answer file, or retry merge. Report the first merge
+error exactly as returned. A retry would invalidate this performance smoke.
 
 ## 6. Timing report
 

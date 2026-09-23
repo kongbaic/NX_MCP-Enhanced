@@ -28,6 +28,16 @@ from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
+from .reader_candidate_answers import (
+    CandidateRegionAnswer,
+    ReaderCandidateAnswerError,
+    assemble_candidate_regions,
+)
+from .reader_candidate_queries import (
+    ReaderCandidateQueryError,
+    ReaderCandidateQueryPlan,
+    build_reader_candidate_queries,
+)
 from .reader_input_prep import prepare_reader_input
 from .reader_observations import (
     ReaderObservationAssemblyError,
@@ -184,6 +194,110 @@ def _cmd_build_reader_visual_aid(args: argparse.Namespace) -> int:
         "max_bucket_candidate_count",
         0,
     )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_build_reader_candidate_queries(args: argparse.Namespace) -> int:
+    reader_input_path = str(Path(args.reader_input).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "reader_input": reader_input_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "query_count": 0,
+        "target_count": 0,
+        "overflow_bucket_count": 0,
+        "errors": [],
+    }
+
+    try:
+        reader_input = _load_json(reader_input_path)
+        visual_aid_path = reader_input.get("reader_visual_aid_path")
+        if not isinstance(visual_aid_path, str) or not visual_aid_path:
+            raise ValueError("reader input requires reader_visual_aid_path")
+        visual_aid = _load_json(visual_aid_path)
+        plan = build_reader_candidate_queries(reader_input, visual_aid)
+        _atomic_write_json(
+            output_path,
+            plan.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderCandidateQueryError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = plan.schema_version
+    report["query_count"] = len(plan.queries)
+    report["target_count"] = sum(
+        len(query.dimension_targets) for query in plan.queries
+    )
+    report["overflow_bucket_count"] = sum(
+        len(query.overflow_buckets) for query in plan.queries
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assemble_reader_candidate_regions(args: argparse.Namespace) -> int:
+    query_plan_path = str(Path(args.query_plan).resolve())
+    regions_dir = Path(args.regions_dir).resolve()
+    partial_path = str(Path(args.partial_out).resolve())
+    report: dict[str, Any] = {
+        "query_plan": query_plan_path,
+        "regions_dir": str(regions_dir),
+        "partial": partial_path,
+        "written": False,
+        "schema": None,
+        "query_count": 0,
+        "entity_count": 0,
+        "dimension_count": 0,
+        "unresolved_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = ReaderCandidateQueryPlan.model_validate(
+            _load_json(query_plan_path)
+        )
+        region_answers: list[CandidateRegionAnswer] = []
+        for query in plan.queries:
+            region_path = regions_dir / f"reader-candidate-{query.query_id}.json"
+            region_answers.append(
+                CandidateRegionAnswer.model_validate(
+                    _load_json(str(region_path))
+                )
+            )
+        partial = assemble_candidate_regions(plan, region_answers)
+        _atomic_write_json(
+            partial_path,
+            partial.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderCandidateAnswerError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = partial.schema_version
+    report["query_count"] = len(plan.queries)
+    report["entity_count"] = len(partial.entities)
+    report["dimension_count"] = len(partial.dimensions)
+    report["unresolved_count"] = len(partial.unresolved)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -854,6 +968,25 @@ def main(argv: list[str] | None = None) -> int:
     build_visual_aid.add_argument("raw_evidence")
     build_visual_aid.add_argument("out")
     build_visual_aid.set_defaults(func=_cmd_build_reader_visual_aid)
+
+    candidate_queries = sub.add_parser(
+        "build-reader-candidate-queries",
+        help="build candidate-addressed dimension semantic questions",
+    )
+    candidate_queries.add_argument("reader_input")
+    candidate_queries.add_argument("out")
+    candidate_queries.set_defaults(func=_cmd_build_reader_candidate_queries)
+
+    assemble_candidate_regions = sub.add_parser(
+        "assemble-reader-candidate-regions",
+        help="assemble per-region candidate answers into partial Reader observations",
+    )
+    assemble_candidate_regions.add_argument("query_plan")
+    assemble_candidate_regions.add_argument("regions_dir")
+    assemble_candidate_regions.add_argument("partial_out")
+    assemble_candidate_regions.set_defaults(
+        func=_cmd_assemble_reader_candidate_regions
+    )
 
     semantic_queries = sub.add_parser(
         "build-reader-semantic-queries",

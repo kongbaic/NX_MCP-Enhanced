@@ -102,3 +102,23 @@ python benchmarks/text_extraction_bakeoff.py benchmarks/text_extraction/manifest
 
 Do not connect the result to ReaderCapture / linker / Resolver / Gate A before
 the bake-off is reviewed.
+
+## Fixed three-drawing benchmark set
+
+The first local bake-off uses exactly three drawings:
+
+1. the current SHKSS20-40 authoritative raster copied from
+   `<workspace>/reader-crops/overview.png`;
+2. `2D PROFILE DRAWING WITH RADIAL AND ANGULAR DIMENSION.png` from
+   `Aadityajain-hub/AutoCAD_2D_Drawings`;
+3. `Screenshot AutoCAD Task 1.png` from `SivaTX92/AutoCAD-Task-1`.
+
+Run:
+
+~~~powershell
+.\benchmarks\text_extraction\setup_bakeoff.ps1 -Workspace "C:\Users\Kavin\NX_MCP_FAST_BASELINE"
+~~~
+
+The script creates `benchmarks/text_extraction/manifest.json` and downloads or
+copies the exact three images. Do not substitute other drawings during the first
+comparison run.

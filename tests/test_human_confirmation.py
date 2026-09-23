@@ -136,6 +136,7 @@ def test_confirmation_request_is_bounded_to_known_features_and_boundaries():
     request = build_confirmation_request(_graph())
 
     assert request["question_count"] == 1
+    assert request["eligible_for_user_confirmation"] is True
     question = request["questions"][0]
     endpoint = question["endpoints"][0]
     option_roles = {item["role"] for item in endpoint["options"]}
@@ -229,6 +230,46 @@ def test_apply_confirmation_rejects_arbitrary_option():
                     {
                         "confirmation_id": "CONF_U_DIM_D1",
                         "selected_option_ids": ["E0_FEATURE_NOT_IN_GRAPH"],
+                    }
+                ],
+            },
+        )
+
+
+def test_unconfirmable_blocker_disables_human_gate():
+    graph = _graph().model_copy(
+        deep=True,
+        update={
+            "unresolved_evidence": [
+                *_graph().unresolved_evidence,
+                {
+                    "id": "U_OTHER",
+                    "kind": "cross_view_identity",
+                    "reason": "identity is still ambiguous",
+                    "required_for_modeling": True,
+                },
+            ]
+        },
+    )
+
+    request = build_confirmation_request(graph)
+
+    assert request["question_count"] == 1
+    assert request["eligible_for_user_confirmation"] is False
+    assert request["unconfirmable_blocking_ids"] == ["U_OTHER"]
+
+    with pytest.raises(
+        ConfirmationError,
+        match="not eligible for bounded user confirmation",
+    ):
+        apply_confirmation_answers(
+            graph,
+            {
+                "schema_version": "1.0",
+                "answers": [
+                    {
+                        "confirmation_id": "CONF_U_DIM_D1",
+                        "selected_option_ids": ["E0_OVERALL_MIN"],
                     }
                 ],
             },

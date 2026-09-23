@@ -440,8 +440,14 @@ def main() -> None:
     if "<stepN ...>" not in text_fast or "禁止写裸语义名" not in text_fast:
         fail("text-mode selection consumer placeholder rule missing")
 
-    if "纯计划表达错误" not in pipeline_contract or "result_bindings" not in pipeline_contract:
-        fail("pipeline contract does not allow safe one-shot repair of binding-only plan errors")
+    for token in (
+        "frozen/executable 边界污染等纯计划表达错误",
+        "不改变尺寸、特征、选择几何或建模顺序",
+        "不改变已冻结设计几何语义的确定性 plan-level / selection-level 技术修复",
+        "生成 repair plan v1，只修改已确认的计划级问题",
+    ):
+        if token not in pipeline_contract:
+            fail(f"pipeline safe one-shot plan repair regression: missing {token}")
 
     for token in (
         "禁止数值 nudge / epsilon 修复",

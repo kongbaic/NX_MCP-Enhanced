@@ -91,7 +91,7 @@ def _raw() -> dict:
                 "orientation": "vertical",
                 "band": "left",
             },
-            {"DG13"},
+            {"DG13", "DG15"},
         ),
         (
             {
@@ -249,7 +249,7 @@ def test_reduce_dimension_candidates_cli_e2e(tmp_path: Path):
         item["dimension_id"]: item
         for item in output["dimensions"]
     }
-    assert by_id["D_FRONT_8"]["candidate_count"] == 1
+    assert by_id["D_FRONT_8"]["candidate_count"] == 2
     assert by_id["D_FRONT_40TOL"]["candidate_count"] == 2
     assert by_id["D_FRONT_24"]["candidate_count"] == 2
     assert by_id["D_SIDE_24"]["candidate_count"] == 2

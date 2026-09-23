@@ -278,7 +278,7 @@ def main() -> None:
         "禁止第二轮用户确认",
         "canonicalize-drawing <semantic-draft.json> <drawing.json>",
         "build <current-frozen> <current-executable> --drawing <current-drawing>",
-        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-crops、reader-capture.json",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B evidence pipeline regression: missing {token}")
@@ -291,7 +291,7 @@ def main() -> None:
         "禁止 fallback 到 python、python3、py",
         "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-crops、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
@@ -303,27 +303,33 @@ def main() -> None:
             "唯一权威几何输入",
             "prepare-reader-input <current-raster-path> <workspace_root>",
             "reader-input.json",
-            "manifest 明确列出的 crop 文件",
+            "reader-contact-sheet.png",
+            "禁止顺序打开全部单张 crop",
+            "对应的那一张现成 crop",
             "不得直接读取 raw-evidence.json / reader-visual-aid.json",
             "不得创建额外 crop",
-            "旧 raw-evidence、reader-visual-aid、reader-input、reader-crops、reader-capture",
+            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-capture",
         ),
         "pipeline-contract.md": (
             "### A0.5. Deterministic Reader input preparation",
             "prepare-reader-input <current-raster-path> <workspace_root>",
             "reader-input.json",
+            "reader-contact-sheet.png",
             "reader-crops\\overview.png",
             "有明确 current raster path 时",
             "禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本",
-            "Reader 只允许读取当前原图、当前 `reader-input.json` 与 manifest 明确列出的 crop 文件",
+            "Reader 默认只读取当前原图、当前 `reader-input.json` 与当前 `reader-contact-sheet.png`",
+            "禁止顺序打开全部单张 crop",
             "Reader 禁止创建额外 crop、重新预处理图片、扫描历史文件或重新组织一套 visual search pipeline",
-            "旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-crops 不得复用",
+            "旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用",
         ),
         "reader-runtime-contract.md": (
             "### Deterministic Reader input bundle",
             "sole authoritative geometry source",
             "exactly one current `reader-input.json`",
-            "only the crop files explicitly listed by that manifest",
+            "exactly one current `reader-contact-sheet.png`",
+            "Do not open all individual crops sequentially",
+            "corresponding already-listed crop",
             "do not read `raw-evidence.json` or `reader-visual-aid.json` directly",
             "do not scan the workspace, chat history, repository, or user directories",
             "do not create additional crops, PowerShell image scripts, PIL/.NET image helpers",
@@ -353,6 +359,9 @@ def main() -> None:
     ).read_text(encoding="utf-8")
     for token in (
         '"schema": "reader-input-v1"',
+        '"contact_sheet_path": str(contact_sheet_path)',
+        '"may_read_contact_sheet": True',
+        '"prefer_contact_sheet": True',
         '"scan_workspace": False',
         '"scan_history": False',
         '"create_additional_crops": False',

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from nx_mcp.drawing_intelligence.reader_semantic_queries import (
@@ -105,3 +110,37 @@ def test_region_query_count_is_bounded():
 
     with pytest.raises(ReaderSemanticQueryError, match="exceeds bounded maximum"):
         build_reader_semantic_queries(payload)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_build_reader_semantic_queries_cli_e2e(tmp_path: Path):
+    reader_input = tmp_path / "reader-input.json"
+    output = tmp_path / "reader-semantic-queries.json"
+    reader_input.write_text(
+        json.dumps(_reader_input(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "build-reader-semantic-queries",
+            str(reader_input),
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    report = json.loads(run.stdout)
+    assert report["written"] is True
+    assert report["schema"] == "reader-semantic-queries-v1"
+    assert report["query_count"] == 2
+    assert output.is_file()

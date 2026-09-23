@@ -126,7 +126,7 @@ def enrich_reduced_dimension_candidates(
     reduced_payload: dict[str, Any],
     *,
     nearest_count: int = 3,
-    max_distance_local_norm: float = 0.08,
+    max_distance_local_norm: float = 0.04,
 ) -> dict[str, Any]:
     """Attach geometry-only nearest-anchor evidence to reduced candidates."""
 

@@ -241,7 +241,7 @@ def _fragment_groups(
             continue
         dx, dy = int(x2 - x1), int(y2 - y1)
         length = math.hypot(dx, dy)
-        if not 10 <= length <= 90:
+        if not min_fragment_length <= length <= max_fragment_length:
             continue
 
         angle = math.degrees(math.atan2(dy, dx))

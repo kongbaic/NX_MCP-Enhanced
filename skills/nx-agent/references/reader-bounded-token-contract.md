@@ -82,7 +82,7 @@ Each fact is one flat object. Use only fields relevant to its `kind`.
 {
   "kind": "overall",
   "axis": "X",
-  "value": 40,
+  "value": 37,
   "evidence": "R1"
 }
 ~~~
@@ -92,7 +92,7 @@ Each fact is one flat object. Use only fields relevant to its `kind`.
 ~~~json
 {
   "kind": "entity",
-  "key": "main_bore",
+  "key": "feature_alpha",
   "shape": "circle",
   "evidence": "R1"
 }
@@ -116,9 +116,9 @@ It does not infer a different engineering feature.
 ~~~json
 {
   "kind": "value",
-  "entity_key": "main_bore",
+  "entity_key": "feature_alpha",
   "field": "diameter",
-  "value": 20,
+  "value": 16,
   "semantic": "diameter",
   "evidence": "R1"
 }
@@ -129,11 +129,11 @@ It does not infer a different engineering feature.
 ~~~json
 {
   "kind": "dimension",
-  "key": "center_height",
+  "key": "dimension_alpha",
   "axis": "Z",
-  "value": 40,
+  "value": 23,
   "endpoint_a": "overall_min",
-  "endpoint_b": "center:main_bore:centerline",
+  "endpoint_b": "center:feature_alpha:centerline",
   "evidence": "R1.vertical.right"
 }
 ~~~
@@ -163,7 +163,7 @@ Optional `direction` is `-1` or `1`.
 ~~~json
 {
   "kind": "datum",
-  "entity_key": "main_bore",
+  "entity_key": "feature_alpha",
   "axis": "Z",
   "evidence": "R1"
 }
@@ -175,9 +175,9 @@ Optional `direction` is `-1` or `1`.
 {
   "kind": "unresolved",
   "category": "unsupported_representation",
-  "reason": "Visible tolerance ±0.02 is not represented by this bounded compact fact.",
-  "dimension_key": "center_height",
-  "dimension_value": 40,
+  "reason": "Visible tolerance ±0.03 is not represented by this bounded compact fact.",
+  "dimension_key": "dimension_alpha",
+  "dimension_value": 23,
   "field": "tolerance",
   "axis": "Z",
   "evidence": "R1.vertical.right"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from importlib import import_module
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
@@ -22,8 +23,8 @@ def fragment_length_limits(image_width: int) -> tuple[int, int]:
 
 def _load_cv_modules() -> tuple[Any, Any]:
     try:
-        import cv2
-        import numpy as np
+        cv2 = import_module("cv2")
+        np = import_module("numpy")
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError(
             "Raster drawing evidence requires the optional drawing dependencies. "

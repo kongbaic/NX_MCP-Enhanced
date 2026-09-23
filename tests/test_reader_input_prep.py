@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import cv2
@@ -111,3 +113,36 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert result["timing_ms"]["raw_evidence"] >= 0
     assert result["timing_ms"]["visual_aid"] >= 0
     assert result["timing_ms"]["crops"] >= 0
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_prepare_reader_input_cli_e2e(tmp_path: Path):
+    image_path = tmp_path / "drawing.png"
+    workspace = tmp_path / "workspace-cli"
+    _write_synthetic_drawing(image_path)
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "prepare-reader-input",
+            str(image_path),
+            str(workspace),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    report = json.loads(run.stdout)
+    assert report["written"] is True
+    assert report["schema"] == "reader-input-v1"
+    assert report["summary"]["region_count"] >= 1
+    assert report["summary"]["bucket_count"] >= 1
+    assert (workspace / "reader-input.json").is_file()
+    assert (workspace / "reader-crops" / "overview.png").is_file()

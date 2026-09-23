@@ -39,6 +39,11 @@ from .reader_semantic_answers import (
     ReaderSemanticAnswers,
     merge_region_semantic_answers,
 )
+from .reader_semantic_compact import (
+    CompactRegionSemanticAnswer,
+    ReaderSemanticCompactError,
+    assemble_compact_regions,
+)
 from .reader_semantic_queries import (
     ReaderSemanticQueryError,
     ReaderSemanticQueryPlan,
@@ -254,6 +259,65 @@ def _cmd_merge_reader_semantic_answers(args: argparse.Namespace) -> int:
     report["written"] = True
     report["schema"] = partial.schema_version
     report["view_count"] = len(partial.views)
+    report["entity_count"] = len(partial.entities)
+    report["dimension_count"] = len(partial.dimensions)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assemble_reader_semantic_regions(args: argparse.Namespace) -> int:
+    query_plan_path = str(Path(args.query_plan).resolve())
+    regions_dir = Path(args.regions_dir).resolve()
+    answers_path = str(Path(args.answers_out).resolve())
+    partial_path = str(Path(args.partial_out).resolve())
+    report: dict[str, Any] = {
+        "query_plan": query_plan_path,
+        "regions_dir": str(regions_dir),
+        "answers": answers_path,
+        "partial": partial_path,
+        "written": False,
+        "schema": None,
+        "query_count": 0,
+        "entity_count": 0,
+        "dimension_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = ReaderSemanticQueryPlan.model_validate(_load_json(query_plan_path))
+        region_answers: list[CompactRegionSemanticAnswer] = []
+        for query in plan.queries:
+            region_path = regions_dir / f"reader-semantic-{query.query_id}.json"
+            region_answers.append(
+                CompactRegionSemanticAnswer.model_validate(
+                    _load_json(str(region_path))
+                )
+            )
+
+        strict, partial = assemble_compact_regions(plan, region_answers)
+        _atomic_write_json(
+            answers_path,
+            strict.model_dump(mode="json", by_alias=True),
+        )
+        _atomic_write_json(
+            partial_path,
+            partial.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderSemanticCompactError,
+        ReaderSemanticAnswerError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = partial.schema_version
+    report["query_count"] = len(plan.queries)
     report["entity_count"] = len(partial.entities)
     report["dimension_count"] = len(partial.dimensions)
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -807,6 +871,16 @@ def main(argv: list[str] | None = None) -> int:
     merge_semantic_answers.add_argument("answers")
     merge_semantic_answers.add_argument("out")
     merge_semantic_answers.set_defaults(func=_cmd_merge_reader_semantic_answers)
+
+    assemble_semantic_regions = sub.add_parser(
+        "assemble-reader-semantic-regions",
+        help="assemble compact per-region semantic files into strict answers and partial observations",
+    )
+    assemble_semantic_regions.add_argument("query_plan")
+    assemble_semantic_regions.add_argument("regions_dir")
+    assemble_semantic_regions.add_argument("answers_out")
+    assemble_semantic_regions.add_argument("partial_out")
+    assemble_semantic_regions.set_defaults(func=_cmd_assemble_reader_semantic_regions)
 
     assemble_capture = sub.add_parser(
         "assemble-reader-capture",

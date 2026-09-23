@@ -30,10 +30,12 @@ def _reader_input(tmp_path: Path | None = None) -> dict:
             {
                 "region_id": "R1",
                 "crop_path": "C:/workspace/reader-crops/R1.png",
+                "candidate_overlay_path": "C:/workspace/reader-crops/R1-candidates.png",
             },
             {
                 "region_id": "R2",
                 "crop_path": "C:/workspace/reader-crops/R2.png",
+                "candidate_overlay_path": "C:/workspace/reader-crops/R2-candidates.png",
             },
         ],
         "candidate_buckets": [
@@ -139,12 +141,26 @@ def test_candidate_queries_address_only_existing_dimension_candidates():
     plan = build_reader_candidate_queries(_reader_input(), _visual_aid())
 
     assert [item.query_id for item in plan.queries] == ["Q001", "Q002"]
+    assert plan.queries[0].image_path.endswith("R1-candidates.png")
+    assert plan.queries[1].image_path.endswith("R2-candidates.png")
     assert [item.target_id for item in plan.queries[0].dimension_targets] == ["DG7"]
     assert plan.queries[0].circle_entities[0].entity_key == "C2"
     assert plan.queries[1].dimension_targets == []
     assert len(plan.queries[1].overflow_buckets) == 1
     assert plan.rules["scan_region_for_unaddressed_facts"] is False
     assert plan.rules["answer_only_listed_dimension_targets"] is True
+    assert plan.rules["candidate_overlay_required"] is True
+
+
+def test_candidate_queries_fail_closed_without_overlay():
+    reader_input = _reader_input()
+    reader_input["regions"][0].pop("candidate_overlay_path")
+
+    with pytest.raises(
+        Exception,
+        match="candidate_overlay_path",
+    ):
+        build_reader_candidate_queries(reader_input, _visual_aid())
 
 
 def test_candidate_answers_assemble_into_existing_partial_observations():
@@ -210,6 +226,8 @@ def test_candidate_contract_forbids_unaddressed_inventory():
 
     assert "Do not search the region for additional" in contract
     assert "every listed `dimension_target` exactly once" in contract
+    assert "candidate-overlay `image_path`" in contract
+    assert "Locator marks carry no engineering semantics" in contract
     for forbidden in ("SHKSS", "main_bore", "center_height", "40±0.02"):
         assert forbidden not in contract
 

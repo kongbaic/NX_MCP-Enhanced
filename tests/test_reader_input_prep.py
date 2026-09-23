@@ -78,8 +78,11 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert payload["semantics_policy"] == ("geometry_only_no_engineering_claims")
     assert payload["summary"]["region_count"] >= 1
     assert payload["summary"]["bucket_count"] >= 1
+    assert payload["summary"]["candidate_overlay_count"] == payload["summary"]["region_count"]
     assert payload["summary"]["crop_count"] == (
-        1 + payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
+        1
+        + 2 * payload["summary"]["region_count"]
+        + payload["summary"]["bucket_count"]
     )
 
     assert payload["reader_contract"] == {
@@ -102,7 +105,18 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     }
 
     for region in payload["regions"]:
-        assert Path(region["crop_path"]).is_file()
+        crop_path = Path(region["crop_path"])
+        overlay_path = Path(region["candidate_overlay_path"])
+        assert crop_path.is_file()
+        assert overlay_path.is_file()
+        assert region["candidate_overlay_count"] >= 0
+        if region["candidate_overlay_count"] > 0:
+            crop = cv2.imread(str(crop_path))
+            overlay = cv2.imread(str(overlay_path))
+            assert crop is not None
+            assert overlay is not None
+            assert crop.shape == overlay.shape
+            assert int(cv2.absdiff(crop, overlay).sum()) > 0
         assert "circle_groups" not in region
         assert "linear_pattern_candidates" not in region
         assert "circle_group_count" in region

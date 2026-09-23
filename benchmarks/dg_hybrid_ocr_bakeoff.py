@@ -224,6 +224,154 @@ def _hybrid_decision(
     return global_token, "global_geometry_assignment_confirmed_by_local_roi"
 
 
+def _observation_ref(
+    source_item_index: int,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "source_item_index": source_item_index,
+        "text": str(item.get("text") or ""),
+        "bbox": item.get("bbox"),
+        "confidence": item.get("confidence"),
+        "primary_tokens": item.get("primary_tokens", []),
+    }
+
+
+def _coverage_ledger(
+    whole_items: list[dict[str, Any]],
+    candidate_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    accepted_support: list[dict[str, Any]] = []
+    conflicting_linear: list[dict[str, Any]] = []
+    unconfirmed_proposals: list[dict[str, Any]] = []
+    secondary_assignments: list[dict[str, Any]] = []
+    unassigned_linear: list[dict[str, Any]] = []
+    routed_elsewhere: list[dict[str, Any]] = []
+    local_only_linear: list[dict[str, Any]] = []
+
+    assignments_by_index: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for candidate in candidate_results:
+        for assignment in candidate.get("global_assignments", []):
+            source_item_index = int(assignment["source_item_index"])
+            if source_item_index in assignments_by_index:
+                raise ValueError(
+                    "whole OCR observation assigned to more than one DG candidate"
+                )
+            assignments_by_index[source_item_index] = (candidate, assignment)
+
+        global_tokens = {
+            str(assignment["token"])
+            for assignment in candidate.get("global_assignments", [])
+        }
+        for token in candidate.get("wide_local_linear_tokens", []):
+            token = str(token)
+            if token in global_tokens:
+                continue
+            local_only_linear.append(
+                {
+                    "candidate_id": candidate.get("candidate_id"),
+                    "token": token,
+                    "reason": "local_linear_token_without_matching_global_assignment",
+                }
+            )
+
+    categorized_indices: set[int] = set()
+    whole_linear_count = 0
+
+    for source_item_index, item in enumerate(whole_items):
+        linear = _linear_tokens(str(item.get("text") or ""))
+        observation = _observation_ref(source_item_index, item)
+
+        if len(linear) != 1:
+            routed_elsewhere.append(
+                {
+                    **observation,
+                    "reason": "not_one_standalone_linear_token",
+                }
+            )
+            categorized_indices.add(source_item_index)
+            continue
+
+        whole_linear_count += 1
+        assigned = assignments_by_index.get(source_item_index)
+        if assigned is None:
+            unassigned_linear.append(
+                {
+                    **observation,
+                    "token": next(iter(linear)),
+                    "reason": "no_unique_DG_assignment",
+                }
+            )
+            categorized_indices.add(source_item_index)
+            continue
+
+        candidate, assignment = assigned
+        candidate_id = str(candidate["candidate_id"])
+        assignment_token = str(assignment["token"])
+        proposal_token = candidate.get("global_proposal_token")
+        accepted_token = candidate.get("accepted_token")
+        decision_reason = str(candidate.get("decision_reason") or "")
+
+        base = {
+            **observation,
+            "candidate_id": candidate_id,
+            "token": assignment_token,
+        }
+        if accepted_token is not None and assignment_token == str(accepted_token):
+            accepted_support.append(
+                {
+                    **base,
+                    "reason": "supports_accepted_DG_value",
+                }
+            )
+        elif proposal_token is not None and assignment_token == str(proposal_token):
+            if decision_reason == "global_local_token_disagreement":
+                conflicting_linear.append(
+                    {
+                        **base,
+                        "local_tokens": candidate.get(
+                            "wide_local_linear_tokens",
+                            [],
+                        ),
+                        "reason": decision_reason,
+                    }
+                )
+            else:
+                unconfirmed_proposals.append(
+                    {
+                        **base,
+                        "reason": decision_reason,
+                    }
+                )
+        else:
+            secondary_assignments.append(
+                {
+                    **base,
+                    "selected_proposal_token": proposal_token,
+                    "reason": "assigned_to_DG_but_not_selected_as_global_proposal",
+                }
+            )
+        categorized_indices.add(source_item_index)
+
+    all_indices = set(range(len(whole_items)))
+    dropped_indices = sorted(all_indices - categorized_indices)
+
+    return {
+        "whole_observation_count": len(whole_items),
+        "whole_linear_observation_count": whole_linear_count,
+        "accepted_support_observations": accepted_support,
+        "conflicting_linear_observations": conflicting_linear,
+        "unconfirmed_proposal_observations": unconfirmed_proposals,
+        "secondary_assignment_observations": secondary_assignments,
+        "unassigned_linear_observations": unassigned_linear,
+        "routed_elsewhere_or_unclassified_observations": routed_elsewhere,
+        "local_only_linear_observations": local_only_linear,
+        "observed_silent_drop_count": len(dropped_indices),
+        "observed_silent_drop_indices": dropped_indices,
+        "source_extraction_completeness_proven": False,
+    }
+
+
 def _collect_candidates(
     visual_aid: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -371,9 +519,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     accepted_count = sum(1 for result in results if result["accepted_token"] is not None)
+    coverage = _coverage_ledger(full_items, results)
     total_ocr_elapsed = full_elapsed + wide_elapsed
     report = {
-        "schema": "dg-hybrid-ocr-bakeoff-v1",
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
         "source_raster": str(source_path),
         "reader_visual_aid": str(visual_aid_path),
         "candidate_count": len(results),
@@ -394,8 +543,10 @@ def main(argv: list[str] | None = None) -> int:
             "linear_dg_excludes_diameter_radius_thread": True,
             "confidence_is_correctness_gate": False,
             "leading_zero_integer_is_ambiguous": True,
+            "observed_evidence_silent_drop_forbidden": True,
         },
         "whole_drawing_items": full_items,
+        "coverage": coverage,
         "candidates": results,
     }
 

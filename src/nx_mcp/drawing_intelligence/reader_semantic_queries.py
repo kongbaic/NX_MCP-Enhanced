@@ -151,5 +151,9 @@ def build_reader_semantic_queries(
             "global_feature_merge": False,
             "reader_capture_output": False,
             "second_interpretation": False,
+            "programmatic_image_analysis": False,
+            "pixel_measurement": False,
+            "image_transform": False,
+            "ascii_render": False,
         },
     )

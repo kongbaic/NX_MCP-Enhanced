@@ -20,6 +20,10 @@ from .reader_candidate_queries import (
     CandidateRegionQuery,
     ReaderCandidateQueryPlan,
 )
+from .reader_semantic_queries import (
+    ReaderSemanticQueryPlan,
+    RegionObservationQuery,
+)
 
 CandidateClassification = Literal["dimension", "not_dimension", "uncertain"]
 
@@ -118,23 +122,32 @@ def _bbox_endpoint(
     suffix = ref.rsplit(".", 1)[-1]
     if target.orientation == "horizontal":
         if suffix == "left":
-            role = "overall_min"
-        elif suffix == "right":
-            role = "overall_max"
-        else:
-            raise ReaderCandidateAnswerError(
-                f"horizontal dimension cannot use bbox endpoint {ref!r}"
+            return RegionDimensionEndpointAnswer(
+                role="overall_min",
+                evidence=[evidence],
             )
-    else:
-        if suffix == "bottom":
-            role = "overall_min"
-        elif suffix == "top":
-            role = "overall_max"
-        else:
-            raise ReaderCandidateAnswerError(
-                f"vertical dimension cannot use bbox endpoint {ref!r}"
+        if suffix == "right":
+            return RegionDimensionEndpointAnswer(
+                role="overall_max",
+                evidence=[evidence],
             )
-    return RegionDimensionEndpointAnswer(role=role, evidence=[evidence])
+        raise ReaderCandidateAnswerError(
+            f"horizontal dimension cannot use bbox endpoint {ref!r}"
+        )
+
+    if suffix == "bottom":
+        return RegionDimensionEndpointAnswer(
+            role="overall_min",
+            evidence=[evidence],
+        )
+    if suffix == "top":
+        return RegionDimensionEndpointAnswer(
+            role="overall_max",
+            evidence=[evidence],
+        )
+    raise ReaderCandidateAnswerError(
+        f"vertical dimension cannot use bbox endpoint {ref!r}"
+    )
 
 
 def _endpoint(
@@ -178,7 +191,13 @@ def _endpoint(
             raise ReaderCandidateAnswerError(
                 f"endpoint token uses unavailable circle anchor {ref!r}"
             )
-        if basis not in {"centerline", "center_mark", "explicit_midline"}:
+        if basis == "centerline":
+            center_basis = "centerline"
+        elif basis == "center_mark":
+            center_basis = "center_mark"
+        elif basis == "explicit_midline":
+            center_basis = "explicit_midline"
+        else:
             raise ReaderCandidateAnswerError(
                 f"unsupported circle endpoint basis {basis!r}"
             )
@@ -186,7 +205,7 @@ def _endpoint(
         return RegionDimensionEndpointAnswer(
             role="entity_center",
             entity_key=entity_key,
-            basis=basis,
+            basis=center_basis,
             evidence=[evidence],
         )
 
@@ -330,4 +349,16 @@ def assemble_candidate_regions(
             for query_id in sorted(queries)
         ]
     )
-    return merge_region_semantic_answers(plan, strict)  # type: ignore[arg-type]
+    semantic_plan = ReaderSemanticQueryPlan(
+        queries=[
+            RegionObservationQuery(
+                query_id=query.query_id,
+                region_id=query.region_id,
+                image_path=query.image_path,
+                allowed_evidence_labels=query.allowed_evidence_labels,
+                candidate_buckets=[],
+            )
+            for query in plan.queries
+        ]
+    )
+    return merge_region_semantic_answers(semantic_plan, strict)

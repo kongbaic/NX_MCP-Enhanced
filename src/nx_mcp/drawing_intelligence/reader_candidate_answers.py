@@ -191,6 +191,7 @@ def _endpoint(
             raise ReaderCandidateAnswerError(
                 f"endpoint token uses unavailable circle anchor {ref!r}"
             )
+        center_basis: Literal["centerline", "center_mark", "explicit_midline"]
         if basis == "centerline":
             center_basis = "centerline"
         elif basis == "center_mark":

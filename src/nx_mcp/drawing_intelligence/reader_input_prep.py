@@ -347,12 +347,10 @@ def prepare_reader_input(
 
     contact_items: list[tuple[str, Path]] = [("overview", overview_path)]
     contact_items.extend(
-        (str(item["region_id"]), Path(str(item["crop_path"])))
-        for item in region_entries
+        (str(item["region_id"]), Path(str(item["crop_path"]))) for item in region_entries
     )
     contact_items.extend(
-        (str(item["bucket_id"]), Path(str(item["crop_path"])))
-        for item in bucket_entries
+        (str(item["bucket_id"]), Path(str(item["crop_path"]))) for item in bucket_entries
     )
     contact_sheet_path = workspace_root / "reader-contact-sheet.png"
     _write_contact_sheet(

@@ -113,10 +113,7 @@ def build_reader_visual_aid(
             }
         )
 
-    bucket_sizes = [
-        int(item.get("candidate_count", 0))
-        for item in candidate_buckets
-    ]
+    bucket_sizes = [int(item.get("candidate_count", 0)) for item in candidate_buckets]
 
     return {
         "schema": "reader-visual-aid-v1",

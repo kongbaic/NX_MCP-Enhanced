@@ -359,6 +359,7 @@ def _cmd_anchor_dimension_candidates(args: argparse.Namespace) -> int:
             raw,
             reduced,
             nearest_count=args.nearest_count,
+            max_distance_local_norm=args.max_distance_local_norm,
         )
         _atomic_write_json(output_path, output)
     except (
@@ -581,6 +582,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=3,
         help="number of nearest geometry anchors per witness (1..5)",
+    )
+    anchor_candidates.add_argument(
+        "--max-distance-local-norm",
+        type=float,
+        default=0.08,
+        help="maximum normalized witness-to-anchor distance (0, 0.25]",
     )
     anchor_candidates.set_defaults(func=_cmd_anchor_dimension_candidates)
 

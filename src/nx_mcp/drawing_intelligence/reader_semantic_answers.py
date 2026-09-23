@@ -106,13 +106,9 @@ class RegionDimensionAnswer(_StrictAnswerModel):
     def _shape(self) -> RegionDimensionAnswer:
         has_unresolved = any(item.role == "unresolved" for item in self.endpoints)
         if has_unresolved and not self.unresolved_reason:
-            raise ValueError(
-                "dimension with unresolved endpoint requires unresolved_reason"
-            )
+            raise ValueError("dimension with unresolved endpoint requires unresolved_reason")
         if not has_unresolved and self.unresolved_reason is not None:
-            raise ValueError(
-                "resolved dimension must not carry unresolved_reason"
-            )
+            raise ValueError("resolved dimension must not carry unresolved_reason")
         return self
 
 
@@ -158,9 +154,7 @@ class RegionObservationAnswer(_StrictAnswerModel):
     query_id: str = Field(min_length=1)
     view_kind: ViewKind
     evidence: list[str] = Field(min_length=1)
-    overall_dimension_facts: list[RegionOverallDimensionFact] = Field(
-        default_factory=list
-    )
+    overall_dimension_facts: list[RegionOverallDimensionFact] = Field(default_factory=list)
     entities: list[RegionEntityAnswer] = Field(default_factory=list)
     values: list[RegionValueAnswer] = Field(default_factory=list)
     dimensions: list[RegionDimensionAnswer] = Field(default_factory=list)
@@ -183,24 +177,17 @@ class RegionObservationAnswer(_StrictAnswerModel):
 
         for value in self.values:
             if value.entity_key not in entity_set:
-                raise ValueError(
-                    f"value references unknown local entity {value.entity_key!r}"
-                )
+                raise ValueError(f"value references unknown local entity {value.entity_key!r}")
 
         for dimension in self.dimensions:
             for endpoint in dimension.endpoints:
-                if (
-                    endpoint.entity_key is not None
-                    and endpoint.entity_key not in entity_set
-                ):
+                if endpoint.entity_key is not None and endpoint.entity_key not in entity_set:
                     raise ValueError(
                         f"dimension {dimension.key!r} references unknown local "
                         f"entity {endpoint.entity_key!r}"
                     )
                 missing = [
-                    item
-                    for item in endpoint.candidate_entity_keys
-                    if item not in entity_set
+                    item for item in endpoint.candidate_entity_keys if item not in entity_set
                 ]
                 if missing:
                     raise ValueError(
@@ -211,25 +198,19 @@ class RegionObservationAnswer(_StrictAnswerModel):
         for alignment in self.datum_alignments:
             if alignment.entity_key not in entity_set:
                 raise ValueError(
-                    "datum alignment references unknown local entity "
-                    f"{alignment.entity_key!r}"
+                    f"datum alignment references unknown local entity {alignment.entity_key!r}"
                 )
 
         for unresolved in self.unresolved:
-            missing = [
-                item for item in unresolved.entity_keys if item not in entity_set
-            ]
+            missing = [item for item in unresolved.entity_keys if item not in entity_set]
             if missing:
-                raise ValueError(
-                    f"unresolved references unknown local entities {missing}"
-                )
+                raise ValueError(f"unresolved references unknown local entities {missing}")
             if (
                 unresolved.dimension_key is not None
                 and unresolved.dimension_key not in dimension_set
             ):
                 raise ValueError(
-                    "unresolved references unknown local dimension "
-                    f"{unresolved.dimension_key!r}"
+                    f"unresolved references unknown local dimension {unresolved.dimension_key!r}"
                 )
 
         return self
@@ -256,9 +237,7 @@ class PartialReaderObservations(_StrictAnswerModel):
         default="reader-partial-observations-v1",
         alias="schema",
     )
-    overall_dimension_facts: list[PartialOverallDimensionFact] = Field(
-        default_factory=list
-    )
+    overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
     views: list[ObservationView] = Field(default_factory=list)
     entities: list[ObservationEntity] = Field(default_factory=list)
     values: list[ObservationValue] = Field(default_factory=list)
@@ -432,8 +411,7 @@ def merge_region_semantic_answers(
                     kind=unresolved.kind,
                     reason=unresolved.reason,
                     entity_keys=[
-                        _prefixed(query.region_id, item)
-                        for item in unresolved.entity_keys
+                        _prefixed(query.region_id, item) for item in unresolved.entity_keys
                     ],
                     dimension_key=(
                         _prefixed(query.region_id, unresolved.dimension_key)

@@ -103,6 +103,46 @@ class CompactRegionSemanticAnswer(_StrictCompactModel):
     view_kind: ViewKind
     facts: list[CompactSemanticFact] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _local_references(self) -> CompactRegionSemanticAnswer:
+        entity_keys = {
+            fact.key
+            for fact in self.facts
+            if fact.kind == "entity" and fact.key is not None
+        }
+        dimension_keys = {
+            fact.key
+            for fact in self.facts
+            if fact.kind == "dimension" and fact.key is not None
+        }
+
+        for fact in self.facts:
+            if fact.kind == "value":
+                if fact.entity_key not in entity_keys:
+                    raise ValueError(
+                        f"value references unknown local entity {fact.entity_key!r}"
+                    )
+            elif fact.kind == "datum":
+                if fact.entity_key not in entity_keys:
+                    raise ValueError(
+                        f"datum references unknown local entity {fact.entity_key!r}"
+                    )
+            elif fact.kind == "unresolved":
+                missing = [key for key in fact.entity_keys if key not in entity_keys]
+                if missing:
+                    raise ValueError(
+                        f"unresolved references unknown local entities {missing}"
+                    )
+                if (
+                    fact.dimension_key is not None
+                    and fact.dimension_key not in dimension_keys
+                ):
+                    raise ValueError(
+                        "unresolved dimension_key must reference a local dimension fact: "
+                        f"{fact.dimension_key!r}"
+                    )
+        return self
+
 
 _SHAPE_ALIASES: dict[str, ProjectionShape] = {
     "circle": "circle",

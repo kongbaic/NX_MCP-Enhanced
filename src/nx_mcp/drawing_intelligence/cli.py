@@ -38,6 +38,11 @@ from .reader_candidate_queries import (
     ReaderCandidateQueryPlan,
     build_reader_candidate_queries,
 )
+from .reader_candidate_values import (
+    CandidateValueRegionAnswer,
+    ReaderCandidateValueError,
+    assemble_candidate_value_regions,
+)
 from .reader_input_prep import prepare_reader_input
 from .reader_observations import (
     ReaderObservationAssemblyError,
@@ -278,6 +283,57 @@ def _cmd_assemble_reader_candidate_regions(args: argparse.Namespace) -> int:
         json.JSONDecodeError,
         ValidationError,
         ReaderCandidateAnswerError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = partial.schema_version
+    report["query_count"] = len(plan.queries)
+    report["entity_count"] = len(partial.entities)
+    report["dimension_count"] = len(partial.dimensions)
+    report["unresolved_count"] = len(partial.unresolved)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assemble_reader_candidate_values(args: argparse.Namespace) -> int:
+    query_plan_path = str(Path(args.query_plan).resolve())
+    regions_dir = Path(args.regions_dir).resolve()
+    partial_path = str(Path(args.partial_out).resolve())
+    report: dict[str, Any] = {
+        "query_plan": query_plan_path,
+        "regions_dir": str(regions_dir),
+        "partial": partial_path,
+        "written": False,
+        "schema": None,
+        "query_count": 0,
+        "entity_count": 0,
+        "dimension_count": 0,
+        "unresolved_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = ReaderCandidateQueryPlan.model_validate(_load_json(query_plan_path))
+        region_answers: list[CandidateValueRegionAnswer] = []
+        for query in plan.queries:
+            region_path = regions_dir / f"reader-candidate-value-{query.query_id}.json"
+            region_answers.append(
+                CandidateValueRegionAnswer.model_validate(_load_json(str(region_path)))
+            )
+        partial = assemble_candidate_value_regions(plan, region_answers)
+        _atomic_write_json(
+            partial_path,
+            partial.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderCandidateValueError,
         ValueError,
     ) as exc:
         report["errors"].append(f"{type(exc).__name__}: {exc}")
@@ -977,6 +1033,15 @@ def main(argv: list[str] | None = None) -> int:
     assemble_candidate_regions.add_argument("regions_dir")
     assemble_candidate_regions.add_argument("partial_out")
     assemble_candidate_regions.set_defaults(func=_cmd_assemble_reader_candidate_regions)
+
+    assemble_candidate_values = sub.add_parser(
+        "assemble-reader-candidate-values",
+        help="assemble value-only candidate answers into partial Reader observations",
+    )
+    assemble_candidate_values.add_argument("query_plan")
+    assemble_candidate_values.add_argument("regions_dir")
+    assemble_candidate_values.add_argument("partial_out")
+    assemble_candidate_values.set_defaults(func=_cmd_assemble_reader_candidate_values)
 
     semantic_queries = sub.add_parser(
         "build-reader-semantic-queries",

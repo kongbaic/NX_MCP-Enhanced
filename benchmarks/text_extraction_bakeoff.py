@@ -32,7 +32,8 @@ def _bbox_orientation_deg(box: list[list[float]]) -> float | None:
     return round(angle, 3)
 
 
-def _rapidocr(image_path: Path) -> tuple[list[OcrItem], float]:
+def _build_rapidocr_runner() -> tuple[Callable[[Path], tuple[list[OcrItem], float]], float]:
+    started = time.perf_counter()
     module = importlib.import_module("rapidocr")
     engine = module.RapidOCR(
         params={
@@ -40,28 +41,33 @@ def _rapidocr(image_path: Path) -> tuple[list[OcrItem], float]:
             "Global.return_word_box": False,
         }
     )
-    started = time.perf_counter()
-    result = engine(str(image_path))
-    elapsed = time.perf_counter() - started
+    init_elapsed = time.perf_counter() - started
 
-    boxes = getattr(result, "boxes", None)
-    txts = getattr(result, "txts", None)
-    scores = getattr(result, "scores", None)
-    if boxes is None or txts is None or scores is None:
-        return [], elapsed
+    def run(image_path: Path) -> tuple[list[OcrItem], float]:
+        inference_started = time.perf_counter()
+        result = engine(str(image_path))
+        elapsed = time.perf_counter() - inference_started
 
-    items: list[OcrItem] = []
-    for box, text, score in zip(boxes, txts, scores):
-        points = [[float(point[0]), float(point[1])] for point in box]
-        items.append(
-            OcrItem(
-                text=str(text),
-                bbox=points,
-                confidence=float(score),
-                orientation_deg=_bbox_orientation_deg(points),
+        boxes = getattr(result, "boxes", None)
+        txts = getattr(result, "txts", None)
+        scores = getattr(result, "scores", None)
+        if boxes is None or txts is None or scores is None:
+            return [], elapsed
+
+        items: list[OcrItem] = []
+        for box, text, score in zip(boxes, txts, scores):
+            points = [[float(point[0]), float(point[1])] for point in box]
+            items.append(
+                OcrItem(
+                    text=str(text),
+                    bbox=points,
+                    confidence=float(score),
+                    orientation_deg=_bbox_orientation_deg(points),
+                )
             )
-        )
-    return items, elapsed
+        return items, elapsed
+
+    return run, init_elapsed
 
 
 def _tesseract(image_path: Path) -> tuple[list[OcrItem], float]:
@@ -137,7 +143,12 @@ def _normalize_token(text: str) -> str:
     )
 
 
-def _score(expected: list[str], items: list[OcrItem]) -> dict[str, Any]:
+def _score(
+    expected: list[str],
+    items: list[OcrItem],
+    *,
+    complete_token_inventory: bool,
+) -> dict[str, Any]:
     expected_normalized = [_normalize_token(item) for item in expected]
     observed_normalized = [_normalize_token(item.text) for item in items]
 
@@ -152,16 +163,22 @@ def _score(expected: list[str], items: list[OcrItem]) -> dict[str, Any]:
             missed.append(token)
 
     recall = len(matched) / len(expected_normalized) if expected_normalized else 1.0
-    precision = len(matched) / (len(matched) + len(remaining)) if items else 1.0
+    precision: float | None = None
+    extra_text: list[str] | None = None
+    if complete_token_inventory:
+        precision = len(matched) / (len(matched) + len(remaining)) if items else 1.0
+        extra_text = remaining
+
     return {
         "expected_count": len(expected_normalized),
         "detected_count": len(items),
         "matched_count": len(matched),
         "exact_token_recall": round(recall, 6),
-        "exact_token_precision": round(precision, 6),
+        "exact_token_precision": round(precision, 6) if precision is not None else None,
+        "complete_token_inventory": complete_token_inventory,
         "matched": matched,
         "missed": missed,
-        "extra_text": remaining,
+        "extra_text": extra_text,
     }
 
 
@@ -175,19 +192,14 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _run_engine(
+def _build_engine(
     engine_name: str,
-    image_path: Path,
-) -> tuple[list[OcrItem], float]:
-    engines: dict[str, Callable[[Path], tuple[list[OcrItem], float]]] = {
-        "rapidocr": _rapidocr,
-        "tesseract": _tesseract,
-    }
-    try:
-        engine = engines[engine_name]
-    except KeyError as exc:
-        raise ValueError(f"unsupported engine: {engine_name}") from exc
-    return engine(image_path)
+) -> tuple[Callable[[Path], tuple[list[OcrItem], float]], float]:
+    if engine_name == "rapidocr":
+        return _build_rapidocr_runner()
+    if engine_name == "tesseract":
+        return _tesseract, 0.0
+    raise ValueError(f"unsupported engine: {engine_name}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -214,16 +226,22 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     for engine_name in args.engine:
+        engine, init_elapsed = _build_engine(engine_name)
         engine_cases: list[dict[str, Any]] = []
         for case in manifest["cases"]:
             case_id = str(case["case_id"])
             image_path = (root / str(case["image"])).resolve()
             expected = [str(value) for value in case.get("expected_tokens", [])]
+            complete_inventory = bool(case.get("complete_token_inventory", False))
             if not image_path.is_file():
                 raise ValueError(f"case {case_id!r} image does not exist: {image_path}")
 
-            items, elapsed = _run_engine(engine_name, image_path)
-            score = _score(expected, items)
+            items, elapsed = engine(image_path)
+            score = _score(
+                expected,
+                items,
+                complete_token_inventory=complete_inventory,
+            )
             engine_cases.append(
                 {
                     "case_id": case_id,
@@ -244,20 +262,26 @@ def main(argv: list[str] | None = None) -> int:
 
         elapsed_values = [item["elapsed_s"] for item in engine_cases]
         recall_values = [item["score"]["exact_token_recall"] for item in engine_cases]
-        precision_values = [item["score"]["exact_token_precision"] for item in engine_cases]
+        precision_values = [
+            item["score"]["exact_token_precision"]
+            for item in engine_cases
+            if item["score"]["exact_token_precision"] is not None
+        ]
         report["engines"][engine_name] = {
             "cases": engine_cases,
             "summary": {
                 "case_count": len(engine_cases),
+                "engine_init_elapsed_s": round(init_elapsed, 6),
                 "mean_elapsed_s": round(sum(elapsed_values) / len(elapsed_values), 6),
                 "max_elapsed_s": round(max(elapsed_values), 6),
                 "mean_exact_token_recall": round(
                     sum(recall_values) / len(recall_values),
                     6,
                 ),
-                "mean_exact_token_precision": round(
-                    sum(precision_values) / len(precision_values),
-                    6,
+                "mean_exact_token_precision": (
+                    round(sum(precision_values) / len(precision_values), 6)
+                    if precision_values
+                    else None
                 ),
             },
         }

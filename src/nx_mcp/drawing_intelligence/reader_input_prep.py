@@ -216,12 +216,12 @@ def prepare_reader_input(
         region_id = str(bucket.get("region_id") or "")
         orientation = str(bucket.get("orientation") or "")
         band = str(bucket.get("band") or "")
-        region = region_lookup.get(region_id)
-        if not bucket_id or region is None:
+        bucket_region = region_lookup.get(region_id)
+        if not bucket_id or bucket_region is None:
             continue
 
         crop_bbox = _bucket_crop_box(
-            list(region["bbox_px"]),
+            list(bucket_region["bbox_px"]),
             orientation,
             band,
             image_width,

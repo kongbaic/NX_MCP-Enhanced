@@ -1,0 +1,37 @@
+{
+  "schema": "text-extraction-bakeoff-v1",
+  "cases": [
+    {
+      "case_id": "drawing-01",
+      "image": "images/drawing-01.png",
+      "expected_tokens": [
+        "24",
+        "40",
+        "6.6",
+        "Ø20",
+        "40±0.02",
+        "H7"
+      ]
+    },
+    {
+      "case_id": "drawing-02",
+      "image": "images/drawing-02.png",
+      "expected_tokens": [
+        "R5",
+        "M6",
+        "12",
+        "32"
+      ]
+    },
+    {
+      "case_id": "drawing-03",
+      "image": "images/drawing-03.png",
+      "expected_tokens": [
+        "Ø8",
+        "18",
+        "45°",
+        "±0.1"
+      ]
+    }
+  ]
+}

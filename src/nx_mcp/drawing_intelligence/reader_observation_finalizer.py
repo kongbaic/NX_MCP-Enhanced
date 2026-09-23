@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import argparse
+import json
 import math
+from pathlib import Path
 from typing import Any
 
 from .evidence import Axis, OverallDimensions
@@ -96,3 +99,66 @@ def finalize_partial_reader_observations(
         ],
         unresolved=partial.unresolved,
     )
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("partial")
+    parser.add_argument("out")
+    args = parser.parse_args(argv)
+
+    partial_path = Path(args.partial).resolve()
+    output_path = Path(args.out).resolve()
+
+    try:
+        payload = json.loads(partial_path.read_text(encoding="utf-8"))
+        partial = PartialReaderObservations.model_validate(payload)
+        full = finalize_partial_reader_observations(partial)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(
+                full.model_dump(mode="json", by_alias=True),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        print(
+            json.dumps(
+                {
+                    "written": False,
+                    "partial": str(partial_path),
+                    "out": str(output_path),
+                    "errors": [f"{type(exc).__name__}: {exc}"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "written": True,
+                "partial": str(partial_path),
+                "out": str(output_path),
+                "dimension_count": len(full.dimensions),
+                "unresolved_count": len(full.unresolved),
+                "errors": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

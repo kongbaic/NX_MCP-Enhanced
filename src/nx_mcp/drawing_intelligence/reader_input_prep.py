@@ -214,17 +214,29 @@ def _write_contact_sheet(
 
 
 def _compact_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    anchor_hints: list[dict[str, Any]] = []
+    for witness in candidate.get("witness_anchor_evidence", []):
+        if not isinstance(witness, dict):
+            continue
+        nearby = []
+        for anchor in witness.get("nearest_anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            kind = anchor.get("kind")
+            ref = anchor.get("ref")
+            if isinstance(kind, str) and isinstance(ref, str):
+                nearby.append({"kind": kind, "ref": ref})
+        anchor_hints.append(
+            {
+                "witness_index": witness.get("witness_index"),
+                "nearby_anchors": nearby,
+            }
+        )
+
     return {
         "candidate_id": candidate.get("candidate_id"),
         "orientation": candidate.get("orientation"),
-        "axis_px": candidate.get("axis_px"),
-        "axis_local_norm": candidate.get("axis_local_norm"),
-        "line_span_px": candidate.get("line_span_px"),
-        "witness_positions_px": candidate.get("witness_positions_px", []),
-        "witness_anchor_evidence": candidate.get(
-            "witness_anchor_evidence",
-            [],
-        ),
+        "anchor_hints": anchor_hints,
     }
 
 
@@ -294,10 +306,9 @@ def prepare_reader_input(
                 "crop_path": str(crop_path),
                 "crop_bbox_px": bbox,
                 "source_bbox_px": region.get("bbox_px"),
-                "circle_groups": region.get("circle_groups", []),
-                "linear_pattern_candidates": region.get(
-                    "linear_pattern_candidates",
-                    [],
+                "circle_group_count": len(region.get("circle_groups", [])),
+                "linear_pattern_candidate_count": len(
+                    region.get("linear_pattern_candidates", [])
                 ),
             }
         )

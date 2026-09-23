@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 from nx_mcp.drawing_intelligence.dimension_witness_anchors import (
     enrich_reduced_dimension_candidates,
 )
@@ -132,3 +137,40 @@ def test_anchor_enrichment_stays_geometry_only():
                     item["distance_local_norm"] <= 0.04
                     for item in witness["nearest_anchors"]
                 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_anchor_dimension_candidates_cli_e2e(tmp_path: Path):
+    raw_path = tmp_path / "raw.json"
+    reduced_path = tmp_path / "reduced.json"
+    out_path = tmp_path / "anchored.json"
+
+    raw_path.write_text(json.dumps(_raw()), encoding="utf-8")
+    reduced_path.write_text(json.dumps(_reduced()), encoding="utf-8")
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "anchor-dimension-candidates",
+            str(raw_path),
+            str(reduced_path),
+            str(out_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    output = json.loads(out_path.read_text(encoding="utf-8"))
+    assert output["anchor_policy"] == (
+        "geometry_only_no_engineering_ownership_claims"
+    )
+    assert output["anchor_summary"]["candidate_count"] == 2
+    assert output["anchor_summary"]["witness_count"] == 4
+    assert output["anchor_summary"]["max_distance_local_norm"] == 0.04

@@ -1,8 +1,5 @@
 {
   "schema": "hybrid-adapter-context-v1",
-  "benchmark_only": true,
-  "benchmark_id": "SHKSS20-40-manual-structural-audit",
-  "production_use_forbidden": true,
   "region_views": [
     {
       "region_id": "R1",

@@ -41,7 +41,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 13. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
 14. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
 15. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
-16. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
+16. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
 17. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
 18. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
 

@@ -99,20 +99,14 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     assert by_key["R1.DG12"].value == 24
     assert by_key["R1.DG12"].axis == "X"
     assert "R1.DG17" not in by_key
-    assert all(
-        endpoint.role == "unresolved"
-        for endpoint in by_key["R1.DG12"].endpoints
-    )
+    assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
     assert by_key["R2.DG13"].axis == "Y"
 
 
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 
-    tolerance = [
-        item for item in partial.unresolved
-        if item.field == "dimension_tolerance"
-    ]
+    tolerance = [item for item in partial.unresolved if item.field == "dimension_tolerance"]
     assert len(tolerance) == 1
     assert tolerance[0].dimension_key == "R1.DG25"
     assert tolerance[0].required_for_modeling is False

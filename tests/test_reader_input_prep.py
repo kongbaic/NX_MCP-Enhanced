@@ -80,9 +80,7 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert payload["summary"]["bucket_count"] >= 1
     assert payload["summary"]["candidate_overlay_count"] == payload["summary"]["region_count"]
     assert payload["summary"]["crop_count"] == (
-        1
-        + 2 * payload["summary"]["region_count"]
-        + payload["summary"]["bucket_count"]
+        1 + 2 * payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
     )
 
     assert payload["reader_contract"] == {

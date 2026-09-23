@@ -138,3 +138,70 @@ def test_hybrid_decision_rejects_partial_digit_conflict():
 
     assert accepted is None
     assert reason == "global_local_token_disagreement"
+
+
+def test_coverage_ledger_preserves_secondary_and_routed_observations():
+    whole_items = [
+        _item("24", 10.0, 10.0),
+        _item("32", 20.0, 20.0),
+        _item("M6", 30.0, 30.0),
+    ]
+    results = [
+        {
+            "candidate_id": "DG-A",
+            "global_assignments": [
+                {
+                    "source_item_index": 0,
+                    "token": "24",
+                },
+                {
+                    "source_item_index": 1,
+                    "token": "32",
+                },
+            ],
+            "global_proposal_token": "24",
+            "accepted_token": "24",
+            "decision_reason": "global_geometry_assignment_confirmed_by_local_roi",
+            "wide_local_linear_tokens": ["24"],
+        }
+    ]
+
+    coverage = hybrid._coverage_ledger(whole_items, results)
+
+    assert coverage["observed_silent_drop_count"] == 0
+    assert len(coverage["accepted_support_observations"]) == 1
+    assert len(coverage["secondary_assignment_observations"]) == 1
+    assert len(coverage["routed_elsewhere_or_unclassified_observations"]) == 1
+
+
+def test_coverage_ledger_preserves_global_local_conflict_and_local_only_token():
+    whole_items = [_item("6", 10.0, 10.0)]
+    results = [
+        {
+            "candidate_id": "DG-A",
+            "global_assignments": [
+                {
+                    "source_item_index": 0,
+                    "token": "6",
+                }
+            ],
+            "global_proposal_token": "6",
+            "accepted_token": None,
+            "decision_reason": "global_local_token_disagreement",
+            "wide_local_linear_tokens": ["66"],
+        }
+    ]
+
+    coverage = hybrid._coverage_ledger(whole_items, results)
+
+    assert coverage["observed_silent_drop_count"] == 0
+    assert coverage["conflicting_linear_observations"][0]["token"] == "6"
+    assert coverage["local_only_linear_observations"][0]["token"] == "66"
+
+
+def test_coverage_ledger_preserves_unassigned_linear_observation():
+    whole_items = [_item("8", 10.0, 10.0)]
+    coverage = hybrid._coverage_ledger(whole_items, [])
+
+    assert coverage["observed_silent_drop_count"] == 0
+    assert coverage["unassigned_linear_observations"][0]["token"] == "8"

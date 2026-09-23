@@ -237,12 +237,8 @@ def _cmd_build_reader_candidate_queries(args: argparse.Namespace) -> int:
     report["written"] = True
     report["schema"] = plan.schema_version
     report["query_count"] = len(plan.queries)
-    report["target_count"] = sum(
-        len(query.dimension_targets) for query in plan.queries
-    )
-    report["overflow_bucket_count"] = sum(
-        len(query.overflow_buckets) for query in plan.queries
-    )
+    report["target_count"] = sum(len(query.dimension_targets) for query in plan.queries)
+    report["overflow_bucket_count"] = sum(len(query.overflow_buckets) for query in plan.queries)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -265,16 +261,12 @@ def _cmd_assemble_reader_candidate_regions(args: argparse.Namespace) -> int:
     }
 
     try:
-        plan = ReaderCandidateQueryPlan.model_validate(
-            _load_json(query_plan_path)
-        )
+        plan = ReaderCandidateQueryPlan.model_validate(_load_json(query_plan_path))
         region_answers: list[CandidateRegionAnswer] = []
         for query in plan.queries:
             region_path = regions_dir / f"reader-candidate-{query.query_id}.json"
             region_answers.append(
-                CandidateRegionAnswer.model_validate(
-                    _load_json(str(region_path))
-                )
+                CandidateRegionAnswer.model_validate(_load_json(str(region_path)))
             )
         partial = assemble_candidate_regions(plan, region_answers)
         _atomic_write_json(
@@ -984,9 +976,7 @@ def main(argv: list[str] | None = None) -> int:
     assemble_candidate_regions.add_argument("query_plan")
     assemble_candidate_regions.add_argument("regions_dir")
     assemble_candidate_regions.add_argument("partial_out")
-    assemble_candidate_regions.set_defaults(
-        func=_cmd_assemble_reader_candidate_regions
-    )
+    assemble_candidate_regions.set_defaults(func=_cmd_assemble_reader_candidate_regions)
 
     semantic_queries = sub.add_parser(
         "build-reader-semantic-queries",

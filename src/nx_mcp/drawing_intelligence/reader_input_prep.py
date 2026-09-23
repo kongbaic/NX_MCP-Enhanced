@@ -307,9 +307,7 @@ def prepare_reader_input(
                 "crop_bbox_px": bbox,
                 "source_bbox_px": region.get("bbox_px"),
                 "circle_group_count": len(region.get("circle_groups", [])),
-                "linear_pattern_candidate_count": len(
-                    region.get("linear_pattern_candidates", [])
-                ),
+                "linear_pattern_candidate_count": len(region.get("linear_pattern_candidates", [])),
             }
         )
 

@@ -31,6 +31,12 @@ python_exe -m nx_mcp.drawing_intelligence build-reader-semantic-queries <reader-
 
 Both commands must succeed before visual interpretation starts.
 
+Before opening Q001, ensure the current smoke has no stale semantic outputs:
+if `<workspace_root>/reader-semantic-answers.json` or
+`<workspace_root>/reader-partial-observations.json` already exists, delete only
+those exact files without reading or inspecting their contents. Do not scan for
+other artifacts and do not reuse, patch, diff, or transform an older answers file.
+
 Do not scan the workspace or history. Do not reuse an older query plan.
 
 ## 3. Region query discipline
@@ -67,8 +73,13 @@ The purpose is bounded local semantics, not whole-drawing closure.
 
 ## 4. Answer shape
 
-Write exactly one `reader-semantic-answers.json` after all listed region queries
-have been answered.
+Write exactly one fresh `reader-semantic-answers.json` after all listed region
+queries have been answered.
+
+The file must be produced as one complete current-run payload derived only from
+the current Q001..Q00N observations. Do not read, patch, edit, diff, or use
+"Extract task-relevant data" against an older answers file. Do not perform a
+post-visual renaming/reconciliation pass against stale content.
 
 Top level:
 
@@ -292,16 +303,53 @@ error exactly as returned. A retry would invalidate this performance smoke.
 
 ## 6. Timing report
 
-For this smoke report only:
+Use two timing scopes and do not confuse them.
 
+### Full smoke wall clock
+
+Record `smoke_start` as soon as bounded-query mode is selected and before runtime
+location/setup begins. Record `smoke_end` immediately when the smoke stops, whether
+PASS or FAIL.
+
+Report `smoke_wall_elapsed` from those timestamps. This is the user-visible
+end-to-end runtime and includes runtime lookup, deterministic setup, visual semantic
+work, answer construction/serialization, merge, and failure handling.
+
+### Visual-semantic stage
+
+Record `visual_semantic_start` immediately before opening Q001.
+
+Do **not** end this timer when the last crop merely finishes opening. The stage
+continues through all reasoning needed to convert the current crop observations
+into the complete structured `reader-semantic-answers.json`.
+
+Record `visual_semantic_end` only after the one fresh
+`reader-semantic-answers.json` has been fully written.
+
+Therefore `visual_semantic_elapsed` includes:
+
+- direct visual reading of every listed region crop;
+- region-local semantic interpretation;
+- construction of entities / values / dimensions / datum alignments / unresolved;
+- legal enum normalization required by this contract;
+- serialization and the single full-file write of `reader-semantic-answers.json`.
+
+It excludes deterministic prepare/query-build time and excludes merge time.
+
+The visual-semantic target is <= 2 minutes. Hard stop at 3 minutes. If the answers
+file has not been fully written by 3 minutes after `visual_semantic_start`, stop
+the smoke and do not run merge.
+
+The final report must include:
+
+- `smoke_start`, `smoke_end`, and `smoke_wall_elapsed`;
 - prepare-reader-input elapsed;
 - build-reader-semantic-queries elapsed;
-- visual start and end time for all region queries;
-- total visual semantic elapsed;
 - query count;
+- `visual_semantic_start`, `visual_semantic_end`, and
+  `visual_semantic_elapsed`;
 - reader-semantic-answers.json path;
 - merge-reader-semantic-answers elapsed;
-- reader-partial-observations.json path;
-- whether any unlisted image was opened.
-
-The visual semantic target is <= 2 minutes. Hard stop at 3 minutes.
+- reader-partial-observations.json path when written;
+- whether any unlisted image was opened;
+- whether any stale answers/partial file was found and deleted before Q001.

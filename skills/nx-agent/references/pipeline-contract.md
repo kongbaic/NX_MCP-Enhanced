@@ -37,7 +37,7 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 6. nx_mcp_src 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
 7. runtime 一旦解析，本轮 drawing、Evidence、Resolver、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
 
-当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
+当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
@@ -72,19 +72,37 @@ python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-p
 - `overflow` bucket 不得截断或猜测；Reader 对该 bucket 只能回到当前原图进行正常视觉判断；
 - Reader 禁止创建额外 crop、重新预处理图片、扫描历史文件或重新组织一套 visual search pipeline。
 
-### A1. Reader Capture
+### A1. Reader semantic observations + deterministic Capture assembly
 
-Reader 只从当前上传工程图生成一次 reader-capture.json。
+Reader 只从当前上传工程图执行一次连续视觉语义 first-pass，并且只写一次 `reader-observations.json`。
 
-- reader-capture.json 是 immutable first-pass visual evidence artifact；
-- Reader 只创建 view-local entity，不创建最终 physical feature ID；
-- Reader 对 cross-view association 只记录结构化 visual basis，由 deterministic linker 决定是否足够 merge；
-- entity_center endpoint 必须记录 centerline / center_mark / explicit_midline visual basis；
-- blocking unresolved 必须使用 structured unresolved kind；不能只写自由文本 reason；
-- 新 capture 的 required_targets 固定为 []；
-- Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json；
-- Reader 不做 centered global coordinate arithmetic；
-- Reader 不从 check-capture / linker / Gate 0 / Resolver / Gate A 错误反向修正 capture。
+`reader-observations.json` 使用 `reader-observations-v1`，只记录 Reader 真正判断出的工程语义：standard views、view-local entities、direct values、visible dimensions、physical endpoint ownership 或 structured unresolved、cross-view association visual basis、datum alignment 与 blocking ambiguity。临时 key 只用于本轮文件内引用。
+
+Reader 禁止负责正式 evidence ID/source_ids 展开、`required_targets=[]`、ReaderCapture schema bookkeeping 或最终 Capture ID 编号。
+
+随后立即执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence assemble-reader-capture <reader-observations.json> <reader-capture.json>
+~~~
+
+Assembler 只能：
+- 校验 `reader-observations-v1`；
+- 把临时 view/entity/dimension key deterministic 映射成正式 Capture ID；
+- 展开 Reader 已明确给出的 evidence label 为 source_ids；
+- 固定写入 schema_version / coordinate_system / required_targets；
+- 执行生产 `ReaderCapture.model_validate` 与 `validate_reader_capture_contract`；
+- 原子写出唯一 `reader-capture.json`。
+
+Assembler 禁止：
+- 创建 Agent 没有声明的 association；
+- 把 unresolved endpoint 绑定到某个 entity；
+- 根据像素距离、数值相似、对称或零件类型猜 ownership；
+- 补 feature inventory、feature value、cross-view identity、datum 或其它工程语义。
+
+Assembler 返回非零或 `written!=true` 时立即 BLOCKED / STOP；保留 reader-observations.json，禁止根据错误重新看图、禁止第二版 observations、禁止手工写 reader-capture.json。
+
+成功生成的 reader-capture.json 是 immutable compiled first-pass visual evidence artifact。Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json，也不得从 check-capture / linker / Gate 0 / Resolver / Gate A 错误反向修正 observations/capture。
 
 ### A2. Authoritative Capture check
 
@@ -275,7 +293,8 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 ~~~text
 当前上传工程图
 → [若有明确 raster path：prepare-reader-input → reader-input.json + reader-contact-sheet.png]
-→ reader-capture.json
+→ reader-observations.json
+→ deterministic assemble-reader-capture → reader-capture.json
 → check-capture
 → deterministic identity link / Gate 0
 → drawing-evidence.json
@@ -291,16 +310,16 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ### 4.1 Mode B 当前请求 artifact isolation
 
-- 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
+- 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
 - 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用；只有本轮从当前明确 raster path 成功运行 prepare-reader-input 生成的 reader-input.json 与其中列出的 crops 才能作为 Reader 的非权威 geometry-only 辅助。
-- Reader 必须从当前图纸重新生成 reader-capture.json；旧 capture 不得复用。
+- Reader 必须从当前图纸重新生成 reader-observations.json，并由 deterministic assembler 重新生成 reader-capture.json；旧 observations/capture 均不得复用。
 - link-capture 必须只读取本轮 reader-capture.json 并生成本轮 drawing-evidence.json；旧 evidence 不得复用。
 - resolve 必须只读取本轮 drawing-evidence.json；不得读取历史 semantic draft、drawing 或 plan。
 - canonicalize-drawing 成功后必须重新运行 Planner，只从本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。
 - Planner 不得读取 drawing-evidence.json 或 semantic-draft.json；Planner 只读取本轮 Gate A PASS 的 drawing.json。
 - Mode B build 固定绑定本轮 drawing：runner.py build <current-frozen> <current-executable> --drawing <current-drawing>。
-- 只有本轮 capture → link-capture → evidence → resolve → Gate A 成功后产生的 artifact 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
+- 只有本轮 observations → assemble-reader-capture → capture → link-capture → evidence → resolve → Gate A 成功后产生的 artifact 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
 
 runner build/check 任一失败即 B 失败。B 阶段失败不进入自修复，禁止修改 frozen plan 后自动重跑。
 

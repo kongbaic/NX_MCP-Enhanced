@@ -254,14 +254,11 @@ def _coverage_ledger(
         for assignment in candidate.get("global_assignments", []):
             source_item_index = int(assignment["source_item_index"])
             if source_item_index in assignments_by_index:
-                raise ValueError(
-                    "whole OCR observation assigned to more than one DG candidate"
-                )
+                raise ValueError("whole OCR observation assigned to more than one DG candidate")
             assignments_by_index[source_item_index] = (candidate, assignment)
 
         global_tokens = {
-            str(assignment["token"])
-            for assignment in candidate.get("global_assignments", [])
+            str(assignment["token"]) for assignment in candidate.get("global_assignments", [])
         }
         for token in candidate.get("wide_local_linear_tokens", []):
             token = str(token)

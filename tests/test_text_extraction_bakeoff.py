@@ -135,9 +135,9 @@ def test_engineering_score_does_not_invent_diameter_from_zero():
 
 
 def test_setup_script_uses_ascii_codepoints_for_engineering_glyphs():
-    script = (
-        ROOT / "benchmarks" / "text_extraction" / "setup_bakeoff.ps1"
-    ).read_text(encoding="utf-8")
+    script = (ROOT / "benchmarks" / "text_extraction" / "setup_bakeoff.ps1").read_text(
+        encoding="utf-8"
+    )
 
     assert "[char]0x00B1" in script
     assert "[char]0x00B0" in script

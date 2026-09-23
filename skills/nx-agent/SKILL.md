@@ -39,11 +39,11 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 11. 对 drawing-evidence-confirmed.json 只允许再执行一次 resolve，输出 semantic-draft-confirmed.json。只有第二次 resolve 完全 PASS 才允许继续；否则立即 BLOCKED / STOP。禁止第二轮用户确认、禁止重新看图、禁止重写 Reader Capture。
 12. Resolve PASS 后立即执行 runner.py canonicalize-drawing <semantic-draft.json 或 semantic-draft-confirmed.json> <drawing.json>。只有 process exit code=0、written=true、output_exists=true、gate_a.ok=true 才算 Gate A PASS。
 13. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
-11. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
-12. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
-13. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
-14. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-15. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
+14. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
+15. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
+16. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
+17. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+18. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
 
 两条链路：
 

@@ -586,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     anchor_candidates.add_argument(
         "--max-distance-local-norm",
         type=float,
-        default=0.08,
+        default=0.04,
         help="maximum normalized witness-to-anchor distance (0, 0.25]",
     )
     anchor_candidates.set_defaults(func=_cmd_anchor_dimension_candidates)

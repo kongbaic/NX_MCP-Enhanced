@@ -209,11 +209,17 @@ def main() -> None:
             fail(f"SKILL Mode A Fast Path regression: missing {token}")
 
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+    reader_runtime = (SKILL / "references" / "reader-runtime-contract.md").read_text(
+        encoding="utf-8"
+    )
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     for token in (
         "当前上传工程图",
-        "唯一几何输入",
+        "唯一权威几何输入",
+        "runtime-local raster 路径",
+        "compact reader-visual-aid.json",
+        "不得直接读取 raw-evidence.json",
         "ReaderCapture.model_validate(payload)",
         "immutable reader-capture.json",
         "check-capture <reader-capture.json>",
@@ -226,7 +232,7 @@ def main() -> None:
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 reader-capture",
+        "禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-capture",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:
@@ -240,7 +246,7 @@ def main() -> None:
         "workspace_root 与 NX_MCP_WORKSPACE 规范化后必须相同",
         "nx_mcp_src 只能取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "当前 reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
+        "当前 raw-evidence.json / reader-visual-aid.json / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
     ):
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")
@@ -270,7 +276,7 @@ def main() -> None:
         "禁止第二轮用户确认",
         "canonicalize-drawing <semantic-draft.json> <drawing.json>",
         "build <current-frozen> <current-executable> --drawing <current-drawing>",
-        "当前 Mode B 的 reader-capture.json、drawing-evidence.json",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-capture.json",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B evidence pipeline regression: missing {token}")
@@ -283,13 +289,60 @@ def main() -> None:
         "禁止 fallback 到 python、python3、py",
         "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "当前 Mode B 的 reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+    visual_aid_contracts = {
+        "SKILL.md": (
+            "唯一权威几何输入",
+            "runtime-local raster 路径",
+            "compact reader-visual-aid.json",
+            "不得直接读取 raw-evidence.json",
+            "旧 raw-evidence、reader-visual-aid、reader-capture",
+        ),
+        "pipeline-contract.md": (
+            "### A0.5. Optional deterministic Reader visual aid",
+            "extract-raster-evidence <current-raster-path>",
+            "build-reader-visual-aid <workspace_root>\\raw-evidence.json <workspace_root>\\reader-visual-aid.json",
+            "禁止扫描 workspace、用户目录、历史聊天目录或仓库去寻找/猜测当前上传图的文件路径",
+            "辅助层降级",
+            "旧 raw-evidence.json / reader-visual-aid.json 不得复用",
+        ),
+        "reader-runtime-contract.md": (
+            "### Optional deterministic visual aid",
+            "sole authoritative geometry source",
+            "do not read `raw-evidence.json` directly",
+            "`overflow` bucket",
+            "never match a dimension by numeric/pixel-scale coincidence",
+            "never create or merge a physical feature",
+            "continue the same first-pass from the source drawing",
+        ),
+    }
+    visual_aid_texts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "reader-runtime-contract.md": reader_runtime,
+    }
+    for name, tokens in visual_aid_contracts.items():
+        for token in tokens:
+            if token not in visual_aid_texts[name]:
+                fail(f"Reader visual-aid contract regression in {name}: missing {token}")
+
+    drawing_cli_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
+    ).read_text(encoding="utf-8")
+    for token in ("extract-raster-evidence", "build-reader-visual-aid"):
+        if token not in drawing_cli_source:
+            fail(f"Reader visual-aid CLI regression: missing {token}")
+
+    for token in ('import cv2, numpy', 'pip install -e "$RepoRoot[drawing]"'):
+        if token not in install_agent:
+            fail(f"Reader raster dependency install regression: missing {token}")
+
     for token in ("所有 `Doubao.exe` 进程", "安装器不会自动终止 Doubao 进程"):
         if token not in readme:
             fail(f"Agent Pack deployment restart note missing: {token}")

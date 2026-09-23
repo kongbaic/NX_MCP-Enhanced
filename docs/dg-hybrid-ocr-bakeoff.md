@@ -54,3 +54,28 @@ If a wrong accepted value occurs, or only 3 or fewer audited key linear
 dimensions close, stop tuning association thresholds. The next experiment is a
 second OCR engine for unresolved/suspicious local ROIs rather than further
 threshold fitting.
+
+
+## Reverse coverage / no-silent-loss contract
+
+Passing a DG/value correctness gate is not sufficient. Every whole-drawing OCR
+observation must remain visible after association even when it is not accepted.
+
+The report therefore contains a reverse coverage ledger with mutually exclusive
+whole-observation states:
+
+- accepted support;
+- global/local conflict;
+- unconfirmed global proposal;
+- secondary assignment not selected as the candidate proposal;
+- unassigned standalone linear observation;
+- routed-elsewhere or currently unclassified observation.
+
+Linear tokens seen only by the wide local sheet are also preserved separately.
+For example, a whole observation of `6` and a local observation of `66` are
+both retained when they disagree.
+
+The benchmark requires `observed_silent_drop_count == 0`. This guarantees
+bookkeeping completeness for observations already extracted by OCR. It does not
+prove that OCR extracted every piece of engineering text present in the source
+drawing; that remains a separate extraction-coverage problem.

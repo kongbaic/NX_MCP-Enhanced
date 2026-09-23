@@ -29,6 +29,7 @@ from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .resolver import resolve_evidence_graph
 from .raster_evidence import extract_raw_evidence
+from .reader_input_prep import prepare_reader_input
 from .reader_visual_aid import build_reader_visual_aid
 from .stability import compare_evidence_runs
 

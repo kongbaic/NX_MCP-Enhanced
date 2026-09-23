@@ -120,6 +120,15 @@ def test_adapter_preserves_conflicts_secondary_and_unassigned_evidence():
     assert "secondary_linear_assignment" in fields
     assert "unassigned_linear_text" in fields
     assert "local_only_linear_text" in fields
+    blocking = [
+        item for item in partial.unresolved
+        if item.required_for_modeling
+    ]
+    assert blocking
+    assert all(
+        item.kind == "unsupported_representation"
+        for item in blocking
+    )
     assert partial.observations[0]["kind"] == "hybrid_ocr_coverage_ledger"
 
 

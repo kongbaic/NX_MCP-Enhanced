@@ -451,16 +451,17 @@ def main() -> None:
 
     for token in (
         "禁止数值 nudge / epsilon 修复",
-        "drawing、derived、frozen plan",
-        "Z=50 → Z=49",
+        "需要猜尺寸、改尺寸、改孔位、改特征数量",
+        "若精确相切/共面导致 NX kernel Boolean 失败",
         "geometry-preserving",
+        "无法确定修复是否改变最终几何",
     ):
         if token not in pipeline_contract:
             fail(f"pipeline numeric-nudge repair regression: missing {token}")
     for token in (
         "禁止 geometry / numeric nudge",
-        "Z=50 → Z=49",
-        "精确相切/共面",
+        "不得通过修改设计尺寸、孔位、特征数量或其它几何语义来修复",
+        "不能把几何变化伪装成 technical repair",
     ):
         if token not in top:
             fail(f"top-level numeric-nudge repair regression: missing {token}")

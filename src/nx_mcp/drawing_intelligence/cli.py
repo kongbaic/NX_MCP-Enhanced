@@ -34,6 +34,10 @@ from .reader_observations import (
     ReaderObservations,
     assemble_reader_capture,
 )
+from .reader_semantic_queries import (
+    ReaderSemanticQueryError,
+    build_reader_semantic_queries,
+)
 from .reader_visual_aid import build_reader_visual_aid
 from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
@@ -169,6 +173,41 @@ def _cmd_build_reader_visual_aid(args: argparse.Namespace) -> int:
         "max_bucket_candidate_count",
         0,
     )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_build_reader_semantic_queries(args: argparse.Namespace) -> int:
+    reader_input_path = str(Path(args.reader_input).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "reader_input": reader_input_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "query_count": 0,
+        "errors": [],
+    }
+
+    try:
+        reader_input = _load_json(reader_input_path)
+        plan = build_reader_semantic_queries(reader_input)
+        payload = plan.model_dump(mode="json", by_alias=True)
+        _atomic_write_json(output_path, payload)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderSemanticQueryError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = plan.schema_version
+    report["query_count"] = len(plan.queries)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -703,6 +742,14 @@ def main(argv: list[str] | None = None) -> int:
     build_visual_aid.add_argument("raw_evidence")
     build_visual_aid.add_argument("out")
     build_visual_aid.set_defaults(func=_cmd_build_reader_visual_aid)
+
+    semantic_queries = sub.add_parser(
+        "build-reader-semantic-queries",
+        help="build bounded region-local semantic questions from reader-input-v1",
+    )
+    semantic_queries.add_argument("reader_input")
+    semantic_queries.add_argument("out")
+    semantic_queries.set_defaults(func=_cmd_build_reader_semantic_queries)
 
     assemble_capture = sub.add_parser(
         "assemble-reader-capture",

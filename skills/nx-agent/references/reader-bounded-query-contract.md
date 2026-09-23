@@ -47,6 +47,16 @@ For each `kind="region_observation"` query:
 - do not open the original drawing, contact sheet, another region crop, another
   bucket crop, or any unlisted image;
 - do not scan files or search for alternate visual evidence;
+- interpret the listed crop directly with the Agent's visual capability in one pass;
+- do not inspect image pixels programmatically and do not use PIL, Pillow, OpenCV,
+  System.Drawing, ImageMagick, PowerShell/.NET image code, GetPixel, LockBits,
+  edge/line detection, thresholding, OCR, ASCII rendering, or any other generated
+  text/pixel representation of the crop;
+- do not crop, resize, resample, enhance, threshold, convert, redraw, or otherwise
+  transform the query image;
+- do not measure pixel coordinates, arrow positions, centerlines, or distances with
+  code. Candidate buckets are hints only and must not trigger a secondary image
+  analysis pipeline;
 - do not perform cross-view identity;
 - do not merge physical features across views;
 - do not create final ReaderCapture IDs;

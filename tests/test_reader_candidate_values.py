@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence.reader_candidate_queries import (
     build_reader_candidate_queries,
@@ -147,7 +148,7 @@ def test_value_only_answers_require_exact_target_set():
 
 
 def test_value_only_answer_schema_forbids_endpoint_fields():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CandidateValueRegionAnswer.model_validate(
             {
                 "schema": "reader-candidate-value-region-v1",

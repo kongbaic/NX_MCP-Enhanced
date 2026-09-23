@@ -123,8 +123,6 @@ def _circle_entities_for_region(
 def _anchor_options(raw_hints: list[dict[str, Any]]) -> list[CandidateWitnessHint]:
     output: list[CandidateWitnessHint] = []
     for hint in raw_hints:
-        if not isinstance(hint, dict):
-            continue
         witness_index = hint.get("witness_index")
         if not isinstance(witness_index, int) or witness_index < 0:
             continue
@@ -163,13 +161,9 @@ def build_reader_candidate_queries(
     if reader_input.get("schema") != "reader-input-v1":
         raise ReaderCandidateQueryError("candidate queries require reader-input-v1")
     if visual_aid.get("schema") != "reader-visual-aid-v1":
-        raise ReaderCandidateQueryError(
-            "candidate queries require reader-visual-aid-v1"
-        )
+        raise ReaderCandidateQueryError("candidate queries require reader-visual-aid-v1")
     if not 1 <= max_targets_per_region <= 32:
-        raise ReaderCandidateQueryError(
-            "max_targets_per_region must be between 1 and 32"
-        )
+        raise ReaderCandidateQueryError("max_targets_per_region must be between 1 and 32")
 
     regions = reader_input.get("regions")
     buckets = reader_input.get("candidate_buckets")
@@ -197,9 +191,7 @@ def build_reader_candidate_queries(
         if not isinstance(region_id, str) or not region_id:
             raise ReaderCandidateQueryError("reader region requires region_id")
         if not isinstance(image_path, str) or not image_path:
-            raise ReaderCandidateQueryError(
-                f"reader region {region_id!r} requires crop_path"
-            )
+            raise ReaderCandidateQueryError(f"reader region {region_id!r} requires crop_path")
 
         labels = [region_id]
         targets: list[CandidateDimensionTarget] = []

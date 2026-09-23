@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from .capture import ReaderCapture, validate_reader_capture_contract
+from .compiler import EvidenceCompileError, compile_evidence_graph
 from .confirmation import (
     ConfirmationAnswers,
     ConfirmationError,
@@ -22,15 +23,14 @@ from .dimension_candidate_reducer import (
     reduce_dimension_candidates,
 )
 from .dimension_witness_anchors import enrich_reduced_dimension_candidates
-from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
-from .resolver import resolve_evidence_graph
 from .raster_evidence import extract_raw_evidence
 from .reader_input_prep import prepare_reader_input
 from .reader_visual_aid import build_reader_visual_aid
+from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
 
 
@@ -63,7 +63,6 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
         except FileNotFoundError:
             pass
         raise
-
 
 
 def _cmd_prepare_reader_input(args: argparse.Namespace) -> int:

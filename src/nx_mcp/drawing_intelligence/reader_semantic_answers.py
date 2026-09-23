@@ -243,6 +243,7 @@ class PartialReaderObservations(_StrictAnswerModel):
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved: list[ObservationUnresolved] = Field(default_factory=list)
 
 

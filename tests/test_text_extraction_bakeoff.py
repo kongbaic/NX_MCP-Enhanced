@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ spec = importlib.util.spec_from_file_location("text_extraction_bakeoff", MODULE_
 assert spec is not None
 assert spec.loader is not None
 bakeoff = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = bakeoff
 spec.loader.exec_module(bakeoff)
 
 
@@ -54,13 +56,44 @@ def test_score_reports_exact_token_precision_and_recall():
         ),
     ]
 
-    report = bakeoff._score(["Φ20", "24", "R5"], items)
+    report = bakeoff._score(
+        ["Φ20", "24", "R5"],
+        items,
+        complete_token_inventory=True,
+    )
 
     assert report["matched_count"] == 2
     assert report["exact_token_recall"] == pytest.approx(2 / 3)
     assert report["exact_token_precision"] == pytest.approx(2 / 3)
     assert report["missed"] == ["R5"]
     assert report["extra_text"] == ["noise"]
+
+
+def test_partial_inventory_does_not_treat_unlisted_text_as_false_positive():
+    items = [
+        bakeoff.OcrItem(
+            text="24",
+            bbox=[[0.0, 0.0], [10.0, 0.0], [10.0, 3.0], [0.0, 3.0]],
+            confidence=0.9,
+            orientation_deg=0.0,
+        ),
+        bakeoff.OcrItem(
+            text="SUS304",
+            bbox=[[0.0, 5.0], [10.0, 5.0], [10.0, 8.0], [0.0, 8.0]],
+            confidence=0.8,
+            orientation_deg=0.0,
+        ),
+    ]
+
+    report = bakeoff._score(
+        ["24"],
+        items,
+        complete_token_inventory=False,
+    )
+
+    assert report["exact_token_recall"] == 1.0
+    assert report["exact_token_precision"] is None
+    assert report["extra_text"] is None
 
 
 def test_manifest_requires_supported_schema_and_cases(tmp_path: Path):

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-import math
 import re
 import time
 from pathlib import Path
@@ -15,7 +14,6 @@ from dg_local_ocr_bakeoff import (
     _load_json,
     _ocr_items,
 )
-
 
 ASSIGNMENT_MARGIN_MIN_PX = 6.0
 
@@ -49,10 +47,7 @@ def _linear_tokens(text: str) -> set[str]:
     )
     if tolerance:
         return {
-            (
-                f"{_canonical_number(tolerance.group(1))}±"
-                f"{_canonical_number(tolerance.group(2))}"
-            )
+            (f"{_canonical_number(tolerance.group(1))}±{_canonical_number(tolerance.group(2))}")
         }
 
     if not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized):
@@ -93,10 +88,7 @@ def _inside_box(
 ) -> bool:
     x, y = point
     left, top, width, height = box
-    return (
-        float(left) <= x <= float(left + width)
-        and float(top) <= y <= float(top + height)
-    )
+    return float(left) <= x <= float(left + width) and float(top) <= y <= float(top + height)
 
 
 def _perpendicular_distance(
@@ -112,11 +104,7 @@ def _perpendicular_distance(
 
 def _assignment_margin(candidate: dict[str, Any]) -> float:
     box = candidate["wide"]["source_roi_bbox_px"]
-    cross_size = (
-        float(box[3])
-        if candidate["orientation"] == "horizontal"
-        else float(box[2])
-    )
+    cross_size = float(box[3]) if candidate["orientation"] == "horizontal" else float(box[2])
     return max(ASSIGNMENT_MARGIN_MIN_PX, cross_size * 0.08)
 
 
@@ -130,10 +118,7 @@ def _candidate_matches_item(
 
     item_orientation = _item_orientation(item)
     candidate_orientation = str(candidate["orientation"])
-    if (
-        item_orientation != "ambiguous"
-        and item_orientation != candidate_orientation
-    ):
+    if item_orientation != "ambiguous" and item_orientation != candidate_orientation:
         return False
 
     return _inside_box(
@@ -146,10 +131,7 @@ def _assign_global_items(
     candidates: list[dict[str, Any]],
     items: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
-    assigned = {
-        str(candidate["candidate_id"]): []
-        for candidate in candidates
-    }
+    assigned = {str(candidate["candidate_id"]): [] for candidate in candidates}
 
     for item_index, item in enumerate(items):
         tokens = _linear_tokens(str(item.get("text") or ""))
@@ -180,10 +162,7 @@ def _assign_global_items(
         nearest_distance, nearest = matches[0]
         if len(matches) > 1:
             second_distance = matches[1][0]
-            if (
-                second_distance - nearest_distance
-                < _assignment_margin(nearest)
-            ):
+            if second_distance - nearest_distance < _assignment_margin(nearest):
                 continue
 
         candidate_id = str(nearest["candidate_id"])
@@ -275,9 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     reader_input_path = Path(args.reader_input).resolve()
     output_path = Path(args.output).resolve()
     reader_input = _load_json(reader_input_path)
-    visual_aid_path = Path(
-        str(reader_input["reader_visual_aid_path"])
-    ).resolve()
+    visual_aid_path = Path(str(reader_input["reader_visual_aid_path"])).resolve()
     source_path = Path(str(reader_input["source_raster_path"])).resolve()
     visual_aid = _load_json(visual_aid_path)
 
@@ -393,10 +370,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
-    accepted_count = sum(
-        1 for result in results
-        if result["accepted_token"] is not None
-    )
+    accepted_count = sum(1 for result in results if result["accepted_token"] is not None)
     total_ocr_elapsed = full_elapsed + wide_elapsed
     report = {
         "schema": "dg-hybrid-ocr-bakeoff-v1",

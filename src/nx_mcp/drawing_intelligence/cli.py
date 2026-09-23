@@ -21,6 +21,7 @@ from .dimension_candidate_reducer import (
     DimensionCandidateQuery,
     reduce_dimension_candidates,
 )
+from .dimension_witness_anchors import enrich_reduced_dimension_candidates
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
@@ -337,6 +338,46 @@ def _cmd_reduce_dimension_candidates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_anchor_dimension_candidates(args: argparse.Namespace) -> int:
+    raw_path = str(Path(args.raw_evidence).resolve())
+    reduced_path = str(Path(args.reduced).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "raw_evidence": raw_path,
+        "reduced": reduced_path,
+        "output": output_path,
+        "written": False,
+        "candidate_count": 0,
+        "witness_count": 0,
+        "errors": [],
+    }
+
+    try:
+        raw = _load_json(raw_path)
+        reduced = _load_json(reduced_path)
+        output = enrich_reduced_dimension_candidates(
+            raw,
+            reduced,
+            nearest_count=args.nearest_count,
+        )
+        _atomic_write_json(output_path, output)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["candidate_count"] = output["anchor_summary"]["candidate_count"]
+    report["witness_count"] = output["anchor_summary"]["witness_count"]
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_request_confirmations(args: argparse.Namespace) -> int:
     evidence_path = str(Path(args.evidence).resolve())
     request_path = str(Path(args.out).resolve())
@@ -527,6 +568,21 @@ def main(argv: list[str] | None = None) -> int:
     reduce_candidates.add_argument("hints")
     reduce_candidates.add_argument("out")
     reduce_candidates.set_defaults(func=_cmd_reduce_dimension_candidates)
+
+    anchor_candidates = sub.add_parser(
+        "anchor-dimension-candidates",
+        help="attach geometry-only nearest anchors to reduced dimension candidates",
+    )
+    anchor_candidates.add_argument("raw_evidence")
+    anchor_candidates.add_argument("reduced")
+    anchor_candidates.add_argument("out")
+    anchor_candidates.add_argument(
+        "--nearest-count",
+        type=int,
+        default=3,
+        help="number of nearest geometry anchors per witness (1..5)",
+    )
+    anchor_candidates.set_defaults(func=_cmd_anchor_dimension_candidates)
 
     request_confirmations = sub.add_parser(
         "request-confirmations",

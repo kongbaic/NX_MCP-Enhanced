@@ -174,6 +174,38 @@ Do not derive missing extents by arithmetic.
 objects, or alternate shapes. Every object may contain only the fields shown by
 this contract.
 
+### Complete allowed enum values
+
+The following enum values are complete. Do not use synonyms or invent new values.
+
+- `view_kind`: `front`, `side`, `top`
+- every `axis`: `X`, `Y`, `Z`
+- entity `shape`: `circle`, `concentric_circles`, `hidden_parallel`,
+  `slot_edges`, `profile`, `other`
+- dimension endpoint `role`: `overall_min`, `overall_max`,
+  `entity_center`, `unresolved`
+- endpoint `basis` when `role="entity_center"`: `centerline`,
+  `center_mark`, `explicit_midline`
+- endpoint `unresolved_kind` when `role="unresolved"`:
+  `intermediate_surface`, `ambiguous_owner`, `unsupported_reference`
+- dimension `direction`: `-1`, `1`, or `null`
+
+Entity `shape` describes the visible 2D projection evidence, not the 3D feature
+type. Use these mappings when the natural-language description uses another word:
+
+- a visible slot depiction -> `slot_edges`, never `slot`;
+- a rectangular, planar, plate, face, step, or other ordinary visible outline ->
+  `profile` when the outline itself is the evidence;
+- a circular outline -> `circle`;
+- two or more concentric circular outlines -> `concentric_circles`;
+- a hidden-line parallel projection -> `hidden_parallel`;
+- if none of the listed projection shapes fits safely -> `other`.
+
+Never emit `rectangle`, `rect`, `slot`, `plane`, `line`, `face`, or any
+other unlisted shape value. If choosing among the legal projection shapes would
+change the engineering meaning rather than only normalize the representation,
+use `other` or structured unresolved instead of guessing.
+
 The exact allowed fields are:
 
 - answer: `query_id`, `view_kind`, `evidence`,

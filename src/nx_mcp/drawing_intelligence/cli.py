@@ -17,6 +17,10 @@ from .confirmation import (
     apply_confirmation_answers,
     build_confirmation_request,
 )
+from .dimension_candidate_reducer import (
+    DimensionCandidateQuery,
+    reduce_dimension_candidates,
+)
 from .compiler import EvidenceCompileError, compile_evidence_graph
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
@@ -268,6 +272,71 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0 if resolution.ok else 2
 
 
+def _cmd_reduce_dimension_candidates(args: argparse.Namespace) -> int:
+    raw_path = str(Path(args.raw_evidence).resolve())
+    hints_path = str(Path(args.hints).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "raw_evidence": raw_path,
+        "hints": hints_path,
+        "output": output_path,
+        "written": False,
+        "dimension_count": 0,
+        "errors": [],
+    }
+
+    try:
+        raw = _load_json(raw_path)
+        hints_payload = _load_json(hints_path)
+        hints = hints_payload.get("dimensions", [])
+        if not isinstance(hints, list):
+            raise ValueError("hints.dimensions must be a list")
+
+        reduced: list[dict[str, Any]] = []
+        for item in hints:
+            if not isinstance(item, dict):
+                raise ValueError("each dimension hint must be an object")
+            dimension_id = item.get("dimension_id")
+            label = item.get("label")
+            query = DimensionCandidateQuery.model_validate(
+                {
+                    "region_id": item.get("region_id"),
+                    "orientation": item.get("orientation"),
+                    "band": item.get("band"),
+                    "max_candidates": item.get("max_candidates", 4),
+                }
+            )
+            result = reduce_dimension_candidates(raw, query)
+            reduced.append(
+                {
+                    "dimension_id": dimension_id,
+                    "label": label,
+                    **result,
+                }
+            )
+
+        payload = {
+            "schema_version": "1.0",
+            "dimension_count": len(reduced),
+            "dimensions": reduced,
+        }
+        _atomic_write_json(output_path, payload)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["dimension_count"] = len(reduced)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_request_confirmations(args: argparse.Namespace) -> int:
     evidence_path = str(Path(args.evidence).resolve())
     request_path = str(Path(args.out).resolve())
@@ -449,6 +518,15 @@ def main(argv: list[str] | None = None) -> int:
     resolve.add_argument("evidence")
     resolve.add_argument("out")
     resolve.set_defaults(func=_cmd_resolve)
+
+    reduce_candidates = sub.add_parser(
+        "reduce-dimension-candidates",
+        help="reduce raw raster dimension candidates using bounded geometry hints",
+    )
+    reduce_candidates.add_argument("raw_evidence")
+    reduce_candidates.add_argument("hints")
+    reduce_candidates.add_argument("out")
+    reduce_candidates.set_defaults(func=_cmd_reduce_dimension_candidates)
 
     request_confirmations = sub.add_parser(
         "request-confirmations",

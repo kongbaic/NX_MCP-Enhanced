@@ -119,6 +119,100 @@ def _write_crop(
         raise ValueError(f"failed to write crop: {path}")
 
 
+def _fit_image_into_cell(
+    image: Any,
+    cell_width: int,
+    cell_height: int,
+    cv2: Any,
+    np: Any,
+) -> Any:
+    height, width = image.shape[:2]
+    if height <= 0 or width <= 0:
+        raise ValueError("contact sheet source image is empty")
+
+    scale = min(cell_width / width, cell_height / height)
+    resized_width = max(1, int(round(width * scale)))
+    resized_height = max(1, int(round(height * scale)))
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(
+        image,
+        (resized_width, resized_height),
+        interpolation=interpolation,
+    )
+
+    canvas = np.full((cell_height, cell_width, 3), 255, dtype=np.uint8)
+    x = (cell_width - resized_width) // 2
+    y = (cell_height - resized_height) // 2
+    canvas[y : y + resized_height, x : x + resized_width] = resized
+    return canvas
+
+
+def _write_contact_sheet(
+    items: list[tuple[str, Path]],
+    output_path: Path,
+    cv2: Any,
+    np: Any,
+) -> None:
+    if not items:
+        raise ValueError("contact sheet requires at least one image")
+
+    columns = 3
+    cell_width = 700
+    image_height = 420
+    title_height = 44
+    cell_height = title_height + image_height
+    rows = (len(items) + columns - 1) // columns
+
+    sheet = np.full(
+        (rows * cell_height, columns * cell_width, 3),
+        255,
+        dtype=np.uint8,
+    )
+
+    for index, (label, image_path) in enumerate(items):
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise ValueError(f"unable to read contact sheet image: {image_path}")
+
+        tile = _fit_image_into_cell(
+            image,
+            cell_width,
+            image_height,
+            cv2,
+            np,
+        )
+        row = index // columns
+        column = index % columns
+        x1 = column * cell_width
+        y1 = row * cell_height
+
+        cv2.rectangle(
+            sheet,
+            (x1, y1),
+            (x1 + cell_width - 1, y1 + cell_height - 1),
+            (210, 210, 210),
+            1,
+        )
+        cv2.putText(
+            sheet,
+            label,
+            (x1 + 14, y1 + 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.68,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        sheet[
+            y1 + title_height : y1 + title_height + image_height,
+            x1 : x1 + cell_width,
+        ] = tile
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(output_path), sheet):
+        raise ValueError(f"failed to write contact sheet: {output_path}")
+
+
 def _compact_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "candidate_id": candidate.get("candidate_id"),
@@ -148,7 +242,7 @@ def prepare_reader_input(
         raise ValueError(f"current raster path does not exist: {image_path}")
     workspace_root.mkdir(parents=True, exist_ok=True)
 
-    cv2, _ = _load_cv_modules()
+    cv2, np = _load_cv_modules()
     image = cv2.imread(str(image_path))
     if image is None:
         raise ValueError(f"unable to read raster image: {image_path}")
@@ -251,6 +345,23 @@ def prepare_reader_input(
             entry["reason"] = bucket.get("reason")
         bucket_entries.append(entry)
 
+    contact_items: list[tuple[str, Path]] = [("overview", overview_path)]
+    contact_items.extend(
+        (str(item["region_id"]), Path(str(item["crop_path"])))
+        for item in region_entries
+    )
+    contact_items.extend(
+        (str(item["bucket_id"]), Path(str(item["crop_path"])))
+        for item in bucket_entries
+    )
+    contact_sheet_path = workspace_root / "reader-contact-sheet.png"
+    _write_contact_sheet(
+        contact_items,
+        contact_sheet_path,
+        cv2,
+        np,
+    )
+
     crops_elapsed_ms = round((time.perf_counter() - crops_started) * 1000, 3)
     total_elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
 
@@ -262,6 +373,7 @@ def prepare_reader_input(
         "raw_evidence_path": str(raw_path),
         "reader_visual_aid_path": str(aid_path),
         "overview_crop_path": str(overview_path),
+        "contact_sheet_path": str(contact_sheet_path),
         "regions": region_entries,
         "candidate_buckets": bucket_entries,
         "summary": {
@@ -285,7 +397,9 @@ def prepare_reader_input(
         "reader_contract": {
             "read_source_drawing": True,
             "may_read_reader_input": True,
+            "may_read_contact_sheet": True,
             "may_read_listed_crops": True,
+            "prefer_contact_sheet": True,
             "read_raw_evidence_directly": False,
             "scan_workspace": False,
             "scan_history": False,
@@ -305,6 +419,7 @@ def prepare_reader_input(
         "raw_evidence": str(raw_path),
         "reader_visual_aid": str(aid_path),
         "crops_directory": str(crops_dir),
+        "contact_sheet": str(contact_sheet_path),
         "summary": manifest["summary"],
         "timing_ms": manifest["timing_ms"],
     }

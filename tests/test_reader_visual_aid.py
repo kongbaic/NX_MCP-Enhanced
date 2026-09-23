@@ -20,10 +20,7 @@ def _candidate(
         "axis_local_norm": axis_local_norm,
         "line_span_px": [0, 100],
         "witness_positions_px": witnesses,
-        "witness_positions_local_norm": [
-            value / 100
-            for value in witnesses
-        ],
+        "witness_positions_local_norm": [value / 100 for value in witnesses],
         "status": "candidate_only_no_semantics",
     }
 
@@ -93,10 +90,7 @@ def _raw() -> dict:
 
 def test_reader_visual_aid_bounds_and_enriches_small_buckets():
     result = build_reader_visual_aid(_raw())
-    buckets = {
-        item["bucket_id"]: item
-        for item in result["candidate_buckets"]
-    }
+    buckets = {item["bucket_id"]: item for item in result["candidate_buckets"]}
 
     top = buckets["R1.horizontal.top"]
     assert top["status"] == "bounded"
@@ -107,18 +101,13 @@ def test_reader_visual_aid_bounds_and_enriches_small_buckets():
         "DG_TOP_3",
     ]
     assert top["candidates"][0]["witness_anchor_evidence"]
-    assert result["semantics_policy"] == (
-        "geometry_only_no_engineering_claims"
-    )
+    assert result["semantics_policy"] == ("geometry_only_no_engineering_claims")
     assert result["source_drawing_authoritative"] is True
 
 
 def test_reader_visual_aid_never_truncates_overflow_bucket():
     result = build_reader_visual_aid(_raw())
-    buckets = {
-        item["bucket_id"]: item
-        for item in result["candidate_buckets"]
-    }
+    buckets = {item["bucket_id"]: item for item in result["candidate_buckets"]}
 
     bottom = buckets["R1.horizontal.bottom"]
     assert bottom["status"] == "overflow"

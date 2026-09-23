@@ -53,9 +53,7 @@ class ReaderSemanticQueryPlan(_StrictQueryModel):
         alias="schema",
     )
     source_drawing_authoritative: Literal[True] = True
-    query_policy: Literal["bounded_local_semantics_only"] = (
-        "bounded_local_semantics_only"
-    )
+    query_policy: Literal["bounded_local_semantics_only"] = "bounded_local_semantics_only"
     queries: list[RegionObservationQuery] = Field(min_length=1, max_length=4)
     rules: dict[str, bool] = Field(default_factory=dict)
 
@@ -80,8 +78,7 @@ def build_reader_semantic_queries(
         raise ReaderSemanticQueryError("reader input candidate_buckets must be a list")
     if len(regions) > max_region_queries:
         raise ReaderSemanticQueryError(
-            f"region query count {len(regions)} exceeds bounded maximum "
-            f"{max_region_queries}"
+            f"region query count {len(regions)} exceeds bounded maximum {max_region_queries}"
         )
 
     buckets_by_region: dict[str, list[dict[str, Any]]] = {}
@@ -107,9 +104,7 @@ def build_reader_semantic_queries(
             raise ReaderSemanticQueryError(f"duplicate reader region {region_id!r}")
         seen_regions.add(region_id)
         if not isinstance(crop_path, str) or not crop_path:
-            raise ReaderSemanticQueryError(
-                f"reader region {region_id!r} requires crop_path"
-            )
+            raise ReaderSemanticQueryError(f"reader region {region_id!r} requires crop_path")
 
         compact_buckets: list[RegionCandidateBucket] = []
         labels = [region_id]
@@ -121,9 +116,7 @@ def build_reader_semantic_queries(
         for bucket in region_buckets:
             bucket_id = bucket.get("bucket_id")
             if not isinstance(bucket_id, str) or not bucket_id:
-                raise ReaderSemanticQueryError(
-                    f"region {region_id!r} has bucket without bucket_id"
-                )
+                raise ReaderSemanticQueryError(f"region {region_id!r} has bucket without bucket_id")
             labels.append(bucket_id)
             compact_buckets.append(
                 RegionCandidateBucket.model_validate(

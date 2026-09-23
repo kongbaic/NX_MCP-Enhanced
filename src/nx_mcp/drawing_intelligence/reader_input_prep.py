@@ -119,6 +119,141 @@ def _write_crop(
         raise ValueError(f"failed to write crop: {path}")
 
 
+def _region_candidate_geometry(
+    visual_aid: dict[str, Any],
+    region_id: str,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for bucket in visual_aid.get("candidate_buckets", []):
+        if not isinstance(bucket, dict):
+            continue
+        if bucket.get("region_id") != region_id or bucket.get("status") != "bounded":
+            continue
+        for candidate in bucket.get("candidates", []):
+            if isinstance(candidate, dict):
+                candidates.append(candidate)
+    candidates.sort(key=lambda item: str(item.get("candidate_id") or ""))
+    return candidates
+
+
+def _clamp_local(value: float, limit: int) -> int:
+    return max(0, min(limit - 1, int(round(value))))
+
+
+def _write_candidate_overlay(
+    image: Any,
+    path: Path,
+    crop_bbox: list[int],
+    candidates: list[dict[str, Any]],
+    cv2: Any,
+) -> None:
+    crop_x, crop_y, crop_width, crop_height = crop_bbox
+    canvas = image[
+        crop_y : crop_y + crop_height,
+        crop_x : crop_x + crop_width,
+    ].copy()
+    if canvas.size == 0:
+        raise ValueError(f"empty candidate overlay source for {path.name}")
+
+    for index, candidate in enumerate(candidates):
+        candidate_id = candidate.get("candidate_id")
+        orientation = candidate.get("orientation")
+        axis = candidate.get("axis_px")
+        span = candidate.get("line_span_px")
+        witnesses = candidate.get("witness_positions_px", [])
+        if (
+            not isinstance(candidate_id, str)
+            or not candidate_id
+            or orientation not in {"horizontal", "vertical"}
+            or not isinstance(axis, (int, float))
+            or not isinstance(span, list)
+            or len(span) != 2
+            or not all(isinstance(value, (int, float)) for value in span)
+        ):
+            continue
+
+        if orientation == "horizontal":
+            y = _clamp_local(float(axis) - crop_y, crop_height)
+            x1 = _clamp_local(float(span[0]) - crop_x, crop_width)
+            x2 = _clamp_local(float(span[1]) - crop_x, crop_width)
+            point_a = (x1, y)
+            point_b = (x2, y)
+            midpoint = ((x1 + x2) // 2, y)
+            witness_points = [
+                (_clamp_local(float(value) - crop_x, crop_width), y)
+                for value in witnesses
+                if isinstance(value, (int, float))
+            ]
+            label_origin = (
+                midpoint[0],
+                _clamp_local(midpoint[1] - 10 - 14 * (index % 3), crop_height),
+            )
+        else:
+            x = _clamp_local(float(axis) - crop_x, crop_width)
+            y1 = _clamp_local(float(span[0]) - crop_y, crop_height)
+            y2 = _clamp_local(float(span[1]) - crop_y, crop_height)
+            point_a = (x, y1)
+            point_b = (x, y2)
+            midpoint = (x, (y1 + y2) // 2)
+            witness_points = [
+                (x, _clamp_local(float(value) - crop_y, crop_height))
+                for value in witnesses
+                if isinstance(value, (int, float))
+            ]
+            label_origin = (
+                _clamp_local(midpoint[0] + 8 + 18 * (index % 3), crop_width),
+                midpoint[1],
+            )
+
+        cv2.line(canvas, point_a, point_b, (0, 0, 220), 2, cv2.LINE_AA)
+        for point in witness_points:
+            cv2.circle(canvas, point, 3, (0, 0, 220), -1, cv2.LINE_AA)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.45
+        thickness = 1
+        (text_width, text_height), baseline = cv2.getTextSize(
+            candidate_id,
+            font,
+            scale,
+            thickness,
+        )
+        text_x = _clamp_local(label_origin[0], crop_width)
+        text_y = _clamp_local(label_origin[1], crop_height)
+        box_left = max(0, text_x - 3)
+        box_top = max(0, text_y - text_height - 4)
+        box_right = min(crop_width - 1, text_x + text_width + 3)
+        box_bottom = min(crop_height - 1, text_y + baseline + 3)
+        cv2.rectangle(
+            canvas,
+            (box_left, box_top),
+            (box_right, box_bottom),
+            (255, 255, 255),
+            -1,
+        )
+        cv2.rectangle(
+            canvas,
+            (box_left, box_top),
+            (box_right, box_bottom),
+            (0, 0, 220),
+            1,
+        )
+        cv2.putText(
+            canvas,
+            candidate_id,
+            (text_x, text_y),
+            font,
+            scale,
+            (0, 0, 0),
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), canvas):
+        raise ValueError(f"failed to write candidate overlay: {path}")
+
+
 def _fit_image_into_cell(
     image: Any,
     cell_width: int,
@@ -299,11 +434,22 @@ def prepare_reader_input(
             image_height,
         )
         crop_path = crops_dir / f"{region_id}.png"
+        overlay_path = crops_dir / f"{region_id}-candidates.png"
         _write_crop(image, crop_path, bbox, cv2)
+        overlay_candidates = _region_candidate_geometry(aid, region_id)
+        _write_candidate_overlay(
+            image,
+            overlay_path,
+            bbox,
+            overlay_candidates,
+            cv2,
+        )
         region_entries.append(
             {
                 "region_id": region_id,
                 "crop_path": str(crop_path),
+                "candidate_overlay_path": str(overlay_path),
+                "candidate_overlay_count": len(overlay_candidates),
                 "crop_bbox_px": bbox,
                 "source_bbox_px": region.get("bbox_px"),
                 "circle_group_count": len(region.get("circle_groups", [])),
@@ -393,7 +539,8 @@ def prepare_reader_input(
                 (int(item.get("candidate_count", 0)) for item in bucket_entries),
                 default=0,
             ),
-            "crop_count": 1 + len(region_entries) + len(bucket_entries),
+            "crop_count": 1 + 2 * len(region_entries) + len(bucket_entries),
+            "candidate_overlay_count": len(region_entries),
         },
         "timing_ms": {
             "raw_evidence": raw_elapsed_ms,

@@ -265,10 +265,7 @@ def _fragment_groups(
 
     for x1, y1, x2, y2 in raw[:, 0]:
         midpoint_x, midpoint_y = (x1 + x2) / 2, (y1 + y2) / 2
-        if not (
-            x0 <= midpoint_x <= x0 + width
-            and y0 <= midpoint_y <= y0 + height
-        ):
+        if not (x0 <= midpoint_x <= x0 + width and y0 <= midpoint_y <= y0 + height):
             continue
         dx, dy = int(x2 - x1), int(y2 - y1)
         length = math.hypot(dx, dy)
@@ -303,10 +300,7 @@ def _fragment_groups(
         )
         buckets: list[list[tuple[str, float, int, int]]] = []
         for item in items:
-            if (
-                not buckets
-                or abs(item[1] - mean(part[1] for part in buckets[-1])) > 3
-            ):
+            if not buckets or abs(item[1] - mean(part[1] for part in buckets[-1])) > 3:
                 buckets.append([item])
             else:
                 buckets[-1].append(item)
@@ -332,8 +326,7 @@ def _fragment_groups(
             if len(intervals) < 3:
                 continue
             gaps = [
-                intervals[index + 1][0] - intervals[index][1]
-                for index in range(len(intervals) - 1)
+                intervals[index + 1][0] - intervals[index][1] for index in range(len(intervals) - 1)
             ]
             positive_gaps = [gap for gap in gaps if gap > 2]
             if len(positive_gaps) < 2:
@@ -372,12 +365,7 @@ def _cluster_rings(
         items = sorted(items, key=lambda item: int(item["radius_px"]))
         clusters: list[list[dict[str, Any]]] = []
         for item in items:
-            if (
-                not clusters
-                or int(item["radius_px"])
-                - int(clusters[-1][-1]["radius_px"])
-                > 5
-            ):
+            if not clusters or int(item["radius_px"]) - int(clusters[-1][-1]["radius_px"]) > 5:
                 clusters.append([item])
             else:
                 clusters[-1].append(item)
@@ -514,10 +502,7 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
 
     for region in probe.get("regions", []):
         bbox = region["bbox"]
-        x, y, width, height = (
-            int(bbox[key])
-            for key in ("x", "y", "width", "height")
-        )
+        x, y, width, height = (int(bbox[key]) for key in ("x", "y", "width", "height"))
         circle_groups = _cluster_rings(
             region.get("circle_evidence", []),
             image_width,
@@ -562,18 +547,12 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
         "regions": regions,
         "summary": {
             "region_count": len(regions),
-            "circle_group_count": sum(
-                len(region["circle_groups"])
-                for region in regions
-            ),
+            "circle_group_count": sum(len(region["circle_groups"]) for region in regions),
             "ring_count": sum(
-                len(group["rings"])
-                for region in regions
-                for group in region["circle_groups"]
+                len(group["rings"]) for region in regions for group in region["circle_groups"]
             ),
             "linear_pattern_candidate_count": sum(
-                len(region["linear_pattern_candidates"])
-                for region in regions
+                len(region["linear_pattern_candidates"]) for region in regions
             ),
         },
     }
@@ -687,8 +666,7 @@ def _dimension_geometry(
     )
 
     region_boxes = {
-        region["region_id"]: region["bbox_px"]
-        for region in raw_evidence.get("regions", [])
+        region["region_id"]: region["bbox_px"] for region in raw_evidence.get("regions", [])
     }
 
     minimum_span = max(50, round(width * 0.028))
@@ -722,10 +700,7 @@ def _dimension_geometry(
             overlap = max(0, min(end, region_right) - max(start, x))
             if overlap < 0.05 * region_width:
                 continue
-            if (
-                axis < y - 0.15 * region_height
-                or axis > region_bottom + 0.15 * region_height
-            ):
+            if axis < y - 0.15 * region_height or axis > region_bottom + 0.15 * region_height:
                 continue
 
             output.append(
@@ -738,8 +713,7 @@ def _dimension_geometry(
                     "line_span_px": [start, end],
                     "witness_positions_px": witnesses,
                     "witness_positions_local_norm": [
-                        round((value - x) / region_width, 5)
-                        for value in witnesses
+                        round((value - x) / region_width, 5) for value in witnesses
                     ],
                     "status": "candidate_only_no_semantics",
                 }
@@ -769,10 +743,7 @@ def _dimension_geometry(
             overlap = max(0, min(end, region_bottom) - max(start, y))
             if overlap < 0.05 * region_height:
                 continue
-            if (
-                axis < x - 0.15 * region_width
-                or axis > region_right + 0.15 * region_width
-            ):
+            if axis < x - 0.15 * region_width or axis > region_right + 0.15 * region_width:
                 continue
 
             output.append(
@@ -785,8 +756,7 @@ def _dimension_geometry(
                     "line_span_px": [start, end],
                     "witness_positions_px": witnesses,
                     "witness_positions_local_norm": [
-                        round((value - y) / region_height, 5)
-                        for value in witnesses
+                        round((value - y) / region_height, 5) for value in witnesses
                     ],
                     "status": "candidate_only_no_semantics",
                 }
@@ -809,19 +779,14 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
     lines = _axis_lines(edges, cv2, np)
     regions = _view_regions(gray.shape, lines, cv2, np)
-    min_fragment_length, max_fragment_length = fragment_length_limits(
-        int(gray.shape[1])
-    )
+    min_fragment_length, max_fragment_length = fragment_length_limits(int(gray.shape[1]))
 
     probe_regions: list[dict[str, Any]] = []
     for index, region in enumerate(regions, start=1):
         probe_regions.append(
             {
                 "region_id": f"R{index}",
-                "bbox": {
-                    key: region[key]
-                    for key in ("x", "y", "width", "height")
-                },
+                "bbox": {key: region[key] for key in ("x", "y", "width", "height")},
                 "circle_evidence": _circle_candidates(
                     gray,
                     edges,
@@ -866,9 +831,7 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
         cv2,
         np,
     )
-    raw["summary"]["dimension_geometry_candidate_count"] = len(
-        raw["dimension_geometry_candidates"]
-    )
+    raw["summary"]["dimension_geometry_candidate_count"] = len(raw["dimension_geometry_candidates"])
     raw["notes"] = [
         "Raster geometry only. No OCR model, VLM, neural detector, or model weights were used.",
         "Dimension geometry is candidate-only: dimension-axis geometry plus perpendicular witness positions; no numeric label or engineering ownership is asserted.",

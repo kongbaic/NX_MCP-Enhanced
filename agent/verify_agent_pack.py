@@ -278,7 +278,7 @@ def main() -> None:
         "禁止第二轮用户确认",
         "canonicalize-drawing <semantic-draft.json> <drawing.json>",
         "build <current-frozen> <current-executable> --drawing <current-drawing>",
-        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B evidence pipeline regression: missing {token}")
@@ -291,7 +291,7 @@ def main() -> None:
         "禁止 fallback 到 python、python3、py",
         "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
@@ -308,7 +308,7 @@ def main() -> None:
             "对应的那一张现成 crop",
             "不得直接读取 raw-evidence.json / reader-visual-aid.json",
             "不得创建额外 crop",
-            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-capture",
+            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture",
         ),
         "pipeline-contract.md": (
             "### A0.5. Deterministic Reader input preparation",
@@ -353,6 +353,21 @@ def main() -> None:
     ).read_text(encoding="utf-8")
     if "prepare-reader-input" not in drawing_cli_source:
         fail("Reader preparation CLI regression: missing prepare-reader-input")
+    if "assemble-reader-capture" not in drawing_cli_source:
+        fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
+
+    reader_observation_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_observations.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'class ReaderObservations',
+        'def assemble_reader_capture',
+        'ReaderCapture.model_validate(payload)',
+        'validate_reader_capture_contract(capture)',
+        '"required_targets": []',
+    ):
+        if token not in reader_observation_source:
+            fail(f"Reader observation assembler regression: missing {token}")
 
     reader_prep_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"
@@ -367,6 +382,9 @@ def main() -> None:
         '"create_additional_crops": False',
         '"numeric_pixel_scale_matching": False',
         '"visual_aid_decides_endpoint_ownership": False',
+        '"agent_output_schema": "reader-observations-v1"',
+        '"agent_writes_reader_capture_directly": False',
+        '"assembler_decides_engineering_semantics": False',
     ):
         if token not in reader_prep_source:
             fail(f"Reader preparation implementation regression: missing {token}")
@@ -412,15 +430,20 @@ def main() -> None:
 
     mode_b_evidence_tokens = {
         "SKILL.md": (
-            "Reader 只允许在生产 `ReaderCapture` schema 校验通过后一次写出本轮 reader-capture.json",
+            "Reader 只允许一次写出本轮 reader-observations.json",
+            "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+            "该程序只允许做确定性 ID/source/schema 组装",
+            "禁止第二版 observations",
             "check-capture PASS 后立即执行 link-capture",
             "再执行 deterministic resolve，生成 semantic-draft.json",
             "最多 3 个可确认的 dimension endpoint",
-            "禁止第二版 reader-capture",
             "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
         ),
         "pipeline-contract.md": (
-            "Reader 只生成 view-local reader-capture.json",
+            "### A1. Reader semantic observations + deterministic Capture assembly",
+            "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
+            "创建 Agent 没有声明的 association",
+            "把 unresolved endpoint 绑定到某个 entity",
             "deterministic identity linker + Gate 0 生成 drawing-evidence.json",
             "semantic-draft.json 由固定程序生成",
             "该阶段只允许解决**尺寸端点 ownership**",

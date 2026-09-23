@@ -37,7 +37,7 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 6. nx_mcp_src 必须原样取自当前 runtime-config，不得由历史 repo、backup repo 或其它 workspace 推断。
 7. runtime 一旦解析，本轮 drawing、Evidence、Resolver、Gate A、Planner、build/check、Runner 和导出阶段固定使用该 runtime，本轮不得重新发现或切换 runtime。
 
-当前 Mode B 的 reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
+当前 Mode B 的 reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP 必须全部位于 runtime-config.workspace_root；其它目录中已有 artifact 不能成为切换 workspace 的理由。
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
@@ -132,21 +132,78 @@ python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence.json> <seman
 - conflicts = 0；
 - dimension_closure = closed。
 
-如果 resolve 返回非零：
-- 保留 reader-capture.json 与 drawing-evidence.json；
-- 如已写出 semantic-draft.json，则保留该 immutable draft 作为失败证据；
-- 立即 BLOCKED / STOP；
+如果第一次 resolve 返回非零：
+- 保留 reader-capture.json、drawing-evidence.json 与已写出的 semantic-draft.json；
+- conflicts > 0 时立即 BLOCKED / STOP；
+- 只有在失败原因是 blocking unresolved 时，才允许进入一次 A4.1 Human Confirmation Gate；
 - 禁止重新看图；
-- 禁止第二版 capture/evidence；
-- 禁止 Edit/Rewrite capture、evidence 或 draft；
-- 禁止继续 canonicalizer / Planner。
+- 禁止第二版 reader-capture.json；
+- 禁止 Edit/Rewrite 原始 drawing-evidence.json 或 semantic-draft.json；
+- 禁止直接进入 canonicalizer / Planner。
+
+### A4.1 Human Confirmation Gate（最多一次）
+
+该阶段只允许解决**尺寸端点 ownership**，不得解决 feature inventory、cross-view identity、feature value、start side、termination 或其它语义歧义。
+
+先执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence request-confirmations <drawing-evidence.json> <confirmation-request.json>
+~~~
+
+只有以下条件全部成立才允许向用户提问：
+- written = true；
+- eligible_for_user_confirmation = true；
+- unconfirmable_blocking_ids = []；
+- question_count 在 1..3 范围内。
+
+否则立即 BLOCKED / STOP。
+
+用户只能从 confirmation-request.json 已提供的 option_id 中选择。禁止：
+- 修改尺寸数值；
+- 输入任意陌生 target；
+- 新增 feature；
+- 改孔数量、类型或其它几何语义；
+- 重新看图让 Agent 再猜一次。
+
+用户选择写入独立 user-confirmations.json 后执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>
+~~~
+
+必须保留原始 drawing-evidence.json，不得覆盖。confirmed evidence 只是由用户明确选择派生出的新 artifact。
+
+随后只允许再执行一次：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence resolve <drawing-evidence-confirmed.json> <semantic-draft-confirmed.json>
+~~~
+
+第二次 resolve 只有以下条件全部成立才进入 A5：
+- process exit code = 0；
+- written = true；
+- ok = true；
+- blocking_unresolved = 0；
+- conflicts = 0；
+- dimension_closure = closed。
+
+其它结果立即 BLOCKED / STOP。禁止第二轮用户确认、禁止重新看图、禁止重写 capture/evidence、禁止继续试探 Resolver。
 
 ### A5. Canonicalizer + Gate A
 
-只在 A3 PASS 后执行：
+只在 A4 直接 PASS，或 A4.1 确认后的第二次 resolve 完整 PASS 后执行。
+
+若 A4 直接 PASS：
 
 ~~~text
 runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
+~~~
+
+若 A4.1 后 PASS：
+
+~~~text
+runner.py canonicalize-drawing <semantic-draft-confirmed.json> <drawing.json>
 ~~~
 
 canonicalizer 只做 representation-only normalization、preservation guards 与现有 Gate A。
@@ -167,10 +224,11 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 - 禁止单独 validate-drawing 绕过 canonicalizer；
 - 禁止进入 Planner。
 
-三种典型结果：
-- Evidence 本身 ambiguous → Resolver FAIL / STOP；
-- Evidence 唯一闭合但 draft 仅有白名单 schema/path 差异 → canonicalizer 无损规范化后 Gate A PASS；
-- Evidence/semantic 存在真实 ownership、relation 或 geometry 冲突 → Gate A FAIL / STOP。
+四种典型结果：
+- Evidence 完全闭合 → Resolver PASS → Gate A；
+- Evidence 仅存在 1..3 个可确认的 dimension endpoint ownership → 允许一次 Human Confirmation Gate；
+- Evidence 存在 feature inventory、cross-view identity 或其它不可确认歧义 → Resolver FAIL / STOP；
+- Evidence/semantic 存在真实 relation / geometry conflict → Gate A FAIL / STOP。
 
 ## 4. 阶段 B：建模规划
 

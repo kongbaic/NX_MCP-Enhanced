@@ -72,6 +72,7 @@ def build_reader_visual_aid(
                 pseudo_dimensions.append(
                     {
                         "dimension_id": bucket_id,
+                        "bucket_id": bucket_id,
                         "region_id": region_id,
                         "orientation": orientation,
                         "band": band,

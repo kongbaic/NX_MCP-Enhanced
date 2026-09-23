@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from .evidence import DimensionEndpoint, DimensionObservation, EvidenceGraph
 
+_MAX_CONFIRMATION_QUESTIONS = 3
+
 
 class ConfirmationError(ValueError):
     """Human confirmation payload is invalid for the current evidence graph."""
@@ -196,9 +198,33 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
                     }
                 )
 
+    blocking_ids = [
+        str(item.get("id") or "")
+        for item in graph.unresolved_evidence
+        if item.get("required_for_modeling", True)
+    ]
+    confirmable_ids = {
+        str(item["unresolved_id"])
+        for item in questions
+    }
+    unconfirmable_ids = [
+        item
+        for item in blocking_ids
+        if item not in confirmable_ids
+    ]
+    eligible = (
+        bool(questions)
+        and not unconfirmable_ids
+        and len(questions) <= _MAX_CONFIRMATION_QUESTIONS
+    )
+
     return {
         "schema_version": "1.0",
         "question_count": len(questions),
+        "blocking_unresolved_count": len(blocking_ids),
+        "unconfirmable_blocking_ids": unconfirmable_ids,
+        "max_confirmation_questions": _MAX_CONFIRMATION_QUESTIONS,
+        "eligible_for_user_confirmation": eligible,
         "questions": questions,
     }
 

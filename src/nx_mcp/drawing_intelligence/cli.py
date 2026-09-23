@@ -34,8 +34,14 @@ from .reader_observations import (
     ReaderObservations,
     assemble_reader_capture,
 )
+from .reader_semantic_answers import (
+    ReaderSemanticAnswerError,
+    ReaderSemanticAnswers,
+    merge_region_semantic_answers,
+)
 from .reader_semantic_queries import (
     ReaderSemanticQueryError,
+    ReaderSemanticQueryPlan,
     build_reader_semantic_queries,
 )
 from .reader_visual_aid import build_reader_visual_aid
@@ -208,6 +214,48 @@ def _cmd_build_reader_semantic_queries(args: argparse.Namespace) -> int:
     report["written"] = True
     report["schema"] = plan.schema_version
     report["query_count"] = len(plan.queries)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_merge_reader_semantic_answers(args: argparse.Namespace) -> int:
+    query_plan_path = str(Path(args.query_plan).resolve())
+    answers_path = str(Path(args.answers).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "query_plan": query_plan_path,
+        "answers": answers_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "view_count": 0,
+        "entity_count": 0,
+        "dimension_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = ReaderSemanticQueryPlan.model_validate(_load_json(query_plan_path))
+        answers = ReaderSemanticAnswers.model_validate(_load_json(answers_path))
+        partial = merge_region_semantic_answers(plan, answers)
+        payload = partial.model_dump(mode="json", by_alias=True)
+        _atomic_write_json(output_path, payload)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderSemanticAnswerError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = partial.schema_version
+    report["view_count"] = len(partial.views)
+    report["entity_count"] = len(partial.entities)
+    report["dimension_count"] = len(partial.dimensions)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -750,6 +798,15 @@ def main(argv: list[str] | None = None) -> int:
     semantic_queries.add_argument("reader_input")
     semantic_queries.add_argument("out")
     semantic_queries.set_defaults(func=_cmd_build_reader_semantic_queries)
+
+    merge_semantic_answers = sub.add_parser(
+        "merge-reader-semantic-answers",
+        help="merge bounded region answers into partial Reader observations",
+    )
+    merge_semantic_answers.add_argument("query_plan")
+    merge_semantic_answers.add_argument("answers")
+    merge_semantic_answers.add_argument("out")
+    merge_semantic_answers.set_defaults(func=_cmd_merge_reader_semantic_answers)
 
     assemble_capture = sub.add_parser(
         "assemble-reader-capture",

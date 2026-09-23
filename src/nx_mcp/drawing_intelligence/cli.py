@@ -65,6 +65,31 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
 
 
 
+def _cmd_prepare_reader_input(args: argparse.Namespace) -> int:
+    image_path = str(Path(args.image).resolve())
+    workspace_root = str(Path(args.workspace_root).resolve())
+    report: dict[str, Any] = {
+        "image": image_path,
+        "workspace_root": workspace_root,
+        "written": False,
+        "reader_input": None,
+        "summary": {},
+        "timing_ms": {},
+        "errors": [],
+    }
+
+    try:
+        result = prepare_reader_input(image_path, workspace_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report.update(result)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_extract_raster_evidence(args: argparse.Namespace) -> int:
     image_path = str(Path(args.image).resolve())
     output_path = str(Path(args.out).resolve())
@@ -606,6 +631,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    prepare_reader = sub.add_parser(
+        "prepare-reader-input",
+        help="prepare deterministic Reader JSON and crops from the current raster",
+    )
+    prepare_reader.add_argument("image")
+    prepare_reader.add_argument("workspace_root")
+    prepare_reader.set_defaults(func=_cmd_prepare_reader_input)
 
     extract_raster = sub.add_parser(
         "extract-raster-evidence",

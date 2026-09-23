@@ -26,6 +26,11 @@ from .dimension_witness_anchors import enrich_reduced_dimension_candidates
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
+from .hybrid_capture_adapter import (
+    HybridAdapterContext,
+    HybridCaptureAdapterError,
+    adapt_hybrid_ocr_report,
+)
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
 from .reader_candidate_answers import (
@@ -483,6 +488,46 @@ def _cmd_assemble_reader_semantic_regions(args: argparse.Namespace) -> int:
     report["entity_count"] = len(partial.entities)
     report["dimension_count"] = len(partial.dimensions)
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_adapt_hybrid_ocr(args: argparse.Namespace) -> int:
+    report_path = str(Path(args.report).resolve())
+    context_path = str(Path(args.context).resolve())
+    output_path = str(Path(args.out).resolve())
+    result: dict[str, Any] = {
+        "hybrid_report": report_path,
+        "context": context_path,
+        "partial_observations": output_path,
+        "written": False,
+        "dimension_count": 0,
+        "unresolved_count": 0,
+        "errors": [],
+    }
+
+    try:
+        report = _load_json(report_path)
+        context = HybridAdapterContext.model_validate(_load_json(context_path))
+        partial = adapt_hybrid_ocr_report(report, context)
+        _atomic_write_json(
+            output_path,
+            partial.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        HybridCaptureAdapterError,
+        ValueError,
+    ) as exc:
+        result["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    result["written"] = True
+    result["dimension_count"] = len(partial.dimensions)
+    result["unresolved_count"] = len(partial.unresolved)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1069,6 +1114,15 @@ def main(argv: list[str] | None = None) -> int:
     assemble_semantic_regions.add_argument("answers_out")
     assemble_semantic_regions.add_argument("partial_out")
     assemble_semantic_regions.set_defaults(func=_cmd_assemble_reader_semantic_regions)
+
+    adapt_hybrid = sub.add_parser(
+        "adapt-hybrid-ocr",
+        help="adapt Hybrid OCR v2 into fail-closed partial Reader observations",
+    )
+    adapt_hybrid.add_argument("report")
+    adapt_hybrid.add_argument("context")
+    adapt_hybrid.add_argument("out")
+    adapt_hybrid.set_defaults(func=_cmd_adapt_hybrid_ocr)
 
     assemble_capture = sub.add_parser(
         "assemble-reader-capture",

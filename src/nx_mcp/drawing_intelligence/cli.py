@@ -29,6 +29,11 @@ from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
 from .reader_input_prep import prepare_reader_input
+from .reader_observations import (
+    ReaderObservationAssemblyError,
+    ReaderObservations,
+    assemble_reader_capture,
+)
 from .reader_visual_aid import build_reader_visual_aid
 from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
@@ -164,6 +169,49 @@ def _cmd_build_reader_visual_aid(args: argparse.Namespace) -> int:
         "max_bucket_candidate_count",
         0,
     )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assemble_reader_capture(args: argparse.Namespace) -> int:
+    observations_path = str(Path(args.observations).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "observations": observations_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "capture_schema_version": None,
+        "view_count": 0,
+        "entity_count": 0,
+        "dimension_count": 0,
+        "unresolved_count": 0,
+        "errors": [],
+    }
+
+    try:
+        raw = _load_json(observations_path)
+        observations = ReaderObservations.model_validate(raw)
+        capture = assemble_reader_capture(observations)
+        _atomic_write_json(output_path, capture.model_dump(mode="json"))
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        ReaderObservationAssemblyError,
+        ValueError,
+    ) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = observations.schema
+    report["capture_schema_version"] = capture.schema_version
+    report["view_count"] = len(capture.views)
+    report["entity_count"] = len(capture.entities)
+    report["dimension_count"] = len(capture.dimensions)
+    report["unresolved_count"] = len(capture.unresolved_evidence)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -655,6 +703,14 @@ def main(argv: list[str] | None = None) -> int:
     build_visual_aid.add_argument("raw_evidence")
     build_visual_aid.add_argument("out")
     build_visual_aid.set_defaults(func=_cmd_build_reader_visual_aid)
+
+    assemble_capture = sub.add_parser(
+        "assemble-reader-capture",
+        help="compile compact Reader observations into validated ReaderCapture v2",
+    )
+    assemble_capture.add_argument("observations")
+    assemble_capture.add_argument("out")
+    assemble_capture.set_defaults(func=_cmd_assemble_reader_capture)
 
     check_capture = sub.add_parser(
         "check-capture",

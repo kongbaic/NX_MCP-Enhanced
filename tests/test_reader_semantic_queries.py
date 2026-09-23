@@ -87,6 +87,10 @@ def test_query_plan_does_not_enable_cross_view_semantics():
     assert plan.rules["global_feature_merge"] is False
     assert plan.rules["reader_capture_output"] is False
     assert plan.rules["second_interpretation"] is False
+    assert plan.rules["programmatic_image_analysis"] is False
+    assert plan.rules["pixel_measurement"] is False
+    assert plan.rules["image_transform"] is False
+    assert plan.rules["ascii_render"] is False
 
 
 def test_overflow_bucket_exposes_no_candidates():

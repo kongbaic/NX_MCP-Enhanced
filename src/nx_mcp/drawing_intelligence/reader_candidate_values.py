@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .reader_candidate_answers import _axis_for
-from .reader_candidate_queries import ReaderCandidateQueryPlan
+from .reader_candidate_queries import CandidateRegionQuery, ReaderCandidateQueryPlan
 from .reader_semantic_answers import (
     PartialReaderObservations,
     ReaderSemanticAnswers,
@@ -50,7 +50,7 @@ class CandidateValueRegionAnswer(_StrictValueModel):
 
 
 def _region_value_answer_to_strict(
-    query,
+    query: CandidateRegionQuery,
     answer: CandidateValueRegionAnswer,
 ) -> RegionObservationAnswer:
     expected = {item.target_id: item for item in query.dimension_targets}

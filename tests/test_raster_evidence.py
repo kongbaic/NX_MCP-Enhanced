@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _adapt_probe,
+    extract_raw_evidence,
     fragment_length_limits,
 )
 
@@ -78,4 +79,55 @@ def test_probe_adapter_stays_geometry_only():
     assert raw["regions"][0]["circle_groups"][0]["center_px"] == [300, 200]
     assert raw["regions"][0]["linear_pattern_candidates"][0]["kind"] == (
         "dashed_or_centerline_candidate"
+    )
+
+
+def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
+    import cv2
+    import numpy as np
+
+    image = np.full((650, 1200, 3), 255, np.uint8)
+
+    cv2.rectangle(image, (100, 100), (520, 400), (0, 0, 0), 3)
+    cv2.circle(image, (310, 240), 80, (0, 0, 0), 3)
+    for x in range(180, 440, 28):
+        cv2.line(image, (x, 240), (x + 14, 240), (0, 0, 0), 2)
+    for y in range(140, 350, 28):
+        cv2.line(image, (310, y), (310, y + 14), (0, 0, 0), 2)
+
+    cv2.rectangle(image, (720, 120), (980, 410), (0, 0, 0), 3)
+    for y in range(150, 380, 30):
+        cv2.line(image, (800, y), (800, y + 15), (0, 0, 0), 2)
+        cv2.line(image, (900, y), (900, y + 15), (0, 0, 0), 2)
+
+    cv2.line(image, (100, 470), (520, 470), (0, 0, 0), 2)
+    cv2.line(image, (100, 400), (100, 490), (0, 0, 0), 2)
+    cv2.line(image, (520, 400), (520, 490), (0, 0, 0), 2)
+    cv2.line(image, (180, 440), (440, 440), (0, 0, 0), 2)
+    cv2.line(image, (180, 390), (180, 460), (0, 0, 0), 2)
+    cv2.line(image, (440, 390), (440, 460), (0, 0, 0), 2)
+
+    cv2.line(image, (580, 100), (580, 400), (0, 0, 0), 2)
+    cv2.line(image, (520, 100), (600, 100), (0, 0, 0), 2)
+    cv2.line(image, (520, 400), (600, 400), (0, 0, 0), 2)
+
+    cv2.line(image, (720, 470), (980, 470), (0, 0, 0), 2)
+    cv2.line(image, (720, 410), (720, 490), (0, 0, 0), 2)
+    cv2.line(image, (980, 410), (980, 490), (0, 0, 0), 2)
+
+    image_path = tmp_path / "synthetic-drawing.png"
+    assert cv2.imwrite(str(image_path), image)
+
+    raw = extract_raw_evidence(image_path)
+
+    assert raw["schema"] == "raw-evidence-v1"
+    assert raw["semantics_policy"] == "geometry_only_no_engineering_claims"
+    assert raw["summary"]["region_count"] == 2
+    assert raw["summary"]["circle_group_count"] >= 1
+    assert raw["summary"]["linear_pattern_candidate_count"] >= 1
+    assert raw["summary"]["dimension_geometry_candidate_count"] >= 1
+    assert raw["probe_parameters"]["fragment_length_limits_px"] == [7, 61]
+    assert all(
+        item["status"] == "candidate_only_no_semantics"
+        for item in raw["dimension_geometry_candidates"]
     )

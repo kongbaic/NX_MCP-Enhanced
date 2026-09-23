@@ -16,9 +16,9 @@ if (-not (Test-Path $shkssSource)) {
 }
 Copy-Item -Force $shkssSource (Join-Path $imagesRoot "drawing-01-shkss20-40.png")
 
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Aadityajain-hub/AutoCAD_2D_Drawings/main/2D%20PROFILE%20DRAWING%20WITH%20RADIAL%20AND%20ANGULAR%20DIMENSION.png" -OutFile (Join-Path $imagesRoot "drawing-02-radial-angular.png")
+Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/Aadityajain-hub/AutoCAD_2D_Drawings/main/2D%20PROFILE%20DRAWING%20WITH%20RADIAL%20AND%20ANGULAR%20DIMENSION.png" -OutFile (Join-Path $imagesRoot "drawing-02-radial-angular.png")
 
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/SivaTX92/AutoCAD-Task-1/main/Screenshot%20AutoCAD%20Task%201.png" -OutFile (Join-Path $imagesRoot "drawing-03-baseplate.png")
+Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/SivaTX92/AutoCAD-Task-1/main/Screenshot%20AutoCAD%20Task%201.png" -OutFile (Join-Path $imagesRoot "drawing-03-baseplate.png")
 
 $manifest = @{
     schema = "text-extraction-bakeoff-v1"
@@ -45,7 +45,9 @@ $manifest = @{
 }
 
 $manifestPath = Join-Path $benchRoot "manifest.json"
-$manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $manifestPath
+$manifestJson = $manifest | ConvertTo-Json -Depth 8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestPath, $manifestJson, $utf8NoBom)
 
 Write-Host "Prepared:"
 Write-Host "  $manifestPath"

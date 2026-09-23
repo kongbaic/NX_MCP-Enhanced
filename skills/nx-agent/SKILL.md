@@ -28,7 +28,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 runtime-config.json；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
 2. 正常 Mode B Reader 只读取 references/reader-runtime-contract.md + references/nx-drawing-rules.md。禁止为了“再确认规则”重复读取完整 drawing-reader.md / reader-capture-contract.md；两者仅供开发、审计或单独排障，不是正常运行时输入。
-3. 当前上传工程图是本轮 interpretation 的唯一权威几何输入。若当前请求环境已明确提供本轮上传工程图的 runtime-local raster 路径，必须先按 pipeline-contract.md 的 A0.5 执行一次 `prepare-reader-input <current-raster-path> <workspace_root>`；失败立即 BLOCKED / STOP，禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本。成功后 Reader 默认只读取当前原图、当前 reader-input.json 与当前 reader-contact-sheet.png；禁止顺序打开全部单张 crop。只有 contact sheet 中某个已列出的具体区域无法辨认时，才允许打开 manifest 中对应的那一张现成 crop；不得直接读取 raw-evidence.json / reader-visual-aid.json，不得扫描 workspace / chats / 历史文件，不得创建额外 crop。若本轮没有明确 raster path，则不得扫描寻找替代文件，直接按原 Reader 路径继续。随后按 reader-runtime-contract.md 完成一次连续 first-pass；在唯一一次写盘前，必须先在内存中使用生产 `ReaderCapture.model_validate(payload)` 完整校验。校验失败则不写文件、不第二次 interpretation、不生成第二版 payload，立即 BLOCKED / STOP。校验成功后只写一次 immutable reader-capture.json，并立即结束 Reader。
+3. 当前上传工程图是本轮 interpretation 的唯一权威几何输入。若当前请求环境已明确提供本轮上传工程图的 runtime-local raster 路径，必须先按 pipeline-contract.md 的 A0.5 执行一次 `prepare-reader-input <current-raster-path> <workspace_root>`；失败立即 BLOCKED / STOP，禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本。成功后 Reader 默认只读取当前原图、当前 reader-input.json 与当前 reader-contact-sheet.png；禁止顺序打开全部单张 crop。只有 contact sheet 中某个已列出的具体区域无法辨认时，才允许打开 manifest 中对应的那一张现成 crop；不得直接读取 raw-evidence.json / reader-visual-aid.json，不得扫描 workspace / chats / 历史文件，不得创建额外 crop。若本轮没有明确 raster path，则不得扫描寻找替代文件，直接按原 Reader 路径继续。随后按 reader-runtime-contract.md 完成一次连续 first-pass，只写一次 immutable reader-observations.json。立即使用 runtime-config 指定 python_exe 执行 `python -m nx_mcp.drawing_intelligence assemble-reader-capture <reader-observations.json> <reader-capture.json>`。该程序只允许做确定性 ID/source/schema 组装，不得推断 feature identity、association、dimension endpoint ownership 或缺失工程语义；失败立即 BLOCKED / STOP，禁止第二次 interpretation、禁止第二版 observations。成功后得到唯一 reader-capture.json，再进入 check-capture。
 4. capture 写出后，先使用 runtime-config 指定 python_exe 执行：python -m nx_mcp.drawing_intelligence check-capture <reader-capture.json>。只有 process exit code=0、schema_valid=true、contract_valid=true、errors=[] 才允许继续；否则 BLOCKED / STOP。禁止依据 check-capture 错误第二次看图或重写 capture。
 5. check-capture PASS 后立即执行：python -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>。该步骤只做 deterministic identity linking + Gate 0；禁止重新读取工程图。
 6. 只有 link-capture 的 process exit code=0、written=true、schema_valid=true、contract_valid=true 才允许继续；否则 BLOCKED / STOP。link-capture 产生 blocking unresolved 可以保留在 drawing-evidence.json，是否闭合由下一步 resolve 判定。
@@ -41,7 +41,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 13. Gate A 失败立即 BLOCKED / STOP。禁止修改 capture/evidence/draft、重新 interpretation、semantic token retry、手写 drawing.json、单独 validate-drawing 绕过 canonicalizer，或进入 Planner。
 14. Gate A PASS 后根据本轮 canonical drawing.json 从零生成新的 frozen plan；即使工作区已有同名 plan 或相同零件，也不得跳过 Planner。
 15. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
-16. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
+16. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。
 17. 禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
 18. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
 
@@ -56,7 +56,8 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 二维工程图
 → [若有明确 raster path：prepare-reader-input → reader-input.json + reader-contact-sheet.png]
-→ reader-capture.json
+→ reader-observations.json
+→ deterministic assemble-reader-capture → reader-capture.json
 → check-capture
 → deterministic identity link / Gate 0
 → drawing-evidence.json
@@ -83,7 +84,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 7. nx_mcp_src 只能取自当前 runtime-config，不得从历史仓库、备份仓库或其它 workspace 推断。
 8. runtime 一旦解析，本轮不得重新发现或切换 runtime。
 
-当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 workspace_root。其它目录中已有文件不能触发 workspace 切换。
+当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / reader-observations.json / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP 都必须只落在该 workspace_root。其它目录中已有文件不能触发 workspace 切换。
 
 ## 3. 模式选择优先级
 
@@ -97,7 +98,7 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 
 ### Evidence Gate
 
-- Reader 只允许在生产 `ReaderCapture` schema 校验通过后一次写出本轮 reader-capture.json；overall_dimensions 三轴必须为正数，禁止 null / 缺省 / 0。
+- Reader 只允许一次写出本轮 reader-observations.json；随后由 deterministic assemble-reader-capture 生成唯一 reader-capture.json。Assembler 不得补语义；overall_dimensions 三轴必须为正数，禁止 null / 缺省 / 0。
 - Reader 只记录 view-local entities、结构化 association visual basis、带 visual basis 的 physical endpoints、direct values 与 structured unresolved evidence；新 capture 的 required_targets 固定为 []，正式 required targets 由 linker 确定性派生；禁止创建最终 physical feature ID。
 - capture 写出后先执行 check-capture；只有 schema_valid=true 且 contract_valid=true 才允许进入 linker。
 - check-capture PASS 后立即执行 link-capture，确定性生成 drawing-evidence.json。

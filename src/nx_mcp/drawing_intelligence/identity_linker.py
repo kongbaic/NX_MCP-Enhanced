@@ -662,6 +662,34 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 for endpoint in item.endpoints
                 for source_id in endpoint.source_ids
             ]
+            axis_leaf = item.axis.lower()
+            endpoint_specs: list[dict[str, Any]] = []
+            for endpoint_index, endpoint in enumerate(item.endpoints):
+                spec: dict[str, Any] = {
+                    "index": endpoint_index,
+                    "role": endpoint.role,
+                    "unresolved_kind": endpoint.unresolved_kind,
+                    "source_ids": endpoint.source_ids,
+                }
+                if endpoint.role == "entity_center" and endpoint.entity_id:
+                    feature_id = entity_to_feature.get(endpoint.entity_id)
+                    if feature_id:
+                        spec["target"] = (
+                            f"feature:{feature_id}.centerline.{axis_leaf}"
+                        )
+                if endpoint.role == "unresolved":
+                    spec["candidate_targets"] = sorted(
+                        {
+                            (
+                                f"feature:{entity_to_feature[entity_id]}"
+                                f".centerline.{axis_leaf}"
+                            )
+                            for entity_id in endpoint.candidate_entity_ids
+                            if entity_id in entity_to_feature
+                        }
+                    )
+                endpoint_specs.append(spec)
+
             unresolved.append(
                 {
                     "id": f"U_DIM_{item.id}",
@@ -673,7 +701,9 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     "capture_dimension_id": item.id,
                     "dimension_value": item.value,
                     "axis": item.axis,
+                    "dimension_direction": item.direction,
                     "endpoint_unresolved_kinds": unresolved_kinds,
+                    "endpoint_specs": endpoint_specs,
                     "source_ids": list(
                         dict.fromkeys([*item.source_ids, *endpoint_source_ids])
                     ),

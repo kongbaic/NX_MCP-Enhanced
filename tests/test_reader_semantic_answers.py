@@ -239,6 +239,25 @@ def test_bounded_contract_lists_answer_enum_values():
         assert f"`{value}`" in contract
 
 
+def test_bounded_contract_lists_endpoint_conditional_rules():
+    contract = (
+        ROOT / "skills" / "nx-agent" / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+
+    for required_text in (
+        'role="entity_center"',
+        'role="overall_min"',
+        'role="overall_max"',
+        'role="unresolved"',
+        'unresolved_kind="ambiguous_owner"',
+        "candidate_entity_keys",
+        "unresolved_reason",
+        "intermediate_surface",
+        "unsupported_reference",
+    ):
+        assert required_text in contract
+
+
 def test_bounded_contract_times_answer_write_and_rejects_stale_answers():
     contract = (
         ROOT / "skills" / "nx-agent" / "references" / "reader-bounded-query-contract.md"

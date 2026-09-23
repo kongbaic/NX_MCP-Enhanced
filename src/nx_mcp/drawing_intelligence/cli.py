@@ -206,7 +206,7 @@ def _cmd_assemble_reader_capture(args: argparse.Namespace) -> int:
         return 1
 
     report["written"] = True
-    report["schema"] = observations.schema
+    report["schema"] = observations.schema_version
     report["capture_schema_version"] = capture.schema_version
     report["view_count"] = len(capture.views)
     report["entity_count"] = len(capture.entities)

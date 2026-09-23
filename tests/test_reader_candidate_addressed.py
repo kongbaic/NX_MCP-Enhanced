@@ -13,6 +13,7 @@ from nx_mcp.drawing_intelligence.reader_candidate_answers import (
     assemble_candidate_regions,
 )
 from nx_mcp.drawing_intelligence.reader_candidate_queries import (
+    ReaderCandidateQueryError,
     build_reader_candidate_queries,
 )
 
@@ -157,7 +158,7 @@ def test_candidate_queries_fail_closed_without_overlay():
     reader_input["regions"][0].pop("candidate_overlay_path")
 
     with pytest.raises(
-        Exception,
+        ReaderCandidateQueryError,
         match="candidate_overlay_path",
     ):
         build_reader_candidate_queries(reader_input, _visual_aid())

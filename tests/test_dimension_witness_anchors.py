@@ -113,7 +113,7 @@ def test_anchor_enrichment_stays_geometry_only():
         "candidate_count": 2,
         "witness_count": 4,
         "nearest_anchor_count": 3,
-        "max_distance_local_norm": 0.08,
+        "max_distance_local_norm": 0.04,
     }
 
     allowed_kinds = {
@@ -129,6 +129,6 @@ def test_anchor_enrichment_stays_geometry_only():
                     for item in witness["nearest_anchors"]
                 } <= allowed_kinds
                 assert all(
-                    item["distance_local_norm"] <= 0.08
+                    item["distance_local_norm"] <= 0.04
                     for item in witness["nearest_anchors"]
                 )

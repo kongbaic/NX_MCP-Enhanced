@@ -23,6 +23,7 @@ REQUIRED = [
     "references/runner-contract.md",
     "references/certified-tool-contract.json",
     "references/pipeline-contract.md",
+    "references/reader-bounded-query-contract.md",
     "references/chinese-output.md",
     "examples/example-output.json",
     "examples/modeling-plan-example.json",
@@ -359,6 +360,10 @@ def main() -> None:
         fail("Reader preparation CLI regression: missing prepare-reader-input")
     if "assemble-reader-capture" not in drawing_cli_source:
         fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
+    if "build-reader-semantic-queries" not in drawing_cli_source:
+        fail("bounded Reader query CLI regression: missing build-reader-semantic-queries")
+    if "merge-reader-semantic-answers" not in drawing_cli_source:
+        fail("bounded Reader merge CLI regression: missing merge-reader-semantic-answers")
 
     reader_observation_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_observations.py"
@@ -372,6 +377,20 @@ def main() -> None:
     ):
         if token not in reader_observation_source:
             fail(f"Reader observation assembler regression: missing {token}")
+
+    bounded_query_contract = (
+        SKILL / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "build-reader-semantic-queries",
+        "reader-semantic-answers-v1",
+        "merge-reader-semantic-answers",
+        "reader-partial-observations.json",
+        "Hard stop at 3 minutes",
+        "do not perform cross-view identity",
+    ):
+        if token not in bounded_query_contract:
+            fail(f"bounded Reader contract regression: missing {token}")
 
     reader_prep_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"

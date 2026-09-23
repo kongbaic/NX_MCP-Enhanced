@@ -187,11 +187,13 @@ def build_reader_candidate_queries(
         if not isinstance(region, dict):
             raise ReaderCandidateQueryError("reader input region must be an object")
         region_id = region.get("region_id")
-        image_path = region.get("crop_path")
+        image_path = region.get("candidate_overlay_path")
         if not isinstance(region_id, str) or not region_id:
             raise ReaderCandidateQueryError("reader region requires region_id")
         if not isinstance(image_path, str) or not image_path:
-            raise ReaderCandidateQueryError(f"reader region {region_id!r} requires crop_path")
+            raise ReaderCandidateQueryError(
+                f"reader region {region_id!r} requires candidate_overlay_path"
+            )
 
         labels = [region_id]
         targets: list[CandidateDimensionTarget] = []
@@ -287,6 +289,7 @@ def build_reader_candidate_queries(
         queries=queries,
         rules={
             "read_only_query_image": True,
+            "candidate_overlay_required": True,
             "open_unlisted_images": False,
             "scan_region_for_unaddressed_facts": False,
             "answer_only_listed_dimension_targets": True,

@@ -38,12 +38,10 @@ class HybridAdapterContext(_StrictAdapterModel):
         alias="schema",
     )
     region_views: list[HybridRegionView] = Field(min_length=1)
-    overall_dimension_facts: list[PartialOverallDimensionFact] = Field(
-        default_factory=list
-    )
+    overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _unique_regions(self) -> "HybridAdapterContext":
+    def _unique_regions(self) -> HybridAdapterContext:
         region_ids = [item.region_id for item in self.region_views]
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("hybrid adapter region_ids must be unique")
@@ -102,13 +100,9 @@ def _coverage_unresolved(
 ) -> list[ObservationUnresolved]:
     coverage = report.get("coverage")
     if not isinstance(coverage, dict):
-        raise HybridCaptureAdapterError(
-            "Hybrid OCR v2 report requires a coverage ledger"
-        )
+        raise HybridCaptureAdapterError("Hybrid OCR v2 report requires a coverage ledger")
     if coverage.get("observed_silent_drop_count") != 0:
-        raise HybridCaptureAdapterError(
-            "Hybrid OCR report has observed silent evidence drops"
-        )
+        raise HybridCaptureAdapterError("Hybrid OCR report has observed silent evidence drops")
 
     unresolved: list[ObservationUnresolved] = []
 
@@ -124,9 +118,7 @@ def _coverage_unresolved(
         region_id = str(candidate.get("region_id") or "")
         region_view = view_lookup.get(region_id)
         if region_view is None:
-            raise HybridCaptureAdapterError(
-                f"missing view context for region {region_id!r}"
-            )
+            raise HybridCaptureAdapterError(f"missing view context for region {region_id!r}")
         axis = _axis_for(
             region_view.view_kind,
             str(candidate.get("orientation") or ""),
@@ -213,9 +205,7 @@ def adapt_hybrid_ocr_report(
     """Adapt Hybrid OCR v2 into partial Reader observations without inference."""
 
     if report.get("schema") != "dg-hybrid-ocr-bakeoff-v2":
-        raise HybridCaptureAdapterError(
-            "adapter requires dg-hybrid-ocr-bakeoff-v2"
-        )
+        raise HybridCaptureAdapterError("adapter requires dg-hybrid-ocr-bakeoff-v2")
 
     candidates = report.get("candidates")
     if not isinstance(candidates, list):
@@ -232,13 +222,9 @@ def adapt_hybrid_ocr_report(
         candidate_id = str(raw_candidate.get("candidate_id") or "")
         region_id = str(raw_candidate.get("region_id") or "")
         if not candidate_id or not region_id:
-            raise HybridCaptureAdapterError(
-                "Hybrid candidate requires candidate_id and region_id"
-            )
+            raise HybridCaptureAdapterError("Hybrid candidate requires candidate_id and region_id")
         if candidate_id in candidate_lookup:
-            raise HybridCaptureAdapterError(
-                f"duplicate Hybrid candidate_id {candidate_id!r}"
-            )
+            raise HybridCaptureAdapterError(f"duplicate Hybrid candidate_id {candidate_id!r}")
         candidate_lookup[candidate_id] = raw_candidate
 
         accepted_token = raw_candidate.get("accepted_token")

@@ -100,6 +100,10 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
 
     for region in payload["regions"]:
         assert Path(region["crop_path"]).is_file()
+        assert "circle_groups" not in region
+        assert "linear_pattern_candidates" not in region
+        assert "circle_group_count" in region
+        assert "linear_pattern_candidate_count" in region
 
     for bucket in payload["candidate_buckets"]:
         assert Path(bucket["crop_path"]).is_file()
@@ -107,6 +111,15 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
             assert bucket["candidates"] == []
         else:
             assert len(bucket["candidates"]) <= 4
+            for candidate in bucket["candidates"]:
+                assert set(candidate) == {
+                    "candidate_id",
+                    "orientation",
+                    "anchor_hints",
+                }
+                assert "axis_px" not in candidate
+                assert "line_span_px" not in candidate
+                assert "witness_positions_px" not in candidate
 
     assert result["timing_ms"]["total"] >= 0
     assert result["timing_ms"]["raw_evidence"] >= 0

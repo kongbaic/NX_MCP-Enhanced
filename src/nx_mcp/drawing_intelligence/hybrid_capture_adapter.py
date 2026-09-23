@@ -237,9 +237,7 @@ def adapt_hybrid_ocr_report(
 
         region_view = view_lookup.get(region_id)
         if region_view is None:
-            raise HybridCaptureAdapterError(
-                f"missing view context for region {region_id!r}"
-            )
+            raise HybridCaptureAdapterError(f"missing view context for region {region_id!r}")
         orientation = str(raw_candidate.get("orientation") or "")
         axis = _axis_for(region_view.view_kind, orientation)
         value, tolerance_token = _dimension_value(accepted_token)

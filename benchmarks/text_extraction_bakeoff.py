@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import math
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class OcrItem:
+    text: str
+    bbox: list[list[float]]
+    confidence: float
+    orientation_deg: float | None
+
+
+def _bbox_orientation_deg(box: list[list[float]]) -> float | None:
+    if len(box) < 2:
+        return None
+    x1, y1 = box[0]
+    x2, y2 = box[1]
+    angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+    while angle < 0:
+        angle += 180
+    while angle >= 180:
+        angle -= 180
+    return round(angle, 3)
+
+
+def _rapidocr(image_path: Path) -> tuple[list[OcrItem], float]:
+    module = importlib.import_module("rapidocr")
+    engine = module.RapidOCR(
+        params={
+            "Global.use_cls": True,
+            "Global.return_word_box": False,
+        }
+    )
+    started = time.perf_counter()
+    result = engine(str(image_path))
+    elapsed = time.perf_counter() - started
+
+    boxes = getattr(result, "boxes", None)
+    txts = getattr(result, "txts", None)
+    scores = getattr(result, "scores", None)
+    if boxes is None or txts is None or scores is None:
+        return [], elapsed
+
+    items: list[OcrItem] = []
+    for box, text, score in zip(boxes, txts, scores):
+        points = [[float(point[0]), float(point[1])] for point in box]
+        items.append(
+            OcrItem(
+                text=str(text),
+                bbox=points,
+                confidence=float(score),
+                orientation_deg=_bbox_orientation_deg(points),
+            )
+        )
+    return items, elapsed
+
+
+def _tesseract(image_path: Path) -> tuple[list[OcrItem], float]:
+    started = time.perf_counter()
+    run = subprocess.run(
+        [
+            "tesseract",
+            str(image_path),
+            "stdout",
+            "--psm",
+            "11",
+            "tsv",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    elapsed = time.perf_counter() - started
+    if run.returncode != 0:
+        raise RuntimeError(run.stderr.strip() or "tesseract failed")
+
+    items: list[OcrItem] = []
+    rows = run.stdout.splitlines()
+    if not rows:
+        return items, elapsed
+    header = rows[0].split("\t")
+    index = {name: position for position, name in enumerate(header)}
+    required = {"left", "top", "width", "height", "conf", "text"}
+    if not required.issubset(index):
+        raise RuntimeError("unexpected tesseract TSV schema")
+
+    for row in rows[1:]:
+        fields = row.split("\t")
+        if len(fields) != len(header):
+            continue
+        text_value = fields[index["text"]].strip()
+        if not text_value:
+            continue
+        confidence = float(fields[index["conf"]])
+        if confidence < 0:
+            continue
+        left = float(fields[index["left"]])
+        top = float(fields[index["top"]])
+        width = float(fields[index["width"]])
+        height = float(fields[index["height"]])
+        box = [
+            [left, top],
+            [left + width, top],
+            [left + width, top + height],
+            [left, top + height],
+        ]
+        items.append(
+            OcrItem(
+                text=text_value,
+                bbox=box,
+                confidence=confidence / 100.0,
+                orientation_deg=0.0,
+            )
+        )
+    return items, elapsed
+
+
+def _normalize_token(text: str) -> str:
+    return (
+        text.strip()
+        .replace("Φ", "Ø")
+        .replace("φ", "Ø")
+        .replace("∅", "Ø")
+        .replace("＋", "+")
+        .replace("－", "-")
+        .replace("± ", "±")
+        .replace(" ", "")
+    )
+
+
+def _score(expected: list[str], items: list[OcrItem]) -> dict[str, Any]:
+    expected_normalized = [_normalize_token(item) for item in expected]
+    observed_normalized = [_normalize_token(item.text) for item in items]
+
+    remaining = list(observed_normalized)
+    matched: list[str] = []
+    missed: list[str] = []
+    for token in expected_normalized:
+        if token in remaining:
+            matched.append(token)
+            remaining.remove(token)
+        else:
+            missed.append(token)
+
+    recall = len(matched) / len(expected_normalized) if expected_normalized else 1.0
+    precision = len(matched) / (len(matched) + len(remaining)) if items else 1.0
+    return {
+        "expected_count": len(expected_normalized),
+        "detected_count": len(items),
+        "matched_count": len(matched),
+        "exact_token_recall": round(recall, 6),
+        "exact_token_precision": round(precision, 6),
+        "matched": matched,
+        "missed": missed,
+        "extra_text": remaining,
+    }
+
+
+def _load_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != "text-extraction-bakeoff-v1":
+        raise ValueError("manifest must use text-extraction-bakeoff-v1")
+    cases = payload.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("manifest requires at least one case")
+    return payload
+
+
+def _run_engine(
+    engine_name: str,
+    image_path: Path,
+) -> tuple[list[OcrItem], float]:
+    engines: dict[str, Callable[[Path], tuple[list[OcrItem], float]]] = {
+        "rapidocr": _rapidocr,
+        "tesseract": _tesseract,
+    }
+    try:
+        engine = engines[engine_name]
+    except KeyError as exc:
+        raise ValueError(f"unsupported engine: {engine_name}") from exc
+    return engine(image_path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("manifest")
+    parser.add_argument("output")
+    parser.add_argument(
+        "--engine",
+        action="append",
+        choices=["rapidocr", "tesseract"],
+        required=True,
+    )
+    args = parser.parse_args(argv)
+
+    manifest_path = Path(args.manifest).resolve()
+    output_path = Path(args.output).resolve()
+    manifest = _load_manifest(manifest_path)
+    root = manifest_path.parent
+
+    report: dict[str, Any] = {
+        "schema": "text-extraction-bakeoff-report-v1",
+        "manifest": str(manifest_path),
+        "engines": {},
+    }
+
+    for engine_name in args.engine:
+        engine_cases: list[dict[str, Any]] = []
+        for case in manifest["cases"]:
+            case_id = str(case["case_id"])
+            image_path = (root / str(case["image"])).resolve()
+            expected = [str(value) for value in case.get("expected_tokens", [])]
+            if not image_path.is_file():
+                raise ValueError(f"case {case_id!r} image does not exist: {image_path}")
+
+            items, elapsed = _run_engine(engine_name, image_path)
+            score = _score(expected, items)
+            engine_cases.append(
+                {
+                    "case_id": case_id,
+                    "image": str(image_path),
+                    "elapsed_s": round(elapsed, 6),
+                    "score": score,
+                    "items": [
+                        {
+                            "text": item.text,
+                            "bbox": item.bbox,
+                            "confidence": item.confidence,
+                            "orientation_deg": item.orientation_deg,
+                        }
+                        for item in items
+                    ],
+                }
+            )
+
+        elapsed_values = [item["elapsed_s"] for item in engine_cases]
+        recall_values = [item["score"]["exact_token_recall"] for item in engine_cases]
+        precision_values = [item["score"]["exact_token_precision"] for item in engine_cases]
+        report["engines"][engine_name] = {
+            "cases": engine_cases,
+            "summary": {
+                "case_count": len(engine_cases),
+                "mean_elapsed_s": round(sum(elapsed_values) / len(elapsed_values), 6),
+                "max_elapsed_s": round(max(elapsed_values), 6),
+                "mean_exact_token_recall": round(
+                    sum(recall_values) / len(recall_values),
+                    6,
+                ),
+                "mean_exact_token_precision": round(
+                    sum(precision_values) / len(precision_values),
+                    6,
+                ),
+            },
+        }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

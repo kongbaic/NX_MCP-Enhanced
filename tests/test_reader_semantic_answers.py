@@ -8,17 +8,17 @@ from typing import get_args
 
 import pytest
 
-from nx_mcp.drawing_intelligence.reader_semantic_answers import (
-    ReaderSemanticAnswerError,
-    ReaderSemanticAnswers,
-    merge_region_semantic_answers,
-)
 from nx_mcp.drawing_intelligence.capture import (
     CaptureEndpointRole,
     CaptureEndpointUnresolvedKind,
     DimensionEndpointEvidenceKind,
 )
 from nx_mcp.drawing_intelligence.evidence import Axis, ProjectionShape, ViewKind
+from nx_mcp.drawing_intelligence.reader_semantic_answers import (
+    ReaderSemanticAnswerError,
+    ReaderSemanticAnswers,
+    merge_region_semantic_answers,
+)
 from nx_mcp.drawing_intelligence.reader_semantic_queries import (
     build_reader_semantic_queries,
 )

@@ -70,6 +70,7 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert input_path.is_file()
     assert crops_dir.is_dir()
     assert (crops_dir / "overview.png").is_file()
+    assert (workspace / "reader-contact-sheet.png").is_file()
 
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     assert payload["schema"] == "reader-input-v1"
@@ -84,7 +85,9 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert payload["reader_contract"] == {
         "read_source_drawing": True,
         "may_read_reader_input": True,
+        "may_read_contact_sheet": True,
         "may_read_listed_crops": True,
+        "prefer_contact_sheet": True,
         "read_raw_evidence_directly": False,
         "scan_workspace": False,
         "scan_history": False,
@@ -140,5 +143,7 @@ def test_prepare_reader_input_cli_e2e(tmp_path: Path):
     assert report["schema"] == "reader-input-v1"
     assert report["summary"]["region_count"] >= 1
     assert report["summary"]["bucket_count"] >= 1
+    assert Path(report["contact_sheet"]).is_file()
     assert (workspace / "reader-input.json").is_file()
     assert (workspace / "reader-crops" / "overview.png").is_file()
+    assert (workspace / "reader-contact-sheet.png").is_file()

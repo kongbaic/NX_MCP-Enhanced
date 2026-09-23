@@ -266,8 +266,10 @@ def main() -> None:
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "Reader 只从当前上传工程图生成一次 reader-capture.json",
-        "immutable first-pass visual evidence artifact",
+        "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
+        "reader-observations.json",
+        "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+        "immutable compiled first-pass visual evidence artifact",
         "Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json",
         "check-capture <reader-capture.json>",
         "link-capture <reader-capture.json> <drawing-evidence.json>",

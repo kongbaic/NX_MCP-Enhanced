@@ -207,6 +207,43 @@ def test_compact_unknown_shape_alias_fails_closed():
         build_reader_semantic_answers_from_regions(plan, answers)
 
 
+def test_compact_unresolved_dimension_key_requires_local_dimension():
+    payload = {
+        "schema": "reader-semantic-region-v1",
+        "query_id": "Q001",
+        "view_kind": "front",
+        "facts": [
+            {
+                "kind": "entity",
+                "key": "feature_alpha",
+                "shape": "circle",
+                "evidence": "R1",
+            },
+            {
+                "kind": "value",
+                "entity_key": "feature_alpha",
+                "field": "diameter",
+                "value": 16,
+                "evidence": "R1",
+            },
+            {
+                "kind": "unresolved",
+                "category": "unsupported_representation",
+                "reason": "The visible tolerance is not represented directly.",
+                "dimension_key": "value_diameter",
+                "field": "tolerance",
+                "evidence": "R1",
+            },
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="dimension_key must reference a local dimension fact",
+    ):
+        CompactRegionSemanticAnswer.model_validate(payload)
+
+
 def test_compact_unlisted_evidence_fails_closed():
     plan = build_reader_semantic_queries(_reader_input())
     answers = _compact_answers()

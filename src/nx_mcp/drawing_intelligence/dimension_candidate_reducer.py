@@ -41,7 +41,7 @@ def classify_candidate_band(candidate: dict[str, Any]) -> Band:
             return "bottom"
         return "middle"
 
-    if value < 0.25:
+    if value <= 0.40:
         return "left"
     if value > 0.75:
         return "right"

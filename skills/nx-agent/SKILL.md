@@ -27,8 +27,8 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 用户上传二维机械工程图并要求开始建模、按图建模、用 NX 画出来等时：
 
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 runtime-config.json；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
-2. 读取 references/drawing-reader.md + references/reader-capture-contract.md + references/nx-drawing-rules.md。
-3. 当前上传工程图是本轮 interpretation 的唯一几何输入。Reader 在唯一一次写盘前，必须先在内存中使用生产 `ReaderCapture.model_validate(payload)` 完整校验；仅 JSON parse、键数量检查或自定义扫描不算通过。只有生产 schema 校验通过后，才允许一次写出 reader-capture.json；它是 immutable first-pass visual evidence artifact。校验失败则不写文件、不第二次看图修复，立即 BLOCKED / STOP。Reader 不得直接创建 drawing-evidence.json、semantic-draft.json 或 drawing.json。
+2. 正常 Mode B Reader 只读取 references/reader-runtime-contract.md + references/nx-drawing-rules.md。禁止为了“再确认规则”重复读取完整 drawing-reader.md / reader-capture-contract.md；两者仅供开发、审计或单独排障，不是正常运行时输入。
+3. 当前上传工程图是本轮 interpretation 的唯一几何输入。按 reader-runtime-contract.md 完成一次连续 first-pass；在唯一一次写盘前，必须先在内存中使用生产 `ReaderCapture.model_validate(payload)` 完整校验。校验失败则不写文件、不第二次 interpretation、不生成第二版 payload，立即 BLOCKED / STOP。校验成功后只写一次 immutable reader-capture.json，并立即结束 Reader。
 4. capture 写出后，先使用 runtime-config 指定 python_exe 执行：python -m nx_mcp.drawing_intelligence check-capture <reader-capture.json>。只有 process exit code=0、schema_valid=true、contract_valid=true、errors=[] 才允许继续；否则 BLOCKED / STOP。禁止依据 check-capture 错误第二次看图或重写 capture。
 5. check-capture PASS 后立即执行：python -m nx_mcp.drawing_intelligence link-capture <reader-capture.json> <drawing-evidence.json>。该步骤只做 deterministic identity linking + Gate 0；禁止重新读取工程图。
 6. 只有 link-capture 的 process exit code=0、written=true、schema_valid=true、contract_valid=true 才允许继续；否则 BLOCKED / STOP。link-capture 产生 blocking unresolved 可以保留在 drawing-evidence.json，是否闭合由下一步 resolve 判定。

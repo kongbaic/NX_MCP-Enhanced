@@ -73,10 +73,13 @@ The Reader may receive only:
 
 - the exact current source drawing;
 - `skills/nx-agent/SKILL.md`;
-- `skills/nx-agent/references/drawing-reader.md`;
-- `skills/nx-agent/references/reader-capture-contract.md`;
+- `skills/nx-agent/references/reader-runtime-contract.md`;
 - `skills/nx-agent/references/nx-drawing-rules.md`;
 - the generic benchmark prompt for the frozen revision.
+
+The verbose development/audit references `drawing-reader.md` and
+`reader-capture-contract.md` are intentionally excluded from normal benchmark
+runtime so the benchmark matches the production fast Reader path.
 
 The Reader must not receive or read:
 
@@ -302,6 +305,13 @@ the Reader timing boundary after the immutable capture has already been written.
 
 Do not compare latency across different benchmark revisions as if conditions
 were identical.
+
+For smoke/recovery runs, use an operator-enforced wall-clock ceiling of
+20 minutes per Reader capture unless the frozen revision specifies a stricter
+limit. If no immutable capture has been written by that ceiling, abort the run
+and record `reader_runtime_timeout`. Do not wait indefinitely for a stability
+run. This ceiling is only a runaway guard; it is not the final performance
+acceptance target.
 
 ## 13. No replacement runs
 

@@ -66,11 +66,7 @@ class CompactSemanticFact(_StrictCompactModel):
     @model_validator(mode="after")
     def _required_fields(self) -> CompactSemanticFact:
         if self.kind == "overall":
-            if (
-                self.axis is None
-                or not isinstance(self.value, (int, float))
-                or self.value <= 0
-            ):
+            if self.axis is None or not isinstance(self.value, (int, float)) or self.value <= 0:
                 raise ValueError("overall fact requires positive numeric value and axis")
         elif self.kind == "entity":
             if not self.key or not self.shape:
@@ -93,9 +89,7 @@ class CompactSemanticFact(_StrictCompactModel):
         elif self.kind == "datum":
             if not self.entity_key or self.axis is None:
                 raise ValueError("datum fact requires entity_key and axis")
-        elif self.kind == "unresolved" and (
-            self.category is None or not self.reason
-        ):
+        elif self.kind == "unresolved" and (self.category is None or not self.reason):
             raise ValueError("unresolved fact requires category and reason")
         return self
 

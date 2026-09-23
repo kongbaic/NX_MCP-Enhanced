@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from nx_mcp.drawing_intelligence.dimension_candidate_reducer import (
@@ -168,3 +173,89 @@ def test_reducer_does_not_arbitrarily_truncate_more_than_four_candidates():
     assert result["status"] == "needs_more_hint"
     assert result["candidate_count"] == 5
     assert result["candidates"] == []
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_reduce_dimension_candidates_cli_e2e(tmp_path: Path):
+    raw_path = tmp_path / "raw-evidence.json"
+    hints_path = tmp_path / "dimension-hints.json"
+    out_path = tmp_path / "reduced.json"
+
+    raw_path.write_text(
+        json.dumps(_raw()),
+        encoding="utf-8",
+    )
+    hints_path.write_text(
+        json.dumps(
+            {
+                "dimensions": [
+                    {
+                        "dimension_id": "D_FRONT_8",
+                        "label": "8",
+                        "region_id": "R1",
+                        "orientation": "vertical",
+                        "band": "left",
+                    },
+                    {
+                        "dimension_id": "D_FRONT_40TOL",
+                        "label": "40±0.02",
+                        "region_id": "R1",
+                        "orientation": "vertical",
+                        "band": "right",
+                    },
+                    {
+                        "dimension_id": "D_FRONT_24",
+                        "label": "24",
+                        "region_id": "R1",
+                        "orientation": "horizontal",
+                        "band": "bottom",
+                    },
+                    {
+                        "dimension_id": "D_SIDE_24",
+                        "label": "24",
+                        "region_id": "R2",
+                        "orientation": "horizontal",
+                        "band": "bottom",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "reduce-dimension-candidates",
+            str(raw_path),
+            str(hints_path),
+            str(out_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    output = json.loads(out_path.read_text(encoding="utf-8"))
+    assert output["dimension_count"] == 4
+
+    by_id = {
+        item["dimension_id"]: item
+        for item in output["dimensions"]
+    }
+    assert by_id["D_FRONT_8"]["candidate_count"] == 1
+    assert by_id["D_FRONT_40TOL"]["candidate_count"] == 2
+    assert by_id["D_FRONT_24"]["candidate_count"] == 2
+    assert by_id["D_SIDE_24"]["candidate_count"] == 2
+
+    front_40_ids = {
+        item["candidate_id"]
+        for item in by_id["D_FRONT_40TOL"]["candidates"]
+    }
+    assert front_40_ids == {"DG19", "DG20"}

@@ -219,6 +219,21 @@ def test_compact_unlisted_evidence_fails_closed():
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_token_contract_avoids_benchmark_specific_examples():
+    contract = (
+        ROOT / "skills" / "nx-agent" / "references" / "reader-bounded-token-contract.md"
+    ).read_text(encoding="utf-8")
+
+    for forbidden in (
+        "SHKSS",
+        "main_bore",
+        "center_height",
+        "40±0.02",
+        "20 H7",
+    ):
+        assert forbidden not in contract
+
+
 def test_assemble_reader_semantic_regions_cli_e2e(tmp_path: Path):
     query_plan = tmp_path / "reader-semantic-queries.json"
     answers_out = tmp_path / "reader-semantic-answers.json"

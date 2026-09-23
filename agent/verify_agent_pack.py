@@ -460,8 +460,9 @@ def main() -> None:
             fail(f"pipeline numeric-nudge repair regression: missing {token}")
     for token in (
         "禁止 geometry / numeric nudge",
-        "不得通过修改设计尺寸、孔位、特征数量或其它几何语义来修复",
-        "不能把几何变化伪装成 technical repair",
+        "只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题",
+        "禁止：重新看图、修改 reader-capture/drawing-evidence、猜尺寸、改图纸、改变主体结构",
+        "修复后必须重新 build/check",
     ):
         if token not in top:
             fail(f"top-level numeric-nudge repair regression: missing {token}")

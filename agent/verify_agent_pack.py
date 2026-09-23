@@ -214,17 +214,20 @@ def main() -> None:
     for token in (
         "当前上传工程图",
         "唯一几何输入",
-        "Reader 只能一次写出 `semantic-draft.json`",
-        "Reader 不得直接创建、覆盖或手写 `drawing.json`",
-        "process exit code = 0",
-        "`written=true`",
-        "`output_exists=true`",
-        "单独调用 `validate-drawing` 绕过 canonicalizer",
+        "ReaderCapture.model_validate(payload)",
+        "immutable reader-capture.json",
+        "check-capture <reader-capture.json>",
+        "link-capture <reader-capture.json> <drawing-evidence.json>",
+        "resolve <drawing-evidence.json> <semantic-draft.json>",
+        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
+        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
+        "禁止第二轮用户确认",
+        "canonicalize-drawing <semantic-draft.json 或 semantic-draft-confirmed.json> <drawing.json>",
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 frozen/executable plan",
-        "禁止扫描工作区寻找“可复用”的历史 plan",
+        "禁止主动读取或把工作区中的旧 reader-capture",
+        "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:
             fail(f"Mode B current-request isolation regression: missing {token}")
@@ -253,18 +256,24 @@ def main() -> None:
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "当前上传工程图 → 当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
-        "Reader只从当前上传工程图生成一次`semantic-draft.json`",
-        "只有process exit code = 0、`written=true`、`output_exists=true`同时成立才PASS",
-        "Reader存在blocking unresolved",
-        "draft只有白名单内安全schema/path差异",
-        "draft存在真实semantic/ownership错误",
-        "不能直接 build/run 或进入 Runner",
-        "不得扫描工作区判断是否存在“可用计划”",
+        "Reader 只从当前上传工程图生成一次 reader-capture.json",
+        "immutable first-pass visual evidence artifact",
+        "Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json",
+        "check-capture <reader-capture.json>",
+        "link-capture <reader-capture.json> <drawing-evidence.json>",
+        "resolve <drawing-evidence.json> <semantic-draft.json>",
+        "A4.1 Human Confirmation Gate（最多一次）",
+        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
+        "eligible_for_user_confirmation = true",
+        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
+        "resolve <drawing-evidence-confirmed.json> <semantic-draft-confirmed.json>",
+        "禁止第二轮用户确认",
+        "canonicalize-drawing <semantic-draft.json> <drawing.json>",
         "build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "当前 Mode B 的 reader-capture.json、drawing-evidence.json",
     ):
         if token not in pipeline_contract:
-            fail(f"Mode B stale-workspace contract regression: missing {token}")
+            fail(f"Mode B evidence pipeline regression: missing {token}")
     for token in (
         "一次且仅一次 runtime discovery",
         "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
@@ -309,29 +318,33 @@ def main() -> None:
     ):
         fail("Mode B pre-interpretation simulation permits a stale artifact")
 
-    mode_b_canonicalizer_tokens = {
+    mode_b_evidence_tokens = {
         "SKILL.md": (
-            "immutable first-pass semantic artifact",
-            "禁止 retry、第二版 draft、Edit/Rewrite draft",
-            "`drawing.json` 不存在",
+            "Reader 只允许在生产 `ReaderCapture` schema 校验通过后一次写出本轮 reader-capture.json",
+            "check-capture PASS 后立即执行 link-capture",
+            "再执行 deterministic resolve，生成 semantic-draft.json",
+            "最多 3 个可确认的 dimension endpoint",
+            "禁止第二版 reader-capture",
             "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
         ),
         "pipeline-contract.md": (
-            "immutable first-pass semantic artifact",
-            "semantic token/schema retry",
-            "手写drawing",
-            "单独`validate-drawing`绕过canonicalizer",
-            "其它结果`BLOCKED / STOP`",
+            "Reader 只生成 view-local reader-capture.json",
+            "deterministic identity linker + Gate 0 生成 drawing-evidence.json",
+            "semantic-draft.json 由固定程序生成",
+            "该阶段只允许解决**尺寸端点 ownership**",
+            "最多一次",
+            "禁止第二轮用户确认",
+            "其它结果立即 BLOCKED / STOP",
         ),
     }
-    mode_b_canonicalizer_texts = {
+    mode_b_evidence_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
     }
-    for name, tokens in mode_b_canonicalizer_tokens.items():
+    for name, tokens in mode_b_evidence_tokens.items():
         for token in tokens:
-            if token not in mode_b_canonicalizer_texts[name]:
-                fail(f"Mode B canonicalizer workflow regression in {name}: missing {token}")
+            if token not in mode_b_evidence_texts[name]:
+                fail(f"Mode B evidence workflow regression in {name}: missing {token}")
 
     for forbidden in (
         "直接覆盖写入当前 `drawing.json`",

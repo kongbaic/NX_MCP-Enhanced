@@ -158,6 +158,7 @@ def _endpoint(token: str, evidence: str) -> RegionDimensionEndpointAnswer:
                 "<centerline|center_mark|explicit_midline>"
             )
         basis = parts[2]
+        center_basis: Literal["centerline", "center_mark", "explicit_midline"]
         if basis == "centerline":
             center_basis = "centerline"
         elif basis == "center_mark":

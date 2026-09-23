@@ -201,6 +201,51 @@ The following enum values are complete. Do not use synonyms or invent new values
   `intermediate_surface`, `ambiguous_owner`, `unsupported_reference`
 - dimension `direction`: `-1`, `1`, or `null`
 
+### Dimension endpoint conditional rules
+
+Endpoint fields are not independent. Apply these exact combinations:
+
+- `role="entity_center"`:
+  - `entity_key` is required and must name one local entity declared in the same answer;
+  - `basis` is required and must be one of `centerline`, `center_mark`,
+    `explicit_midline`;
+  - `candidate_entity_keys` must be empty;
+  - `unresolved_kind` must be null.
+- `role="overall_min"` or `role="overall_max"`:
+  - `entity_key` must be null/omitted;
+  - `candidate_entity_keys` must be empty;
+  - `basis` must be null/omitted;
+  - `unresolved_kind` must be null/omitted.
+- `role="unresolved"`:
+  - `entity_key` must be null/omitted;
+  - `basis` must be null/omitted;
+  - `unresolved_kind` is required;
+  - when `unresolved_kind="ambiguous_owner"`,
+    `candidate_entity_keys` is required, non-empty, unique, and every key must
+    name a local entity declared in the same answer;
+  - when `unresolved_kind` is `intermediate_surface` or
+    `unsupported_reference`, `candidate_entity_keys` must be empty.
+
+If a dimension contains at least one `role="unresolved"` endpoint,
+`unresolved_reason` is required and non-empty. If both endpoints are resolved,
+`unresolved_reason` must be null/omitted.
+
+Example ambiguous-owner endpoint:
+
+~~~json
+{
+  "role": "unresolved",
+  "candidate_entity_keys": ["bottom_hole_left", "bottom_hole_right"],
+  "unresolved_kind": "ambiguous_owner",
+  "evidence": ["R1.horizontal.bottom"]
+}
+~~~
+
+Do not use `ambiguous_owner` merely to mean "I do not know". It means the query
+contains two or more explicit local entity candidates and the endpoint cannot be
+uniquely assigned between them. If there are no concrete candidate entities,
+use `intermediate_surface` or `unsupported_reference` as appropriate instead.
+
 Entity `shape` describes the visible 2D projection evidence, not the 3D feature
 type. Use these mappings when the natural-language description uses another word:
 

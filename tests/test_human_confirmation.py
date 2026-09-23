@@ -20,6 +20,7 @@ from nx_mcp.drawing_intelligence.evidence import (
     EvidenceGraph,
     OverallDimensions,
     ProjectionEvidence,
+    ViewEvidence,
 )
 from nx_mcp.drawing_intelligence.identity_linker import link_reader_capture
 from nx_mcp.drawing_intelligence.resolver import resolve_evidence_graph
@@ -32,6 +33,7 @@ def _graph() -> EvidenceGraph:
             width_y=32,
             height_z=66,
         ),
+        views=[ViewEvidence(id="V1", kind="front", source_ids=["OBS_V1"])],
         projections=[
             ProjectionEvidence(
                 id="P1",

@@ -9,13 +9,14 @@ from .capture import (
     CaptureView,
     ReaderCapture,
 )
-from .identity_linker import IdentityLinkError, IdentityLinkResult, link_reader_capture
 from .hybrid_capture_adapter import (
     HybridAdapterContext,
     HybridCaptureAdapterError,
     HybridRegionView,
     adapt_hybrid_ocr_report,
 )
+from .identity_linker import IdentityLinkError, IdentityLinkResult, link_reader_capture
+
 """Deterministic drawing-evidence compilation and resolution.
 
 This package is intentionally independent from the NX execution backend.

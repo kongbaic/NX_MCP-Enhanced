@@ -234,7 +234,7 @@ def main() -> None:
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-crops、reader-capture",
+        "禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-capture",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:

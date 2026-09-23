@@ -93,9 +93,10 @@ class CompactSemanticFact(_StrictCompactModel):
         elif self.kind == "datum":
             if not self.entity_key or self.axis is None:
                 raise ValueError("datum fact requires entity_key and axis")
-        elif self.kind == "unresolved":
-            if self.category is None or not self.reason:
-                raise ValueError("unresolved fact requires category and reason")
+        elif self.kind == "unresolved" and (
+            self.category is None or not self.reason
+        ):
+            raise ValueError("unresolved fact requires category and reason")
         return self
 
 

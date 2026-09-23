@@ -276,6 +276,8 @@ def _cmd_request_confirmations(args: argparse.Namespace) -> int:
         "confirmation_request": request_path,
         "written": False,
         "question_count": 0,
+        "eligible_for_user_confirmation": False,
+        "unconfirmable_blocking_ids": [],
         "errors": [],
     }
 
@@ -303,6 +305,12 @@ def _cmd_request_confirmations(args: argparse.Namespace) -> int:
 
     report["written"] = True
     report["question_count"] = request["question_count"]
+    report["eligible_for_user_confirmation"] = request[
+        "eligible_for_user_confirmation"
+    ]
+    report["unconfirmable_blocking_ids"] = request[
+        "unconfirmable_blocking_ids"
+    ]
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

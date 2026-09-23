@@ -122,3 +122,23 @@ Run:
 The script creates `benchmarks/text_extraction/manifest.json` and downloads or
 copies the exact three images. Do not substitute other drawings during the first
 comparison run.
+
+## Engineering-token scoring
+
+Raw exact-string recall remains in the report as a diagnostic metric, but it is
+not sufficient for mechanical drawings. The benchmark also reports
+`engineering_token_recall`, which deterministically handles:
+
+- diameter glyph normalization (`Φ`, `φ`, `∅` -> `Ø`);
+- compound strings such as `∅20 H7`;
+- numeric values embedded in drawing notes such as hole callouts;
+- `R`, `M`, angle, fit, and plus/minus tolerance notation;
+- a standalone engineering prefix immediately adjacent to one unique numeric
+  OCR item, for example split `R` + `100`.
+
+The scorer must not convert a plain leading zero into a diameter symbol. For
+example, OCR text `012` does not satisfy expected token `Ø12`. This stays
+unresolved because a wrong diameter claim is worse than a missed token.
+
+High OCR confidence is not a correctness gate. A high-confidence wrong numeric
+value remains a blocking error and must not be silently sent downstream.

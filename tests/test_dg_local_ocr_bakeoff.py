@@ -66,7 +66,7 @@ def test_candidate_roi_box_uses_witness_span_for_vertical():
 
 
 def test_primary_tokens_never_infer_diameter_from_plain_zero():
-    assert local_ocr._primary_tokens("012") == {"12"}
+    assert local_ocr._primary_tokens("012") == set()
     assert local_ocr._primary_tokens("Ø12") == {"Ø12"}
 
 
@@ -74,39 +74,22 @@ def test_primary_tokens_preserve_tolerance_as_one_claim():
     assert local_ocr._primary_tokens("40±0.02") == {"40±0.02"}
 
 
-def test_decision_requires_independent_variant_consensus():
-    accepted, reason = local_ocr._decision(
-        {
-            "tight-native": {"66"},
-            "wide-native": {"66"},
-        }
-    )
+def test_decision_requires_tight_wide_consensus():
+    accepted, reason = local_ocr._decision({"66"}, {"66"})
 
     assert accepted == "66"
-    assert reason == "consensus_across_independent_roi_variants"
+    assert reason == "same_unique_token_in_tight_and_wide_roi"
 
 
-def test_decision_rejects_single_variant_token():
-    accepted, reason = local_ocr._decision(
-        {
-            "tight-native": {"66"},
-            "wide-native": set(),
-        }
-    )
+def test_decision_rejects_single_scale_token():
+    accepted, reason = local_ocr._decision({"66"}, set())
 
     assert accepted is None
-    assert reason == "no_token_repeated_across_independent_roi_variants"
+    assert reason == "no_token_consensus_between_tight_and_wide_roi"
 
 
-def test_decision_rejects_competing_consensus_tokens():
-    accepted, reason = local_ocr._decision(
-        {
-            "tight-cw": {"66"},
-            "wide-cw": {"66"},
-            "tight-ccw": {"63"},
-            "wide-ccw": {"63"},
-        }
-    )
+def test_decision_rejects_multiple_consensus_tokens():
+    accepted, reason = local_ocr._decision({"63", "66"}, {"63", "66"})
 
     assert accepted is None
-    assert reason == "multiple_tokens_have_independent_variant_support"
+    assert reason == "multiple_tokens_consistent_across_tight_and_wide_roi"

@@ -121,14 +121,8 @@ def test_value_only_answers_assemble_without_endpoint_claims():
         "unresolved",
         "unresolved",
     ]
-    assert all(
-        item.unresolved_kind == "intermediate_surface"
-        for item in dimension.endpoints
-    )
-    assert any(
-        item.field == "dimension_value_candidate"
-        for item in partial.unresolved
-    )
+    assert all(item.unresolved_kind == "intermediate_surface" for item in dimension.endpoints)
+    assert any(item.field == "dimension_value_candidate" for item in partial.unresolved)
 
 
 def test_value_only_answers_require_exact_target_set():

@@ -285,6 +285,11 @@ def apply_confirmation_answers(
         for item in answers.answers
     }
 
+    if answer_map and not request["eligible_for_user_confirmation"]:
+        raise ConfirmationError(
+            "evidence is not eligible for bounded user confirmation"
+        )
+
     unknown = sorted(set(answer_map) - set(questions))
     if unknown:
         raise ConfirmationError(f"unknown confirmation ids: {unknown}")

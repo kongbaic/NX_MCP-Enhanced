@@ -233,7 +233,10 @@ class ObservationUnresolved(_StrictObservationModel):
 
 
 class ReaderObservations(_StrictObservationModel):
-    schema: Literal["reader-observations-v1"] = "reader-observations-v1"
+    schema_version: Literal["reader-observations-v1"] = Field(
+        default="reader-observations-v1",
+        alias="schema",
+    )
     overall_dimensions: OverallDimensions
     views: list[ObservationView] = Field(min_length=1)
     entities: list[ObservationEntity] = Field(default_factory=list)
@@ -392,39 +395,39 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
         "unresolved_evidence": [],
     }
 
-    for index, item in enumerate(observations.associations, start=1):
+    for index, association in enumerate(observations.associations, start=1):
         payload["associations"].append(
             {
                 "id": f"A{index:03d}",
                 "entity_ids": [
                     _mapped(entity_ids, key, "entity")
-                    for key in item.entity_keys
+                    for key in association.entity_keys
                 ],
-                "basis": item.basis,
-                "source_ids": item.evidence,
-                "required_for_modeling": item.required_for_modeling,
+                "basis": association.basis,
+                "source_ids": association.evidence,
+                "required_for_modeling": association.required_for_modeling,
             }
         )
 
-    for index, item in enumerate(observations.values, start=1):
+    for index, value_item in enumerate(observations.values, start=1):
         payload["values"].append(
             {
                 "id": f"VAL{index:03d}",
                 "entity_id": _mapped(
                     entity_ids,
-                    item.entity_key,
+                    value_item.entity_key,
                     "entity",
                 ),
-                "field": item.field,
-                "value": item.value,
-                "semantic": item.semantic,
-                "source_ids": item.evidence,
+                "field": value_item.field,
+                "value": value_item.value,
+                "semantic": value_item.semantic,
+                "source_ids": value_item.evidence,
             }
         )
 
-    for index, item in enumerate(observations.dimensions, start=1):
+    for index, dimension in enumerate(observations.dimensions, start=1):
         endpoints: list[dict[str, Any]] = []
-        for endpoint in item.endpoints:
+        for endpoint in dimension.endpoints:
             endpoint_payload: dict[str, Any] = {
                 "role": endpoint.role,
                 "entity_id": None,
@@ -447,58 +450,58 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
 
         payload["dimensions"].append(
             {
-                "id": dimension_ids[item.key],
-                "value": item.value,
-                "axis": item.axis,
+                "id": dimension_ids[dimension.key],
+                "value": dimension.value,
+                "axis": dimension.axis,
                 "endpoints": endpoints,
-                "unresolved_reason": item.unresolved_reason,
-                "direction": item.direction,
-                "source_ids": item.evidence,
-                "required_for_modeling": item.required_for_modeling,
+                "unresolved_reason": dimension.unresolved_reason,
+                "direction": dimension.direction,
+                "source_ids": dimension.evidence,
+                "required_for_modeling": dimension.required_for_modeling,
             }
         )
 
-    for index, item in enumerate(observations.datum_alignments, start=1):
+    for index, alignment in enumerate(observations.datum_alignments, start=1):
         payload["datum_alignments"].append(
             {
                 "id": f"DA{index:03d}",
                 "entity_id": _mapped(
                     entity_ids,
-                    item.entity_key,
+                    alignment.entity_key,
                     "entity",
                 ),
-                "axis": item.axis,
+                "axis": alignment.axis,
                 "datum": "overall_center",
-                "source_ids": item.evidence,
-                "required_for_modeling": item.required_for_modeling,
+                "source_ids": alignment.evidence,
+                "required_for_modeling": alignment.required_for_modeling,
             }
         )
 
-    for index, item in enumerate(observations.unresolved, start=1):
+    for index, unresolved in enumerate(observations.unresolved, start=1):
         payload["unresolved_evidence"].append(
             {
                 "id": f"U{index:03d}",
-                "kind": item.kind,
-                "reason": item.reason,
+                "kind": unresolved.kind,
+                "reason": unresolved.reason,
                 "entity_ids": [
                     _mapped(entity_ids, key, "entity")
-                    for key in item.entity_keys
+                    for key in unresolved.entity_keys
                 ],
                 "dimension_id": (
                     _mapped(
                         dimension_ids,
-                        item.dimension_key,
+                        unresolved.dimension_key,
                         "dimension",
                     )
-                    if item.dimension_key is not None
+                    if unresolved.dimension_key is not None
                     else None
                 ),
-                "dimension_value": item.dimension_value,
-                "field": item.field,
-                "axis": item.axis,
-                "basis": item.basis,
-                "source_ids": item.evidence,
-                "required_for_modeling": item.required_for_modeling,
+                "dimension_value": unresolved.dimension_value,
+                "field": unresolved.field,
+                "axis": unresolved.axis,
+                "basis": unresolved.basis,
+                "source_ids": unresolved.evidence,
+                "required_for_modeling": unresolved.required_for_modeling,
             }
         )
 

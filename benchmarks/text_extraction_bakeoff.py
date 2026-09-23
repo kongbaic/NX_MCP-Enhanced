@@ -4,6 +4,7 @@ import argparse
 import importlib
 import json
 import math
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -20,17 +21,32 @@ class OcrItem:
     orientation_deg: float | None
 
 
-def _bbox_orientation_deg(box: list[list[float]]) -> float | None:
-    if len(box) < 2:
-        return None
-    x1, y1 = box[0]
-    x2, y2 = box[1]
-    angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+def _normalized_axis_angle(dx: float, dy: float) -> float:
+    angle = math.degrees(math.atan2(dy, dx))
     while angle < 0:
         angle += 180
     while angle >= 180:
         angle -= 180
     return round(angle, 3)
+
+
+def _bbox_orientation_deg(box: list[list[float]]) -> float | None:
+    if len(box) < 4:
+        return None
+    x0, y0 = box[0]
+    x1, y1 = box[1]
+    x3, y3 = box[3]
+    edge_a = math.hypot(x1 - x0, y1 - y0)
+    edge_b = math.hypot(x3 - x0, y3 - y0)
+    longest = max(edge_a, edge_b)
+    shortest = min(edge_a, edge_b)
+    if longest <= 0:
+        return None
+    if shortest > 0 and longest / shortest < 1.25:
+        return None
+    if edge_a >= edge_b:
+        return _normalized_axis_angle(x1 - x0, y1 - y0)
+    return _normalized_axis_angle(x3 - x0, y3 - y0)
 
 
 def _build_rapidocr_runner() -> tuple[Callable[[Path], tuple[list[OcrItem], float]], float]:
@@ -144,6 +160,109 @@ def _normalize_token(text: str) -> str:
     )
 
 
+def _canonical_number(text: str) -> str:
+    value = float(text)
+    if value.is_integer():
+        return str(int(value))
+    return format(value, ".12g")
+
+
+def _engineering_tokens_from_text(text: str) -> set[str]:
+    normalized = _normalize_token(text).upper()
+    tokens: set[str] = set()
+
+    for match in re.finditer(r"(\d+(?:\.\d+)?)±(\d+(?:\.\d+)?)", normalized):
+        left = _canonical_number(match.group(1))
+        right = _canonical_number(match.group(2))
+        tokens.add(f"{left}±{right}")
+
+    for match in re.finditer(r"Ø(\d+(?:\.\d+)?)", normalized):
+        number = _canonical_number(match.group(1))
+        tokens.add(f"Ø{number}")
+        tokens.add(number)
+
+    for prefix in ("R", "M"):
+        for match in re.finditer(rf"{prefix}(\d+(?:\.\d+)?)", normalized):
+            tokens.add(f"{prefix}{_canonical_number(match.group(1))}")
+
+    for match in re.finditer(r"(\d+(?:\.\d+)?)°", normalized):
+        tokens.add(f"{_canonical_number(match.group(1))}°")
+
+    for match in re.finditer(r"H\d+", normalized):
+        tokens.add(match.group(0))
+
+    for match in re.finditer(r"(?<![A-Z])[-+]?\d+(?:\.\d+)?", normalized):
+        raw = match.group(0)
+        try:
+            tokens.add(_canonical_number(raw.lstrip("+").lstrip("-")))
+        except ValueError:
+            continue
+
+    return tokens
+
+
+def _bbox_center(item: OcrItem) -> tuple[float, float]:
+    xs = [point[0] for point in item.bbox]
+    ys = [point[1] for point in item.bbox]
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+
+def _bbox_height(item: OcrItem) -> float:
+    ys = [point[1] for point in item.bbox]
+    return max(ys) - min(ys)
+
+
+def _stitched_engineering_tokens(items: list[OcrItem]) -> set[str]:
+    tokens: set[str] = set()
+    for item in items:
+        tokens.update(_engineering_tokens_from_text(item.text))
+
+    for prefix_item in items:
+        prefix = _normalize_token(prefix_item.text).upper()
+        if prefix not in {"R", "M", "Ø"}:
+            continue
+        px, py = _bbox_center(prefix_item)
+        scale = max(_bbox_height(prefix_item), 1.0)
+        candidates: list[tuple[float, str]] = []
+        for number_item in items:
+            if number_item is prefix_item:
+                continue
+            normalized = _normalize_token(number_item.text)
+            if not re.fullmatch(r"\d+(?:\.\d+)?", normalized):
+                continue
+            nx, ny = _bbox_center(number_item)
+            distance = math.hypot(nx - px, ny - py)
+            if distance <= scale * 2.5:
+                candidates.append((distance, normalized))
+        if len(candidates) == 1:
+            _, raw_number = candidates[0]
+            tokens.add(f"{prefix}{_canonical_number(raw_number)}")
+
+    return tokens
+
+
+def _canonical_expected_semantic_token(text: str) -> str:
+    normalized = _normalize_token(text).upper()
+    tolerance = re.fullmatch(r"(\d+(?:\.\d+)?)±(\d+(?:\.\d+)?)", normalized)
+    if tolerance:
+        return (
+            f"{_canonical_number(tolerance.group(1))}±"
+            f"{_canonical_number(tolerance.group(2))}"
+        )
+    for prefix in ("Ø", "R", "M"):
+        match = re.fullmatch(rf"{prefix}(\d+(?:\.\d+)?)", normalized)
+        if match:
+            return f"{prefix}{_canonical_number(match.group(1))}"
+    angle = re.fullmatch(r"(\d+(?:\.\d+)?)°", normalized)
+    if angle:
+        return f"{_canonical_number(angle.group(1))}°"
+    if re.fullmatch(r"H\d+", normalized):
+        return normalized
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized):
+        return _canonical_number(normalized.lstrip("+").lstrip("-"))
+    return normalized
+
+
 def _score(
     expected: list[str],
     items: list[OcrItem],
@@ -164,6 +283,26 @@ def _score(
             missed.append(token)
 
     recall = len(matched) / len(expected_normalized) if expected_normalized else 1.0
+
+    expected_semantic = [
+        _canonical_expected_semantic_token(item)
+        for item in expected
+    ]
+    observed_semantic = _stitched_engineering_tokens(items)
+    semantic_matched = [
+        token for token in expected_semantic
+        if token in observed_semantic
+    ]
+    semantic_missed = [
+        token for token in expected_semantic
+        if token not in observed_semantic
+    ]
+    semantic_recall = (
+        len(semantic_matched) / len(expected_semantic)
+        if expected_semantic
+        else 1.0
+    )
+
     precision: float | None = None
     extra_text: list[str] | None = None
     if complete_token_inventory:
@@ -176,6 +315,9 @@ def _score(
         "matched_count": len(matched),
         "exact_token_recall": round(recall, 6),
         "exact_token_precision": round(precision, 6) if precision is not None else None,
+        "engineering_token_recall": round(semantic_recall, 6),
+        "engineering_matched": semantic_matched,
+        "engineering_missed": semantic_missed,
         "complete_token_inventory": complete_token_inventory,
         "matched": matched,
         "missed": missed,
@@ -263,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
 
         elapsed_values = [item["elapsed_s"] for item in engine_cases]
         recall_values = [item["score"]["exact_token_recall"] for item in engine_cases]
+        engineering_recall_values = [
+            item["score"]["engineering_token_recall"]
+            for item in engine_cases
+        ]
         precision_values = [
             item["score"]["exact_token_precision"]
             for item in engine_cases
@@ -277,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
                 "max_elapsed_s": round(max(elapsed_values), 6),
                 "mean_exact_token_recall": round(
                     sum(recall_values) / len(recall_values),
+                    6,
+                ),
+                "mean_engineering_token_recall": round(
+                    sum(engineering_recall_values) / len(engineering_recall_values),
                     6,
                 ),
                 "mean_exact_token_precision": (

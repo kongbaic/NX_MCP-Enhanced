@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 CELL_WIDTH = 360
 CELL_HEIGHT = 160
 SHEET_COLUMNS = 4
@@ -129,8 +128,7 @@ def _primary_tokens(text: str) -> set[str]:
     tolerance = re.search(r"(\d+(?:\.\d+)?)±(\d+(?:\.\d+)?)", normalized)
     if tolerance:
         tokens.add(
-            f"{_canonical_number(tolerance.group(1))}±"
-            f"{_canonical_number(tolerance.group(2))}"
+            f"{_canonical_number(tolerance.group(1))}±{_canonical_number(tolerance.group(2))}"
         )
         return tokens
 
@@ -447,10 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
-    accepted_count = sum(
-        1 for item in candidate_results
-        if item["accepted_token"] is not None
-    )
+    accepted_count = sum(1 for item in candidate_results if item["accepted_token"] is not None)
     report = {
         "schema": "dg-local-ocr-bakeoff-v2",
         "source_raster": str(source_path),

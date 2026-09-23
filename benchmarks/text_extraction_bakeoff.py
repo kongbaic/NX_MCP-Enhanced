@@ -6,9 +6,10 @@ import json
 import math
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def _build_rapidocr_runner() -> tuple[Callable[[Path], tuple[list[OcrItem], floa
             return [], elapsed
 
         items: list[OcrItem] = []
-        for box, text, score in zip(boxes, txts, scores):
+        for box, text, score in zip(boxes, txts, scores, strict=True):
             points = [[float(point[0]), float(point[1])] for point in box]
             items.append(
                 OcrItem(

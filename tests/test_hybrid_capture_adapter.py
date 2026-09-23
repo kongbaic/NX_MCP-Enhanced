@@ -98,7 +98,7 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     by_key = {item.key: item for item in partial.dimensions}
     assert by_key["R1.DG12"].value == 24
     assert by_key["R1.DG12"].axis == "X"
-    assert by_key["R1.DG17"] if "R1.DG17" in by_key else True
+    assert "R1.DG17" not in by_key
     assert all(
         endpoint.role == "unresolved"
         for endpoint in by_key["R1.DG12"].endpoints

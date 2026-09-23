@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -12,6 +13,12 @@ from nx_mcp.drawing_intelligence.reader_semantic_answers import (
     ReaderSemanticAnswers,
     merge_region_semantic_answers,
 )
+from nx_mcp.drawing_intelligence.capture import (
+    CaptureEndpointRole,
+    CaptureEndpointUnresolvedKind,
+    DimensionEndpointEvidenceKind,
+)
+from nx_mcp.drawing_intelligence.evidence import Axis, ProjectionShape, ViewKind
 from nx_mcp.drawing_intelligence.reader_semantic_queries import (
     build_reader_semantic_queries,
 )
@@ -213,6 +220,23 @@ def test_unknown_local_entity_reference_rejected():
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_bounded_contract_lists_answer_enum_values():
+    contract = (
+        ROOT / "skills" / "nx-agent" / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+
+    enum_values = (
+        *get_args(ViewKind),
+        *get_args(Axis),
+        *get_args(ProjectionShape),
+        *get_args(CaptureEndpointRole),
+        *get_args(DimensionEndpointEvidenceKind),
+        *get_args(CaptureEndpointUnresolvedKind),
+    )
+    for value in enum_values:
+        assert f"`{value}`" in contract
 
 
 def test_merge_reader_semantic_answers_cli_e2e(tmp_path: Path):

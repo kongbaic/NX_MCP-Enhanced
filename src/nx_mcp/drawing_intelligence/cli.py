@@ -28,6 +28,7 @@ from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .resolver import resolve_evidence_graph
+from .raster_evidence import extract_raw_evidence
 from .stability import compare_evidence_runs
 
 
@@ -61,6 +62,39 @@ def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
             pass
         raise
 
+
+
+def _cmd_extract_raster_evidence(args: argparse.Namespace) -> int:
+    image_path = str(Path(args.image).resolve())
+    output_path = str(Path(args.out).resolve())
+    report: dict[str, Any] = {
+        "image": image_path,
+        "output": output_path,
+        "written": False,
+        "schema": None,
+        "region_count": 0,
+        "dimension_geometry_candidate_count": 0,
+        "errors": [],
+    }
+
+    try:
+        output = extract_raw_evidence(image_path)
+        _atomic_write_json(output_path, output)
+    except (OSError, RuntimeError, ValueError) as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    report["written"] = True
+    report["schema"] = output.get("schema")
+    summary = output.get("summary", {})
+    report["region_count"] = summary.get("region_count", 0)
+    report["dimension_geometry_candidate_count"] = summary.get(
+        "dimension_geometry_candidate_count",
+        0,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _cmd_check_capture(args: argparse.Namespace) -> int:
@@ -526,6 +560,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic drawing-evidence compiler and resolver",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    extract_raster = sub.add_parser(
+        "extract-raster-evidence",
+        help="extract geometry-only RawEvidence v1 from a raster engineering drawing",
+    )
+    extract_raster.add_argument("image")
+    extract_raster.add_argument("out")
+    extract_raster.set_defaults(func=_cmd_extract_raster_evidence)
 
     check_capture = sub.add_parser(
         "check-capture",

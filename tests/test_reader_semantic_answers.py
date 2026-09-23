@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from nx_mcp.drawing_intelligence.reader_semantic_answers import (
@@ -205,3 +210,46 @@ def test_unknown_local_entity_reference_rejected():
 
     with pytest.raises(ValueError, match="unknown local entity"):
         ReaderSemanticAnswers.model_validate(payload)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_merge_reader_semantic_answers_cli_e2e(tmp_path: Path):
+    plan_path = tmp_path / "reader-semantic-queries.json"
+    answers_path = tmp_path / "reader-semantic-answers.json"
+    output_path = tmp_path / "reader-partial-observations.json"
+
+    plan = build_reader_semantic_queries(_reader_input())
+    plan_path.write_text(
+        json.dumps(plan.model_dump(mode="json", by_alias=True), indent=2),
+        encoding="utf-8",
+    )
+    answers_path.write_text(
+        json.dumps(_answers(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nx_mcp.drawing_intelligence",
+            "merge-reader-semantic-answers",
+            str(plan_path),
+            str(answers_path),
+            str(output_path),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    report = json.loads(run.stdout)
+    assert report["written"] is True
+    assert report["schema"] == "reader-partial-observations-v1"
+    assert report["view_count"] == 2
+    assert report["entity_count"] == 2
+    assert output_path.is_file()

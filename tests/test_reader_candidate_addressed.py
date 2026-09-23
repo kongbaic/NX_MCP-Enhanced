@@ -157,10 +157,7 @@ def test_candidate_answers_assemble_into_existing_partial_observations():
     assert partial.dimensions[0].axis == "X"
     assert partial.dimensions[0].endpoints[0].role == "overall_min"
     assert partial.dimensions[0].endpoints[1].entity_key == "R1.C2"
-    assert any(
-        item.field == "dimension_candidate_bucket"
-        for item in partial.unresolved
-    )
+    assert any(item.field == "dimension_candidate_bucket" for item in partial.unresolved)
 
 
 def test_candidate_answer_requires_exact_target_set():
@@ -208,11 +205,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_candidate_contract_forbids_unaddressed_inventory():
     contract = (
-        ROOT
-        / "skills"
-        / "nx-agent"
-        / "references"
-        / "reader-candidate-addressed-contract.md"
+        ROOT / "skills" / "nx-agent" / "references" / "reader-candidate-addressed-contract.md"
     ).read_text(encoding="utf-8")
 
     assert "Do not search the region for additional" in contract

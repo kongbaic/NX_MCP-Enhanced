@@ -126,11 +126,16 @@ def enrich_reduced_dimension_candidates(
     reduced_payload: dict[str, Any],
     *,
     nearest_count: int = 3,
+    max_distance_local_norm: float = 0.08,
 ) -> dict[str, Any]:
     """Attach geometry-only nearest-anchor evidence to reduced candidates."""
 
     if not 1 <= nearest_count <= 5:
         raise ValueError("nearest_count must be between 1 and 5")
+    if not 0 < max_distance_local_norm <= 0.25:
+        raise ValueError(
+            "max_distance_local_norm must be greater than 0 and at most 0.25"
+        )
 
     regions = _region_lookup(raw_evidence)
     output = copy.deepcopy(reduced_payload)
@@ -195,12 +200,18 @@ def enrich_reduced_dimension_candidates(
                         str(item["ref"]),
                     )
                 )
+                nearby = [
+                    item
+                    for item in ranked
+                    if float(item["distance_local_norm"])
+                    <= max_distance_local_norm
+                ]
                 enriched_witnesses.append(
                     {
                         "witness_index": witness_index,
                         "position_px": float(witness),
                         "axis": axis,
-                        "nearest_anchors": ranked[:nearest_count],
+                        "nearest_anchors": nearby[:nearest_count],
                     }
                 )
 
@@ -214,5 +225,6 @@ def enrich_reduced_dimension_candidates(
         "candidate_count": candidate_total,
         "witness_count": witness_total,
         "nearest_anchor_count": nearest_count,
+        "max_distance_local_norm": max_distance_local_norm,
     }
     return output

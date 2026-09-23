@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$plusMinus = [char]0x00B1
+$degree = [char]0x00B0
+$diameter = [char]0x00D8
+
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $benchRoot = Join-Path $repoRoot "benchmarks\\text_extraction"
 $imagesRoot = Join-Path $benchRoot "images"
@@ -27,19 +31,19 @@ $manifest = @{
             case_id = "drawing-01-shkss20-40"
             image = "images/drawing-01-shkss20-40.png"
             complete_token_inventory = $false
-            expected_tokens = @("40","32","66","20","24","18","8","6.6","40±0.02","H7")
+            expected_tokens = @("40","32","66","20","24","18","8","6.6","40${plusMinus}0.02","H7")
         }
         @{
             case_id = "drawing-02-radial-angular"
             image = "images/drawing-02-radial-angular.png"
             complete_token_inventory = $false
-            expected_tokens = @("R40","R10","R90","R100","R20","R70","R30","R15","10°","50°","30","70","15","50")
+            expected_tokens = @("R40","R10","R90","R100","R20","R70","R30","R15","10${degree}","50${degree}","30","70","15","50")
         }
         @{
             case_id = "drawing-03-baseplate"
             image = "images/drawing-03-baseplate.png"
             complete_token_inventory = $false
-            expected_tokens = @("180.00","120.00","Ø12","10")
+            expected_tokens = @("180.00","120.00","${diameter}12","10")
         }
     )
 }

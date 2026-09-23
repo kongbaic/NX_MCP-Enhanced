@@ -470,31 +470,22 @@ def main() -> None:
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
     drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
     for token in (
-        "唯一 semantic decision chain",
-        "Annotation / same-feature projection association",
-        "Physical endpoint ownership",
-        "Direct coordinate / evidence-backed relation lock",
-        "Eligible derived",
-        "Required HARD feature inventory",
-        "Semantic draft assembly",
-        "First-write semantic check",
-        "association 本身不建立不同 feature 之间的数值关系",
-        "不得在全局坐标转换时重分类",
-        "distinct-feature relation必须有证据",
-        "dimension-bearing number 必须通过 `source`",
-        "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
-        "无法唯一表达的必需feature写blocking",
-        "pattern/symmetry/spacing不得删除该ownership",
-        "逐项核对该 identity 的全部正交视图记录",
-        "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
-        "不得作为裸 numeric operand 或 mental arithmetic 输入",
-        "start face 只能在 axis 锁定后解释",
-        "coordinate 正确不能替代该 ownership",
-        "这些 centers 不要求位于同一个 feature object",
-        "每个 dimension-bearing annotation 在 numeric use 前已有 identity",
+        "二维工程图 Reader Capture v2",
+        "view-local evidence capture",
+        "对跨视图候选只记录结构化 association visual basis",
+        "由 deterministic linker 决定是否 merge",
+        "对 entity_center endpoint 记录 centerline / center_mark / explicit_midline basis",
+        "structured unresolved_evidence",
+        "新 capture 的 required_targets 固定写空数组",
+        "创建任何最终 physical feature ID",
+        "根据 linker / Gate 0 / Resolver / Gate A 错误第二次看图修答案",
+        "同一个 entity 只能属于一个 association claim",
+        "一个 association claim 在同一个 view 中最多只能包含一个 entity",
+        "如果 endpoint 不能唯一归属",
+        "linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking",
     ):
         if token not in drawing_reader:
-            fail(f"consolidated Reader decision contract regression: missing {token}")
+            fail(f"ReaderCapture decision contract regression: missing {token}")
     for token in (
         "只提供视觉识别与制图符号词典",
         "本文件不得建立第二套 inference policy",
@@ -597,40 +588,22 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "Semantic draft contract",
-        "现有drawing结构",
-        "稳定 feature、annotation、source、relation 与 unresolved identity",
-        "measured quantity与physical endpoint ownership",
-        "dimension-bearing数值只能通过已识别的source",
-        "Reader必须按draft中真实字段发出可解析路径",
-        "feature:<id>.centerline.<axis>",
-        "feature:<id>.explicit_centers.<index>.<coordinate-index>",
-        "不得把歧义path交给canonicalizer猜测",
-        "canonicalizer只修representation",
-        "`edge_offset` 不得作为 derived expression",
-        "known opposite endpoint target",
-        "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-        "First-write semantic check",
-        "HARD inventory无静默遗漏",
-        "不得生成第二版draft",
-        "`X=[-length_x/2,+length_x/2]`",
-        "局部 profile/body/step boundary 不得套 overall bbox",
-        "用 `alignment` 保存共享中心坐标",
-        "只描述 drawing semantic，不规定具有非零 width 的实体 cut realization",
-        "其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand",
-        "direct witness 优先于所有 arithmetic",
-        "view→projection geometry→annotation endpoints",
-        "不得在同一draft中混入 `0..extent` X/Y frame",
-        "只写 `connected_to / notes / reason / evidence` 不构成 relation coverage",
-        "`upper_tangent` 或 `lower_tangent`",
-        "`center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`",
-        "`edge_offset`使用`value + axis + from + targets`",
-        "看见孔位所在的面也不能代替 orthographic axis evidence",
-        "blocking unresolved不得同时带猜测的concrete value",
+        "ReaderCapture.model_validate(payload)",
+        "不第二次看图修复",
+        "生产 schema 校验通过后，才允许执行唯一一次文件写入",
+        "每个 view-local entity 是否只属于一个 view",
+        "associated / unresolved / single_view 是否和 association / unresolved evidence 自洽",
+        "每个 modeling-critical dimension endpoint 是否有自己的非空 source_ids",
+        "dimension endpoint 是否由真实标注 geometry 支持",
+        "不确定 endpoint 是否使用 role=\"unresolved\" + unresolved_kind +",
+        "required_targets 是否为 []",
+        "modeling-critical 缺失语义是否进入 structured unresolved_evidence",
+        "blocking unresolved 是否使用明确 kind",
+        "没有 final feature ID",
         "Closure is validation only",
     ):
         if token not in drawing_reader and token != "Closure is validation only":
-            fail(f"consolidated Reader canonical contract regression: missing {token}")
+            fail(f"ReaderCapture first-pass contract regression: missing {token}")
         if token == "Closure is validation only" and token not in drawing_rules:
             fail(f"quick closure boundary regression: missing {token}")
 

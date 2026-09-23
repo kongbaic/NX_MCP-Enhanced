@@ -271,10 +271,7 @@ def prepare_reader_input(
                 1 for item in bucket_entries if item["status"] == "overflow"
             ),
             "max_bucket_candidate_count": max(
-                (
-                    int(item.get("candidate_count", 0))
-                    for item in bucket_entries
-                ),
+                (int(item.get("candidate_count", 0)) for item in bucket_entries),
                 default=0,
             ),
             "crop_count": 1 + len(region_entries) + len(bucket_entries),

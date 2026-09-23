@@ -50,7 +50,11 @@ class CandidateTargetAnswer(_StrictCandidateAnswerModel):
                 raise ValueError(
                     "dimension candidate answer requires value and two endpoint tokens"
                 )
-        elif self.value is not None or self.endpoint_a is not None or self.endpoint_b is not None:
+        elif (
+            self.value is not None
+            or self.endpoint_a is not None
+            or self.endpoint_b is not None
+        ):
             raise ValueError(
                 "non-dimension/uncertain candidate answer must not carry value or endpoints"
             )

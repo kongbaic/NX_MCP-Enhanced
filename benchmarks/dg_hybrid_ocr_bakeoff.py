@@ -505,6 +505,10 @@ def main(argv: list[str] | None = None) -> int:
                     "witness_positions_px",
                     [],
                 ),
+                "witness_anchor_evidence": candidate.get(
+                    "witness_anchor_evidence",
+                    [],
+                ),
                 "global_assignments": assignments,
                 "global_proposal_token": global_token,
                 "global_proposal_reason": proposal_reason,

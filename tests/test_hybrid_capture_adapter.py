@@ -496,9 +496,7 @@ def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():
 
     partial = adapt_hybrid_ocr_report(report, _context())
 
-    callout_entities = [
-        item for item in partial.entities if ".CALLOUT." in item.key
-    ]
+    callout_entities = [item for item in partial.entities if ".CALLOUT." in item.key]
     assert len(callout_entities) == 1
     entity = callout_entities[0]
     assert entity.key == "R1.CALLOUT.1"
@@ -556,9 +554,7 @@ def test_adapter_does_not_transport_unbound_callout_without_unique_view_region()
     assert not [item for item in partial.entities if ".CALLOUT." in item.key]
     assert partial.values == []
     unresolved = [
-        item
-        for item in partial.unresolved
-        if item.field == "engineering_callout_geometry_binding"
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
     ]
     assert len(unresolved) == 1
     assert unresolved[0].kind == "feature_inventory"

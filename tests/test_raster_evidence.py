@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _adapt_probe,
+    _oblique_annotation_lines,
     _witness_line_evidence,
     extract_raw_evidence,
     fragment_length_limits,
@@ -171,3 +172,27 @@ def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():
             ],
         }
     ]
+
+
+def test_oblique_annotation_lines_stay_geometry_only():
+    import cv2
+    import numpy as np
+
+    image = np.full((300, 500), 255, np.uint8)
+    cv2.line(image, (40, 250), (180, 110), 0, 2)
+    cv2.line(image, (220, 200), (440, 200), 0, 2)
+    edges = cv2.Canny(image, 50, 150, apertureSize=3)
+
+    candidates = _oblique_annotation_lines(
+        edges,
+        image_width=500,
+        image_height=300,
+        cv2=cv2,
+        np=np,
+    )
+
+    assert candidates
+    assert all(item["kind"] == "oblique_line_candidate" for item in candidates)
+    assert all(item["candidate_only"] is True for item in candidates)
+    assert all(8 < item["angle_deg"] < 82 for item in candidates)
+

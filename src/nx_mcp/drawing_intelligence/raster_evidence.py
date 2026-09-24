@@ -635,9 +635,7 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
             "linear_pattern_candidate_count": sum(
                 len(region["linear_pattern_candidates"]) for region in regions
             ),
-            "annotation_line_candidate_count": len(
-                probe.get("oblique_annotation_lines", [])
-            ),
+            "annotation_line_candidate_count": len(probe.get("oblique_annotation_lines", [])),
         },
     }
 

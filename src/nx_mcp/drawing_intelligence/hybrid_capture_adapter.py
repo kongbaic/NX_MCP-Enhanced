@@ -745,6 +745,11 @@ def adapt_hybrid_ocr_report(
     metric_profile_edges = metricize_profile_edge_candidates(
         candidates=calibration_candidates,
         calibrations=calibrations,
+        profile_inventory=(
+            report.get("structural_profile_inventory")
+            if isinstance(report.get("structural_profile_inventory"), list)
+            else None
+        ),
     )
     junction_tolerance_by_region: dict[str, float] = {}
     for region in report.get("regions", []):

@@ -91,6 +91,121 @@ def _circle_target_matches(
     return matches
 
 
+def _circle_target_matches_on_ray(
+    entry_point: tuple[float, float],
+    exit_point: tuple[float, float],
+    regions: list[Any],
+    *,
+    max_extension: float,
+) -> list[dict[str, Any]]:
+    """Match a leader shaft whose Hough segment stops before the arrow tip.
+
+    The ray may extend only a bounded distance beyond the observed shaft, and
+    only along the observed shaft direction.  This recovers common arrowhead
+    gaps without allowing arbitrary point-to-circle snapping.
+    """
+
+    dx = exit_point[0] - entry_point[0]
+    dy = exit_point[1] - entry_point[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9 or max_extension <= 0:
+        return []
+
+    ux = dx / length
+    uy = dy / length
+    matches: list[dict[str, Any]] = []
+
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        groups = region.get("circle_groups", [])
+        if not region_id or not isinstance(groups, list):
+            continue
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("circle_group_id") or "")
+            center = group.get("center_px")
+            rings = group.get("rings", [])
+            if not (
+                group_id
+                and isinstance(center, list)
+                and len(center) >= 2
+                and all(isinstance(value, (int, float)) for value in center[:2])
+                and isinstance(rings, list)
+                and rings
+            ):
+                continue
+
+            cx, cy = float(center[0]), float(center[1])
+            fx = exit_point[0] - cx
+            fy = exit_point[1] - cy
+
+            for ring in rings:
+                if not isinstance(ring, dict):
+                    continue
+                radius = ring.get("radius_px")
+                if not isinstance(radius, (int, float)) or float(radius) <= 0:
+                    continue
+                radius_f = float(radius)
+                tolerance = max(4.0, radius_f * 0.15)
+
+                projection = -(fx * ux + fy * uy)
+                probe_values = {
+                    0.0,
+                    max_extension,
+                    min(max(projection, 0.0), max_extension),
+                }
+
+                b = 2.0 * (fx * ux + fy * uy)
+                c = fx * fx + fy * fy - radius_f * radius_f
+                discriminant = b * b - 4.0 * c
+                if discriminant >= 0.0:
+                    root = math.sqrt(discriminant)
+                    for value in ((-b - root) / 2.0, (-b + root) / 2.0):
+                        if 0.0 <= value <= max_extension:
+                            probe_values.add(value)
+
+                best: tuple[float, float, tuple[float, float]] | None = None
+                for extension in probe_values:
+                    px = exit_point[0] + ux * extension
+                    py = exit_point[1] + uy * extension
+                    residual = abs(math.hypot(px - cx, py - cy) - radius_f)
+                    candidate = (residual, extension, (px, py))
+                    if best is None or candidate[:2] < best[:2]:
+                        best = candidate
+
+                if best is None or best[0] > tolerance or best[1] <= 1e-9:
+                    continue
+                residual, extension, point = best
+                matches.append(
+                    {
+                        "region_id": region_id,
+                        "circle_group_id": group_id,
+                        "entity_key": f"{region_id}.{group_id}",
+                        "ring_radius_px": radius_f,
+                        "radial_residual_px": round(residual, 3),
+                        "arrow_extension_px": round(extension, 3),
+                        "extended_geometry_endpoint_px": [
+                            round(point[0], 3),
+                            round(point[1], 3),
+                        ],
+                    }
+                )
+
+    matches.sort(
+        key=lambda item: (
+            float(item["radial_residual_px"]),
+            float(item["arrow_extension_px"]),
+            str(item["entity_key"]),
+            float(item["ring_radius_px"]),
+        )
+    )
+    return matches
+
+
 def _line_angle(line: dict[str, Any]) -> float | None:
     angle = line.get("angle_deg")
     if isinstance(angle, (int, float)):
@@ -169,9 +284,36 @@ def _chain_bindings(
         exit_endpoint = 1 - entry_endpoint
         exit_point = current["endpoints"][exit_endpoint]
         targets = _circle_target_matches(exit_point, regions)
-        if len(targets) == 1:
+        binding_mode = "observed_endpoint_on_circle_ring"
+        if not targets:
+            entry_point = current["endpoints"][entry_endpoint]
+            shaft_length = math.dist(entry_point, exit_point)
+            max_extension = max(
+                6.0,
+                min(
+                    shaft_length * 0.55,
+                    text_height * 0.60,
+                ),
+            )
+            targets = _circle_target_matches_on_ray(
+                entry_point,
+                exit_point,
+                regions,
+                max_extension=max_extension,
+            )
+            binding_mode = "bounded_arrow_extension_to_circle_ring"
+
+        if len({item["entity_key"] for item in targets}) == 1 and targets:
             used = [normalized[index] for index in path]
             angles = [float(item["angle_deg"]) for item in used]
+            selected = targets[0]
+            geometry_endpoint = selected.get(
+                "extended_geometry_endpoint_px",
+                [
+                    round(exit_point[0], 3),
+                    round(exit_point[1], 3),
+                ],
+            )
             bindings.append(
                 {
                     "line_indices": [int(item["line_index"]) for item in used],
@@ -179,11 +321,9 @@ def _chain_bindings(
                     "text_touch_distance_px": round(text_distance, 3),
                     "chain_gap_px": [round(value, 3) for value in gap_trace],
                     "chain_angle_span_deg": round(max(angles) - min(angles), 3),
-                    "geometry_endpoint_px": [
-                        round(exit_point[0], 3),
-                        round(exit_point[1], 3),
-                    ],
-                    **targets[0],
+                    "geometry_endpoint_px": geometry_endpoint,
+                    "binding_mode": binding_mode,
+                    **selected,
                 }
             )
             return

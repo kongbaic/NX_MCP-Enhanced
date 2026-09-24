@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from nx_mcp.drawing_intelligence.view_metric_calibration import (
+    derive_metric_profile_segments,
     derive_view_metric_calibrations,
     metricize_profile_edge_candidates,
 )
@@ -268,3 +269,123 @@ def test_conflict_backed_calibration_still_requires_opposite_profile_extremes():
     )
 
     assert items == []
+
+
+
+def _metric_edge(
+    ref: str,
+    *,
+    orientation: str,
+    axis: str,
+    position_px: float,
+    coordinate_mm: float,
+    span_px: list[float],
+) -> dict[str, object]:
+    return {
+        "ref": ref,
+        "region_id": "R1",
+        "view_kind": "front",
+        "axis": axis,
+        "source_orientation": orientation,
+        "position_px": position_px,
+        "coordinate_mm": coordinate_mm,
+        "span_px": span_px,
+        "basis": "view_metric_calibration",
+    }
+
+
+def test_metric_profile_segments_use_junctions_instead_of_raw_span_endpoints():
+    edges = [
+        _metric_edge(
+            "V_LEFT",
+            orientation="vertical",
+            axis="X",
+            position_px=100,
+            coordinate_mm=-20,
+            span_px=[40, 260],
+        ),
+        _metric_edge(
+            "V_RIGHT",
+            orientation="vertical",
+            axis="X",
+            position_px=300,
+            coordinate_mm=20,
+            span_px=[40, 260],
+        ),
+        _metric_edge(
+            "H_LOW",
+            orientation="horizontal",
+            axis="Z",
+            position_px=80,
+            coordinate_mm=0,
+            span_px=[95, 305],
+        ),
+        _metric_edge(
+            "H_HIGH",
+            orientation="horizontal",
+            axis="Z",
+            position_px=220,
+            coordinate_mm=66,
+            span_px=[95, 305],
+        ),
+    ]
+
+    result = derive_metric_profile_segments(
+        metric_edges=edges,
+        junction_tolerance_by_region={"R1": 5.0},
+    )
+
+    assert len(result["junctions"]) == 4
+    assert len(result["segments"]) == 4
+    assert result["unresolved_edges"] == []
+    by_edge = {item["source_edge_ref"]: item for item in result["segments"]}
+    assert by_edge["V_LEFT"]["start_mm"] == {"X": -20.0, "Z": 0.0}
+    assert by_edge["V_LEFT"]["end_mm"] == {"X": -20.0, "Z": 66.0}
+    assert by_edge["V_LEFT"]["length_mm"] == pytest.approx(66.0)
+    assert by_edge["H_LOW"]["length_mm"] == pytest.approx(40.0)
+    assert all(
+        item["basis"] == "observed_profile_line_between_metric_junctions"
+        for item in result["segments"]
+    )
+
+
+def test_metric_profile_segments_fail_closed_without_explicit_gap_tolerance():
+    edges = [
+        _metric_edge(
+            "V_LEFT",
+            orientation="vertical",
+            axis="X",
+            position_px=100,
+            coordinate_mm=-20,
+            span_px=[40, 260],
+        ),
+        _metric_edge(
+            "V_RIGHT",
+            orientation="vertical",
+            axis="X",
+            position_px=300,
+            coordinate_mm=20,
+            span_px=[40, 260],
+        ),
+        _metric_edge(
+            "H_ONLY_NEAR",
+            orientation="horizontal",
+            axis="Z",
+            position_px=80,
+            coordinate_mm=0,
+            span_px=[95, 296],
+        ),
+    ]
+
+    strict = derive_metric_profile_segments(metric_edges=edges)
+    tolerant = derive_metric_profile_segments(
+        metric_edges=edges,
+        junction_tolerance_by_region={"R1": 5.0},
+    )
+
+    assert len(strict["junctions"]) == 1
+    assert strict["segments"] == []
+    assert len(tolerant["junctions"]) == 2
+    assert len(tolerant["segments"]) == 1
+    assert tolerant["segments"][0]["source_edge_ref"] == "H_ONLY_NEAR"
+    assert tolerant["segments"][0]["length_mm"] == pytest.approx(40.0)

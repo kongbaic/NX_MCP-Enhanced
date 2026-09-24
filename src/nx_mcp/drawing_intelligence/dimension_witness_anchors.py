@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from .structural_profile_anchors import derive_structural_profile_anchors
+
 
 def _region_lookup(raw_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
     regions = raw_evidence.get("regions", [])
@@ -168,6 +170,13 @@ def enrich_reduced_dimension_candidates(
                 regions[region_id],
                 orientation,
             )
+            anchors.extend(
+                derive_structural_profile_anchors(
+                    raw_evidence,
+                    region_id,
+                    orientation,
+                )
+            )
             if denominator <= 0:
                 raise ValueError("region axis span must be positive")
 
@@ -217,7 +226,7 @@ def enrich_reduced_dimension_candidates(
 
             candidate["witness_anchor_evidence"] = enriched_witnesses
 
-    output["anchor_schema_version"] = "1.0"
+    output["anchor_schema_version"] = "1.1"
     output["anchor_policy"] = (
         "geometry_only_no_engineering_ownership_claims"
     )

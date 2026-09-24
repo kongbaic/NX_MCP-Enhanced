@@ -110,6 +110,11 @@ def _coverage_unresolved(
         raise HybridCaptureAdapterError("Hybrid OCR report has observed silent evidence drops")
 
     unresolved: list[ObservationUnresolved] = []
+    conflicting_candidate_ids = {
+        str(item.get("candidate_id") or "")
+        for item in coverage.get("conflicting_linear_observations", [])
+        if isinstance(item, dict) and item.get("candidate_id")
+    }
 
     for item in coverage.get("conflicting_linear_observations", []):
         if not isinstance(item, dict):
@@ -163,7 +168,7 @@ def _coverage_unresolved(
                 ),
                 field="secondary_linear_assignment",
                 evidence=evidence,
-                required_for_modeling=True,
+                required_for_modeling=False,
             )
         )
 
@@ -179,7 +184,7 @@ def _coverage_unresolved(
                 ),
                 field="unassigned_linear_text",
                 evidence=[f"hybrid:whole:{item.get('source_item_index')}"],
-                required_for_modeling=True,
+                required_for_modeling=False,
             )
         )
 
@@ -187,6 +192,15 @@ def _coverage_unresolved(
         if not isinstance(item, dict):
             continue
         candidate_id = str(item.get("candidate_id") or "")
+        candidate = candidate_lookup.get(candidate_id)
+        if candidate is None:
+            raise HybridCaptureAdapterError(
+                f"local-only coverage references unknown candidate {candidate_id!r}"
+            )
+        required = (
+            candidate.get("accepted_token") is None
+            and candidate_id not in conflicting_candidate_ids
+        )
         unresolved.append(
             ObservationUnresolved(
                 kind="unsupported_representation",
@@ -196,7 +210,7 @@ def _coverage_unresolved(
                 ),
                 field="local_only_linear_text",
                 evidence=_candidate_evidence(candidate_id),
-                required_for_modeling=True,
+                required_for_modeling=required,
             )
         )
 

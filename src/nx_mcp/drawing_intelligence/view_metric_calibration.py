@@ -234,9 +234,7 @@ def derive_metric_profile_segments(
     )
 
     junctions: list[dict[str, Any]] = []
-    junctions_by_edge: dict[str, list[dict[str, Any]]] = {
-        str(item["ref"]): [] for item in edges
-    }
+    junctions_by_edge: dict[str, list[dict[str, Any]]] = {str(item["ref"]): [] for item in edges}
 
     vertical_edges = [item for item in edges if item["source_orientation"] == "vertical"]
     horizontal_edges = [item for item in edges if item["source_orientation"] == "horizontal"]
@@ -261,9 +259,7 @@ def derive_metric_profile_segments(
 
             raw_tolerance = tolerance_lookup.get(region_id, 0.0)
             tolerance = (
-                max(0.0, float(raw_tolerance))
-                if isinstance(raw_tolerance, (int, float))
-                else 0.0
+                max(0.0, float(raw_tolerance)) if isinstance(raw_tolerance, (int, float)) else 0.0
             )
             max_gap = max(vertical_gap, horizontal_gap)
             if max_gap > tolerance:
@@ -332,17 +328,13 @@ def derive_metric_profile_segments(
         ):
             start_mm = start["point_mm"]
             end_mm = end["point_mm"]
-            varying_axes = (
-                (set(start_mm) & set(end_mm)) - {fixed_axis}
-            )
+            varying_axes = (set(start_mm) & set(end_mm)) - {fixed_axis}
             if len(varying_axes) != 1:
                 continue
             varying_axis = next(iter(varying_axes))
             start_value = start_mm.get(varying_axis)
             end_value = end_mm.get(varying_axis)
-            if not isinstance(start_value, (int, float)) or not isinstance(
-                end_value, (int, float)
-            ):
+            if not isinstance(start_value, (int, float)) or not isinstance(end_value, (int, float)):
                 continue
             length_mm = abs(float(end_value) - float(start_value))
             if length_mm <= 1e-9:

@@ -21,7 +21,10 @@ from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
 )
-from .view_metric_calibration import derive_view_metric_calibrations
+from .view_metric_calibration import (
+    derive_view_metric_calibrations,
+    metricize_profile_edge_candidates,
+)
 
 
 class HybridCaptureAdapterError(ValueError):
@@ -732,10 +735,17 @@ def adapt_hybrid_ocr_report(
         {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
         for fact in context.overall_dimension_facts
     }
+    calibration_candidates = [
+        item for item in candidates if isinstance(item, dict)
+    ]
     calibrations = derive_view_metric_calibrations(
-        candidates=[item for item in candidates if isinstance(item, dict)],
+        candidates=calibration_candidates,
         region_views={item.region_id: item.view_kind for item in context.region_views},
         overall_dimensions=overall_dimensions,
+    )
+    metric_profile_edges = metricize_profile_edge_candidates(
+        candidates=calibration_candidates,
+        calibrations=calibrations,
     )
 
     observations = [
@@ -758,6 +768,11 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_view_metric_calibration_ledger",
             "schema": "1.0",
             "items": calibrations,
+        },
+        {
+            "kind": "hybrid_metric_profile_edge_ledger",
+            "schema": "1.0",
+            "items": metric_profile_edges,
         },
     ]
 

@@ -280,12 +280,13 @@ def _engineering_callout_routing(
     report: dict[str, Any],
 ) -> tuple[
     list[dict[str, Any]],
+    list[ObservationEntity],
     list[ObservationValue],
     list[ObservationUnresolved],
 ]:
     coverage = report.get("coverage")
     if not isinstance(coverage, dict):
-        return [], [], []
+        return [], [], [], []
 
     regions = report.get("regions", [])
     annotation_lines = report.get("annotation_line_candidates", [])
@@ -300,6 +301,7 @@ def _engineering_callout_routing(
                 region_boxes.append((region_id, bbox))
 
     ledger: list[dict[str, Any]] = []
+    callout_entities: list[ObservationEntity] = []
     unresolved: list[ObservationUnresolved] = []
     value_records: dict[tuple[str, str], dict[str, Any]] = {}
     conflicted_targets: set[tuple[str, str]] = set()
@@ -335,22 +337,73 @@ def _engineering_callout_routing(
         }
         ledger.append(record)
 
-        if binding.get("status") != "bound":
-            unresolved.append(
-                ObservationUnresolved(
-                    kind="feature_inventory",
-                    reason=(
-                        "Engineering callout semantics were parsed, but visible "
-                        "geometry ownership is not deterministically proven."
-                    ),
-                    field="engineering_callout_geometry_binding",
-                    evidence=evidence,
-                    required_for_modeling=True,
-                )
-            )
-            continue
+        safe_facts = {
+            key: value
+            for key, value in parsed["facts"].items()
+            if key
+            in {
+                "diameter",
+                "fit",
+                "thread_spec",
+                "thread_depth",
+                "through",
+                "count",
+            }
+        }
 
-        entity_key = str(binding["entity_key"])
+        if binding.get("status") != "bound":
+            if len(region_candidates) == 1 and safe_facts:
+                region_id = region_candidates[0]
+                entity_key = f"{region_id}.CALLOUT.{source_item_index}"
+                callout_entities.append(
+                    ObservationEntity(
+                        key=entity_key,
+                        view_key=f"view.{region_id}",
+                        shape="profile",
+                        cross_view_disposition="unresolved",
+                        evidence=evidence,
+                        required_for_modeling=True,
+                    )
+                )
+                unresolved.append(
+                    ObservationUnresolved(
+                        kind="cross_view_identity",
+                        reason=(
+                            "Engineering callout facts are preserved on a "
+                            "view-local callout-backed feature, but physical "
+                            "cross-view identity remains unresolved."
+                        ),
+                        entity_keys=[entity_key],
+                        field="physical_feature_identity",
+                        evidence=evidence,
+                        required_for_modeling=True,
+                    )
+                )
+                binding = {
+                    **binding,
+                    "status": "callout_backed",
+                    "entity_key": entity_key,
+                    "basis": "unique_region_callout_fact_transport",
+                }
+                record["binding"] = binding
+            else:
+                unresolved.append(
+                    ObservationUnresolved(
+                        kind="feature_inventory",
+                        reason=(
+                            "Engineering callout semantics were parsed, but visible "
+                            "geometry ownership is not deterministically proven and "
+                            "the callout cannot be assigned to one view region."
+                        ),
+                        field="engineering_callout_geometry_binding",
+                        evidence=evidence,
+                        required_for_modeling=True,
+                    )
+                )
+                continue
+        else:
+            entity_key = str(binding["entity_key"])
+
         safe_facts = {
             key: value
             for key, value in parsed["facts"].items()
@@ -456,7 +509,7 @@ def _engineering_callout_routing(
         for target, record in sorted(value_records.items())
         if target not in conflicted_targets
     ]
-    return ledger, values, unresolved
+    return ledger, callout_entities, values, unresolved
 
 
 def adapt_hybrid_ocr_report(
@@ -556,7 +609,13 @@ def adapt_hybrid_ocr_report(
             view_lookup,
         )
     )
-    callout_ledger, callout_values, callout_unresolved = _engineering_callout_routing(report)
+    (
+        callout_ledger,
+        callout_entities,
+        callout_values,
+        callout_unresolved,
+    ) = _engineering_callout_routing(report)
+    entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)
 
     coverage = report["coverage"]

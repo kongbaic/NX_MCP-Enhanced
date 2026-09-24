@@ -131,3 +131,14 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         item["status"] == "candidate_only_no_semantics"
         for item in raw["dimension_geometry_candidates"]
     )
+    assert all(
+        len(item["witness_line_evidence"]) == len(item["witness_positions_px"])
+        for item in raw["dimension_geometry_candidates"]
+    )
+    assert all(
+        all(
+            "source_lines" in witness
+            for witness in item["witness_line_evidence"]
+        )
+        for item in raw["dimension_geometry_candidates"]
+    )

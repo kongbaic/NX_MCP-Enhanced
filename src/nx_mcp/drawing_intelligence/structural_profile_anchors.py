@@ -240,6 +240,75 @@ def _junction_metrics(
     )
 
 
+def _is_hidden_pair_midline(
+    line: dict[str, Any],
+    region: dict[str, Any],
+    *,
+    axis_tolerance: float,
+) -> bool:
+    """Return whether one source line is the centerline of a dashed hidden pair."""
+
+    patterns = region.get("linear_pattern_candidates", [])
+    if not isinstance(patterns, list):
+        return False
+
+    orientation = str(line.get("orientation") or "")
+    if orientation not in {"horizontal", "vertical"}:
+        return False
+    line_axis = float(line["axis_px"])
+    line_span = line.get("span_px", [])
+    if not (isinstance(line_span, list) and len(line_span) == 2):
+        return False
+
+    bbox = region.get("bbox_px", [])
+    if not (
+        isinstance(bbox, list)
+        and len(bbox) == 4
+        and all(isinstance(value, (int, float)) for value in bbox)
+    ):
+        return False
+
+    axis_extent = float(bbox[3] if orientation == "horizontal" else bbox[2])
+    minimum_pair_separation = max(4.0, axis_extent * 0.008)
+    maximum_pair_separation = axis_extent * 0.18
+
+    eligible = [
+        item
+        for item in patterns
+        if isinstance(item, dict)
+        and str(item.get("orientation") or "") == orientation
+        and isinstance(item.get("axis_px"), (int, float))
+        and isinstance(item.get("span_px"), list)
+        and len(item["span_px"]) == 2
+    ]
+
+    for left_index in range(len(eligible)):
+        first = eligible[left_index]
+        first_axis = float(first["axis_px"])
+        for right_index in range(left_index + 1, len(eligible)):
+            second = eligible[right_index]
+            second_axis = float(second["axis_px"])
+            separation = abs(second_axis - first_axis)
+            if (
+                separation < minimum_pair_separation
+                or separation > maximum_pair_separation
+            ):
+                continue
+            if _overlap_ratio(first, second) < 0.75:
+                continue
+
+            midpoint = (first_axis + second_axis) / 2.0
+            if abs(midpoint - line_axis) > axis_tolerance:
+                continue
+            if _overlap_ratio(line, first) < 0.40:
+                continue
+            if _overlap_ratio(line, second) < 0.40:
+                continue
+            return True
+
+    return False
+
+
 def derive_structural_profile_anchors(
     raw_evidence: dict[str, Any],
     region_id: str,
@@ -297,6 +366,12 @@ def derive_structural_profile_anchors(
     profile_lines: list[dict[str, Any]] = []
     for line in all_lines:
         if line["orientation"] != source_orientation:
+            continue
+        if _is_hidden_pair_midline(
+            line,
+            region,
+            axis_tolerance=axis_tolerance,
+        ):
             continue
 
         junction_count, endpoint_junction_count = _junction_metrics(

@@ -851,7 +851,13 @@ def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated
         {
             "region_id": "R1",
             "bbox_px": [0, 0, 400, 300],
-            "circle_groups": [],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 150],
+                    "rings": [{"radius_px": 30}],
+                }
+            ],
         }
     ]
 
@@ -981,6 +987,21 @@ def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated
     assert len(segment_ledger["junctions"]) == 4
     assert len(segment_ledger["items"]) == 4
     assert segment_ledger["unresolved_edges"] == []
+
+    circle_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_metric_circle_primitive_ledger"
+    )
+    assert circle_ledger["unresolved"] == []
+    assert len(circle_ledger["items"]) == 1
+    circle = circle_ledger["items"][0]
+    assert circle["entity_key"] == "R1.C1"
+    assert circle["axis"] == "Y"
+    assert set(circle["center_mm"]) == {"X", "Z"}
+    assert circle["diameter_mm"] is None
+    assert circle["pixel_radius_used_for_engineering_size"] is False
+
     assert "R1.DG17" not in {item.key for item in partial.dimensions}
     assert any(
         item.required_for_modeling and item.field == "dimension_value_candidate"

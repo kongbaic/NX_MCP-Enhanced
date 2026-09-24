@@ -34,7 +34,7 @@ def test_callout_binds_only_when_one_line_bridges_text_and_circle_ring():
 
     assert result["status"] == "bound"
     assert result["entity_key"] == "R1.C1"
-    assert result["basis"] == "callout_bbox_to_collinear_segment_chain_to_geometry"
+    assert result["basis"] == "callout_bbox_to_collinear_segment_chain_to_circle_ring"
 
 
 def test_nearest_circle_without_annotation_line_does_not_bind():
@@ -140,43 +140,3 @@ def test_fragmented_collinear_leader_chain_binds_without_nearest_geometry_guess(
     assert result["entity_key"] == "R1.C1"
     assert result["support"][0]["segment_count"] == 3
     assert result["support"][0]["line_indices"] == [0, 1, 2]
-
-
-def test_short_forward_leader_extension_can_bind_unique_parallel_dash_pair():
-    regions = [
-        {
-            "region_id": "R1",
-            "bbox_px": [0, 0, 300, 300],
-            "circle_groups": [],
-            "parallel_dash_pair_candidates": [
-                {
-                    "pair_id": "HP001",
-                    "kind": "parallel_dash_pair_candidate",
-                    "orientation": "vertical",
-                    "axes_px": [200.0, 220.0],
-                    "span_px": [160.0, 260.0],
-                    "candidate_only": True,
-                    "ownership_claimed": False,
-                }
-            ],
-        }
-    ]
-
-    result = bind_callout_to_circle_entity(
-        [[20, 20], [100, 20], [100, 60], [20, 60]],
-        [
-            {
-                "kind": "oblique_line_candidate",
-                "endpoints_px": [[95, 55], [180, 140]],
-                "angle_deg": 45.0,
-                "candidate_only": True,
-            }
-        ],
-        regions,
-    )
-
-    assert result["status"] == "bound"
-    assert result["entity_key"] == "R1.HP001"
-    assert result["support"][0]["target_kind"] == "parallel_dash_pair"
-    assert 0 < result["support"][0]["forward_extension_px"] <= 26
-

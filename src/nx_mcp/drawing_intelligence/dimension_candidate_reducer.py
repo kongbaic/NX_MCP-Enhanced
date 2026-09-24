@@ -105,6 +105,10 @@ def reduce_dimension_candidates(
                 "witness_positions_local_norm": candidate.get(
                     "witness_positions_local_norm", []
                 ),
+                "witness_line_evidence": candidate.get(
+                    "witness_line_evidence",
+                    [],
+                ),
             }
         )
 

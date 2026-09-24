@@ -122,6 +122,10 @@ def build_reader_visual_aid(
         "source_drawing_authoritative": True,
         "image": raw_evidence.get("image"),
         "regions": compact_regions,
+        "annotation_line_candidates": raw_evidence.get(
+            "annotation_line_candidates",
+            [],
+        ),
         "candidate_buckets": candidate_buckets,
         "summary": {
             "region_count": len(compact_regions),

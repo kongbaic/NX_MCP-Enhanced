@@ -15,7 +15,6 @@ def _calibration_lookup(
     return {
         (str(item.get("region_id") or ""), str(item.get("axis") or "")): item
         for item in calibrations
-        if isinstance(item, dict)
     }
 
 
@@ -42,8 +41,6 @@ def _bound_callout_facts(
     values_by_entity: dict[str, dict[str, list[Any]]] = {}
 
     for item in callout_ledger:
-        if not isinstance(item, dict):
-            continue
         binding = item.get("binding")
         facts = item.get("facts")
         if not (
@@ -101,8 +98,6 @@ def derive_metric_circle_primitives(
     unresolved: list[dict[str, Any]] = []
 
     for region in regions:
-        if not isinstance(region, dict):
-            continue
         region_id = str(region.get("region_id") or "")
         view_kind = region_views.get(region_id)
         axis_mapping = _VIEW_CENTER_AXES.get(str(view_kind or ""))
@@ -110,12 +105,8 @@ def derive_metric_circle_primitives(
             continue
 
         horizontal_axis, vertical_axis, normal_axis = axis_mapping
-        horizontal_calibration = calibration_by_axis.get(
-            (region_id, horizontal_axis)
-        )
-        vertical_calibration = calibration_by_axis.get(
-            (region_id, vertical_axis)
-        )
+        horizontal_calibration = calibration_by_axis.get((region_id, horizontal_axis))
+        vertical_calibration = calibration_by_axis.get((region_id, vertical_axis))
 
         groups = region.get("circle_groups", [])
         if not isinstance(groups, list):
@@ -158,6 +149,8 @@ def derive_metric_circle_primitives(
                         "basis": "fail_closed_metric_circle_center",
                     }
                 )
+                continue
+            if horizontal_calibration is None or vertical_calibration is None:
                 continue
 
             horizontal_mm = _metric_coordinate(
@@ -207,9 +200,7 @@ def derive_metric_circle_primitives(
                     horizontal_axis: horizontal_mm,
                     vertical_axis: vertical_mm,
                 },
-                "rings": [
-                    dict(ring) for ring in rings if isinstance(ring, dict)
-                ],
+                "rings": [dict(ring) for ring in rings if isinstance(ring, dict)],
                 "ring_count": ring_count,
                 "engineering_facts": dict(facts),
                 "engineering_fact_conflicts": dict(conflicts),
@@ -217,8 +208,7 @@ def derive_metric_circle_primitives(
                 "size_assignment_status": size_assignment_status,
                 "pixel_radius_used_for_engineering_size": False,
                 "basis": (
-                    "circle_detection_plus_view_metric_calibration"
-                    "_plus_explicit_bound_callout"
+                    "circle_detection_plus_view_metric_calibration_plus_explicit_bound_callout"
                     if facts
                     else "circle_detection_plus_view_metric_calibration"
                 ),

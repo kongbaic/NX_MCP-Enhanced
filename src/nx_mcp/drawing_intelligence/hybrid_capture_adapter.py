@@ -309,6 +309,7 @@ def _engineering_callout_routing(
     unresolved: list[ObservationUnresolved] = []
     value_records: dict[tuple[str, str], dict[str, Any]] = {}
     conflicted_targets: set[tuple[str, str]] = set()
+    conflict_evidence: dict[tuple[str, str], list[str]] = {}
 
     for item in coverage.get("routed_elsewhere_or_unclassified_observations", []):
         if not isinstance(item, dict):
@@ -390,6 +391,15 @@ def _engineering_callout_routing(
                 )
                 continue
             conflicted_targets.add(target)
+            conflict_evidence[target] = list(
+                dict.fromkeys(
+                    [
+                        *conflict_evidence.get(target, []),
+                        *previous["evidence"],
+                        *evidence,
+                    ]
+                )
+            )
 
         for ambiguity in parsed["ambiguities"]:
             if ambiguity == "leading_zero_diameter_like_token_not_promoted":
@@ -412,35 +422,8 @@ def _engineering_callout_routing(
                 )
             )
 
-        if parsed["facts"].get("recessed_hole") is True:
-            unresolved.append(
-                ObservationUnresolved(
-                    kind="feature_value",
-                    reason=(
-                        "Visible callout says recessed hole, but the source text "
-                        "does not deterministically distinguish counterbore from "
-                        "countersink."
-                    ),
-                    entity_keys=[entity_key],
-                    field="recessed_hole_subtype",
-                    evidence=evidence,
-                    required_for_modeling=True,
-                )
-            )
-
     for entity_key, field in sorted(conflicted_targets):
-        records = [
-            item
-            for target, item in value_records.items()
-            if target == (entity_key, field)
-        ]
-        evidence = list(
-            dict.fromkeys(
-                source_id
-                for record in records
-                for source_id in record["evidence"]
-            )
-        )
+        evidence = conflict_evidence.get((entity_key, field), [])
         unresolved.append(
             ObservationUnresolved(
                 kind="feature_value",

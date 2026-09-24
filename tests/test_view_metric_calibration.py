@@ -170,3 +170,102 @@ def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
         "R1.structural.vertical.001",
         "R1.structural.vertical.002",
     }
+
+
+
+def _conflict_candidate(
+    *,
+    local_tokens: list[str] | None = None,
+    right_side: str | None = "max",
+) -> dict[str, object]:
+    candidate = _candidate(token="6")
+    candidate["orientation"] = "vertical"
+    candidate["accepted_token"] = None
+    candidate["global_proposal_token"] = "6"
+    candidate["decision_reason"] = "global_local_token_disagreement"
+    candidate["wide_local_linear_tokens"] = local_tokens or ["66"]
+    candidate["global_assignments"][0]["bbox"] = [
+        [400.0, 180.0],
+        [440.0, 180.0],
+        [440.0, 220.0],
+        [400.0, 220.0],
+    ]
+    candidate["witness_anchor_evidence"][0]["nearest_anchors"][0].update(
+        {
+            "ref": "R1.structural.horizontal.001",
+            "source_orientation": "horizontal",
+            "relative_extreme_side": "min",
+        }
+    )
+    candidate["witness_anchor_evidence"][1]["nearest_anchors"][0].update(
+        {
+            "ref": "R1.structural.horizontal.004",
+            "source_orientation": "horizontal",
+        }
+    )
+    if right_side is None:
+        candidate["witness_anchor_evidence"][1]["nearest_anchors"][0].pop(
+            "relative_extreme_side",
+            None,
+        )
+    else:
+        candidate["witness_anchor_evidence"][1]["nearest_anchors"][0][
+            "relative_extreme_side"
+        ] = right_side
+    return candidate
+
+
+def test_conflicting_ocr_can_calibrate_from_independent_overall_and_opposite_extremes():
+    candidate = _conflict_candidate()
+
+    items = derive_view_metric_calibrations(
+        candidates=[candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0, "width_y": 32.0, "height_z": 66.0},
+    )
+
+    assert candidate["accepted_token"] is None
+    assert len(items) == 1
+    item = items[0]
+    assert item["axis"] == "Z"
+    assert item["dimension_value"] == 66.0
+    assert item["overall_dimension_value"] == 66.0
+    assert item["min_anchor"]["coordinate_mm"] == 0.0
+    assert item["max_anchor"]["coordinate_mm"] == 66.0
+    assert item["dimension_value_source"] == "overall_dimension_context"
+    assert item["spatial_label_token"] == "6"
+    assert item["supporting_local_token"] == "66"
+    assert item["ocr_conflict_preserved"] is True
+    assert item["basis"] == (
+        "overall_dimension_with_conflict_local_match_and_opposite_profile_extremes"
+    )
+
+
+def test_conflict_backed_calibration_rejects_local_value_that_does_not_match_overall():
+    items = derive_view_metric_calibrations(
+        candidates=[_conflict_candidate(local_tokens=["65"])],
+        region_views={"R1": "front"},
+        overall_dimensions={"height_z": 66.0},
+    )
+
+    assert items == []
+
+
+def test_conflict_backed_calibration_rejects_multiple_local_linear_tokens():
+    items = derive_view_metric_calibrations(
+        candidates=[_conflict_candidate(local_tokens=["66", "6"])],
+        region_views={"R1": "front"},
+        overall_dimensions={"height_z": 66.0},
+    )
+
+    assert items == []
+
+
+def test_conflict_backed_calibration_still_requires_opposite_profile_extremes():
+    items = derive_view_metric_calibrations(
+        candidates=[_conflict_candidate(right_side=None)],
+        region_views={"R1": "front"},
+        overall_dimensions={"height_z": 66.0},
+    )
+
+    assert items == []

@@ -404,19 +404,6 @@ def _engineering_callout_routing(
         else:
             entity_key = str(binding["entity_key"])
 
-        safe_facts = {
-            key: value
-            for key, value in parsed["facts"].items()
-            if key
-            in {
-                "diameter",
-                "fit",
-                "thread_spec",
-                "thread_depth",
-                "through",
-                "count",
-            }
-        }
         for field, value in safe_facts.items():
             target = (entity_key, field)
             previous = value_records.get(target)

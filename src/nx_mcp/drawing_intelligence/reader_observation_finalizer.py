@@ -22,6 +22,38 @@ _OVERALL_FIELD_BY_AXIS: dict[Axis, str] = {
 }
 
 
+_PIXEL_DERIVED_METRIC_OBSERVATION_KINDS = frozenset(
+    {
+        "hybrid_view_metric_calibration_ledger",
+        "hybrid_metric_profile_edge_ledger",
+        "hybrid_metric_profile_segment_ledger",
+        "hybrid_metric_circle_primitive_ledger",
+    }
+)
+
+
+def _reject_pixel_derived_metric_observations(
+    observations: list[dict[str, Any]],
+) -> None:
+    """Keep pixel-derived millimeter estimates out of canonical Reader output."""
+
+    forbidden = sorted(
+        {
+            str(item.get("kind") or "")
+            for item in observations
+            if isinstance(item, dict)
+            and str(item.get("kind") or "")
+            in _PIXEL_DERIVED_METRIC_OBSERVATION_KINDS
+        }
+    )
+    if forbidden:
+        raise ReaderObservationFinalizationError(
+            "pixel-derived metric observations are diagnostic-only and cannot "
+            "enter canonical ReaderObservations: "
+            + ", ".join(forbidden)
+        )
+
+
 def _overall_dimensions(
     facts: list[PartialOverallDimensionFact],
 ) -> OverallDimensions:
@@ -76,6 +108,14 @@ def finalize_partial_reader_observations(
         raise ReaderObservationFinalizationError(
             "partial Reader observations require at least one explicit view"
         )
+
+    _reject_pixel_derived_metric_observations(
+        [
+            item
+            for item in partial.observations
+            if isinstance(item, dict)
+        ]
+    )
 
     overall = _overall_dimensions(partial.overall_dimension_facts)
     overall_ledger: dict[str, Any] = {

@@ -296,12 +296,31 @@ def adapt_hybrid_ocr_report(
     )
 
     coverage = report["coverage"]
+    anchor_items = [
+        {
+            "candidate_id": str(candidate.get("candidate_id") or ""),
+            "region_id": str(candidate.get("region_id") or ""),
+            "orientation": str(candidate.get("orientation") or ""),
+            "accepted_token": candidate.get("accepted_token"),
+            "witness_anchor_evidence": candidate.get(
+                "witness_anchor_evidence",
+                [],
+            ),
+        }
+        for candidate in candidates
+        if isinstance(candidate, dict) and candidate.get("accepted_token") is not None
+    ]
     observations = [
         {
             "kind": "hybrid_ocr_coverage_ledger",
             "schema": report.get("schema"),
             "coverage": coverage,
-        }
+        },
+        {
+            "kind": "hybrid_dimension_anchor_ledger",
+            "schema": "1.0",
+            "items": anchor_items,
+        },
     ]
 
     views = [

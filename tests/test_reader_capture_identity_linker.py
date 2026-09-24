@@ -2551,3 +2551,78 @@ def test_intermediate_surface_endpoint_cannot_carry_feature_candidates():
         "intermediate_surface endpoint 0 must not carry candidate_entity_ids" in item
         for item in errors
     )
+
+
+def test_identity_linker_required_targets_exclude_non_numeric_direct_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="other",
+                required_for_modeling=False,
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="THREAD_SPEC",
+                entity_id="E1",
+                field="thread_spec",
+                value="M6",
+            ),
+            CaptureValue(
+                id="THREAD_DEPTH",
+                entity_id="E1",
+                field="thread_depth",
+                value=12,
+            ),
+            CaptureValue(
+                id="FIT",
+                entity_id="E1",
+                field="fit",
+                value="H7",
+            ),
+            CaptureValue(
+                id="THROUGH",
+                entity_id="E1",
+                field="through",
+                value=True,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+    feature_id = result.entity_to_feature["E1"]
+
+    assert {
+        item.target: item.value
+        for item in result.evidence.direct_values
+    } == {
+        f"feature:{feature_id}.fit": "H7",
+        f"feature:{feature_id}.thread_depth": 12,
+        f"feature:{feature_id}.thread_spec": "M6",
+        f"feature:{feature_id}.through": True,
+    }
+    assert result.evidence.required_targets == [
+        f"feature:{feature_id}.thread_depth"
+    ]
+
+    compiled = compile_evidence_graph(result.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values == {
+        f"feature:{feature_id}.thread_depth": 12.0
+    }
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("id")
+        in {
+            f"target:feature:{feature_id}.thread_spec",
+            f"target:feature:{feature_id}.fit",
+            f"target:feature:{feature_id}.through",
+        }
+    ]
+

@@ -389,6 +389,27 @@ def _engineering_callout_routing(
                 )
             )
 
+        unsupported_explicit_facts = {
+            key: value
+            for key, value in parsed["facts"].items()
+            if key not in safe_facts
+        }
+        for field, value in sorted(unsupported_explicit_facts.items()):
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="feature_value",
+                    reason=(
+                        "Engineering callout explicitly provides "
+                        f"{field}={value!r}, but the current canonical Capture "
+                        "value contract has no safe direct representation."
+                    ),
+                    entity_keys=[entity_key],
+                    field=field,
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
+            )
+
         for ambiguity in parsed["ambiguities"]:
             if ambiguity == "leading_zero_diameter_like_token_not_promoted":
                 field = "diameter"

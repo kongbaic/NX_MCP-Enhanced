@@ -63,6 +63,21 @@ def _report() -> dict:
                         ],
                     }
                 ],
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 100.0,
+                        "source_lines": [
+                            {
+                                "orientation": "vertical",
+                                "axis_px": 100.0,
+                                "span_px": [20, 180],
+                                "span_length_px": 160,
+                                "crosses_dimension_axis": True,
+                            }
+                        ],
+                    }
+                ],
             },
             {
                 "candidate_id": "DG17",
@@ -121,6 +136,8 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     )
     dg12 = next(item for item in anchor_ledger["items"] if item["candidate_id"] == "DG12")
     assert dg12["witness_anchor_evidence"][0]["nearest_anchors"][0]["kind"] == "circle_center_axis"
+    assert dg12["witness_line_evidence"][0]["source_lines"][0]["span_length_px"] == 160
+    assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
 
 
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():

@@ -660,6 +660,77 @@ def _callout_binding_groups(
     return bbox_by_index, members_by_index
 
 
+def _recover_geometry_backed_leading_zero_hole_value(
+    parsed: dict[str, Any],
+    binding: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover a likely lost diameter glyph only after hole geometry is bound.
+
+    The parser remains conservative.  A leading-zero token is promoted only
+    when explicit hole semantics are present and the note has deterministic
+    geometry ownership.  Recess diameters stay distinct from the primary hole
+    diameter until the recess subtype is independently resolved.
+    """
+
+    if binding.get("status") not in {"bound", "dimension_backed"}:
+        return parsed
+    ambiguities = parsed.get("ambiguities", [])
+    if (
+        not isinstance(ambiguities, list)
+        or "leading_zero_diameter_like_token_not_promoted" not in ambiguities
+    ):
+        return parsed
+
+    facts = parsed.get("facts", {})
+    if not isinstance(facts, dict) or "diameter" in facts:
+        return parsed
+    if not (facts.get("through") is True or facts.get("recessed_hole") is True):
+        return parsed
+
+    normalized = str(parsed.get("normalized_text") or "")
+    match = re.search(
+        r"(?<![A-Z0-9Ø.])(0\d+(?:\.\d+)?)(?![A-Z0-9.])",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return parsed
+
+    raw_value = match.group(1)
+    try:
+        value = float(raw_value[1:])
+    except ValueError:
+        return parsed
+    if value <= 0:
+        return parsed
+
+    recovered_facts = dict(facts)
+    if recovered_facts.get("recessed_hole") is True:
+        recovered_facts["recess_diameter"] = value
+        recovered_field = "recess_diameter"
+    else:
+        recovered_facts["diameter"] = value
+        recovered_field = "diameter"
+
+    return {
+        **parsed,
+        "facts": recovered_facts,
+        "ambiguities": [
+            item
+            for item in ambiguities
+            if item != "leading_zero_diameter_like_token_not_promoted"
+        ],
+        "geometry_backed_ocr_recovery": {
+            "field": recovered_field,
+            "value": value,
+            "raw_token": raw_value,
+            "basis": (
+                "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
+            ),
+        },
+    }
+
+
 def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -801,6 +872,11 @@ def _engineering_callout_routing(
                     "leader_binding": leader_binding,
                     "dimension_binding": dimension_binding,
                 }
+
+        parsed = _recover_geometry_backed_leading_zero_hole_value(
+            parsed,
+            binding,
+        )
 
         record = {
             "source_item_index": source_item_index,

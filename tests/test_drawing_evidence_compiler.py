@@ -313,8 +313,10 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     - bottom datum -> main-bore center Z = 40
     - main-bore center -> clamp center Z spacing = 18 upward
     - overall max Y -> clamp center = 8
-    - overall max Y -> mounting-hole projected center = 24
+    - right-view internal step -> overall max Y = 24
     - mounting-hole X center-to-center spacing = 24
+
+    The right-view 24 dimension does not own the mounting-hole Y center.
 
     It does NOT, by those dimensions alone, anchor the pair's absolute X
     coordinates. The resolver must leave those X coordinates unresolved rather
@@ -324,7 +326,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     main_z = "feature:F_MAIN_HOLE.centerline.z"
     clamp_z = "feature:F_CLAMP.centerline.z"
     clamp_y = "feature:F_CLAMP.centerline.y"
-    mount_y = "feature:F_MOUNT_PAIR.explicit_centers.0.1"
     mount_x0 = "feature:F_MOUNT_PAIR.explicit_centers.0.0"
     mount_x1 = "feature:F_MOUNT_PAIR.explicit_centers.1.0"
 
@@ -384,16 +385,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
                 source_ids=["REAL_SHKSS_8_FROM_RIGHT_EDGE"],
             ),
             DimensionObservation(
-                id="D_REAL_MOUNT_Y24",
-                value=24,
-                axis="Y",
-                endpoints=[
-                    DimensionEndpoint(role="overall_max"),
-                    DimensionEndpoint(role="feature_center", target=mount_y),
-                ],
-                source_ids=["REAL_SHKSS_24_FROM_RIGHT_EDGE"],
-            ),
-            DimensionObservation(
                 id="D_REAL_MOUNT_X24",
                 value=24,
                 axis="X",
@@ -409,7 +400,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
             main_z,
             clamp_z,
             clamp_y,
-            mount_y,
             mount_x0,
             mount_x1,
         ],
@@ -434,7 +424,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     assert result.values[main_z] == 40
     assert result.values[clamp_z] == 58
     assert result.values[clamp_y] == 24
-    assert result.values[mount_y] == 8
 
     assert mount_x0 not in result.values
     assert mount_x1 not in result.values

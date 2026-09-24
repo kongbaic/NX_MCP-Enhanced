@@ -80,10 +80,7 @@ def finalize_partial_reader_observations(
     overall = _overall_dimensions(partial.overall_dimension_facts)
     overall_ledger: dict[str, Any] = {
         "kind": "overall_dimension_fact_ledger",
-        "facts": [
-            fact.model_dump(mode="json")
-            for fact in partial.overall_dimension_facts
-        ],
+        "facts": [fact.model_dump(mode="json") for fact in partial.overall_dimension_facts],
     }
 
     return ReaderObservations(

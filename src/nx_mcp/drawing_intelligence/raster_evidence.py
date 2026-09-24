@@ -227,6 +227,36 @@ def _view_regions(
     return boxes[:4]
 
 
+def _select_circle_centers(
+    scored: list[dict[str, Any]],
+    *,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    centers: list[dict[str, Any]] = []
+    for item in scored:
+        radius = float(item["radius_px"])
+        duplicate = False
+        for previous in centers:
+            previous_radius = float(previous["radius_px"])
+            center_distance = math.hypot(
+                int(item["cx"]) - int(previous["cx"]),
+                int(item["cy"]) - int(previous["cy"]),
+            )
+            same_center_tolerance = max(
+                5.0,
+                min(radius, previous_radius) * 0.45,
+            )
+            if center_distance <= same_center_tolerance:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        centers.append(item)
+        if len(centers) >= limit:
+            break
+    return centers
+
+
 def _circle_candidates(
     gray: Any,
     edges: Any,
@@ -299,28 +329,7 @@ def _circle_candidates(
         reverse=True,
     )
 
-    centers: list[dict[str, Any]] = []
-    for item in scored:
-        radius = float(item["radius_px"])
-        duplicate = False
-        for previous in centers:
-            previous_radius = float(previous["radius_px"])
-            center_distance = math.hypot(
-                int(item["cx"]) - int(previous["cx"]),
-                int(item["cy"]) - int(previous["cy"]),
-            )
-            same_center_tolerance = max(
-                5.0,
-                min(radius, previous_radius) * 0.45,
-            )
-            if center_distance <= same_center_tolerance:
-                duplicate = True
-                break
-        if duplicate:
-            continue
-        centers.append(item)
-        if len(centers) >= 12:
-            break
+    centers = _select_circle_centers(scored)
 
     enriched: list[dict[str, Any]] = []
     for center in centers:

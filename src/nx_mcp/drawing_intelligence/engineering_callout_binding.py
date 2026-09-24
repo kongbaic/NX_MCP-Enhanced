@@ -276,13 +276,10 @@ def bind_callout_to_circle_entity(
     entity_key = unique_entities[0]
     entity_bindings = [item for item in bindings if item["entity_key"] == entity_key]
     shortest = min(item["segment_count"] for item in entity_bindings)
-    support = [
-        item for item in entity_bindings if item["segment_count"] == shortest
-    ]
+    support = [item for item in entity_bindings if item["segment_count"] == shortest]
     return {
         "status": "bound",
         "basis": "callout_bbox_to_collinear_segment_chain_to_circle_ring",
         "entity_key": entity_key,
         "support": support,
     }
-

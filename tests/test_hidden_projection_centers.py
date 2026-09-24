@@ -255,3 +255,70 @@ def test_ambiguous_profile_vs_hidden_center_is_exposed_to_one_confirmation():
     )
     assert hidden_feature != main_feature
     assert resolution.values[f"{hidden_feature}.centerline.z"] == 58.0
+
+
+
+def test_multiple_near_equal_hidden_pairs_fail_closed():
+    region = _region()
+    region["linear_pattern_candidates"] = [
+        {
+            "orientation": "horizontal",
+            "axis_px": 100.0,
+            "span_px": [120, 300],
+            "kind": "dashed_or_centerline_candidate",
+        },
+        {
+            "orientation": "horizontal",
+            "axis_px": 140.0,
+            "span_px": [122, 302],
+            "kind": "dashed_or_centerline_candidate",
+        },
+        {
+            "orientation": "horizontal",
+            "axis_px": 102.0,
+            "span_px": [121, 301],
+            "kind": "dashed_or_centerline_candidate",
+        },
+        {
+            "orientation": "horizontal",
+            "axis_px": 140.0,
+            "span_px": [123, 303],
+            "kind": "dashed_or_centerline_candidate",
+        },
+    ]
+
+    items = derive_hidden_projection_center_candidates(
+        _distance_candidate(),
+        region=region,
+        view_kind="front",
+        profile_inventory=[],
+    )
+
+    assert items == []
+
+
+def test_hidden_pair_rejects_weak_midpoint_alignment_even_when_only_pair():
+    region = _region()
+    region["linear_pattern_candidates"] = [
+        {
+            "orientation": "horizontal",
+            "axis_px": 90.0,
+            "span_px": [120, 300],
+            "kind": "dashed_or_centerline_candidate",
+        },
+        {
+            "orientation": "horizontal",
+            "axis_px": 130.0,
+            "span_px": [122, 302],
+            "kind": "dashed_or_centerline_candidate",
+        },
+    ]
+
+    items = derive_hidden_projection_center_candidates(
+        _distance_candidate(),
+        region=region,
+        view_kind="front",
+        profile_inventory=[],
+    )
+
+    assert items == []

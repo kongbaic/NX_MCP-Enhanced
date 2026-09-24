@@ -141,6 +141,7 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         for item in raw["dimension_geometry_candidates"]
     )
 
+
 def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():
     evidence = _witness_line_evidence(
         [50.0],
@@ -170,4 +171,3 @@ def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():
             ],
         }
     ]
-

@@ -95,7 +95,13 @@ def _line_angle(line: dict[str, Any]) -> float | None:
     angle = line.get("angle_deg")
     if isinstance(angle, (int, float)):
         return float(angle)
-    return None
+
+    pair = _endpoint_pair(line)
+    if pair is None:
+        return None
+    (x1, y1), (x2, y2) = pair
+    raw = abs(math.degrees(math.atan2(y2 - y1, x2 - x1))) % 180.0
+    return 180.0 - raw if raw > 90.0 else raw
 
 
 def _endpoint_pair(line: dict[str, Any]) -> tuple[tuple[float, float], tuple[float, float]] | None:

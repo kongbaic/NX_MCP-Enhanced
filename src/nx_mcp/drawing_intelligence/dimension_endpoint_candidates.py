@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _PHYSICAL_ANCHOR_KINDS = {
     "profile_edge_candidate",
     "circle_center_axis",
@@ -75,8 +74,7 @@ def derive_dimension_endpoint_candidates(
     accepted_assignments = [
         item
         for item in assignments
-        if isinstance(item, dict)
-        and str(item.get("token") or "") == accepted_token
+        if isinstance(item, dict) and str(item.get("token") or "") == accepted_token
     ]
     if len(accepted_assignments) != 1:
         return {
@@ -111,9 +109,7 @@ def derive_dimension_endpoint_candidates(
             "text_axis_coordinate_px": round(text_coordinate, 3),
         }
 
-    brackets: list[
-        tuple[tuple[int, float], tuple[int, float]]
-    ] = []
+    brackets: list[tuple[tuple[int, float], tuple[int, float]]] = []
     for first, second in zip(
         indexed_witnesses,
         indexed_witnesses[1:],
@@ -137,9 +133,7 @@ def derive_dimension_endpoint_candidates(
     anchor_lookup = _witness_anchor_lookup(candidate)
 
     endpoints: list[dict[str, Any]] = []
-    for endpoint_index, (witness_index, position_px) in enumerate(
-        (first, second)
-    ):
+    for endpoint_index, (witness_index, position_px) in enumerate((first, second)):
         witness_evidence = anchor_lookup.get(witness_index, {})
         nearest = witness_evidence.get("nearest_anchors", [])
         if not isinstance(nearest, list):
@@ -148,8 +142,7 @@ def derive_dimension_endpoint_candidates(
         physical_candidates = [
             item
             for item in nearest
-            if isinstance(item, dict)
-            and item.get("kind") in _PHYSICAL_ANCHOR_KINDS
+            if isinstance(item, dict) and item.get("kind") in _PHYSICAL_ANCHOR_KINDS
         ]
 
         endpoint_status = (
@@ -170,8 +163,7 @@ def derive_dimension_endpoint_candidates(
                 "ignored_nonownership_anchors": [
                     item
                     for item in nearest
-                    if isinstance(item, dict)
-                    and item.get("kind") not in _PHYSICAL_ANCHOR_KINDS
+                    if isinstance(item, dict) and item.get("kind") not in _PHYSICAL_ANCHOR_KINDS
                 ],
             }
         )
@@ -185,8 +177,7 @@ def derive_dimension_endpoint_candidates(
         "selected_witness_indices": [first[0], second[0]],
         "selected_witness_positions_px": [first[1], second[1]],
         "all_endpoint_candidates_unique": all(
-            item["status"] == "unique_physical_candidate"
-            for item in endpoints
+            item["status"] == "unique_physical_candidate" for item in endpoints
         ),
         "endpoints": endpoints,
     }

@@ -547,6 +547,99 @@ def _circle_entities(
     return output
 
 
+def _callout_binding_groups(
+    items: list[Any],
+) -> tuple[
+    dict[Any, list[list[float]]],
+    dict[Any, list[Any]],
+]:
+    """Group vertically adjacent engineering callout lines for one leader.
+
+    OCR often emits a multi-line hole note as separate text observations even
+    though the drawing provides one shared leader.  Grouping affects geometry
+    binding only; each line keeps its own parsed semantic facts.
+    """
+
+    records: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source_item_index = item.get("source_item_index")
+        parsed = parse_engineering_callout(str(item.get("text") or ""))
+        bounds = _bbox_bounds(item.get("bbox"))
+        if parsed is None or bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        records.append(
+            {
+                "source_item_index": source_item_index,
+                "bounds": bounds,
+                "width": max(1.0, right - left),
+                "height": max(1.0, bottom - top),
+            }
+        )
+
+    parent = list(range(len(records)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left_index: int, right_index: int) -> None:
+        left_root = find(left_index)
+        right_root = find(right_index)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for left_index, left in enumerate(records):
+        l0, t0, r0, b0 = left["bounds"]
+        for right_index in range(left_index + 1, len(records)):
+            right = records[right_index]
+            l1, t1, r1, b1 = right["bounds"]
+            overlap = max(0.0, min(r0, r1) - max(l0, l1))
+            overlap_ratio = overlap / min(
+                float(left["width"]),
+                float(right["width"]),
+            )
+            vertical_gap = max(t1 - b0, t0 - b1, 0.0)
+            allowed_gap = max(
+                6.0,
+                min(float(left["height"]), float(right["height"])) * 0.35,
+            )
+            if overlap_ratio >= 0.45 and vertical_gap <= allowed_gap:
+                union(left_index, right_index)
+
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for index, record in enumerate(records):
+        groups.setdefault(find(index), []).append(record)
+
+    bbox_by_index: dict[Any, list[list[float]]] = {}
+    members_by_index: dict[Any, list[Any]] = {}
+    for members in groups.values():
+        left = min(float(item["bounds"][0]) for item in members)
+        top = min(float(item["bounds"][1]) for item in members)
+        right = max(float(item["bounds"][2]) for item in members)
+        bottom = max(float(item["bounds"][3]) for item in members)
+        bbox = [
+            [left, top],
+            [right, top],
+            [right, bottom],
+            [left, bottom],
+        ]
+        member_ids = sorted(
+            (item["source_item_index"] for item in members),
+            key=lambda value: str(value),
+        )
+        for item in members:
+            source_item_index = item["source_item_index"]
+            bbox_by_index[source_item_index] = bbox
+            members_by_index[source_item_index] = member_ids
+
+    return bbox_by_index, members_by_index
+
+
 def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -572,6 +665,14 @@ def _engineering_callout_routing(
             if region_id and isinstance(bbox, list):
                 region_boxes.append((region_id, bbox))
 
+    routed_items = coverage.get(
+        "routed_elsewhere_or_unclassified_observations",
+        [],
+    )
+    binding_bbox_by_index, binding_group_by_index = _callout_binding_groups(
+        routed_items if isinstance(routed_items, list) else []
+    )
+
     ledger: list[dict[str, Any]] = []
     callout_entities: list[ObservationEntity] = []
     callout_entity_keys: set[str] = set()
@@ -580,7 +681,7 @@ def _engineering_callout_routing(
     conflicted_targets: set[tuple[str, str]] = set()
     conflict_evidence: dict[tuple[str, str], list[str]] = {}
 
-    for item in coverage.get("routed_elsewhere_or_unclassified_observations", []):
+    for item in routed_items:
         if not isinstance(item, dict):
             continue
         parsed = parse_engineering_callout(str(item.get("text") or ""))
@@ -589,6 +690,10 @@ def _engineering_callout_routing(
 
         source_item_index = item.get("source_item_index")
         evidence = [f"hybrid:whole:{source_item_index}"]
+        binding_bbox = binding_bbox_by_index.get(
+            source_item_index,
+            item.get("bbox"),
+        )
         center = _bbox_center(item.get("bbox"))
         region_candidates = (
             sorted(region_id for region_id, bbox in region_boxes if _point_in_bbox(center, bbox))
@@ -596,7 +701,7 @@ def _engineering_callout_routing(
             else []
         )
         leader_binding = bind_callout_to_circle_entity(
-            item.get("bbox"),
+            binding_bbox,
             annotation_lines,
             regions,
         )
@@ -606,7 +711,7 @@ def _engineering_callout_routing(
             and len(region_candidates) == 1
         ):
             candidate_binding = bind_callout_to_dimension_candidate(
-                item.get("bbox"),
+                binding_bbox,
                 candidates,
                 region_id=region_candidates[0],
             )
@@ -680,6 +785,11 @@ def _engineering_callout_routing(
         record = {
             "source_item_index": source_item_index,
             "bbox": item.get("bbox"),
+            "binding_bbox": binding_bbox,
+            "binding_group_source_item_indices": binding_group_by_index.get(
+                source_item_index,
+                [source_item_index],
+            ),
             "confidence": item.get("confidence"),
             "region_candidates": region_candidates,
             "binding": binding,

@@ -186,6 +186,201 @@ def metricize_profile_edge_candidates(
     )
 
 
+def _span_gap_px(value: float, span: Any) -> float | None:
+    if not (
+        isinstance(span, list)
+        and len(span) == 2
+        and all(isinstance(item, (int, float)) for item in span)
+    ):
+        return None
+    low, high = sorted(float(item) for item in span)
+    if low <= value <= high:
+        return 0.0
+    return low - value if value < low else value - high
+
+
+def derive_metric_profile_segments(
+    *,
+    metric_edges: list[dict[str, Any]],
+    junction_tolerance_by_region: dict[str, float] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Derive only junction-bounded metric segments from calibrated profile lines.
+
+    Raw source-line span endpoints are evidence bounds, not physical endpoints.
+    A segment is emitted only between two observed orthogonal metric profile
+    intersections on the same source line.  Small pixel endpoint gaps may be
+    tolerated only through an explicit, region-scoped tolerance supplied by the
+    caller; missing geometry is never extended beyond that tolerance.
+    """
+
+    tolerance_lookup = junction_tolerance_by_region or {}
+    edges = [
+        item
+        for item in metric_edges
+        if isinstance(item, dict)
+        and item.get("source_orientation") in {"horizontal", "vertical"}
+        and isinstance(item.get("position_px"), (int, float))
+        and isinstance(item.get("coordinate_mm"), (int, float))
+        and isinstance(item.get("ref"), str)
+        and item.get("ref")
+    ]
+    edges.sort(
+        key=lambda item: (
+            str(item.get("region_id") or ""),
+            str(item.get("view_kind") or ""),
+            str(item.get("source_orientation") or ""),
+            str(item.get("ref") or ""),
+        )
+    )
+
+    junctions: list[dict[str, Any]] = []
+    junctions_by_edge: dict[str, list[dict[str, Any]]] = {
+        str(item["ref"]): [] for item in edges
+    }
+
+    vertical_edges = [item for item in edges if item["source_orientation"] == "vertical"]
+    horizontal_edges = [item for item in edges if item["source_orientation"] == "horizontal"]
+
+    for vertical in vertical_edges:
+        for horizontal in horizontal_edges:
+            region_id = str(vertical.get("region_id") or "")
+            if not region_id or region_id != str(horizontal.get("region_id") or ""):
+                continue
+            view_kind = str(vertical.get("view_kind") or "")
+            if not view_kind or view_kind != str(horizontal.get("view_kind") or ""):
+                continue
+            if vertical.get("axis") == horizontal.get("axis"):
+                continue
+
+            x_px = float(vertical["position_px"])
+            y_px = float(horizontal["position_px"])
+            vertical_gap = _span_gap_px(y_px, vertical.get("span_px"))
+            horizontal_gap = _span_gap_px(x_px, horizontal.get("span_px"))
+            if vertical_gap is None or horizontal_gap is None:
+                continue
+
+            raw_tolerance = tolerance_lookup.get(region_id, 0.0)
+            tolerance = (
+                max(0.0, float(raw_tolerance))
+                if isinstance(raw_tolerance, (int, float))
+                else 0.0
+            )
+            max_gap = max(vertical_gap, horizontal_gap)
+            if max_gap > tolerance:
+                continue
+
+            vertical_ref = str(vertical["ref"])
+            horizontal_ref = str(horizontal["ref"])
+            point_mm = {
+                str(vertical["axis"]): float(vertical["coordinate_mm"]),
+                str(horizontal["axis"]): float(horizontal["coordinate_mm"]),
+            }
+            if len(point_mm) != 2:
+                continue
+
+            junction = {
+                "key": f"{vertical_ref}|{horizontal_ref}",
+                "region_id": region_id,
+                "view_kind": view_kind,
+                "edge_refs": [vertical_ref, horizontal_ref],
+                "point_px": [x_px, y_px],
+                "point_mm": point_mm,
+                "max_gap_px": max_gap,
+                "junction_tolerance_px": tolerance,
+                "basis": "orthogonal_metric_profile_intersection_within_tolerance",
+            }
+            junctions.append(junction)
+            junctions_by_edge[vertical_ref].append(junction)
+            junctions_by_edge[horizontal_ref].append(junction)
+
+    junctions.sort(
+        key=lambda item: (
+            item["region_id"],
+            item["view_kind"],
+            item["edge_refs"][0],
+            item["edge_refs"][1],
+        )
+    )
+
+    segments: list[dict[str, Any]] = []
+    unresolved_edges: list[dict[str, Any]] = []
+
+    for edge in edges:
+        ref = str(edge["ref"])
+        orientation = str(edge["source_orientation"])
+        edge_junctions = list(junctions_by_edge.get(ref, []))
+        coordinate_index = 1 if orientation == "vertical" else 0
+        edge_junctions.sort(key=lambda item: float(item["point_px"][coordinate_index]))
+
+        if len(edge_junctions) < 2:
+            unresolved_edges.append(
+                {
+                    "ref": ref,
+                    "region_id": edge.get("region_id"),
+                    "view_kind": edge.get("view_kind"),
+                    "reason": "fewer_than_two_observed_metric_profile_junctions",
+                    "junction_count": len(edge_junctions),
+                    "basis": "fail_closed_segment_extent",
+                }
+            )
+            continue
+
+        fixed_axis = str(edge.get("axis") or "")
+        for segment_index, (start, end) in enumerate(
+            zip(edge_junctions, edge_junctions[1:], strict=False),
+            start=1,
+        ):
+            start_mm = start["point_mm"]
+            end_mm = end["point_mm"]
+            varying_axes = (
+                (set(start_mm) & set(end_mm)) - {fixed_axis}
+            )
+            if len(varying_axes) != 1:
+                continue
+            varying_axis = next(iter(varying_axes))
+            start_value = start_mm.get(varying_axis)
+            end_value = end_mm.get(varying_axis)
+            if not isinstance(start_value, (int, float)) or not isinstance(
+                end_value, (int, float)
+            ):
+                continue
+            length_mm = abs(float(end_value) - float(start_value))
+            if length_mm <= 1e-9:
+                continue
+
+            segments.append(
+                {
+                    "key": f"{ref}.segment.{segment_index:03d}",
+                    "region_id": edge.get("region_id"),
+                    "view_kind": edge.get("view_kind"),
+                    "source_edge_ref": ref,
+                    "source_orientation": orientation,
+                    "fixed_axis": fixed_axis,
+                    "fixed_coordinate_mm": float(edge["coordinate_mm"]),
+                    "varying_axis": varying_axis,
+                    "start_mm": dict(start_mm),
+                    "end_mm": dict(end_mm),
+                    "length_mm": length_mm,
+                    "junction_keys": [start["key"], end["key"]],
+                    "basis": "observed_profile_line_between_metric_junctions",
+                }
+            )
+
+    segments.sort(
+        key=lambda item: (
+            str(item.get("region_id") or ""),
+            str(item.get("source_edge_ref") or ""),
+            str(item.get("key") or ""),
+        )
+    )
+    unresolved_edges.sort(key=lambda item: str(item.get("ref") or ""))
+    return {
+        "junctions": junctions,
+        "segments": segments,
+        "unresolved_edges": unresolved_edges,
+    }
+
+
 def derive_view_metric_calibrations(
     *,
     candidates: list[dict[str, Any]],

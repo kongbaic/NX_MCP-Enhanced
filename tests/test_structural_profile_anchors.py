@@ -123,3 +123,47 @@ def test_structural_profile_anchors_flow_into_witness_evidence():
     assert "step_or_shoulder_candidate" in kinds_by_witness[1]
     assert "silhouette_extreme_candidate" in kinds_by_witness[2]
     assert result["anchor_schema_version"] == "1.1"
+
+def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 200, "height": 200},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 200, 200],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_SINGLE_CORNER",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 60.0,
+                        "source_lines": [
+                            _source("horizontal", 60.0, 20, 100),
+                            _source("vertical", 100.0, 60, 100),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "vertical",
+    )
+
+    assert len(anchors) == 1
+    assert anchors[0]["kind"] == "profile_edge_candidate"
+    assert anchors[0]["position_px"] == 60.0
+    assert anchors[0]["candidate_only"] is True
+    assert anchors[0]["ownership_claimed"] is False
+

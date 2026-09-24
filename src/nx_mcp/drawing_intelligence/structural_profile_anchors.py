@@ -335,28 +335,9 @@ def derive_structural_profile_anchors(
         axis = float(line["axis_px"])
         at_minimum = abs(axis - minimum_axis) <= axis_tolerance
         at_maximum = abs(axis - maximum_axis) <= axis_tolerance
-        is_extreme = at_minimum or at_maximum
-
-        strong_extreme = (
-            float(line["span_local_norm"]) >= 0.30 and int(line["endpoint_junction_count"]) >= 2
-        ) or (
-            float(line["span_local_norm"]) >= 0.75
-            and int(line["junction_count"]) >= 3
-            and int(line["endpoint_junction_count"]) >= 1
-        )
-
-        if is_extreme and strong_extreme:
-            kind = "silhouette_extreme_candidate"
-            extreme_side = "min" if at_minimum else "max"
-        elif not is_extreme:
-            kind = "step_or_shoulder_candidate"
-            extreme_side = None
-        else:
-            kind = "profile_edge_candidate"
-            extreme_side = None
 
         anchor = {
-            "kind": kind,
+            "kind": "profile_edge_candidate",
             "ref": (f"{region_id}.structural.{source_orientation}.{index:03d}"),
             "position_px": round(axis, 3),
             "source_orientation": source_orientation,
@@ -369,8 +350,10 @@ def derive_structural_profile_anchors(
             "candidate_only": True,
             "ownership_claimed": False,
         }
-        if extreme_side is not None:
-            anchor["extreme_side"] = extreme_side
+        if at_minimum:
+            anchor["relative_extreme_side"] = "min"
+        elif at_maximum:
+            anchor["relative_extreme_side"] = "max"
         anchors.append(anchor)
 
     return anchors

@@ -322,3 +322,80 @@ def test_hidden_pair_rejects_weak_midpoint_alignment_even_when_only_pair():
     )
 
     assert items == []
+
+
+
+def test_unique_hidden_center_plus_main_center_resolves_engineering_z58_without_pixels():
+    report = _report()
+    # The structural classifier has already suppressed the hidden-pair midline,
+    # so the upper witness has one physical center candidate, not a profile edge.
+    report["structural_profile_inventory"] = []
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+    dimension = next(
+        item for item in partial.dimensions if item.key == "R1.DG_DISTANCE"
+    )
+
+    assert dimension.unresolved_reason is None
+    assert [item.role for item in dimension.endpoints] == [
+        "entity_center",
+        "entity_center",
+    ]
+    upper_key = dimension.endpoints[0].entity_key
+    assert upper_key is not None
+    assert upper_key.startswith("R1.HIDDEN_PAIR.horizontal.")
+    assert dimension.endpoints[1].entity_key == "R1.C_MAIN"
+    assert dimension.value == 18
+    assert dimension.direction == -1
+
+    main_z = ObservationDimension(
+        key="R1.MAIN_Z",
+        value=40,
+        axis="Z",
+        endpoints=[
+            ObservationDimensionEndpoint(
+                role="entity_center",
+                entity_key="R1.C_MAIN",
+                basis="circle_center",
+                evidence=["test:main-center"],
+            ),
+            ObservationDimensionEndpoint(
+                role="overall_min",
+                evidence=["test:bottom"],
+            ),
+        ],
+        evidence=["test:main-z"],
+        required_for_modeling=True,
+    )
+
+    observations = ReaderObservations(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=partial.views,
+        entities=partial.entities,
+        values=partial.values,
+        dimensions=[dimension, main_z],
+    )
+    capture = assemble_reader_capture(observations)
+    linked = link_reader_capture(capture)
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    upper_entity = next(
+        item
+        for item in capture.entities
+        if item.source_key == upper_key
+    )
+    upper_feature = linked.entity_to_feature[upper_entity.id]
+    main_entity = next(
+        item
+        for item in capture.entities
+        if item.source_key == "R1.C_MAIN"
+    )
+    main_feature = linked.entity_to_feature[main_entity.id]
+
+    assert resolution.values[f"feature:{main_feature}.centerline.z"] == 40.0
+    assert resolution.values[f"feature:{upper_feature}.centerline.z"] == 58.0

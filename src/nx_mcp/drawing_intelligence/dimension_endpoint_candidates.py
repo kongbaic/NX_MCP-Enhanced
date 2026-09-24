@@ -5,6 +5,7 @@ from typing import Any
 _PHYSICAL_ANCHOR_KINDS = {
     "profile_edge_candidate",
     "circle_center_axis",
+    "hidden_projection_center_axis",
 }
 
 

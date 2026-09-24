@@ -160,6 +160,15 @@ def test_adapter_materializes_diameter_projection_instead_of_advisory_callout():
         for item in partial.unresolved
         if item.field == "engineering_callout_geometry_binding"
     ]
+    termination = [
+        item
+        for item in partial.unresolved
+        if item.kind == "termination" and item.required_for_modeling
+    ]
+    assert len(termination) == 1
+    assert termination[0].entity_keys == [
+        "R2.DG_DIAMETER.DIAMETER_PROJECTION"
+    ]
 
     ledger = next(
         item
@@ -522,6 +531,12 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
         and item.field == "dimension_value_candidate"
     ]
     assert len(conflict_blockers) == 1
+    termination_blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.kind == "termination"
+    ]
+    assert len(termination_blockers) == 1
 
     center_dimension = next(
         item
@@ -575,10 +590,19 @@ def test_missing_orthographic_circle_is_feature_inventory_blocker_not_identity_r
     )
 
     assert partial.associations == []
-    blockers = [item for item in partial.unresolved if item.required_for_modeling]
-    assert len(blockers) == 1
-    assert blockers[0].kind == "feature_inventory"
-    assert blockers[0].field == "orthographic_circular_counterpart"
-    assert blockers[0].entity_keys == [
+    inventory_blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.kind == "feature_inventory"
+    ]
+    assert len(inventory_blockers) == 1
+    assert inventory_blockers[0].field == "orthographic_circular_counterpart"
+    assert inventory_blockers[0].entity_keys == [
         "R2.DG_DIAMETER.DIAMETER_PROJECTION"
     ]
+    termination_blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.kind == "termination"
+    ]
+    assert len(termination_blockers) == 1

@@ -110,6 +110,10 @@ def build_reader_visual_aid(
                     "linear_pattern_candidates",
                     [],
                 ),
+                "parallel_dash_pair_candidates": region.get(
+                    "parallel_dash_pair_candidates",
+                    [],
+                ),
             }
         )
 

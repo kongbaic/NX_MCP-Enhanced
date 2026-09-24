@@ -451,4 +451,3 @@ def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresol
     assert "recessed_hole" in fields
     assert "diameter" in fields
     assert "recessed_hole_subtype" in fields
-

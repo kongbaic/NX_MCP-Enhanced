@@ -485,6 +485,26 @@ def _point_in_bbox(
     return left <= x <= left + width and top <= y <= top + height
 
 
+def _bbox_bounds(
+    bbox: Any,
+) -> tuple[float, float, float, float] | None:
+    if not (
+        isinstance(bbox, list)
+        and len(bbox) >= 4
+        and all(
+            isinstance(point, list)
+            and len(point) >= 2
+            and isinstance(point[0], (int, float))
+            and isinstance(point[1], (int, float))
+            for point in bbox
+        )
+    ):
+        return None
+    xs = [float(point[0]) for point in bbox]
+    ys = [float(point[1]) for point in bbox]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _bbox_center(bbox: Any) -> tuple[float, float] | None:
     if not (
         isinstance(bbox, list)

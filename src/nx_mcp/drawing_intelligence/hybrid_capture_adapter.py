@@ -21,6 +21,7 @@ from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
 )
+from .view_metric_calibration import derive_view_metric_calibrations
 
 
 class HybridCaptureAdapterError(ValueError):
@@ -727,6 +728,19 @@ def adapt_hybrid_ocr_report(
         for candidate in candidates
         if isinstance(candidate, dict) and candidate.get("accepted_token") is not None
     ]
+    overall_dimensions = {
+        {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
+        for fact in context.overall_dimension_facts
+    }
+    calibrations = derive_view_metric_calibrations(
+        candidates=[item for item in candidates if isinstance(item, dict)],
+        region_views={
+            item.region_id: item.view_kind
+            for item in context.region_views
+        },
+        overall_dimensions=overall_dimensions,
+    )
+
     observations = [
         {
             "kind": "hybrid_ocr_coverage_ledger",
@@ -742,6 +756,11 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_engineering_callout_ledger",
             "schema": "1.0",
             "items": callout_ledger,
+        },
+        {
+            "kind": "hybrid_view_metric_calibration_ledger",
+            "schema": "1.0",
+            "items": calibrations,
         },
     ]
 

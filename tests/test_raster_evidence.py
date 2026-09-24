@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _adapt_probe,
+    _witness_line_evidence,
     extract_raw_evidence,
     fragment_length_limits,
 )
@@ -139,3 +140,34 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         all("source_lines" in witness for witness in item["witness_line_evidence"])
         for item in raw["dimension_geometry_candidates"]
     )
+
+def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():
+    evidence = _witness_line_evidence(
+        [50.0],
+        [
+            ("vertical", 50.0, 10, 90),
+            ("vertical", 50.0, 210, 260),
+        ],
+        dimension_axis=80.0,
+        witness_axis_tolerance=2.0,
+        cross_tolerance=5.0,
+        region_bbox=[0, 0, 100, 100],
+        region_margin=5.0,
+    )
+
+    assert evidence == [
+        {
+            "witness_index": 0,
+            "position_px": 50.0,
+            "source_lines": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 50.0,
+                    "span_px": [10, 90],
+                    "span_length_px": 80,
+                    "crosses_dimension_axis": True,
+                }
+            ],
+        }
+    ]
+

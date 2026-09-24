@@ -264,4 +264,3 @@ def test_small_circle_detection_channel_preserves_small_feature_inventory():
     assert any(abs(cx - 110) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)
     assert any(abs(cx - 150) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)
     assert any(abs(cx - 300) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)
-

@@ -845,7 +845,6 @@ def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_confl
     assert by_ref["R1.structural.horizontal.004"]["coordinate_mm"] == pytest.approx(66.0)
 
 
-
 def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated():
     report = _report()
     report["regions"] = [

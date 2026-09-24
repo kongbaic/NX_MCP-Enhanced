@@ -562,6 +562,10 @@ def main(argv: list[str] | None = None) -> int:
             "annotation_line_candidates",
             [],
         ),
+        "structural_profile_inventory": visual_aid.get(
+            "structural_profile_inventory",
+            [],
+        ),
         "coverage": coverage,
         "candidates": results,
     }

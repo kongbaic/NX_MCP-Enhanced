@@ -291,9 +291,7 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     ]
 
     ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_engineering_callout_ledger"
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
     )
     assert ledger["items"][0]["facts"] == {
         "thread_spec": "M6",
@@ -307,9 +305,7 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     assert ledger["items"][1]["region_candidates"] == ["R2"]
 
     callout_unresolved = [
-        item
-        for item in partial.unresolved
-        if item.field == "engineering_callout_geometry_binding"
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
     ]
     assert len(callout_unresolved) == 2
     assert all(item.kind == "feature_inventory" for item in callout_unresolved)
@@ -355,9 +351,7 @@ def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
         ("R1.C1", "fit", "H7"),
     ]
     assert not [
-        item
-        for item in partial.unresolved
-        if item.field == "engineering_callout_geometry_binding"
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
     ]
 
     ledger = next(
@@ -397,10 +391,7 @@ def test_adapter_does_not_bind_nearby_callout_without_annotation_geometry():
 
     assert partial.values == []
     unresolved = [
-        item
-        for item in partial.unresolved
-        if item.field == "engineering_callout_geometry_binding"
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
     ]
     assert len(unresolved) == 1
     assert unresolved[0].kind == "feature_inventory"
-

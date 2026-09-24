@@ -78,11 +78,13 @@ def _number(value: Any) -> float | None:
 
 
 def _bounds(graph: EvidenceGraph, axis: str) -> tuple[float, float]:
+    """Reader-local engineering bounds use overall_min=0 on every axis."""
+
     dims = graph.overall_dimensions
     if axis == "X":
-        return (-dims.length_x / 2.0, dims.length_x / 2.0)
+        return (0.0, dims.length_x)
     if axis == "Y":
-        return (-dims.width_y / 2.0, dims.width_y / 2.0)
+        return (0.0, dims.width_y)
     return (0.0, dims.height_z)
 
 

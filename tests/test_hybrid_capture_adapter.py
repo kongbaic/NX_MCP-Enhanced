@@ -635,184 +635,71 @@ def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
     assert dimension.unresolved_reason is not None
 
 
-def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
-    report = _report()
-    candidate = report["candidates"][0]
-    candidate["accepted_token"] = "40"
-    candidate["global_assignments"][0]["token"] = "40"
-    candidate["witness_anchor_evidence"] = [
-        {
-            "witness_index": 0,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.001",
-                    "position_px": 100.0,
-                    "source_orientation": "vertical",
-                    "span_px": [20, 180],
-                    "relative_extreme_side": "min",
-                    "candidate_only": True,
-                    "ownership_claimed": False,
-                    "distance_px": 0.0,
-                    "distance_local_norm": 0.0,
-                }
-            ],
-        },
-        {
-            "witness_index": 1,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.003",
-                    "position_px": 200.0,
-                    "source_orientation": "vertical",
-                    "span_px": [20, 180],
-                    "relative_extreme_side": "max",
-                    "candidate_only": True,
-                    "ownership_claimed": False,
-                    "distance_px": 0.0,
-                    "distance_local_norm": 0.0,
-                }
-            ],
-        },
-    ]
-    context = HybridAdapterContext.model_validate(
-        {
-            "schema": "hybrid-adapter-context-v1",
-            "region_views": [
-                {
-                    "region_id": "R1",
-                    "view_kind": "front",
-                    "evidence": ["structural:R1"],
-                },
-                {
-                    "region_id": "R2",
-                    "view_kind": "side",
-                    "evidence": ["structural:R2"],
-                },
-            ],
-            "overall_dimension_facts": [
-                {
-                    "axis": "X",
-                    "value": 40,
-                    "evidence": ["overall:X"],
-                }
-            ],
-        }
+def test_adapter_never_emits_pixel_derived_metric_ledgers():
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
     )
 
-    partial = adapt_hybrid_ocr_report(report, context)
-
-    ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_view_metric_calibration_ledger"
-    )
-    assert ledger["schema"] == "1.0"
-    assert len(ledger["items"]) == 1
-    calibration = ledger["items"][0]
-    assert calibration["region_id"] == "R1"
-    assert calibration["axis"] == "X"
-    assert calibration["min_anchor"]["coordinate_mm"] == -20
-    assert calibration["max_anchor"]["coordinate_mm"] == 20
-    assert calibration["basis"] == "overall_dimension_with_opposite_profile_extremes"
-
-    metric_ledger = next(
-        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
-    )
-    assert metric_ledger["schema"] == "1.0"
-    assert {item["ref"]: item["coordinate_mm"] for item in metric_ledger["items"]} == {
-        "R1.structural.vertical.001": -20.0,
-        "R1.structural.vertical.003": 20.0,
+    forbidden = {
+        "hybrid_view_metric_calibration_ledger",
+        "hybrid_metric_profile_edge_ledger",
+        "hybrid_metric_profile_segment_ledger",
+        "hybrid_metric_circle_primitive_ledger",
     }
-
-
-def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_conflict():
-    report = _report()
-    dg17 = next(item for item in report["candidates"] if item["candidate_id"] == "DG17")
-    dg17.update(
+    assert forbidden.isdisjoint(
         {
-            "global_proposal_token": "6",
-            "decision_reason": "global_local_token_disagreement",
-            "wide_local_linear_tokens": ["66"],
-            "global_assignments": [
-                {
-                    "source_item_index": 9,
-                    "text": "6",
-                    "token": "6",
-                    "perpendicular_distance_px": 19.0,
-                    "bbox": [
-                        [7.0, 180.0],
-                        [47.0, 180.0],
-                        [47.0, 220.0],
-                        [7.0, 220.0],
-                    ],
-                    "confidence": 0.99,
-                }
-            ],
-            "witness_positions_px": [100.0, 300.0],
-            "witness_anchor_evidence": [
-                {
-                    "witness_index": 0,
-                    "position_px": 100.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.001",
-                            "position_px": 100.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [20, 180],
-                            "relative_extreme_side": "min",
-                        }
-                    ],
-                },
-                {
-                    "witness_index": 1,
-                    "position_px": 300.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.004",
-                            "position_px": 300.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [20, 180],
-                            "relative_extreme_side": "max",
-                        }
-                    ],
-                },
-            ],
-        }
-    )
-    context = HybridAdapterContext.model_validate(
-        {
-            "schema": "hybrid-adapter-context-v1",
-            "region_views": [
-                {
-                    "region_id": "R1",
-                    "view_kind": "front",
-                    "evidence": ["structural:R1"],
-                },
-                {
-                    "region_id": "R2",
-                    "view_kind": "side",
-                    "evidence": ["structural:R2"],
-                },
-            ],
-            "overall_dimension_facts": [
-                {
-                    "axis": "Z",
-                    "value": 66,
-                    "evidence": ["overall:Z"],
-                }
-            ],
+            item.get("kind")
+            for item in partial.observations
+            if isinstance(item, dict)
         }
     )
 
-    partial = adapt_hybrid_ocr_report(report, context)
+
+def test_adapter_preserves_ocr_conflict_without_pixel_metric_fallback():
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
 
     assert "R1.DG17" not in {item.key for item in partial.dimensions}
     blockers = [
@@ -821,31 +708,15 @@ def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_confl
         if item.required_for_modeling and item.field == "dimension_value_candidate"
     ]
     assert len(blockers) == 1
-
-    ledger = next(
-        item
+    assert not any(
+        str(item.get("kind", "")).startswith("hybrid_metric_")
+        or item.get("kind") == "hybrid_view_metric_calibration_ledger"
         for item in partial.observations
-        if item["kind"] == "hybrid_view_metric_calibration_ledger"
+        if isinstance(item, dict)
     )
-    assert len(ledger["items"]) == 1
-    calibration = ledger["items"][0]
-    assert calibration["axis"] == "Z"
-    assert calibration["min_anchor"]["coordinate_mm"] == 0.0
-    assert calibration["max_anchor"]["coordinate_mm"] == 66.0
-    assert calibration["ocr_conflict_preserved"] is True
-    assert calibration["supporting_local_token"] == "66"
-
-    metric_ledger = next(
-        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
-    )
-    by_ref = {item["ref"]: item for item in metric_ledger["items"]}
-    assert by_ref["R1.structural.horizontal.001"]["axis"] == "Z"
-    assert by_ref["R1.structural.horizontal.001"]["coordinate_mm"] == pytest.approx(0.0)
-    assert by_ref["R1.structural.horizontal.004"]["axis"] == "Z"
-    assert by_ref["R1.structural.horizontal.004"]["coordinate_mm"] == pytest.approx(66.0)
 
 
-def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated():
+def test_adapter_does_not_turn_circle_or_profile_pixels_into_engineering_coordinates():
     report = _report()
     report["regions"] = [
         {
@@ -858,349 +729,98 @@ def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated
                     "rings": [{"radius_px": 30}],
                 }
             ],
-        }
-    ]
-
-    dg12 = next(item for item in report["candidates"] if item["candidate_id"] == "DG12")
-    dg12["accepted_token"] = "40"
-    dg12["global_assignments"][0]["token"] = "40"
-    dg12["witness_positions_px"] = [100.0, 300.0]
-    dg12["witness_anchor_evidence"] = [
-        {
-            "witness_index": 0,
-            "position_px": 100.0,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.001",
-                    "position_px": 100.0,
-                    "source_orientation": "vertical",
-                    "span_px": [40, 260],
-                    "relative_extreme_side": "min",
-                }
-            ],
         },
         {
-            "witness_index": 1,
-            "position_px": 300.0,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.003",
-                    "position_px": 300.0,
-                    "source_orientation": "vertical",
-                    "span_px": [40, 260],
-                    "relative_extreme_side": "max",
-                }
-            ],
-        },
-    ]
-
-    dg17 = next(item for item in report["candidates"] if item["candidate_id"] == "DG17")
-    dg17.update(
-        {
-            "global_proposal_token": "6",
-            "decision_reason": "global_local_token_disagreement",
-            "wide_local_linear_tokens": ["66"],
-            "global_assignments": [
-                {
-                    "source_item_index": 9,
-                    "text": "6",
-                    "token": "6",
-                    "perpendicular_distance_px": 19.0,
-                    "bbox": [
-                        [7.0, 130.0],
-                        [47.0, 130.0],
-                        [47.0, 170.0],
-                        [7.0, 170.0],
-                    ],
-                    "confidence": 0.99,
-                }
-            ],
-            "witness_positions_px": [80.0, 220.0],
-            "witness_anchor_evidence": [
-                {
-                    "witness_index": 0,
-                    "position_px": 80.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.001",
-                            "position_px": 80.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [95, 305],
-                            "relative_extreme_side": "min",
-                        }
-                    ],
-                },
-                {
-                    "witness_index": 1,
-                    "position_px": 220.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.004",
-                            "position_px": 220.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [95, 305],
-                            "relative_extreme_side": "max",
-                        }
-                    ],
-                },
-            ],
-        }
-    )
-
-    context = HybridAdapterContext.model_validate(
-        {
-            "schema": "hybrid-adapter-context-v1",
-            "region_views": [
-                {
-                    "region_id": "R1",
-                    "view_kind": "front",
-                    "evidence": ["structural:R1"],
-                },
-                {
-                    "region_id": "R2",
-                    "view_kind": "side",
-                    "evidence": ["structural:R2"],
-                },
-            ],
-            "overall_dimension_facts": [
-                {"axis": "X", "value": 40, "evidence": ["overall:X"]},
-                {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
-            ],
-        }
-    )
-
-    partial = adapt_hybrid_ocr_report(report, context)
-
-    segment_ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_metric_profile_segment_ledger"
-    )
-    assert len(segment_ledger["junctions"]) == 4
-    assert len(segment_ledger["items"]) == 4
-    assert segment_ledger["unresolved_edges"] == []
-
-    circle_ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_metric_circle_primitive_ledger"
-    )
-    assert circle_ledger["unresolved"] == []
-    assert len(circle_ledger["items"]) == 1
-    circle = circle_ledger["items"][0]
-    assert circle["entity_key"] == "R1.C1"
-    assert circle["axis"] == "Y"
-    assert set(circle["center_mm"]) == {"X", "Z"}
-    assert circle["diameter_mm"] is None
-    assert circle["pixel_radius_used_for_engineering_size"] is False
-
-    assert "R1.DG17" not in {item.key for item in partial.dimensions}
-    assert any(
-        item.required_for_modeling and item.field == "dimension_value_candidate"
-        for item in partial.unresolved
-    )
-
-
-def test_adapter_full_profile_inventory_adds_unreferenced_edge_to_metric_geometry():
-    report = _report()
-    report["regions"] = [
-        {
-            "region_id": "R1",
-            "bbox_px": [0, 0, 400, 300],
+            "region_id": "R2",
+            "bbox_px": [400, 0, 300, 300],
             "circle_groups": [],
-        }
-    ]
-
-    dg12 = next(item for item in report["candidates"] if item["candidate_id"] == "DG12")
-    dg12["accepted_token"] = "40"
-    dg12["global_assignments"][0]["token"] = "40"
-    dg12["witness_positions_px"] = [100.0, 300.0]
-    dg12["witness_anchor_evidence"] = [
-        {
-            "witness_index": 0,
-            "position_px": 100.0,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.001",
-                    "position_px": 100.0,
-                    "source_orientation": "vertical",
-                    "span_px": [40, 260],
-                    "relative_extreme_side": "min",
-                }
-            ],
-        },
-        {
-            "witness_index": 1,
-            "position_px": 300.0,
-            "axis": "x",
-            "nearest_anchors": [
-                {
-                    "kind": "profile_edge_candidate",
-                    "ref": "R1.structural.vertical.003",
-                    "position_px": 300.0,
-                    "source_orientation": "vertical",
-                    "span_px": [40, 260],
-                    "relative_extreme_side": "max",
-                }
-            ],
         },
     ]
 
-    dg17 = next(item for item in report["candidates"] if item["candidate_id"] == "DG17")
-    dg17.update(
-        {
-            "global_proposal_token": "6",
-            "decision_reason": "global_local_token_disagreement",
-            "wide_local_linear_tokens": ["66"],
-            "global_assignments": [
-                {
-                    "source_item_index": 9,
-                    "text": "6",
-                    "token": "6",
-                    "perpendicular_distance_px": 19.0,
-                    "bbox": [
-                        [7.0, 130.0],
-                        [47.0, 130.0],
-                        [47.0, 170.0],
-                        [7.0, 170.0],
-                    ],
-                    "confidence": 0.99,
-                }
-            ],
-            "witness_positions_px": [80.0, 220.0],
-            "witness_anchor_evidence": [
-                {
-                    "witness_index": 0,
-                    "position_px": 80.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.001",
-                            "position_px": 80.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [95, 305],
-                            "relative_extreme_side": "min",
-                        }
-                    ],
-                },
-                {
-                    "witness_index": 1,
-                    "position_px": 220.0,
-                    "axis": "y",
-                    "nearest_anchors": [
-                        {
-                            "kind": "profile_edge_candidate",
-                            "ref": "R1.structural.horizontal.004",
-                            "position_px": 220.0,
-                            "source_orientation": "horizontal",
-                            "span_px": [95, 305],
-                            "relative_extreme_side": "max",
-                        }
-                    ],
-                },
-            ],
-        }
+    partial = adapt_hybrid_ocr_report(
+        report,
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
     )
 
+    serialized = partial.model_dump(mode="json")
+    text = repr(serialized)
+    for forbidden_key in (
+        "mm_per_px",
+        "coordinate_mm",
+        "center_mm",
+        "point_mm",
+        "fixed_coordinate_mm",
+    ):
+        assert forbidden_key not in text
+
+
+def test_full_profile_inventory_remains_visual_evidence_not_metric_truth():
+    report = _report()
     report["structural_profile_inventory"] = [
         {
             "region_id": "R1",
             "kind": "profile_edge_candidate",
-            "ref": "R1.structural.vertical.001",
-            "position_px": 100.0,
-            "source_orientation": "vertical",
-            "span_px": [40, 260],
-        },
-        {
-            "region_id": "R1",
-            "kind": "profile_edge_candidate",
-            "ref": "R1.structural.vertical.002",
+            "ref": "R1.structural.vertical.UNREFERENCED",
             "position_px": 200.0,
             "source_orientation": "vertical",
             "span_px": [40, 260],
-        },
-        {
-            "region_id": "R1",
-            "kind": "profile_edge_candidate",
-            "ref": "R1.structural.vertical.003",
-            "position_px": 300.0,
-            "source_orientation": "vertical",
-            "span_px": [40, 260],
-        },
-        {
-            "region_id": "R1",
-            "kind": "profile_edge_candidate",
-            "ref": "R1.structural.horizontal.001",
-            "position_px": 80.0,
-            "source_orientation": "horizontal",
-            "span_px": [95, 305],
-        },
-        {
-            "region_id": "R1",
-            "kind": "profile_edge_candidate",
-            "ref": "R1.structural.horizontal.004",
-            "position_px": 220.0,
-            "source_orientation": "horizontal",
-            "span_px": [95, 305],
-        },
+        }
     ]
 
-    context = HybridAdapterContext.model_validate(
-        {
-            "schema": "hybrid-adapter-context-v1",
-            "region_views": [
-                {
-                    "region_id": "R1",
-                    "view_kind": "front",
-                    "evidence": ["structural:R1"],
-                },
-                {
-                    "region_id": "R2",
-                    "view_kind": "side",
-                    "evidence": ["structural:R2"],
-                },
-            ],
-            "overall_dimension_facts": [
-                {"axis": "X", "value": 40, "evidence": ["overall:X"]},
-                {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
-            ],
+    partial = adapt_hybrid_ocr_report(
+        report,
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
+
+    assert not any(
+        item.get("kind")
+        in {
+            "hybrid_view_metric_calibration_ledger",
+            "hybrid_metric_profile_edge_ledger",
+            "hybrid_metric_profile_segment_ledger",
+            "hybrid_metric_circle_primitive_ledger",
         }
-    )
-
-    partial = adapt_hybrid_ocr_report(report, context)
-
-    metric_ledger = next(
-        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
-    )
-    assert {item["ref"] for item in metric_ledger["items"]} == {
-        "R1.structural.vertical.001",
-        "R1.structural.vertical.002",
-        "R1.structural.vertical.003",
-        "R1.structural.horizontal.001",
-        "R1.structural.horizontal.004",
-    }
-    middle = next(
-        item for item in metric_ledger["items"] if item["ref"] == "R1.structural.vertical.002"
-    )
-    assert middle["coordinate_mm"] == pytest.approx(0.0)
-    assert middle["source_scope"] == "full_structural_profile_inventory"
-
-    segment_ledger = next(
-        item
         for item in partial.observations
-        if item["kind"] == "hybrid_metric_profile_segment_ledger"
+        if isinstance(item, dict)
     )
-    assert len(segment_ledger["junctions"]) == 6
-    assert len(segment_ledger["items"]) == 7
-    assert segment_ledger["unresolved_edges"] == []
+

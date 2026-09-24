@@ -755,7 +755,7 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
             if endpoint.role == "entity_center" and endpoint.basis is None:
                 errors.append(
                     f"dimension {dimension.id!r} entity_center endpoint "
-                    "requires centerline/center_mark/explicit_midline/circle_center basis"
+                    "requires centerline/center_mark/explicit_midline basis, or circle_center basis"
                 )
 
     entity_fields: dict[str, set[str]] = {}

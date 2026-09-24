@@ -31,6 +31,45 @@ def _overall_value(overall_dimensions: dict[str, float], axis: str) -> float | N
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _conflict_backed_overall_probe(
+    candidate: dict[str, Any],
+    *,
+    overall_value: float,
+    relative_tolerance: float,
+) -> tuple[dict[str, Any], str] | None:
+    """Build a spatial-only probe for a conflicting OCR overall dimension.
+
+    The OCR conflict remains unresolved.  The whole-drawing proposal is reused
+    only to select the adjacent witness pair, while the metric value comes from
+    independent overall-dimension context.  A calibration is eligible only when
+    one and only one local linear token agrees with that overall value.
+    """
+
+    if candidate.get("accepted_token") is not None:
+        return None
+    if candidate.get("decision_reason") != "global_local_token_disagreement":
+        return None
+
+    global_token = candidate.get("global_proposal_token")
+    local_tokens = candidate.get("wide_local_linear_tokens")
+    if not isinstance(global_token, str) or not global_token:
+        return None
+    if not isinstance(local_tokens, list) or len(local_tokens) != 1:
+        return None
+
+    local_token = local_tokens[0]
+    local_value = _linear_value(local_token)
+    if local_value is None:
+        return None
+
+    tolerance = max(abs(overall_value) * relative_tolerance, 1e-9)
+    if abs(local_value - overall_value) > tolerance:
+        return None
+
+    spatial_probe = {**candidate, "accepted_token": global_token}
+    return spatial_probe, str(local_token)
+
+
 def _profile_extreme(
     endpoint: dict[str, Any],
 ) -> tuple[str, float, str] | None:
@@ -184,13 +223,32 @@ def derive_view_metric_calibrations(
 
         dimension_value = _linear_value(candidate.get("accepted_token"))
         overall_value = _overall_value(overall_dimensions, axis)
-        if dimension_value is None or overall_value is None:
-            continue
-        tolerance = max(abs(overall_value) * relative_tolerance, 1e-9)
-        if abs(dimension_value - overall_value) > tolerance:
+        if overall_value is None:
             continue
 
-        endpoint_evidence = derive_dimension_endpoint_candidates(candidate)
+        calibration_basis = "overall_dimension_with_opposite_profile_extremes"
+        endpoint_candidate = candidate
+        supporting_local_token: str | None = None
+
+        if dimension_value is None:
+            conflict_probe = _conflict_backed_overall_probe(
+                candidate,
+                overall_value=overall_value,
+                relative_tolerance=relative_tolerance,
+            )
+            if conflict_probe is None:
+                continue
+            endpoint_candidate, supporting_local_token = conflict_probe
+            dimension_value = overall_value
+            calibration_basis = (
+                "overall_dimension_with_conflict_local_match_and_opposite_profile_extremes"
+            )
+        else:
+            tolerance = max(abs(overall_value) * relative_tolerance, 1e-9)
+            if abs(dimension_value - overall_value) > tolerance:
+                continue
+
+        endpoint_evidence = derive_dimension_endpoint_candidates(endpoint_candidate)
         endpoints = endpoint_evidence.get("endpoints")
         if not isinstance(endpoints, list) or len(endpoints) != 2:
             continue
@@ -241,7 +299,17 @@ def derive_view_metric_calibrations(
                 },
                 "mm_per_px": mm_per_px,
                 "offset_mm": offset_mm,
-                "basis": "overall_dimension_with_opposite_profile_extremes",
+                "basis": calibration_basis,
+                **(
+                    {
+                        "dimension_value_source": "overall_dimension_context",
+                        "spatial_label_token": candidate.get("global_proposal_token"),
+                        "supporting_local_token": supporting_local_token,
+                        "ocr_conflict_preserved": True,
+                    }
+                    if supporting_local_token is not None
+                    else {}
+                ),
             }
         )
 

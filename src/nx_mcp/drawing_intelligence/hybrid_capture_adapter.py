@@ -276,50 +276,6 @@ def _circle_entities(
     return output
 
 
-def _parallel_pair_entities(
-    report: dict[str, Any],
-    view_lookup: dict[str, HybridRegionView],
-) -> list[ObservationEntity]:
-    regions = report.get("regions", [])
-    if not isinstance(regions, list):
-        return []
-
-    output: list[ObservationEntity] = []
-    seen: set[str] = set()
-    for region in regions:
-        if not isinstance(region, dict):
-            continue
-        region_id = str(region.get("region_id") or "")
-        if region_id not in view_lookup:
-            continue
-        pairs = region.get("parallel_dash_pair_candidates", [])
-        if not isinstance(pairs, list):
-            continue
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            pair_id = str(pair.get("pair_id") or "")
-            if not pair_id:
-                continue
-            key = f"{region_id}.{pair_id}"
-            if key in seen:
-                raise HybridCaptureAdapterError(
-                    f"duplicate Hybrid parallel-pair entity key {key!r}"
-                )
-            seen.add(key)
-            output.append(
-                ObservationEntity(
-                    key=key,
-                    view_key=f"view.{region_id}",
-                    shape="profile",
-                    cross_view_disposition=None,
-                    evidence=[f"hybrid:geometry:{region_id}:{pair_id}"],
-                    required_for_modeling=False,
-                )
-            )
-    return output
-
-
 def _engineering_callout_routing(
     report: dict[str, Any],
 ) -> tuple[
@@ -520,10 +476,7 @@ def adapt_hybrid_ocr_report(
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
-    entities = [
-        *_circle_entities(report, view_lookup),
-        *_parallel_pair_entities(report, view_lookup),
-    ]
+    entities = _circle_entities(report, view_lookup)
 
     for raw_candidate in candidates:
         if not isinstance(raw_candidate, dict):

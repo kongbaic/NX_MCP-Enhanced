@@ -775,7 +775,7 @@ def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unres
     assert result.ok
 
 
-def test_overall_center_datum_alignment_compiles_xy_to_zero_and_z_to_half_height():
+def test_overall_center_datum_alignment_compiles_all_axes_to_half_extent():
     graph = EvidenceGraph(
         overall_dimensions=OverallDimensions(length_x=120, width_y=80, height_z=32),
         datum_alignments=[
@@ -803,8 +803,8 @@ def test_overall_center_datum_alignment_compiles_xy_to_zero_and_z_to_half_height
     compiled = compile_evidence_graph(graph)
     values = {item.target: item.value for item in compiled.direct_values}
 
-    assert values["feature:F_A.centerline.x"] == 0
-    assert values["feature:F_A.centerline.y"] == 0
+    assert values["feature:F_A.centerline.x"] == 60
+    assert values["feature:F_A.centerline.y"] == 40
     assert values["feature:F_A.centerline.z"] == 16
 
 

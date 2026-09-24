@@ -742,6 +742,37 @@ def _engineering_callout_routing(
                 )
             )
 
+        if (
+            binding.get("status") == "dimension_backed"
+            and "diameter" in safe_facts
+            and not any(
+                key in parsed["facts"]
+                for key in {
+                    "through",
+                    "depth",
+                    "thread_depth",
+                    "recess_depth",
+                }
+            )
+        ):
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="termination",
+                    reason=(
+                        "Diameter and projection geometry are known, but the "
+                        "cylindrical feature has no explicit through/depth "
+                        "termination evidence."
+                    ),
+                    entity_keys=[entity_key],
+                    field="termination",
+                    evidence=[
+                        *evidence,
+                        f"hybrid:{binding.get('candidate_id')}:geometry",
+                    ],
+                    required_for_modeling=True,
+                )
+            )
+
         unsupported_explicit_facts = {
             key: value for key, value in parsed["facts"].items() if key not in safe_facts
         }

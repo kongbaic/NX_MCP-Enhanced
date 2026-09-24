@@ -4,6 +4,7 @@ from typing import Any
 
 from .dimension_candidate_reducer import reduce_dimension_candidates
 from .dimension_witness_anchors import enrich_reduced_dimension_candidates
+from .structural_profile_anchors import derive_structural_profile_anchors
 
 _HORIZONTAL_BANDS = ("top", "middle", "bottom")
 _VERTICAL_BANDS = ("left", "middle", "right")
@@ -113,6 +114,33 @@ def build_reader_visual_aid(
             }
         )
 
+    structural_profile_inventory: list[dict[str, Any]] = []
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        region_id = region.get("region_id")
+        if not isinstance(region_id, str) or not region_id:
+            continue
+        for dimension_orientation in ("horizontal", "vertical"):
+            for anchor in derive_structural_profile_anchors(
+                raw_evidence,
+                region_id,
+                dimension_orientation,
+            ):
+                structural_profile_inventory.append(
+                    {
+                        "region_id": region_id,
+                        **anchor,
+                    }
+                )
+    structural_profile_inventory.sort(
+        key=lambda item: (
+            str(item.get("region_id") or ""),
+            str(item.get("source_orientation") or ""),
+            str(item.get("ref") or ""),
+        )
+    )
+
     bucket_sizes = [int(item.get("candidate_count", 0)) for item in candidate_buckets]
 
     return {
@@ -127,6 +155,7 @@ def build_reader_visual_aid(
             [],
         ),
         "candidate_buckets": candidate_buckets,
+        "structural_profile_inventory": structural_profile_inventory,
         "summary": {
             "region_count": len(compact_regions),
             "bucket_count": len(candidate_buckets),
@@ -136,6 +165,7 @@ def build_reader_visual_aid(
             "raw_dimension_candidate_count": len(
                 raw_evidence.get("dimension_geometry_candidates", [])
             ),
+            "structural_profile_edge_count": len(structural_profile_inventory),
         },
         "rules": {
             "bucket_key": "region_id + orientation + normalized_position_band",

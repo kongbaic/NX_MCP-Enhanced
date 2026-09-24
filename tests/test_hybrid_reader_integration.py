@@ -27,6 +27,30 @@ def _minimal_hybrid_report() -> dict:
             "unassigned_linear_observations": [],
             "local_only_linear_observations": [],
         },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 400, 400],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [200, 200],
+                        "rings": [{"radius_px": 40}],
+                    }
+                ],
+            },
+            {
+                "region_id": "R2",
+                "bbox_px": [500, 0, 300, 400],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [650, 200],
+                        "rings": [{"radius_px": 20}],
+                    }
+                ],
+            },
+        ],
         "candidates": [
             {
                 "candidate_id": "DG12",
@@ -56,4 +80,6 @@ def test_shkss_fixture_drives_hybrid_to_contract_valid_capture():
     assert capture.dimensions[0].value == 24
     assert capture.dimensions[0].axis == "X"
     assert capture.dimensions[0].endpoints[0].role == "unresolved"
+    assert len(capture.entities) == 2
+    assert all(item.required_for_modeling is False for item in capture.entities)
     assert validate_reader_capture_contract(capture) == []

@@ -64,7 +64,7 @@ def _raw() -> dict[str, object]:
     }
 
 
-def test_structural_profile_anchors_find_extremes_and_internal_shoulder():
+def test_structural_profile_anchors_stay_geometry_only():
     anchors = derive_structural_profile_anchors(
         _raw(),
         "R1",
@@ -73,11 +73,12 @@ def test_structural_profile_anchors_find_extremes_and_internal_shoulder():
 
     by_position = {round(float(anchor["position_px"]), 3): anchor for anchor in anchors}
 
-    assert by_position[20.0]["kind"] == "silhouette_extreme_candidate"
-    assert by_position[20.0]["extreme_side"] == "min"
-    assert by_position[80.0]["kind"] == "step_or_shoulder_candidate"
-    assert by_position[160.0]["kind"] == "silhouette_extreme_candidate"
-    assert by_position[160.0]["extreme_side"] == "max"
+    assert by_position[20.0]["kind"] == "profile_edge_candidate"
+    assert by_position[20.0]["relative_extreme_side"] == "min"
+    assert by_position[80.0]["kind"] == "profile_edge_candidate"
+    assert "relative_extreme_side" not in by_position[80.0]
+    assert by_position[160.0]["kind"] == "profile_edge_candidate"
+    assert by_position[160.0]["relative_extreme_side"] == "max"
 
     assert 120.0 not in by_position
     assert all(anchor["candidate_only"] is True for anchor in anchors)
@@ -115,9 +116,11 @@ def test_structural_profile_anchors_flow_into_witness_evidence():
         {item["kind"] for item in witness["nearest_anchors"]} for witness in evidence
     ]
 
-    assert "silhouette_extreme_candidate" in kinds_by_witness[0]
-    assert "step_or_shoulder_candidate" in kinds_by_witness[1]
-    assert "silhouette_extreme_candidate" in kinds_by_witness[2]
+    assert kinds_by_witness == [
+        {"profile_edge_candidate"},
+        {"profile_edge_candidate"},
+        {"profile_edge_candidate"},
+    ]
     assert result["anchor_schema_version"] == "1.1"
 
 

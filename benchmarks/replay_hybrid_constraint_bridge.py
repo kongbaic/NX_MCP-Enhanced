@@ -15,6 +15,7 @@ from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
     adapt_hybrid_ocr_report,
 )
+from nx_mcp.drawing_intelligence.raster_evidence import extract_raw_evidence
 from nx_mcp.drawing_intelligence.reader_observation_finalizer import (
     ReaderObservationFinalizationError,
     finalize_partial_reader_observations,
@@ -52,6 +53,7 @@ def replay_hybrid_constraint_bridge(
     raw_evidence: dict[str, Any],
     hybrid_report: dict[str, Any],
     context_payload: dict[str, Any],
+    raster_path: Path | None = None,
 ) -> dict[str, Any]:
     """Replay current Reader bridge without re-running OCR.
 
@@ -60,7 +62,37 @@ def replay_hybrid_constraint_bridge(
     evidence before running Adapter -> Capture -> Linker -> Compiler -> Resolver.
     """
 
-    visual_aid = build_reader_visual_aid(raw_evidence)
+    replay_raw = copy.deepcopy(raw_evidence)
+    annotation_geometry_rebuilt = False
+    current_annotation_count = len(
+        replay_raw.get("annotation_line_candidates", [])
+        if isinstance(replay_raw.get("annotation_line_candidates"), list)
+        else []
+    )
+    if raster_path is not None:
+        current_geometry = extract_raw_evidence(raster_path)
+        stable_image = replay_raw.get("image", {})
+        current_image = current_geometry.get("image", {})
+        if (
+            isinstance(stable_image, dict)
+            and isinstance(current_image, dict)
+            and (
+                stable_image.get("width") != current_image.get("width")
+                or stable_image.get("height") != current_image.get("height")
+            )
+        ):
+            raise ValueError(
+                "raster dimensions do not match the stable raw-evidence source"
+            )
+        replay_raw["annotation_line_candidates"] = copy.deepcopy(
+            current_geometry.get("annotation_line_candidates", [])
+        )
+        current_annotation_count = len(
+            replay_raw["annotation_line_candidates"]
+        )
+        annotation_geometry_rebuilt = True
+
+    visual_aid = build_reader_visual_aid(replay_raw)
     report = copy.deepcopy(hybrid_report)
     report["regions"] = copy.deepcopy(visual_aid.get("regions", []))
     report["annotation_line_candidates"] = copy.deepcopy(
@@ -79,6 +111,8 @@ def replay_hybrid_constraint_bridge(
     result: dict[str, Any] = {
         "schema": "hybrid-constraint-bridge-replay-v1",
         "ocr_reexecuted": False,
+        "annotation_geometry_rebuilt_from_raster": annotation_geometry_rebuilt,
+        "annotation_line_candidate_count": current_annotation_count,
         "hybrid_schema": report.get("schema"),
         "candidate_count": len(report.get("candidates", [])),
         "accepted_dimension_keys": sorted(item.key for item in partial.dimensions),
@@ -148,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--raw", required=True)
     parser.add_argument("--hybrid", required=True)
     parser.add_argument("--context", required=True)
+    parser.add_argument("--raster")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
 
@@ -155,12 +190,14 @@ def main(argv: list[str] | None = None) -> int:
     hybrid_path = Path(args.hybrid).resolve()
     context_path = Path(args.context).resolve()
     out_path = Path(args.out).resolve()
+    raster_path = Path(args.raster).resolve() if args.raster else None
 
     try:
         result = replay_hybrid_constraint_bridge(
             raw_evidence=_load(raw_path),
             hybrid_report=_load(hybrid_path),
             context_payload=_load(context_path),
+            raster_path=raster_path,
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
@@ -191,6 +228,12 @@ def main(argv: list[str] | None = None) -> int:
                 "written": True,
                 "out": str(out_path),
                 "ocr_reexecuted": False,
+                "annotation_geometry_rebuilt_from_raster": result[
+                    "annotation_geometry_rebuilt_from_raster"
+                ],
+                "annotation_line_candidate_count": result[
+                    "annotation_line_candidate_count"
+                ],
                 "accepted_dimension_count": len(
                     result["accepted_dimension_keys"]
                 ),

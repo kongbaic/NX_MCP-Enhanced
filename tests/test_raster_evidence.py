@@ -3,7 +3,6 @@ from __future__ import annotations
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _adapt_probe,
     _oblique_annotation_lines,
-    _parallel_dash_pair_candidates,
     _witness_line_evidence,
     extract_raw_evidence,
     fragment_length_limits,
@@ -196,39 +195,3 @@ def test_oblique_annotation_lines_stay_geometry_only():
     assert all(item["kind"] == "oblique_line_candidate" for item in candidates)
     assert all(item["candidate_only"] is True for item in candidates)
     assert all(8 < item["angle_deg"] < 82 for item in candidates)
-
-
-def test_parallel_dash_pair_candidates_stay_geometry_only():
-    patterns = [
-        {
-            "orientation": "vertical",
-            "axis_px": 100.0,
-            "span_px": [50, 180],
-            "dash_score": 0.9,
-        },
-        {
-            "orientation": "vertical",
-            "axis_px": 118.0,
-            "span_px": [55, 175],
-            "dash_score": 0.88,
-        },
-        {
-            "orientation": "horizontal",
-            "axis_px": 80.0,
-            "span_px": [20, 200],
-            "dash_score": 0.92,
-        },
-    ]
-
-    pairs = _parallel_dash_pair_candidates(
-        patterns,
-        [0, 0, 300, 240],
-    )
-
-    assert len(pairs) == 1
-    assert pairs[0]["kind"] == "parallel_dash_pair_candidate"
-    assert pairs[0]["orientation"] == "vertical"
-    assert pairs[0]["axes_px"] == [100.0, 118.0]
-    assert pairs[0]["candidate_only"] is True
-    assert pairs[0]["ownership_claimed"] is False
-

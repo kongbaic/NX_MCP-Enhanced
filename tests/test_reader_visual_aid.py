@@ -28,9 +28,7 @@ def _candidate(
                 "source_lines": [
                     {
                         "orientation": (
-                            "vertical"
-                            if orientation == "horizontal"
-                            else "horizontal"
+                            "vertical" if orientation == "horizontal" else "horizontal"
                         ),
                         "axis_px": value,
                         "span_px": [0, 100],

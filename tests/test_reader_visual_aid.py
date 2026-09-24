@@ -21,6 +21,26 @@ def _candidate(
         "line_span_px": [0, 100],
         "witness_positions_px": witnesses,
         "witness_positions_local_norm": [value / 100 for value in witnesses],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "position_px": value,
+                "source_lines": [
+                    {
+                        "orientation": (
+                            "vertical"
+                            if orientation == "horizontal"
+                            else "horizontal"
+                        ),
+                        "axis_px": value,
+                        "span_px": [0, 100],
+                        "span_length_px": 100,
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+            for index, value in enumerate(witnesses)
+        ],
         "status": "candidate_only_no_semantics",
     }
 
@@ -101,6 +121,7 @@ def test_reader_visual_aid_bounds_and_enriches_small_buckets():
         "DG_TOP_3",
     ]
     assert top["candidates"][0]["witness_anchor_evidence"]
+    assert top["candidates"][0]["witness_line_evidence"]
     assert result["semantics_policy"] == ("geometry_only_no_engineering_claims")
     assert result["source_drawing_authoritative"] is True
 

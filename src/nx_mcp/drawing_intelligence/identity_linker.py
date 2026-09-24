@@ -105,6 +105,10 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     return referenced
 
 
+def _resolver_numeric_value(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
 def _canonical_projection_shape(
     capture: ReaderCapture,
     entity_id: str,
@@ -795,6 +799,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     required_targets = {
         item.target
         for item in direct_values
+        if _resolver_numeric_value(item.value)
     }
     for item in dimensions:
         if not item.required_for_modeling:

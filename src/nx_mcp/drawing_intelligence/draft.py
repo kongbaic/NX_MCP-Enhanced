@@ -22,6 +22,118 @@ def _equal(left: Any, right: Any) -> bool:
     return left == right
 
 
+def _planner_axis_shift(graph: EvidenceGraph, axis: str) -> float:
+    if axis == "X":
+        return graph.overall_dimensions.length_x / 2.0
+    if axis == "Y":
+        return graph.overall_dimensions.width_y / 2.0
+    return 0.0
+
+
+def _scalar_coordinate_axis(target: str) -> str | None:
+    lower = target.lower()
+
+    match = re.search(r"\.centerline\.(x|y|z)$", lower)
+    if match:
+        return match.group(1).upper()
+
+    match = re.search(r"\.position\.center\.(x|y|z)$", lower)
+    if match:
+        return match.group(1).upper()
+
+    match = re.search(r"\.explicit_centers\.\d+\.(0|1|2)$", lower)
+    if match:
+        return {"0": "X", "1": "Y", "2": "Z"}[match.group(1)]
+
+    leaf = lower.split(".")[-1]
+    leaf_axis = {
+        "centerline_x": "X",
+        "centerline_y": "Y",
+        "centerline_z": "Z",
+        "hole_x": "X",
+        "hole_y": "Y",
+        "hole_z": "Z",
+        "top_z": "Z",
+        "bottom_z": "Z",
+        "start_z": "Z",
+        "end_z": "Z",
+        "x1": "X",
+        "x2": "X",
+        "y1": "Y",
+        "y2": "Y",
+        "z1": "Z",
+        "z2": "Z",
+    }
+    return leaf_axis.get(leaf)
+
+
+def _transform_center_value(
+    graph: EvidenceGraph,
+    value: Any,
+) -> Any:
+    if isinstance(value, dict):
+        output = copy.deepcopy(value)
+        for key, axis in (("x", "X"), ("y", "Y"), ("z", "Z")):
+            raw = output.get(key)
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                output[key] = float(raw) - _planner_axis_shift(graph, axis)
+        return output
+
+    if isinstance(value, list):
+        output = copy.deepcopy(value)
+        for index, axis in enumerate(("X", "Y", "Z")):
+            if index >= len(output):
+                break
+            raw = output[index]
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                output[index] = float(raw) - _planner_axis_shift(graph, axis)
+        return output
+
+    return copy.deepcopy(value)
+
+
+def _planner_value_for_target(
+    graph: EvidenceGraph,
+    target: str,
+    value: Any,
+) -> Any:
+    """Convert Reader-local 0..overall coordinates to Planner centered XY."""
+
+    axis = _scalar_coordinate_axis(target)
+    if axis is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) - _planner_axis_shift(graph, axis)
+
+    lower = target.lower()
+    if lower.endswith(".centerline") or lower.endswith(".position.center"):
+        return _transform_center_value(graph, value)
+
+    if lower.endswith(".explicit_centers") and isinstance(value, list):
+        return [_transform_center_value(graph, item) for item in value]
+
+    for suffix, axis_name in (
+        (".centers_x", "X"),
+        (".centers_y", "Y"),
+        (".centers_z", "Z"),
+    ):
+        if lower.endswith(suffix) and isinstance(value, list):
+            shift = _planner_axis_shift(graph, axis_name)
+            return [
+                float(item) - shift
+                if isinstance(item, (int, float)) and not isinstance(item, bool)
+                else copy.deepcopy(item)
+                for item in value
+            ]
+
+    if lower.endswith(".x_range") and isinstance(value, list):
+        shift = _planner_axis_shift(graph, "X")
+        return [float(item) - shift for item in value]
+    if lower.endswith(".y_range") and isinstance(value, list):
+        shift = _planner_axis_shift(graph, "Y")
+        return [float(item) - shift for item in value]
+
+    return copy.deepcopy(value)
+
+
 def _feature(root: dict[str, Any], feature_id: str) -> dict[str, Any]:
     features = root.setdefault("features", [])
     for item in features:
@@ -211,13 +323,20 @@ def _semantic_for_target(root: dict[str, Any], fact: DirectValueEvidence) -> str
     raise DraftAssemblyError(f"cannot infer Gate A semantic for target {target!r}")
 
 
-def _direct_source(root: dict[str, Any], fact: DirectValueEvidence) -> dict[str, Any]:
+def _direct_source(
+    root: dict[str, Any],
+    graph: EvidenceGraph,
+    fact: DirectValueEvidence,
+) -> dict[str, Any]:
+    planner_value = _planner_value_for_target(graph, fact.target, fact.value)
     source = {
         "id": fact.id,
         "semantic": _semantic_for_target(root, fact),
-        "value": copy.deepcopy(fact.value),
+        "value": planner_value,
         "target": fact.target,
     }
+    if planner_value != fact.value:
+        source["reader_local_value"] = copy.deepcopy(fact.value)
     if fact.source_ids:
         source["evidence"] = list(fact.source_ids)
     return source
@@ -387,6 +506,17 @@ def build_semantic_draft(
         },
         "coordinate_system": {
             "origin": "part_center_xy_bottom_z0",
+            "source_origin": "overall_min_xyz",
+            "reader_local_bounds": {
+                "x": [0.0, graph.overall_dimensions.length_x],
+                "y": [0.0, graph.overall_dimensions.width_y],
+                "z": [0.0, graph.overall_dimensions.height_z],
+            },
+            "reader_to_planner_translation": {
+                "x": -graph.overall_dimensions.length_x / 2.0,
+                "y": -graph.overall_dimensions.width_y / 2.0,
+                "z": 0.0,
+            },
             "x_positive": "right",
             "y_positive": "declared side-view positive",
             "z_positive": "up",
@@ -405,14 +535,18 @@ def build_semantic_draft(
     # Materialize all direct observations first so feature type is available
     # before semantic inference (for example slot width -> slot_width).
     for fact in sorted(graph.direct_values, key=lambda item: (item.target, item.id)):
-        _set_target(draft, fact.target, fact.value)
+        _set_target(
+            draft,
+            fact.target,
+            _planner_value_for_target(graph, fact.target, fact.value),
+        )
 
     direct_targets: set[str] = set()
     for fact in sorted(graph.direct_values, key=lambda item: item.id):
         if fact.target in direct_targets:
             raise DraftAssemblyError(f"multiple direct evidence writers for {fact.target!r}")
         direct_targets.add(fact.target)
-        draft["source_ledger"].append(_direct_source(draft, fact))
+        draft["source_ledger"].append(_direct_source(draft, graph, fact))
 
     relations_by_id = {relation.id: relation for relation in graph.relations}
     for relation in sorted(graph.relations, key=lambda item: item.id):
@@ -421,10 +555,11 @@ def build_semantic_draft(
     # Materialize deterministic numeric results only when they were not already
     # written by a direct observation.
     for target, value in sorted(resolution.values.items()):
+        planner_value = _planner_value_for_target(graph, target, value)
         current = _get_target(draft, target)
         if current is _MISSING or current is None:
-            _set_target(draft, target, value)
-        elif not _equal(current, value):
+            _set_target(draft, target, planner_value)
+        elif not _equal(current, planner_value):
             # Keep the direct value. The Resolver conflict and/or Gate A relation
             # check will reject the inconsistent evidence instead of overwriting it.
             continue
@@ -437,7 +572,17 @@ def build_semantic_draft(
             raise DraftAssemblyError(
                 f"derivation for {target!r} references unknown relation {relation_id!r}"
             )
-        entry = _derived_entry(target, resolution.values[target], derivation)
+        entry = _derived_entry(
+            target,
+            _planner_value_for_target(
+                graph,
+                target,
+                resolution.values[target],
+            ),
+            derivation,
+        )
+        if entry is not None and entry.get("value") != resolution.values[target]:
+            entry["reader_local_value"] = resolution.values[target]
         if entry is not None:
             draft["derived"].append(entry)
 

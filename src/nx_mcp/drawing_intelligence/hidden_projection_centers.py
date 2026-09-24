@@ -192,12 +192,34 @@ def derive_hidden_projection_center_candidates(
                 str(item["entity_key"]),
             )
         )
-        for match in matches:
-            output.append(
-                {
-                    "witness_index": witness_index,
-                    **match,
-                }
+        if not matches:
+            continue
+
+        best = matches[0]
+        maximum_residual = max(2.0, midpoint_tolerance * 0.50)
+        if float(best["witness_midpoint_residual_px"]) > maximum_residual:
+            continue
+
+        uniqueness_margin = max(3.0, midpoint_tolerance * 0.25)
+        if len(matches) > 1:
+            margin = (
+                float(matches[1]["witness_midpoint_residual_px"])
+                - float(best["witness_midpoint_residual_px"])
             )
+            if margin < uniqueness_margin:
+                continue
+        else:
+            margin = None
+
+        output.append(
+            {
+                "witness_index": witness_index,
+                **best,
+                "selection_basis": "unique_best_hidden_projection_pair",
+                "selection_margin_px": (
+                    round(margin, 3) if margin is not None else None
+                ),
+            }
+        )
 
     return output

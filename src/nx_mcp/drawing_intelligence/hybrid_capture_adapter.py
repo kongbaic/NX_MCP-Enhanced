@@ -775,12 +775,8 @@ def adapt_hybrid_ocr_report(
         junction_tolerance_by_region=junction_tolerance_by_region,
     )
     metric_circle_geometry = derive_metric_circle_primitives(
-        regions=[
-            item for item in report.get("regions", []) if isinstance(item, dict)
-        ],
-        region_views={
-            item.region_id: item.view_kind for item in context.region_views
-        },
+        regions=[item for item in report.get("regions", []) if isinstance(item, dict)],
+        region_views={item.region_id: item.view_kind for item in context.region_views},
         calibrations=calibrations,
         callout_ledger=callout_ledger,
     )

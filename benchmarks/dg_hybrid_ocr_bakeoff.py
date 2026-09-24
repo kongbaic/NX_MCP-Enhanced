@@ -557,6 +557,7 @@ def main(argv: list[str] | None = None) -> int:
             "observed_evidence_silent_drop_forbidden": True,
         },
         "whole_drawing_items": full_items,
+        "regions": visual_aid.get("regions", []),
         "coverage": coverage,
         "candidates": results,
     }

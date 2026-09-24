@@ -271,7 +271,7 @@ def _circle_candidates(
     max_radius = max(12, min(120, min(width, height) // 2))
     small_max_radius = max(12, min(42, min(width, height) // 5))
 
-    passes = [
+    passes: list[dict[str, Any]] = [
         {
             "param2": 45,
             "min_radius": 8,

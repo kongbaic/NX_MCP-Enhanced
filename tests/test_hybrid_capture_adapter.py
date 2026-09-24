@@ -604,3 +604,38 @@ def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidat
         "hybrid:DG10:wide",
     ]
 
+
+def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [100, 100],
+                    "rings": [{"radius_px": 20}],
+                }
+            ],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [500, 0, 300, 400],
+            "circle_groups": [],
+        },
+    ]
+    report["candidates"][0]["witness_anchor_evidence"][0]["nearest_anchors"][0][
+        "ref"
+    ] = "R1.C1.center_x"
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    dimension = next(item for item in partial.dimensions if item.key == "R1.DG12")
+    assert dimension.endpoints[0].role == "entity_center"
+    assert dimension.endpoints[0].entity_key == "R1.C1"
+    assert dimension.endpoints[0].basis == "circle_center"
+    assert dimension.endpoints[1].role == "unresolved"
+    assert dimension.endpoints[1].unresolved_kind == "intermediate_surface"
+    assert dimension.unresolved_reason is not None
+

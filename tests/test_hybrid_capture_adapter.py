@@ -208,11 +208,7 @@ def test_adapter_preserves_coverage_evidence_without_overblocking_bookkeeping():
         ("unsupported_representation", "dimension_value_candidate")
     ]
 
-    advisory_fields = {
-        item.field
-        for item in partial.unresolved
-        if not item.required_for_modeling
-    }
+    advisory_fields = {item.field for item in partial.unresolved if not item.required_for_modeling}
     assert {
         "secondary_linear_assignment",
         "unassigned_linear_text",
@@ -595,8 +591,7 @@ def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidat
     blockers = [
         item
         for item in partial.unresolved
-        if item.required_for_modeling
-        and item.field == "local_only_linear_text"
+        if item.required_for_modeling and item.field == "local_only_linear_text"
     ]
     assert len(blockers) == 1
     assert blockers[0].evidence == [
@@ -625,9 +620,9 @@ def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
             "circle_groups": [],
         },
     ]
-    report["candidates"][0]["witness_anchor_evidence"][0]["nearest_anchors"][0][
-        "ref"
-    ] = "R1.C1.center_x"
+    report["candidates"][0]["witness_anchor_evidence"][0]["nearest_anchors"][0]["ref"] = (
+        "R1.C1.center_x"
+    )
 
     partial = adapt_hybrid_ocr_report(report, _context())
 
@@ -719,4 +714,3 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
     assert calibration["min_anchor"]["coordinate_mm"] == -20
     assert calibration["max_anchor"]["coordinate_mm"] == 20
     assert calibration["basis"] == "overall_dimension_with_opposite_profile_extremes"
-

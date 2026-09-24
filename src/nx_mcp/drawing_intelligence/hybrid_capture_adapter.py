@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .circle_datum_alignment import derive_circle_overall_center_alignments
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
@@ -1050,6 +1051,29 @@ def adapt_hybrid_ocr_report(
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
+    circle_alignment_records = derive_circle_overall_center_alignments(
+        regions=[
+            item for item in report.get("regions", []) if isinstance(item, dict)
+        ],
+        region_views={item.region_id: item.view_kind for item in context.region_views},
+        boundaries=boundaries,
+        profile_inventory=profile_inventory,
+    )
+    circle_entity_keys = {item.key for item in entities}
+    datum_alignments = [
+        ObservationDatumAlignment(
+            entity_key=str(item["entity_key"]),
+            axis=item["axis"],
+            evidence=[
+                f"hybrid:geometry:{item['entity_key']}",
+                f"hybrid:{item['overall_boundary_candidate_id']}:overall-boundary",
+                f"hybrid:{item['axis_line_ref']}:center-axis",
+            ],
+            required_for_modeling=True,
+        )
+        for item in circle_alignment_records
+        if str(item.get("entity_key") or "") in circle_entity_keys
+    ]
 
     for raw_candidate in working_candidates:
         if not isinstance(raw_candidate, dict):
@@ -1227,6 +1251,12 @@ def adapt_hybrid_ocr_report(
             "engineering_coordinate_inferred_from_pixels": False,
         },
         {
+            "kind": "hybrid_circle_datum_alignment_ledger",
+            "schema": "1.0",
+            "items": circle_alignment_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
             "kind": "hybrid_view_metric_calibration_ledger",
             "schema": "1.0",
             "items": calibrations,
@@ -1275,6 +1305,7 @@ def adapt_hybrid_ocr_report(
         associations=associations,
         values=callout_values,
         dimensions=dimensions,
+        datum_alignments=datum_alignments,
         observations=observations,
         unresolved=unresolved,
     )

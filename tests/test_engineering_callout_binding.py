@@ -140,3 +140,70 @@ def test_fragmented_collinear_leader_chain_binds_without_nearest_geometry_guess(
     assert result["entity_key"] == "R1.C1"
     assert result["support"][0]["segment_count"] == 3
     assert result["support"][0]["line_indices"] == [0, 1, 2]
+
+
+
+def test_leader_shaft_may_extend_a_bounded_distance_to_arrow_tip_on_circle():
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 320, 320],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [240, 220],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+
+    result = bind_callout_to_circle_entity(
+        [[20, 20], [120, 20], [120, 100], [20, 100]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 95], [185, 165]],
+                "angle_deg": 45.0,
+                "candidate_only": True,
+            }
+        ],
+        regions,
+    )
+
+    assert result["status"] == "bound"
+    support = result["support"][0]
+    assert support["binding_mode"] == "bounded_arrow_extension_to_circle_ring"
+    assert 0 < support["arrow_extension_px"] <= 38.5
+
+
+def test_bounded_arrow_extension_does_not_reverse_or_snap_to_unrelated_circle():
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 320, 320],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [60, 60],
+                    "rings": [{"radius_px": 30}],
+                }
+            ],
+        }
+    ]
+
+    result = bind_callout_to_circle_entity(
+        [[20, 120], [120, 120], [120, 180], [20, 180]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 145], [180, 210]],
+                "angle_deg": 45.0,
+                "candidate_only": True,
+            }
+        ],
+        regions,
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "no_unique_callout_to_circle_leader"

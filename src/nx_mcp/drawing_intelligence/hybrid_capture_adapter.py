@@ -22,6 +22,7 @@ from .reader_semantic_answers import (
     PartialReaderObservations,
 )
 from .view_metric_calibration import (
+    derive_metric_profile_segments,
     derive_view_metric_calibrations,
     metricize_profile_edge_candidates,
 )
@@ -745,6 +746,28 @@ def adapt_hybrid_ocr_report(
         candidates=calibration_candidates,
         calibrations=calibrations,
     )
+    junction_tolerance_by_region: dict[str, float] = {}
+    for region in report.get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        bbox = region.get("bbox_px")
+        if not (
+            region_id
+            and isinstance(bbox, list)
+            and len(bbox) == 4
+            and isinstance(bbox[2], (int, float))
+            and float(bbox[2]) > 0
+        ):
+            continue
+        junction_tolerance_by_region[region_id] = max(
+            5.0,
+            round(float(bbox[2]) * 0.0075),
+        )
+    metric_profile_geometry = derive_metric_profile_segments(
+        metric_edges=metric_profile_edges,
+        junction_tolerance_by_region=junction_tolerance_by_region,
+    )
 
     observations = [
         {
@@ -771,6 +794,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_metric_profile_edge_ledger",
             "schema": "1.0",
             "items": metric_profile_edges,
+        },
+        {
+            "kind": "hybrid_metric_profile_segment_ledger",
+            "schema": "1.0",
+            "items": metric_profile_geometry["segments"],
+            "junctions": metric_profile_geometry["junctions"],
+            "unresolved_edges": metric_profile_geometry["unresolved_edges"],
         },
     ]
 

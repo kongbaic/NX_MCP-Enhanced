@@ -606,3 +606,64 @@ def test_missing_orthographic_circle_is_feature_inventory_blocker_not_identity_r
         if item.required_for_modeling and item.kind == "termination"
     ]
     assert len(termination_blockers) == 1
+
+
+
+def test_exact_dimension_carrier_beats_incidental_circle_leader_binding():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R2",
+            "bbox_px": [0, 0, 400, 300],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C_FALSE",
+                    "center_px": [218, 150],
+                    "rings": [{"radius_px": 28}],
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[230, 140], [246, 150]],
+            "angle_deg": 32.0,
+            "length_px": 18.9,
+            "candidate_only": True,
+        }
+    ]
+
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                }
+            ],
+        }
+    )
+    partial = adapt_hybrid_ocr_report(report, context)
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    binding = ledger["items"][0]["binding"]
+    assert binding["status"] == "dimension_backed"
+    assert binding["candidate_id"] == "DG_DIAMETER"
+    assert binding["text_geometry_distance_px"] == 0.0
+    assert binding["competing_leader_binding"]["status"] == "bound"
+    assert binding["competing_leader_binding"]["entity_key"] == "R2.C_FALSE"
+
+    assert {
+        (item.entity_key, item.field): item.value
+        for item in partial.values
+    } == {
+        ("R2.DG_DIAMETER.DIAMETER_PROJECTION", "diameter"): 20.0,
+        ("R2.DG_DIAMETER.DIAMETER_PROJECTION", "fit"): "H7",
+    }

@@ -2626,3 +2626,16 @@ def test_identity_linker_required_targets_exclude_non_numeric_direct_values():
         }
     ]
 
+
+def test_capture_accepts_circle_center_as_entity_center_basis():
+    endpoint = CaptureDimensionEndpoint(
+        role="entity_center",
+        entity_id="E1",
+        basis="circle_center",
+        source_ids=["OBS_CIRCLE_CENTER"],
+    )
+
+    assert endpoint.role == "entity_center"
+    assert endpoint.entity_id == "E1"
+    assert endpoint.basis == "circle_center"
+

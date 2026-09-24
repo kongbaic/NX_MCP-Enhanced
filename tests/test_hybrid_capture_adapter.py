@@ -729,12 +729,9 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
     }
 
 
-
 def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_conflict():
     report = _report()
-    dg17 = next(
-        item for item in report["candidates"] if item["candidate_id"] == "DG17"
-    )
+    dg17 = next(item for item in report["candidates"] if item["candidate_id"] == "DG17")
     dg17.update(
         {
             "global_proposal_token": "6",
@@ -839,9 +836,7 @@ def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_confl
     assert calibration["supporting_local_token"] == "66"
 
     metric_ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_metric_profile_edge_ledger"
+        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
     )
     by_ref = {item["ref"]: item for item in metric_ledger["items"]}
     assert by_ref["R1.structural.horizontal.001"]["axis"] == "Z"

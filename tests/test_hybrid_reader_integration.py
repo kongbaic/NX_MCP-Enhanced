@@ -130,6 +130,11 @@ def test_unowned_callout_facts_reach_backend_without_inventing_geometry():
 
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("id") == f"target:feature:{feature_id}.thread_spec"
+    ]
     draft = build_semantic_draft(compiled, resolution)
 
     feature = next(item for item in draft["features"] if item["id"] == feature_id)

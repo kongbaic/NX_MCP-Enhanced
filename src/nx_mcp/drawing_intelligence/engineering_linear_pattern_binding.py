@@ -110,6 +110,52 @@ def _point_to_pattern_distance(
     )
 
 
+def _ray_to_pattern_extension(
+    entry_point: tuple[float, float],
+    exit_point: tuple[float, float],
+    pattern: dict[str, Any],
+    *,
+    max_extension: float,
+    target_tolerance: float,
+) -> float | None:
+    dx = exit_point[0] - entry_point[0]
+    dy = exit_point[1] - entry_point[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9 or max_extension <= 0:
+        return None
+    ux, uy = dx / length, dy / length
+
+    orientation = str(pattern.get("orientation") or "")
+    axis = pattern.get("axis_px")
+    span = pattern.get("span_px")
+    if not (
+        orientation in {"horizontal", "vertical"}
+        and isinstance(axis, (int, float))
+        and isinstance(span, list)
+        and len(span) == 2
+        and all(isinstance(value, (int, float)) for value in span)
+    ):
+        return None
+
+    start, end = sorted(float(value) for value in span)
+    if orientation == "horizontal":
+        if abs(uy) <= 1e-9:
+            return None
+        extension = (float(axis) - exit_point[1]) / uy
+        cross = exit_point[0] + ux * extension
+    else:
+        if abs(ux) <= 1e-9:
+            return None
+        extension = (float(axis) - exit_point[0]) / ux
+        cross = exit_point[1] + uy * extension
+
+    if extension <= 1e-9 or extension > max_extension:
+        return None
+    if cross < start - target_tolerance or cross > end + target_tolerance:
+        return None
+    return float(extension)
+
+
 def bind_callout_to_linear_pattern(
     callout_bbox: Any,
     annotation_lines: Any,
@@ -194,8 +240,37 @@ def bind_callout_to_linear_pattern(
                 if overlaps_structural_profile(pattern):
                     continue
                 target_distance = _point_to_pattern_distance(exit_point, pattern)
-                if target_distance is None or target_distance > target_tolerance:
+                forward_extension: float | None = None
+                binding_mode = "observed_endpoint_on_linear_pattern"
+                geometry_endpoint = exit_point
+
+                if target_distance is None:
                     continue
+                if target_distance > target_tolerance:
+                    forward_extension = _ray_to_pattern_extension(
+                        pair[entry_index],
+                        exit_point,
+                        pattern,
+                        max_extension=max(
+                            6.0,
+                            min(
+                                leader_length * 0.65,
+                                text_height * 0.75,
+                            ),
+                        ),
+                        target_tolerance=target_tolerance,
+                    )
+                    if forward_extension is None:
+                        continue
+                    direction_x = (exit_point[0] - pair[entry_index][0]) / leader_length
+                    direction_y = (exit_point[1] - pair[entry_index][1]) / leader_length
+                    geometry_endpoint = (
+                        exit_point[0] + direction_x * forward_extension,
+                        exit_point[1] + direction_y * forward_extension,
+                    )
+                    target_distance = 0.0
+                    binding_mode = "bounded_forward_extension_to_linear_pattern"
+
                 orientation = str(pattern.get("orientation") or "")
                 axis = _AXIS_BY_VIEW_ORIENTATION.get((view_kind, orientation))
                 if axis is None:
@@ -211,16 +286,24 @@ def bind_callout_to_linear_pattern(
                         "pattern_span_px": list(pattern["span_px"]),
                         "text_touch_distance_px": round(text_distance, 3),
                         "pattern_target_distance_px": round(target_distance, 3),
+                        "leader_forward_extension_px": (
+                            round(forward_extension, 3)
+                            if forward_extension is not None
+                            else 0.0
+                        ),
+                        "binding_mode": binding_mode,
                         "geometry_endpoint_px": [
-                            round(exit_point[0], 3),
-                            round(exit_point[1], 3),
+                            round(geometry_endpoint[0], 3),
+                            round(geometry_endpoint[1], 3),
                         ],
                     }
                 )
 
     matches.sort(
         key=lambda item: (
+            item.get("binding_mode") != "observed_endpoint_on_linear_pattern",
             float(item["pattern_target_distance_px"]),
+            float(item.get("leader_forward_extension_px", 0.0)),
             float(item["text_touch_distance_px"]),
             int(item["line_index"]),
             int(item["pattern_index"]),

@@ -24,6 +24,7 @@ from .reader_semantic_answers import (
 )
 from .view_metric_calibration import (
     derive_metric_profile_segments,
+    derive_view_axis_boundaries,
     derive_view_metric_calibrations,
     metricize_profile_edge_candidates,
 )
@@ -237,10 +238,147 @@ def _circle_center_entity_key(
     return entity_key if entity_key in entity_keys else None
 
 
+def _region_profile_match_tolerance(
+    report: dict[str, Any],
+    region_id: str,
+) -> float:
+    for region in report.get("regions", []):
+        if not isinstance(region, dict) or str(region.get("region_id") or "") != region_id:
+            continue
+        bbox = region.get("bbox_px")
+        if (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and isinstance(bbox[2], (int, float))
+            and isinstance(bbox[3], (int, float))
+        ):
+            return max(2.0, min(float(bbox[2]), float(bbox[3])) * 0.003)
+    return 2.0
+
+
+def _enrich_candidate_from_profile_inventory(
+    candidate: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach only pixel-coincident profile candidates to existing witnesses.
+
+    This does not claim endpoint ownership.  Multiple matches remain multiple
+    physical candidates and therefore fail closed downstream.
+    """
+
+    region_id = str(candidate.get("region_id") or "")
+    orientation = str(candidate.get("orientation") or "")
+    if orientation == "horizontal":
+        source_orientation = "vertical"
+    elif orientation == "vertical":
+        source_orientation = "horizontal"
+    else:
+        return candidate
+
+    tolerance = _region_profile_match_tolerance(report, region_id)
+    witness_positions = candidate.get("witness_positions_px", [])
+    raw_evidence = candidate.get("witness_anchor_evidence", [])
+    evidence_by_index = {
+        int(item["witness_index"]): item
+        for item in raw_evidence
+        if isinstance(item, dict) and isinstance(item.get("witness_index"), int)
+    }
+
+    enriched_evidence: list[dict[str, Any]] = []
+    for index, raw_position in enumerate(witness_positions):
+        if not isinstance(raw_position, (int, float)):
+            continue
+        position = float(raw_position)
+        existing = evidence_by_index.get(index, {})
+        nearest = [
+            dict(item)
+            for item in existing.get("nearest_anchors", [])
+            if isinstance(item, dict)
+        ]
+        existing_refs = {str(item.get("ref") or "") for item in nearest}
+
+        matches = [
+            item
+            for item in profile_inventory
+            if isinstance(item, dict)
+            and item.get("kind") == "profile_edge_candidate"
+            and str(item.get("region_id") or "") == region_id
+            and str(item.get("source_orientation") or "") == source_orientation
+            and isinstance(item.get("position_px"), (int, float))
+            and abs(float(item["position_px"]) - position) <= tolerance
+        ]
+        matches.sort(
+            key=lambda item: (
+                abs(float(item["position_px"]) - position),
+                str(item.get("ref") or ""),
+            )
+        )
+        for item in matches:
+            ref = str(item.get("ref") or "")
+            if not ref or ref in existing_refs:
+                continue
+            nearest.append(
+                {
+                    **item,
+                    "distance_px": abs(float(item["position_px"]) - position),
+                }
+            )
+            existing_refs.add(ref)
+
+        enriched_evidence.append(
+            {
+                **existing,
+                "witness_index": index,
+                "position_px": position,
+                "axis": existing.get(
+                    "axis",
+                    "x" if orientation == "horizontal" else "y",
+                ),
+                "nearest_anchors": nearest,
+            }
+        )
+
+    return {
+        **candidate,
+        "witness_anchor_evidence": enriched_evidence,
+    }
+
+
+def _boundary_role_lookup(
+    boundaries: list[dict[str, Any]],
+) -> dict[str, Literal["overall_min", "overall_max"]]:
+    output: dict[str, Literal["overall_min", "overall_max"]] = {}
+    conflicted: set[str] = set()
+
+    for boundary in boundaries:
+        if not isinstance(boundary, dict) or boundary.get("status") != "resolved":
+            continue
+        for anchor in boundary.get("anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            ref = str(anchor.get("ref") or "")
+            role = anchor.get("role")
+            if not ref or role not in {"overall_min", "overall_max"}:
+                continue
+            typed_role: Literal["overall_min", "overall_max"] = role
+            previous = output.get(ref)
+            if previous is not None and previous != typed_role:
+                conflicted.add(ref)
+                continue
+            output[ref] = typed_role
+
+    for ref in conflicted:
+        output.pop(ref, None)
+    return output
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
     entity_keys: set[str],
+    boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
     endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
@@ -300,6 +438,19 @@ def _dimension_endpoints_from_candidates(
                     )
                 )
                 continue
+
+            physical = physical_candidates[0]
+            if physical.get("kind") == "profile_edge_candidate":
+                ref = str(physical.get("ref") or "")
+                boundary_role = boundary_roles.get(ref)
+                if boundary_role is not None:
+                    output.append(
+                        ObservationDimensionEndpoint(
+                            role=boundary_role,
+                            evidence=evidence,
+                        )
+                    )
+                    continue
 
         output.append(
             ObservationDimensionEndpoint(
@@ -630,12 +781,37 @@ def adapt_hybrid_ocr_report(
         raise HybridCaptureAdapterError("Hybrid report candidates must be a list")
 
     view_lookup = {item.region_id: item for item in context.region_views}
+    profile_inventory = (
+        report.get("structural_profile_inventory")
+        if isinstance(report.get("structural_profile_inventory"), list)
+        else []
+    )
+    working_candidates = [
+        _enrich_candidate_from_profile_inventory(
+            item,
+            report=report,
+            profile_inventory=profile_inventory,
+        )
+        for item in candidates
+        if isinstance(item, dict)
+    ]
+    overall_dimensions = {
+        {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
+        for fact in context.overall_dimension_facts
+    }
+    boundaries = derive_view_axis_boundaries(
+        candidates=working_candidates,
+        region_views={item.region_id: item.view_kind for item in context.region_views},
+        overall_dimensions=overall_dimensions,
+    )
+    boundary_roles = _boundary_role_lookup(boundaries)
+
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
 
-    for raw_candidate in candidates:
+    for raw_candidate in working_candidates:
         if not isinstance(raw_candidate, dict):
             raise HybridCaptureAdapterError("Hybrid candidate must be an object")
         candidate_id = str(raw_candidate.get("candidate_id") or "")
@@ -666,6 +842,7 @@ def adapt_hybrid_ocr_report(
         dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
             raw_candidate,
             entity_keys={item.key for item in entities},
+            boundary_roles=boundary_roles,
             evidence=evidence,
         )
         dimensions.append(
@@ -730,14 +907,10 @@ def adapt_hybrid_ocr_report(
             ),
             "endpoint_candidate_evidence": derive_dimension_endpoint_candidates(candidate),
         }
-        for candidate in candidates
-        if isinstance(candidate, dict) and candidate.get("accepted_token") is not None
+        for candidate in working_candidates
+        if candidate.get("accepted_token") is not None
     ]
-    overall_dimensions = {
-        {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
-        for fact in context.overall_dimension_facts
-    }
-    calibration_candidates = [item for item in candidates if isinstance(item, dict)]
+    calibration_candidates = working_candidates
     calibrations = derive_view_metric_calibrations(
         candidates=calibration_candidates,
         region_views={item.region_id: item.view_kind for item in context.region_views},
@@ -798,19 +971,31 @@ def adapt_hybrid_ocr_report(
             "items": callout_ledger,
         },
         {
+            "kind": "hybrid_view_axis_boundary_ledger",
+            "schema": "1.0",
+            "items": boundaries,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
             "kind": "hybrid_view_metric_calibration_ledger",
             "schema": "1.0",
             "items": calibrations,
+            "engineering_authoritative": False,
+            "purpose": "visual_scale_diagnostic_only",
         },
         {
             "kind": "hybrid_metric_profile_edge_ledger",
             "schema": "1.0",
             "items": metric_profile_edges,
+            "engineering_authoritative": False,
+            "purpose": "visual_scale_diagnostic_only",
         },
         {
             "kind": "hybrid_metric_profile_segment_ledger",
             "schema": "1.0",
             "items": metric_profile_geometry["segments"],
+            "engineering_authoritative": False,
+            "purpose": "visual_topology_diagnostic_only",
             "junctions": metric_profile_geometry["junctions"],
             "unresolved_edges": metric_profile_geometry["unresolved_edges"],
         },
@@ -818,6 +1003,8 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_metric_circle_primitive_ledger",
             "schema": "1.0",
             "items": metric_circle_geometry["items"],
+            "engineering_authoritative": False,
+            "purpose": "visual_center_diagnostic_only",
             "unresolved": metric_circle_geometry["unresolved"],
         },
     ]

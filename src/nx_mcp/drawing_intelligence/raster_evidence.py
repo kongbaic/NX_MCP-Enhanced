@@ -603,6 +603,39 @@ def _deduplicate(values: list[float], tolerance: int) -> list[float]:
     return [round(sum(group) / len(group), 1) for group in groups]
 
 
+def _source_line_intersects_region(
+    orientation: str,
+    axis: float,
+    start: int,
+    end: int,
+    region_bbox: list[int],
+    *,
+    margin: float,
+) -> bool:
+    """Return whether one orthogonal source line belongs to the candidate view region."""
+
+    x, y, width, height = (float(value) for value in region_bbox)
+    right = x + width
+    bottom = y + height
+    start_f = float(start)
+    end_f = float(end)
+    axis_f = float(axis)
+
+    if orientation == "vertical":
+        return (
+            x - margin <= axis_f <= right + margin
+            and end_f >= y - margin
+            and start_f <= bottom + margin
+        )
+    if orientation == "horizontal":
+        return (
+            y - margin <= axis_f <= bottom + margin
+            and end_f >= x - margin
+            and start_f <= right + margin
+        )
+    return False
+
+
 def _witness_line_evidence(
     witnesses: list[float],
     source_lines: list[tuple[str, float, int, int]],
@@ -610,14 +643,25 @@ def _witness_line_evidence(
     dimension_axis: float,
     witness_axis_tolerance: float,
     cross_tolerance: float,
+    region_bbox: list[int],
+    region_margin: float,
 ) -> list[dict[str, Any]]:
-    """Preserve the merged orthogonal lines that produced each witness axis."""
+    """Preserve same-region merged orthogonal lines that produced each witness axis."""
 
     output: list[dict[str, Any]] = []
     for witness_index, witness in enumerate(witnesses):
         matched: list[dict[str, Any]] = []
         for orientation, axis, start, end in source_lines:
             if abs(float(axis) - float(witness)) > witness_axis_tolerance:
+                continue
+            if not _source_line_intersects_region(
+                orientation,
+                axis,
+                start,
+                end,
+                region_bbox,
+                margin=region_margin,
+            ):
                 continue
             matched.append(
                 {
@@ -767,6 +811,8 @@ def _dimension_geometry(
                         dimension_axis=axis,
                         witness_axis_tolerance=float(witness_dedup),
                         cross_tolerance=float(witness_tolerance),
+                        region_bbox=bbox,
+                        region_margin=float(witness_tolerance),
                     ),
                     "status": "candidate_only_no_semantics",
                 }
@@ -817,6 +863,8 @@ def _dimension_geometry(
                         dimension_axis=axis,
                         witness_axis_tolerance=float(witness_dedup),
                         cross_tolerance=float(witness_tolerance),
+                        region_bbox=bbox,
+                        region_margin=float(witness_tolerance),
                     ),
                     "status": "candidate_only_no_semantics",
                 }

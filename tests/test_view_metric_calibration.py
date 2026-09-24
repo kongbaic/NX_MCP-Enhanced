@@ -144,8 +144,15 @@ def test_metricize_profile_edge_candidates_converts_only_calibrated_axis():
 
 
 def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
-    candidate = _candidate()
-    candidate["witness_anchor_evidence"][0]["nearest_anchors"].append(
+    calibration_candidate = _candidate()
+    calibrations = derive_view_metric_calibrations(
+        candidates=[calibration_candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0, "width_y": 32.0, "height_z": 66.0},
+    )
+
+    observed_candidate = _candidate()
+    observed_candidate["witness_anchor_evidence"][0]["nearest_anchors"].append(
         {
             "kind": "profile_edge_candidate",
             "ref": "R1.structural.horizontal.001",
@@ -154,14 +161,8 @@ def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
             "span_px": [100, 300],
         }
     )
-    calibrations = derive_view_metric_calibrations(
-        candidates=[candidate],
-        region_views={"R1": "front"},
-        overall_dimensions={"length_x": 40.0, "width_y": 32.0, "height_z": 66.0},
-    )
-
     edges = metricize_profile_edge_candidates(
-        candidates=[candidate],
+        candidates=[observed_candidate],
         calibrations=calibrations,
     )
 
@@ -169,4 +170,3 @@ def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
         "R1.structural.vertical.001",
         "R1.structural.vertical.002",
     }
-

@@ -194,7 +194,7 @@ def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     assert tolerance[0].required_for_modeling is False
 
 
-def test_adapter_preserves_conflicts_secondary_and_unassigned_evidence():
+def test_adapter_preserves_coverage_evidence_without_overblocking_bookkeeping():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 
     fields = [item.field for item in partial.unresolved]
@@ -202,9 +202,22 @@ def test_adapter_preserves_conflicts_secondary_and_unassigned_evidence():
     assert "secondary_linear_assignment" in fields
     assert "unassigned_linear_text" in fields
     assert "local_only_linear_text" in fields
+
     blocking = [item for item in partial.unresolved if item.required_for_modeling]
-    assert blocking
-    assert all(item.kind == "unsupported_representation" for item in blocking)
+    assert [(item.kind, item.field) for item in blocking] == [
+        ("unsupported_representation", "dimension_value_candidate")
+    ]
+
+    advisory_fields = {
+        item.field
+        for item in partial.unresolved
+        if not item.required_for_modeling
+    }
+    assert {
+        "secondary_linear_assignment",
+        "unassigned_linear_text",
+        "local_only_linear_text",
+    } <= advisory_fields
     assert partial.observations[0]["kind"] == "hybrid_ocr_coverage_ledger"
 
 
@@ -558,3 +571,36 @@ def test_adapter_does_not_transport_unbound_callout_without_unique_view_region()
     ]
     assert len(unresolved) == 1
     assert unresolved[0].kind == "feature_inventory"
+
+
+def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidate():
+    report = _report()
+    report["candidates"].append(
+        {
+            "candidate_id": "DG10",
+            "region_id": "R1",
+            "orientation": "horizontal",
+            "accepted_token": None,
+        }
+    )
+    report["coverage"]["local_only_linear_observations"].append(
+        {
+            "candidate_id": "DG10",
+            "token": "24",
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling
+        and item.field == "local_only_linear_text"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0].evidence == [
+        "hybrid:DG10:whole",
+        "hybrid:DG10:wide",
+    ]
+

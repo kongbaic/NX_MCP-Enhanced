@@ -6,10 +6,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
+from .engineering_callouts import parse_engineering_callout
 from .evidence import Axis, ViewKind
 from .reader_observations import (
     ObservationDimension,
     ObservationDimensionEndpoint,
+    ObservationEntity,
     ObservationUnresolved,
     ObservationView,
 )
@@ -199,6 +201,157 @@ def _coverage_unresolved(
     return unresolved
 
 
+def _point_in_bbox(
+    point: tuple[float, float],
+    bbox: list[Any],
+) -> bool:
+    if len(bbox) != 4 or not all(isinstance(value, (int, float)) for value in bbox):
+        return False
+    left, top, width, height = (float(value) for value in bbox)
+    x, y = point
+    return left <= x <= left + width and top <= y <= top + height
+
+
+def _bbox_center(bbox: Any) -> tuple[float, float] | None:
+    if not (
+        isinstance(bbox, list)
+        and len(bbox) >= 4
+        and all(
+            isinstance(point, list)
+            and len(point) >= 2
+            and isinstance(point[0], (int, float))
+            and isinstance(point[1], (int, float))
+            for point in bbox
+        )
+    ):
+        return None
+    return (
+        sum(float(point[0]) for point in bbox) / len(bbox),
+        sum(float(point[1]) for point in bbox) / len(bbox),
+    )
+
+
+def _circle_entities(
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+) -> list[ObservationEntity]:
+    regions = report.get("regions", [])
+    if not isinstance(regions, list):
+        return []
+
+    output: list[ObservationEntity] = []
+    seen: set[str] = set()
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        if region_id not in view_lookup:
+            continue
+        groups = region.get("circle_groups", [])
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("circle_group_id") or "")
+            rings = group.get("rings", [])
+            if not group_id or not isinstance(rings, list) or not rings:
+                continue
+            key = f"{region_id}.{group_id}"
+            if key in seen:
+                raise HybridCaptureAdapterError(
+                    f"duplicate Hybrid circle entity key {key!r}"
+                )
+            seen.add(key)
+            output.append(
+                ObservationEntity(
+                    key=key,
+                    view_key=f"view.{region_id}",
+                    shape=(
+                        "concentric_circles"
+                        if len(rings) > 1
+                        else "circle"
+                    ),
+                    cross_view_disposition=None,
+                    evidence=[f"hybrid:geometry:{region_id}:{group_id}"],
+                    required_for_modeling=True,
+                )
+            )
+    return output
+
+
+def _engineering_callout_routing(
+    report: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[ObservationUnresolved]]:
+    coverage = report.get("coverage")
+    if not isinstance(coverage, dict):
+        return [], []
+
+    regions = report.get("regions", [])
+    region_boxes: list[tuple[str, list[Any]]] = []
+    if isinstance(regions, list):
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+            region_id = str(region.get("region_id") or "")
+            bbox = region.get("bbox_px")
+            if region_id and isinstance(bbox, list):
+                region_boxes.append((region_id, bbox))
+
+    ledger: list[dict[str, Any]] = []
+    unresolved: list[ObservationUnresolved] = []
+    for item in coverage.get("routed_elsewhere_or_unclassified_observations", []):
+        if not isinstance(item, dict):
+            continue
+        parsed = parse_engineering_callout(str(item.get("text") or ""))
+        if parsed is None:
+            continue
+
+        source_item_index = item.get("source_item_index")
+        evidence = [f"hybrid:whole:{source_item_index}"]
+        center = _bbox_center(item.get("bbox"))
+        region_candidates = (
+            sorted(
+                region_id
+                for region_id, bbox in region_boxes
+                if _point_in_bbox(center, bbox)
+            )
+            if center is not None
+            else []
+        )
+        record = {
+            "source_item_index": source_item_index,
+            "bbox": item.get("bbox"),
+            "confidence": item.get("confidence"),
+            "region_candidates": region_candidates,
+            **parsed,
+        }
+        ledger.append(record)
+
+        if len(region_candidates) == 1:
+            reason = (
+                "Engineering callout semantics were parsed, but visible geometry "
+                "ownership is not yet deterministically bound inside region "
+                f"{region_candidates[0]!r}."
+            )
+        else:
+            reason = (
+                "Engineering callout semantics were parsed, but the callout does "
+                "not have one deterministic view-region geometry owner."
+            )
+        unresolved.append(
+            ObservationUnresolved(
+                kind="feature_inventory",
+                reason=reason,
+                field="engineering_callout_geometry_binding",
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+
+    return ledger, unresolved
+
+
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
     context: HybridAdapterContext,
@@ -216,6 +369,7 @@ def adapt_hybrid_ocr_report(
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
+    entities = _circle_entities(report, view_lookup)
 
     for raw_candidate in candidates:
         if not isinstance(raw_candidate, dict):
@@ -295,6 +449,8 @@ def adapt_hybrid_ocr_report(
             view_lookup,
         )
     )
+    callout_ledger, callout_unresolved = _engineering_callout_routing(report)
+    unresolved.extend(callout_unresolved)
 
     coverage = report["coverage"]
     anchor_items = [
@@ -327,6 +483,11 @@ def adapt_hybrid_ocr_report(
             "schema": "1.1",
             "items": anchor_items,
         },
+        {
+            "kind": "hybrid_engineering_callout_ledger",
+            "schema": "1.0",
+            "items": callout_ledger,
+        },
     ]
 
     views = [
@@ -341,6 +502,7 @@ def adapt_hybrid_ocr_report(
     return PartialReaderObservations(
         overall_dimension_facts=context.overall_dimension_facts,
         views=views,
+        entities=entities,
         dimensions=dimensions,
         observations=observations,
         unresolved=unresolved,

@@ -500,3 +500,20 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
     assert direct[f"feature:{feature_id}.diameter"] == 20.0
     assert direct[f"feature:{feature_id}.fit"] == "H7"
     assert resolution.values[f"feature:{feature_id}.centerline.z"] == 40.0
+
+
+
+def test_missing_orthographic_circle_is_feature_inventory_blocker_not_identity_record():
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        _two_view_context(),
+    )
+
+    assert partial.associations == []
+    blockers = [item for item in partial.unresolved if item.required_for_modeling]
+    assert len(blockers) == 1
+    assert blockers[0].kind == "feature_inventory"
+    assert blockers[0].field == "orthographic_circular_counterpart"
+    assert blockers[0].entity_keys == [
+        "R2.DG_DIAMETER.DIAMETER_PROJECTION"
+    ]

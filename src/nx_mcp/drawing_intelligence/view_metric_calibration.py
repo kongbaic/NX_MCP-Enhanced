@@ -95,6 +95,149 @@ def _profile_extreme(
     return side, float(position_px), ref
 
 
+def derive_view_axis_boundaries(
+    *,
+    candidates: list[dict[str, Any]],
+    region_views: dict[str, str],
+    overall_dimensions: dict[str, float],
+    relative_tolerance: float = 1e-6,
+) -> list[dict[str, Any]]:
+    """Identify overall boundary owners without inferring mm from pixel distance.
+
+    Pixel geometry is used only to identify the two physical endpoints of an
+    independently known overall dimension.  No pixel-to-mm scale or internal
+    coordinate is derived here.
+    """
+
+    resolved_by_axis: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+    for candidate in candidates:
+        candidate_id = str(candidate.get("candidate_id") or "")
+        region_id = str(candidate.get("region_id") or "")
+        orientation = str(candidate.get("orientation") or "")
+        view_kind = region_views.get(region_id)
+        axis = (
+            _AXIS_BY_VIEW_ORIENTATION.get((view_kind, orientation))
+            if view_kind is not None
+            else None
+        )
+        if not candidate_id or axis is None:
+            continue
+
+        overall_value = _overall_value(overall_dimensions, axis)
+        if overall_value is None:
+            continue
+
+        dimension_value = _linear_value(candidate.get("accepted_token"))
+        endpoint_candidate = candidate
+        supporting_local_token: str | None = None
+        basis = "accepted_overall_dimension_endpoint_identity"
+
+        if dimension_value is None:
+            conflict_probe = _conflict_backed_overall_probe(
+                candidate,
+                overall_value=overall_value,
+                relative_tolerance=relative_tolerance,
+            )
+            if conflict_probe is None:
+                continue
+            endpoint_candidate, supporting_local_token = conflict_probe
+            dimension_value = overall_value
+            basis = "conflict_preserved_overall_dimension_endpoint_identity"
+        else:
+            tolerance = max(abs(overall_value) * relative_tolerance, 1e-9)
+            if abs(dimension_value - overall_value) > tolerance:
+                continue
+
+        endpoint_evidence = derive_dimension_endpoint_candidates(endpoint_candidate)
+        endpoints = endpoint_evidence.get("endpoints")
+        if not isinstance(endpoints, list) or len(endpoints) != 2:
+            continue
+
+        first = _profile_extreme(endpoints[0])
+        second = _profile_extreme(endpoints[1])
+        if first is None or second is None:
+            continue
+        by_side = {first[0]: first, second[0]: second}
+        if set(by_side) != {"min", "max"}:
+            continue
+
+        if orientation == "horizontal":
+            role_by_side = {
+                "min": "overall_min",
+                "max": "overall_max",
+            }
+        elif orientation == "vertical":
+            # Image Y grows downward.  The upper pixel extreme is the positive
+            # orthographic axis boundary; the lower extreme is overall_min.
+            role_by_side = {
+                "min": "overall_max",
+                "max": "overall_min",
+            }
+        else:
+            continue
+
+        anchors = [
+            {
+                "ref": by_side[side][2],
+                "pixel_extreme_side": side,
+                "role": role_by_side[side],
+                "position_px": by_side[side][1],
+            }
+            for side in ("min", "max")
+        ]
+        record = {
+            "status": "resolved",
+            "region_id": region_id,
+            "view_kind": view_kind,
+            "axis": axis,
+            "candidate_id": candidate_id,
+            "overall_dimension_value": overall_value,
+            "anchors": anchors,
+            "basis": basis,
+            "engineering_coordinate_inferred_from_pixels": False,
+            **(
+                {
+                    "spatial_label_token": candidate.get("global_proposal_token"),
+                    "supporting_local_token": supporting_local_token,
+                    "ocr_conflict_preserved": True,
+                }
+                if supporting_local_token is not None
+                else {}
+            ),
+        }
+        resolved_by_axis.setdefault((region_id, axis), []).append(record)
+
+    output: list[dict[str, Any]] = []
+    for (region_id, axis), records in sorted(resolved_by_axis.items()):
+        signatures = {
+            tuple(
+                sorted(
+                    (str(anchor["ref"]), str(anchor["role"]))
+                    for anchor in record["anchors"]
+                )
+            )
+            for record in records
+        }
+        if len(signatures) == 1:
+            selected = sorted(records, key=lambda item: str(item["candidate_id"]))[0]
+            output.append(selected)
+            continue
+
+        output.append(
+            {
+                "status": "conflict",
+                "region_id": region_id,
+                "axis": axis,
+                "candidate_ids": sorted(str(item["candidate_id"]) for item in records),
+                "reason": "multiple_overall_dimensions_disagree_on_boundary_identity",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        )
+
+    return output
+
+
 _PROFILE_ORIENTATION_BY_VIEW_AXIS: dict[tuple[str, str], str] = {
     ("front", "X"): "vertical",
     ("front", "Z"): "horizontal",

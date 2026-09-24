@@ -91,203 +91,6 @@ def _circle_target_matches(
     return matches
 
 
-def _parallel_pair_target_matches(
-    point: tuple[float, float],
-    regions: list[Any],
-    *,
-    tolerance: float = 5.0,
-) -> list[dict[str, Any]]:
-    matches: list[dict[str, Any]] = []
-    px, py = point
-
-    for region in regions:
-        if not isinstance(region, dict):
-            continue
-        region_id = str(region.get("region_id") or "")
-        pairs = region.get("parallel_dash_pair_candidates", [])
-        if not region_id or not isinstance(pairs, list):
-            continue
-
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            pair_id = str(pair.get("pair_id") or "")
-            orientation = str(pair.get("orientation") or "")
-            axes = pair.get("axes_px")
-            span = pair.get("span_px")
-            if not (
-                pair_id
-                and orientation in {"horizontal", "vertical"}
-                and isinstance(axes, list)
-                and len(axes) == 2
-                and isinstance(span, list)
-                and len(span) == 2
-                and all(isinstance(value, (int, float)) for value in [*axes, *span])
-            ):
-                continue
-
-            axis_min, axis_max = sorted(float(value) for value in axes)
-            span_min, span_max = sorted(float(value) for value in span)
-
-            if orientation == "horizontal":
-                inside = (
-                    span_min - tolerance <= px <= span_max + tolerance
-                    and axis_min - tolerance <= py <= axis_max + tolerance
-                )
-            else:
-                inside = (
-                    axis_min - tolerance <= px <= axis_max + tolerance
-                    and span_min - tolerance <= py <= span_max + tolerance
-                )
-            if not inside:
-                continue
-
-            matches.append(
-                {
-                    "region_id": region_id,
-                    "pair_id": pair_id,
-                    "entity_key": f"{region_id}.{pair_id}",
-                    "target_kind": "parallel_dash_pair",
-                    "orientation": orientation,
-                    "axes_px": [axis_min, axis_max],
-                    "span_px": [span_min, span_max],
-                }
-            )
-
-    return matches
-
-
-def _ray_rect_distance(
-    start: tuple[float, float],
-    direction: tuple[float, float],
-    rect: tuple[float, float, float, float],
-) -> float | None:
-    sx, sy = start
-    dx, dy = direction
-    left, top, right, bottom = rect
-
-    t_min = 0.0
-    t_max = float("inf")
-    for origin, delta, low, high in (
-        (sx, dx, left, right),
-        (sy, dy, top, bottom),
-    ):
-        if abs(delta) < 1e-9:
-            if origin < low or origin > high:
-                return None
-            continue
-        first = (low - origin) / delta
-        second = (high - origin) / delta
-        entry = min(first, second)
-        exit_ = max(first, second)
-        t_min = max(t_min, entry)
-        t_max = min(t_max, exit_)
-        if t_min > t_max:
-            return None
-
-    if t_max < 0:
-        return None
-    return max(0.0, t_min)
-
-
-def _forward_parallel_pair_matches(
-    entry_point: tuple[float, float],
-    exit_point: tuple[float, float],
-    regions: list[Any],
-    *,
-    max_extension: float,
-) -> list[dict[str, Any]]:
-    dx = exit_point[0] - entry_point[0]
-    dy = exit_point[1] - entry_point[1]
-    length = math.hypot(dx, dy)
-    if length <= 1e-9:
-        return []
-
-    direction = (dx / length, dy / length)
-    matches: list[dict[str, Any]] = []
-
-    for region in regions:
-        if not isinstance(region, dict):
-            continue
-        region_id = str(region.get("region_id") or "")
-        pairs = region.get("parallel_dash_pair_candidates", [])
-        if not region_id or not isinstance(pairs, list):
-            continue
-
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            pair_id = str(pair.get("pair_id") or "")
-            orientation = str(pair.get("orientation") or "")
-            axes = pair.get("axes_px")
-            span = pair.get("span_px")
-            if not (
-                pair_id
-                and orientation in {"horizontal", "vertical"}
-                and isinstance(axes, list)
-                and len(axes) == 2
-                and isinstance(span, list)
-                and len(span) == 2
-                and all(isinstance(value, (int, float)) for value in [*axes, *span])
-            ):
-                continue
-
-            axis_min, axis_max = sorted(float(value) for value in axes)
-            span_min, span_max = sorted(float(value) for value in span)
-            margin = 3.0
-            if orientation == "horizontal":
-                rect = (
-                    span_min - margin,
-                    axis_min - margin,
-                    span_max + margin,
-                    axis_max + margin,
-                )
-            else:
-                rect = (
-                    axis_min - margin,
-                    span_min - margin,
-                    axis_max + margin,
-                    span_max + margin,
-                )
-
-            distance = _ray_rect_distance(exit_point, direction, rect)
-            if distance is None or distance <= 0 or distance > max_extension:
-                continue
-
-            hit_point = (
-                exit_point[0] + direction[0] * distance,
-                exit_point[1] + direction[1] * distance,
-            )
-            matches.append(
-                {
-                    "region_id": region_id,
-                    "pair_id": pair_id,
-                    "entity_key": f"{region_id}.{pair_id}",
-                    "target_kind": "parallel_dash_pair",
-                    "orientation": orientation,
-                    "axes_px": [axis_min, axis_max],
-                    "span_px": [span_min, span_max],
-                    "forward_extension_px": round(distance, 3),
-                    "geometry_hit_px": [
-                        round(hit_point[0], 3),
-                        round(hit_point[1], 3),
-                    ],
-                }
-            )
-
-    return matches
-
-
-def _geometry_target_matches(
-    point: tuple[float, float],
-    regions: list[Any],
-) -> list[dict[str, Any]]:
-    return [
-        *_circle_target_matches(point, regions),
-        *_parallel_pair_target_matches(point, regions),
-    ]
-
-
 def _line_angle(line: dict[str, Any]) -> float | None:
     angle = line.get("angle_deg")
     if isinstance(angle, (int, float)):
@@ -365,22 +168,7 @@ def _chain_bindings(
         current = normalized[current_index]
         exit_endpoint = 1 - entry_endpoint
         exit_point = current["endpoints"][exit_endpoint]
-        targets = _geometry_target_matches(exit_point, regions)
-        binding_endpoint = exit_point
-        if not targets:
-            entry_point = current["endpoints"][entry_endpoint]
-            targets = _forward_parallel_pair_matches(
-                entry_point,
-                exit_point,
-                regions,
-                max_extension=max(10.0, text_height * 0.65),
-            )
-            if len(targets) == 1 and "geometry_hit_px" in targets[0]:
-                binding_endpoint = (
-                    float(targets[0]["geometry_hit_px"][0]),
-                    float(targets[0]["geometry_hit_px"][1]),
-                )
-
+        targets = _circle_target_matches(exit_point, regions)
         if len(targets) == 1:
             used = [normalized[index] for index in path]
             angles = [float(item["angle_deg"]) for item in used]
@@ -392,8 +180,8 @@ def _chain_bindings(
                     "chain_gap_px": [round(value, 3) for value in gap_trace],
                     "chain_angle_span_deg": round(max(angles) - min(angles), 3),
                     "geometry_endpoint_px": [
-                        round(binding_endpoint[0], 3),
-                        round(binding_endpoint[1], 3),
+                        round(exit_point[0], 3),
+                        round(exit_point[1], 3),
                     ],
                     **targets[0],
                 }
@@ -458,7 +246,7 @@ def bind_callout_to_circle_entity(
     annotation_lines: Any,
     regions: Any,
 ) -> dict[str, Any]:
-    """Bind only through a deterministic text-to-line-chain-to-geometry path."""
+    """Bind only through a deterministic text-to-line-chain-to-circle path."""
 
     bounds = _bbox_bounds(callout_bbox)
     if bounds is None:
@@ -491,7 +279,7 @@ def bind_callout_to_circle_entity(
     support = [item for item in entity_bindings if item["segment_count"] == shortest]
     return {
         "status": "bound",
-        "basis": "callout_bbox_to_collinear_segment_chain_to_geometry",
+        "basis": "callout_bbox_to_collinear_segment_chain_to_circle_ring",
         "entity_key": entity_key,
         "support": support,
     }

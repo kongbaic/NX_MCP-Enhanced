@@ -91,12 +91,156 @@ def _circle_target_matches(
     return matches
 
 
+def _line_angle(line: dict[str, Any]) -> float | None:
+    angle = line.get("angle_deg")
+    if isinstance(angle, (int, float)):
+        return float(angle)
+    return None
+
+
+def _endpoint_pair(line: dict[str, Any]) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    endpoints = line.get("endpoints_px")
+    if not (
+        isinstance(endpoints, list)
+        and len(endpoints) == 2
+        and all(
+            isinstance(point, list)
+            and len(point) >= 2
+            and isinstance(point[0], (int, float))
+            and isinstance(point[1], (int, float))
+            for point in endpoints
+        )
+    ):
+        return None
+    return (
+        (float(endpoints[0][0]), float(endpoints[0][1])),
+        (float(endpoints[1][0]), float(endpoints[1][1])),
+    )
+
+
+def _angle_difference(left: float, right: float) -> float:
+    delta = abs(left - right)
+    return min(delta, 180.0 - delta)
+
+
+def _chain_bindings(
+    bounds: tuple[float, float, float, float],
+    annotation_lines: list[Any],
+    regions: list[Any],
+) -> list[dict[str, Any]]:
+    text_height = max(1.0, bounds[3] - bounds[1])
+    touch_tolerance = max(5.0, text_height * 0.30)
+    chain_gap_tolerance = max(6.0, text_height * 0.20)
+    max_angle_delta = 14.0
+    max_segments = 5
+
+    normalized: list[dict[str, Any]] = []
+    for line_index, line in enumerate(annotation_lines):
+        if not isinstance(line, dict):
+            continue
+        pair = _endpoint_pair(line)
+        angle = _line_angle(line)
+        if pair is None or angle is None:
+            continue
+        normalized.append(
+            {
+                "line_index": line_index,
+                "endpoints": pair,
+                "angle_deg": angle,
+            }
+        )
+
+    bindings: list[dict[str, Any]] = []
+
+    def visit(
+        path: list[int],
+        current_index: int,
+        entry_endpoint: int,
+        text_distance: float,
+        gap_trace: list[float],
+    ) -> None:
+        current = normalized[current_index]
+        exit_endpoint = 1 - entry_endpoint
+        exit_point = current["endpoints"][exit_endpoint]
+        targets = _circle_target_matches(exit_point, regions)
+        if len(targets) == 1:
+            used = [normalized[index] for index in path]
+            angles = [float(item["angle_deg"]) for item in used]
+            bindings.append(
+                {
+                    "line_indices": [int(item["line_index"]) for item in used],
+                    "segment_count": len(path),
+                    "text_touch_distance_px": round(text_distance, 3),
+                    "chain_gap_px": [round(value, 3) for value in gap_trace],
+                    "chain_angle_span_deg": round(max(angles) - min(angles), 3),
+                    "geometry_endpoint_px": [
+                        round(exit_point[0], 3),
+                        round(exit_point[1], 3),
+                    ],
+                    **targets[0],
+                }
+            )
+            return
+
+        if len(path) >= max_segments:
+            return
+
+        current_angle = float(current["angle_deg"])
+        used_indices = set(path)
+
+        for next_index, candidate in enumerate(normalized):
+            if next_index in used_indices:
+                continue
+            if _angle_difference(current_angle, float(candidate["angle_deg"])) > max_angle_delta:
+                continue
+
+            distances = [
+                math.dist(exit_point, candidate["endpoints"][0]),
+                math.dist(exit_point, candidate["endpoints"][1]),
+            ]
+            next_entry = 0 if distances[0] <= distances[1] else 1
+            gap = distances[next_entry]
+            if gap > chain_gap_tolerance:
+                continue
+
+            next_exit = candidate["endpoints"][1 - next_entry]
+            if _point_to_rect_distance(next_exit, bounds) <= touch_tolerance:
+                continue
+
+            visit(
+                [*path, next_index],
+                next_index,
+                next_entry,
+                text_distance,
+                [*gap_trace, gap],
+            )
+
+    for line_index, line in enumerate(normalized):
+        first, second = line["endpoints"]
+        distances = [
+            _point_to_rect_distance(first, bounds),
+            _point_to_rect_distance(second, bounds),
+        ]
+        for entry_endpoint, text_distance in enumerate(distances):
+            if text_distance > touch_tolerance:
+                continue
+            visit(
+                [line_index],
+                line_index,
+                entry_endpoint,
+                text_distance,
+                [],
+            )
+
+    return bindings
+
+
 def bind_callout_to_circle_entity(
     callout_bbox: Any,
     annotation_lines: Any,
     regions: Any,
 ) -> dict[str, Any]:
-    """Bind only when one visible oblique line bridges text and one circle ring."""
+    """Bind only through a deterministic text-to-line-chain-to-circle path."""
 
     bounds = _bbox_bounds(callout_bbox)
     if bounds is None:
@@ -110,60 +254,7 @@ def bind_callout_to_circle_entity(
             "reason": "annotation_geometry_unavailable",
         }
 
-    text_height = max(1.0, bounds[3] - bounds[1])
-    touch_tolerance = max(5.0, text_height * 0.30)
-    bindings: list[dict[str, Any]] = []
-
-    for line_index, line in enumerate(annotation_lines):
-        if not isinstance(line, dict):
-            continue
-        endpoints = line.get("endpoints_px")
-        if not (
-            isinstance(endpoints, list)
-            and len(endpoints) == 2
-            and all(
-                isinstance(point, list)
-                and len(point) >= 2
-                and isinstance(point[0], (int, float))
-                and isinstance(point[1], (int, float))
-                for point in endpoints
-            )
-        ):
-            continue
-
-        first = (float(endpoints[0][0]), float(endpoints[0][1]))
-        second = (float(endpoints[1][0]), float(endpoints[1][1]))
-        first_text_distance = _point_to_rect_distance(first, bounds)
-        second_text_distance = _point_to_rect_distance(second, bounds)
-
-        if first_text_distance <= touch_tolerance:
-            text_endpoint = 0
-            geometry_point = second
-            text_distance = first_text_distance
-        elif second_text_distance <= touch_tolerance:
-            text_endpoint = 1
-            geometry_point = first
-            text_distance = second_text_distance
-        else:
-            continue
-
-        targets = _circle_target_matches(geometry_point, regions)
-        if len(targets) != 1:
-            continue
-
-        bindings.append(
-            {
-                "line_index": line_index,
-                "text_endpoint": text_endpoint,
-                "text_touch_distance_px": round(text_distance, 3),
-                "geometry_endpoint_px": [
-                    round(geometry_point[0], 3),
-                    round(geometry_point[1], 3),
-                ],
-                **targets[0],
-            }
-        )
-
+    bindings = _chain_bindings(bounds, annotation_lines, regions)
     unique_entities = sorted({item["entity_key"] for item in bindings})
     if len(unique_entities) != 1:
         return {
@@ -178,9 +269,14 @@ def bind_callout_to_circle_entity(
 
     entity_key = unique_entities[0]
     entity_bindings = [item for item in bindings if item["entity_key"] == entity_key]
+    shortest = min(item["segment_count"] for item in entity_bindings)
+    support = [
+        item for item in entity_bindings if item["segment_count"] == shortest
+    ]
     return {
         "status": "bound",
-        "basis": "callout_bbox_to_oblique_line_to_circle_ring",
+        "basis": "callout_bbox_to_collinear_segment_chain_to_circle_ring",
         "entity_key": entity_key,
-        "support": entity_bindings,
+        "support": support,
     }
+

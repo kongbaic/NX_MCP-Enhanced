@@ -265,7 +265,7 @@ class ReaderCapture(_StrictCaptureModel):
     """Reader Capture v2: visual observations before physical feature identity."""
 
     schema_version: Literal["2.0"] = "2.0"
-    coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
+    coordinate_system: Literal["overall_min_xyz"] = "overall_min_xyz"
     overall_dimensions: OverallDimensions
     views: list[CaptureView] = Field(default_factory=list)
     entities: list[CaptureEntity] = Field(default_factory=list)

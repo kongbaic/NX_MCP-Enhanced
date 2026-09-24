@@ -451,3 +451,60 @@ def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresol
     assert "recessed_hole" in fields
     assert "diameter" in fields
     assert "recessed_hole_subtype" in fields
+
+
+def test_adapter_materializes_dash_pair_profile_and_binds_explicit_hole_callout():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [],
+            "parallel_dash_pair_candidates": [
+                {
+                    "pair_id": "HP001",
+                    "kind": "parallel_dash_pair_candidate",
+                    "orientation": "vertical",
+                    "axes_px": [200.0, 220.0],
+                    "span_px": [160.0, 260.0],
+                    "candidate_only": True,
+                    "ownership_claimed": False,
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[95, 55], [180, 140]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 11,
+            "text": "2-Ø6.6通孔",
+            "bbox": [[20, 20], [100, 20], [100, 60], [20, 60]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.key, item.shape) for item in partial.entities] == [
+        ("R1.HP001", "profile"),
+    ]
+    assert partial.entities[0].required_for_modeling is False
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.HP001", "count", 2),
+        ("R1.HP001", "diameter", 6.6),
+        ("R1.HP001", "through", True),
+    ]
+
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "bound"
+    assert ledger["items"][0]["binding"]["entity_key"] == "R1.HP001"
+

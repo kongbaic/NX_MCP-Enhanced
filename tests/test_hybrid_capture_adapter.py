@@ -117,15 +117,9 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     assert by_key["R2.DG13"].axis == "Y"
 
     anchor_ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_dimension_anchor_ledger"
+        item for item in partial.observations if item["kind"] == "hybrid_dimension_anchor_ledger"
     )
-    dg12 = next(
-        item
-        for item in anchor_ledger["items"]
-        if item["candidate_id"] == "DG12"
-    )
+    dg12 = next(item for item in anchor_ledger["items"] if item["candidate_id"] == "DG12")
     assert dg12["witness_anchor_evidence"][0]["nearest_anchors"][0]["kind"] == "circle_center_axis"
 
 

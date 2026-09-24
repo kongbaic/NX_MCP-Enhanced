@@ -11,6 +11,7 @@ from .capture import (
 )
 from .evidence import Axis, ProjectionShape, ViewKind
 from .reader_observations import (
+    ObservationAssociation,
     ObservationDatumAlignment,
     ObservationDimension,
     ObservationDimensionEndpoint,
@@ -240,6 +241,7 @@ class PartialReaderObservations(_StrictAnswerModel):
     overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
     views: list[ObservationView] = Field(default_factory=list)
     entities: list[ObservationEntity] = Field(default_factory=list)
+    associations: list[ObservationAssociation] = Field(default_factory=list)
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)

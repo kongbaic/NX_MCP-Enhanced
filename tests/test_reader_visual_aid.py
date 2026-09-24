@@ -80,6 +80,15 @@ def _raw() -> dict:
     return {
         "schema": "raw-evidence-v1",
         "image": {"width": 100, "height": 100},
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[5, 5], [25, 25]],
+                "angle_deg": 45.0,
+                "length_px": 28.28,
+                "candidate_only": True,
+            }
+        ],
         "regions": [
             {
                 "region_id": "R1",
@@ -122,6 +131,15 @@ def test_reader_visual_aid_bounds_and_enriches_small_buckets():
     assert top["candidates"][0]["witness_line_evidence"]
     assert result["semantics_policy"] == ("geometry_only_no_engineering_claims")
     assert result["source_drawing_authoritative"] is True
+    assert result["annotation_line_candidates"] == [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[5, 5], [25, 25]],
+            "angle_deg": 45.0,
+            "length_px": 28.28,
+            "candidate_only": True,
+        }
+    ]
 
 
 def test_reader_visual_aid_never_truncates_overflow_bucket():

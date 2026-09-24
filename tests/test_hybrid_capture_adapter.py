@@ -289,6 +289,7 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
         ("R1.C1", "circle"),
         ("R2.C1", "concentric_circles"),
     ]
+    assert all(item.required_for_modeling is False for item in partial.entities)
 
     ledger = next(
         item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"

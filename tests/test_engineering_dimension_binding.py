@@ -682,7 +682,7 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
             "routed_elsewhere_or_unclassified_observations": [
                 {
                     "source_item_index": 3,
-                    "text": "Ø6.6通孔",
+                    "text": "06.6通孔",
                     "bbox": [
                         [80.0, 40.0],
                         [180.0, 40.0],
@@ -693,7 +693,7 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
                 },
                 {
                     "source_item_index": 5,
-                    "text": "Ø11沉孔深6.5",
+                    "text": "011沉孔深6.5",
                     "bbox": [
                         [80.0, 82.0],
                         [200.0, 82.0],
@@ -764,8 +764,45 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
         item["binding"]["status"] == "bound"
         for item in ledger["items"]
     )
-    assert all(
-        item["binding"]["support"][0]["binding_mode"]
-        == "bounded_arrow_extension_to_circle_ring"
+    recoveries = {
+        item["source_item_index"]: item.get("geometry_backed_ocr_recovery")
         for item in ledger["items"]
-    )
+    }
+    assert recoveries[3] == {
+        "field": "diameter",
+        "value": 6.6,
+        "raw_token": "06.6",
+        "basis": (
+            "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
+        ),
+    }
+    assert recoveries[5] == {
+        "field": "recess_diameter",
+        "value": 11.0,
+        "raw_token": "011",
+        "basis": (
+            "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
+        ),
+    }
+
+    values = {
+        (item.entity_key, item.field): item.value
+        for item in partial.values
+    }
+    assert values[("R2.C1", "diameter")] == 6.6
+    assert values[("R2.C1", "through")] is True
+    assert ("R2.C1", "diameter") in values
+    assert 11.0 not in [
+        value
+        for (entity_key, field), value in values.items()
+        if entity_key == "R2.C1" and field == "diameter"
+    ]
+
+    unresolved_fields = {
+        item.field
+        for item in partial.unresolved
+        if item.entity_keys == ["R2.C1"]
+    }
+    assert "recess_diameter" in unresolved_fields
+    assert "recess_depth" in unresolved_fields
+    assert "recessed_hole_subtype" in unresolved_fields

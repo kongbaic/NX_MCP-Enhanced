@@ -166,3 +166,100 @@ def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
     assert anchors[0]["position_px"] == 60.0
     assert anchors[0]["candidate_only"] is True
     assert anchors[0]["ownership_claimed"] is False
+
+
+
+def test_hidden_pair_midline_is_not_promoted_to_physical_profile_edge():
+    raw = _raw()
+    raw["regions"][0]["linear_pattern_candidates"] = [
+        {
+            "orientation": "horizontal",
+            "axis_px": 80.0,
+            "span_px": [20, 170],
+            "kind": "dashed_or_centerline_candidate",
+        },
+        {
+            "orientation": "horizontal",
+            "axis_px": 120.0,
+            "span_px": [22, 172],
+            "kind": "dashed_or_centerline_candidate",
+        },
+    ]
+    raw["dimension_geometry_candidates"][0]["witness_line_evidence"][0][
+        "source_lines"
+    ].extend(
+        [
+            _source("horizontal", 100.0, 20, 160),
+            _source("vertical", 20.0, 80, 120),
+            _source("vertical", 160.0, 80, 120),
+        ]
+    )
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "vertical",
+    )
+
+    positions = {round(float(item["position_px"]), 3) for item in anchors}
+    assert 100.0 not in positions
+
+
+def test_realistic_upper_hidden_pair_midline_is_suppressed_but_outer_profiles_survive():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1000, "height": 700},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [35, 138, 434, 533],
+                "circle_groups": [],
+                "linear_pattern_candidates": [
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 216.6,
+                        "span_px": [228, 378],
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 249.8,
+                        "span_px": [226, 376],
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                ],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_REALISTIC",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 234.0,
+                        "source_lines": [
+                            _source("horizontal", 200.5, 37, 226),
+                            _source("horizontal", 234.0, 156, 285),
+                            _source("horizontal", 483.7, 146, 403),
+                            _source("horizontal", 550.6, 94, 465),
+                            _source("vertical", 142.5, 199, 668),
+                            _source("vertical", 406.5, 199, 668),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "vertical",
+    )
+
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+    assert 234.0 not in positions
+    assert 483.7 in positions
+    assert 550.6 in positions

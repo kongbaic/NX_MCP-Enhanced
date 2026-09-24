@@ -1435,21 +1435,7 @@ def adapt_hybrid_ocr_report(
         boundaries=boundaries,
         profile_inventory=profile_inventory,
     )
-    circle_entity_keys = {item.key for item in entities}
-    datum_alignments = [
-        ObservationDatumAlignment(
-            entity_key=str(item["entity_key"]),
-            axis=item["axis"],
-            evidence=[
-                f"hybrid:geometry:{item['entity_key']}",
-                f"hybrid:{item['overall_boundary_candidate_id']}:overall-boundary",
-                f"hybrid:{item['axis_line_ref']}:center-axis",
-            ],
-            required_for_modeling=True,
-        )
-        for item in circle_alignment_records
-        if str(item.get("entity_key") or "") in circle_entity_keys
-    ]
+    datum_alignments: list[ObservationDatumAlignment] = []
 
     for raw_candidate in working_candidates:
         if not isinstance(raw_candidate, dict):
@@ -1631,6 +1617,8 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_circle_datum_alignment_ledger",
             "schema": "1.0",
             "items": circle_alignment_records,
+            "engineering_authoritative": False,
+            "purpose": "visual_symmetry_diagnostic_only",
             "engineering_coordinate_inferred_from_pixels": False,
         },
         {

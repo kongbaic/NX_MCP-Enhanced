@@ -34,7 +34,7 @@ def test_callout_binds_only_when_one_line_bridges_text_and_circle_ring():
 
     assert result["status"] == "bound"
     assert result["entity_key"] == "R1.C1"
-    assert result["basis"] == "callout_bbox_to_oblique_line_to_circle_ring"
+    assert result["basis"] == "callout_bbox_to_collinear_segment_chain_to_circle_ring"
 
 
 def test_nearest_circle_without_annotation_line_does_not_bind():
@@ -97,3 +97,47 @@ def test_multiple_circle_targets_fail_closed():
 
     assert result["status"] == "unresolved"
     assert result["reason"] == "multiple_circle_entities_supported_by_annotation_lines"
+
+
+def test_fragmented_collinear_leader_chain_binds_without_nearest_geometry_guess():
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [220, 220],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+
+    result = bind_callout_to_circle_entity(
+        [[20, 20], [100, 20], [100, 100], [20, 100]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[96, 96], [125, 125]],
+                "candidate_only": True,
+            },
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[130, 130], [155, 155]],
+                "candidate_only": True,
+            },
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[160, 160], [192, 192]],
+                "candidate_only": True,
+            },
+        ],
+        regions,
+    )
+
+    assert result["status"] == "bound"
+    assert result["entity_key"] == "R1.C1"
+    assert result["support"][0]["segment_count"] == 3
+    assert result["support"][0]["line_indices"] == [0, 1, 2]
+

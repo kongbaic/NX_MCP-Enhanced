@@ -558,6 +558,10 @@ def main(argv: list[str] | None = None) -> int:
         },
         "whole_drawing_items": full_items,
         "regions": visual_aid.get("regions", []),
+        "annotation_line_candidates": visual_aid.get(
+            "annotation_line_candidates",
+            [],
+        ),
         "coverage": coverage,
         "candidates": results,
     }

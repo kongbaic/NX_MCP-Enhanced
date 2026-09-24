@@ -196,7 +196,7 @@ The following enum values are complete. Do not use synonyms or invent new values
 - dimension endpoint `role`: `overall_min`, `overall_max`,
   `entity_center`, `unresolved`
 - endpoint `basis` when `role="entity_center"`: `centerline`,
-  `center_mark`, `explicit_midline`
+  `center_mark`, `explicit_midline`, `circle_center`
 - endpoint `unresolved_kind` when `role="unresolved"`:
   `intermediate_surface`, `ambiguous_owner`, `unsupported_reference`
 - dimension `direction`: `-1`, `1`, or `null`
@@ -208,7 +208,7 @@ Endpoint fields are not independent. Apply these exact combinations:
 - `role="entity_center"`:
   - `entity_key` is required and must name one local entity declared in the same answer;
   - `basis` is required and must be one of `centerline`, `center_mark`,
-    `explicit_midline`;
+    `explicit_midline`, `circle_center`;
   - `candidate_entity_keys` must be empty;
   - `unresolved_kind` must be null.
 - `role="overall_min"` or `role="overall_max"`:

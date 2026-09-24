@@ -157,7 +157,5 @@ def test_metric_circle_rejects_conflicting_bound_diameters():
 
     item = result["items"][0]
     assert item["diameter_mm"] is None
-    assert item["engineering_fact_conflicts"] == {
-        "diameter": [20.0, 22.0]
-    }
+    assert item["engineering_fact_conflicts"] == {"diameter": [20.0, 22.0]}
     assert item["size_assignment_status"] == "conflicting_bound_diameter"

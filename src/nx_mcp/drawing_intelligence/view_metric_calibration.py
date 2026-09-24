@@ -4,7 +4,6 @@ from typing import Any
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 
-
 _AXIS_BY_VIEW_ORIENTATION: dict[tuple[str, str], str] = {
     ("front", "horizontal"): "X",
     ("front", "vertical"): "Z",
@@ -39,9 +38,7 @@ def _profile_extreme(
         return None
     candidates = endpoint.get("physical_candidates")
     if not (
-        isinstance(candidates, list)
-        and len(candidates) == 1
-        and isinstance(candidates[0], dict)
+        isinstance(candidates, list) and len(candidates) == 1 and isinstance(candidates[0], dict)
     ):
         return None
     item = candidates[0]
@@ -82,8 +79,6 @@ def derive_view_metric_calibrations(
     seen: set[tuple[str, str]] = set()
 
     for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
         candidate_id = str(candidate.get("candidate_id") or "")
         region_id = str(candidate.get("region_id") or "")
         orientation = str(candidate.get("orientation") or "")

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
+from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .evidence import Axis, ViewKind
 from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
@@ -546,6 +547,7 @@ def _circle_entities(
 
 def _engineering_callout_routing(
     report: dict[str, Any],
+    candidates: list[dict[str, Any]],
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -570,6 +572,7 @@ def _engineering_callout_routing(
 
     ledger: list[dict[str, Any]] = []
     callout_entities: list[ObservationEntity] = []
+    callout_entity_keys: set[str] = set()
     unresolved: list[ObservationUnresolved] = []
     value_records: dict[tuple[str, str], dict[str, Any]] = {}
     conflicted_targets: set[tuple[str, str]] = set()
@@ -595,6 +598,46 @@ def _engineering_callout_routing(
             annotation_lines,
             regions,
         )
+        if (
+            binding.get("status") != "bound"
+            and isinstance(parsed["facts"].get("diameter"), (int, float))
+            and len(region_candidates) == 1
+        ):
+            dimension_binding = bind_callout_to_dimension_candidate(
+                item.get("bbox"),
+                candidates,
+                region_id=region_candidates[0],
+            )
+            if dimension_binding.get("status") == "bound":
+                projection_entity_key = (
+                    f"{region_candidates[0]}."
+                    f"{dimension_binding['candidate_id']}."
+                    "DIAMETER_PROJECTION"
+                )
+                binding = {
+                    **dimension_binding,
+                    "status": "dimension_backed",
+                    "entity_key": projection_entity_key,
+                }
+                if projection_entity_key not in callout_entity_keys:
+                    callout_entity_keys.add(projection_entity_key)
+                    callout_entities.append(
+                        ObservationEntity(
+                            key=projection_entity_key,
+                            view_key=f"view.{region_candidates[0]}",
+                            shape="hidden_parallel",
+                            cross_view_disposition=None,
+                            evidence=[
+                                *evidence,
+                                (
+                                    "hybrid:"
+                                    f"{dimension_binding['candidate_id']}:geometry"
+                                ),
+                            ],
+                            required_for_modeling=False,
+                        )
+                    )
+
         record = {
             "source_item_index": source_item_index,
             "bbox": item.get("bbox"),
@@ -619,7 +662,7 @@ def _engineering_callout_routing(
             }
         }
 
-        if binding.get("status") != "bound":
+        if binding.get("status") not in {"bound", "dimension_backed"}:
             if len(region_candidates) == 1 and safe_facts:
                 region_id = region_candidates[0]
                 entity_key = f"{region_id}.CALLOUT.{source_item_index}"
@@ -886,7 +929,10 @@ def adapt_hybrid_ocr_report(
         callout_entities,
         callout_values,
         callout_unresolved,
-    ) = _engineering_callout_routing(report)
+    ) = _engineering_callout_routing(
+        report,
+        working_candidates,
+    )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)
 

@@ -390,7 +390,6 @@ def test_metric_profile_segments_fail_closed_without_explicit_gap_tolerance():
     assert tolerant["segments"][0]["length_mm"] == pytest.approx(40.0)
 
 
-
 def test_metricize_profile_inventory_includes_edges_not_referenced_by_dimensions():
     candidate = _candidate()
     calibrations = derive_view_metric_calibrations(

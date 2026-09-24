@@ -136,7 +136,7 @@ def _oblique_annotation_lines(
         normalized = abs(angle) % 180.0
         if normalized > 90.0:
             normalized = 180.0 - normalized
-        if normalized <= 8.0 or abs(normalized - 90.0) <= 8.0:
+        if normalized <= 3.0 or abs(normalized - 90.0) <= 3.0:
             continue
 
         first = (int(x1), int(y1))

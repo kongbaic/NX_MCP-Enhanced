@@ -508,7 +508,7 @@ def _compact_fragments(
     image_height: int,
     region: dict[str, int],
     *,
-    limit: int = 8,
+    limit: int = 24,
 ) -> list[dict[str, Any]]:
     scored: list[dict[str, Any]] = []
     for group in groups:

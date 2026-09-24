@@ -189,3 +189,34 @@ def test_m6_hidden_projection_carries_axis_thread_and_depth_to_linker():
         target.startswith(f"feature:{feature_id}.centerline.")
         for target in direct
     )
+
+
+
+def test_linear_pattern_coincident_with_structural_profile_is_not_hidden_owner():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 66], [160, 197]],
+                "angle_deg": 71.0,
+                "length_px": 138.5,
+                "candidate_only": True,
+            }
+        ],
+        _region(),
+        view_kind="front",
+        profile_inventory=[
+            {
+                "region_id": "R1",
+                "kind": "profile_edge_candidate",
+                "ref": "R1.structural.horizontal.001",
+                "position_px": 200.5,
+                "source_orientation": "horizontal",
+                "span_px": [100, 360],
+            }
+        ],
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "no_leader_to_linear_pattern_match"

@@ -988,7 +988,6 @@ def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated
     )
 
 
-
 def test_adapter_full_profile_inventory_adds_unreferenced_edge_to_metric_geometry():
     report = _report()
     report["regions"] = [
@@ -1171,9 +1170,7 @@ def test_adapter_full_profile_inventory_adds_unreferenced_edge_to_metric_geometr
         "R1.structural.horizontal.004",
     }
     middle = next(
-        item
-        for item in metric_ledger["items"]
-        if item["ref"] == "R1.structural.vertical.002"
+        item for item in metric_ledger["items"] if item["ref"] == "R1.structural.vertical.002"
     )
     assert middle["coordinate_mm"] == pytest.approx(0.0)
     assert middle["source_scope"] == "full_structural_profile_inventory"

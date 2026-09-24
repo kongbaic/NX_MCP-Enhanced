@@ -288,8 +288,13 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     assert [(item.key, item.shape) for item in partial.entities] == [
         ("R1.C1", "circle"),
         ("R2.C1", "concentric_circles"),
+        ("R1.CALLOUT.1", "profile"),
+        ("R2.CALLOUT.7", "profile"),
     ]
-    assert all(item.required_for_modeling is False for item in partial.entities)
+    assert partial.entities[0].required_for_modeling is False
+    assert partial.entities[1].required_for_modeling is False
+    assert partial.entities[2].required_for_modeling is True
+    assert partial.entities[3].required_for_modeling is True
 
     ledger = next(
         item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
@@ -305,13 +310,17 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     }
     assert ledger["items"][1]["region_candidates"] == ["R2"]
 
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.1", "thread_depth", 12.0),
+        ("R1.CALLOUT.1", "thread_spec", "M6"),
+        ("R2.CALLOUT.7", "diameter", 20.0),
+        ("R2.CALLOUT.7", "fit", "H7"),
+    ]
     callout_unresolved = [
-        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
+        item for item in partial.unresolved if item.kind == "cross_view_identity"
     ]
     assert len(callout_unresolved) == 2
-    assert all(item.kind == "feature_inventory" for item in callout_unresolved)
     assert all(item.required_for_modeling for item in callout_unresolved)
-    assert all(not item.entity_keys for item in callout_unresolved)
 
 
 def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
@@ -362,7 +371,7 @@ def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
     assert ledger["items"][0]["binding"]["entity_key"] == "R1.C1"
 
 
-def test_adapter_does_not_bind_nearby_callout_without_annotation_geometry():
+def test_adapter_transports_nearby_callout_without_claiming_geometry_binding():
     report = _report()
     report["regions"] = [
         {
@@ -388,12 +397,21 @@ def test_adapter_does_not_bind_nearby_callout_without_annotation_geometry():
 
     partial = adapt_hybrid_ocr_report(report, _context())
 
-    assert partial.values == []
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.7", "diameter", 20.0),
+        ("R1.CALLOUT.7", "fit", "H7"),
+    ]
     unresolved = [
-        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
+        item
+        for item in partial.unresolved
+        if item.kind == "cross_view_identity"
+        and item.entity_keys == ["R1.CALLOUT.7"]
     ]
     assert len(unresolved) == 1
-    assert unresolved[0].kind == "feature_inventory"
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "callout_backed"
 
 
 def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresolved():

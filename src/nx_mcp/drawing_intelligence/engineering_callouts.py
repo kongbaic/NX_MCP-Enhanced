@@ -56,7 +56,7 @@ def parse_engineering_callout(text: str) -> dict[str, Any] | None:
         facts["diameter"] = _number(diameter_match.group(1))
         tags.append("diameter")
 
-    fit_match = re.search(r"(?<![A-Z0-9])([Hh][0-9]{1,2})(?![A-Z0-9])", normalized)
+    fit_match = re.search(r"(?<![A-Z])([Hh][0-9]{1,2})(?![A-Z0-9])", normalized)
     if fit_match:
         facts["fit"] = fit_match.group(1)
         tags.append("fit")

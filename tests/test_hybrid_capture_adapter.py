@@ -355,9 +355,7 @@ def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
     ]
 
     ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_engineering_callout_ledger"
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
     )
     assert ledger["items"][0]["binding"]["status"] == "bound"
     assert ledger["items"][0]["binding"]["entity_key"] == "R1.C1"

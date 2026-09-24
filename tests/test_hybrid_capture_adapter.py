@@ -727,3 +727,124 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
         "R1.structural.vertical.001": -20.0,
         "R1.structural.vertical.003": 20.0,
     }
+
+
+
+def test_adapter_emits_conflict_backed_z_calibration_without_accepting_ocr_conflict():
+    report = _report()
+    dg17 = next(
+        item for item in report["candidates"] if item["candidate_id"] == "DG17"
+    )
+    dg17.update(
+        {
+            "global_proposal_token": "6",
+            "decision_reason": "global_local_token_disagreement",
+            "wide_local_linear_tokens": ["66"],
+            "global_assignments": [
+                {
+                    "source_item_index": 9,
+                    "text": "6",
+                    "token": "6",
+                    "perpendicular_distance_px": 19.0,
+                    "bbox": [
+                        [7.0, 180.0],
+                        [47.0, 180.0],
+                        [47.0, 220.0],
+                        [7.0, 220.0],
+                    ],
+                    "confidence": 0.99,
+                }
+            ],
+            "witness_positions_px": [100.0, 300.0],
+            "witness_anchor_evidence": [
+                {
+                    "witness_index": 0,
+                    "position_px": 100.0,
+                    "axis": "y",
+                    "nearest_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.horizontal.001",
+                            "position_px": 100.0,
+                            "source_orientation": "horizontal",
+                            "span_px": [20, 180],
+                            "relative_extreme_side": "min",
+                        }
+                    ],
+                },
+                {
+                    "witness_index": 1,
+                    "position_px": 300.0,
+                    "axis": "y",
+                    "nearest_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.horizontal.004",
+                            "position_px": 300.0,
+                            "source_orientation": "horizontal",
+                            "span_px": [20, 180],
+                            "relative_extreme_side": "max",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+            "overall_dimension_facts": [
+                {
+                    "axis": "Z",
+                    "value": 66,
+                    "evidence": ["overall:Z"],
+                }
+            ],
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, context)
+
+    assert "R1.DG17" not in {item.key for item in partial.dimensions}
+    blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.field == "dimension_value_candidate"
+    ]
+    assert len(blockers) == 1
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_view_metric_calibration_ledger"
+    )
+    assert len(ledger["items"]) == 1
+    calibration = ledger["items"][0]
+    assert calibration["axis"] == "Z"
+    assert calibration["min_anchor"]["coordinate_mm"] == 0.0
+    assert calibration["max_anchor"]["coordinate_mm"] == 66.0
+    assert calibration["ocr_conflict_preserved"] is True
+    assert calibration["supporting_local_token"] == "66"
+
+    metric_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_metric_profile_edge_ledger"
+    )
+    by_ref = {item["ref"]: item for item in metric_ledger["items"]}
+    assert by_ref["R1.structural.horizontal.001"]["axis"] == "Z"
+    assert by_ref["R1.structural.horizontal.001"]["coordinate_mm"] == pytest.approx(0.0)
+    assert by_ref["R1.structural.horizontal.004"]["axis"] == "Z"
+    assert by_ref["R1.structural.horizontal.004"]["coordinate_mm"] == pytest.approx(66.0)

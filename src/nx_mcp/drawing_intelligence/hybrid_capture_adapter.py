@@ -217,6 +217,103 @@ def _coverage_unresolved(
     return unresolved
 
 
+def _circle_center_entity_key(
+    physical_candidate: dict[str, Any],
+    entity_keys: set[str],
+) -> str | None:
+    if physical_candidate.get("kind") != "circle_center_axis":
+        return None
+    ref = str(physical_candidate.get("ref") or "")
+    match = re.fullmatch(r"(.+)\.center_[xyz]", ref)
+    if match is None:
+        return None
+    entity_key = match.group(1)
+    return entity_key if entity_key in entity_keys else None
+
+
+def _dimension_endpoints_from_candidates(
+    candidate: dict[str, Any],
+    *,
+    entity_keys: set[str],
+    evidence: list[str],
+) -> tuple[list[ObservationDimensionEndpoint], str | None]:
+    endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
+    raw_endpoints = endpoint_candidates.get("endpoints")
+    if not isinstance(raw_endpoints, list) or len(raw_endpoints) != 2:
+        return (
+            [
+                ObservationDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    evidence=evidence,
+                ),
+                ObservationDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    evidence=evidence,
+                ),
+            ],
+            (
+                "Hybrid OCR confirms value and measured axis; endpoint candidate "
+                "evidence does not yet close both physical endpoints."
+            ),
+        )
+
+    output: list[ObservationDimensionEndpoint] = []
+    for raw_endpoint in raw_endpoints:
+        if not isinstance(raw_endpoint, dict):
+            output.append(
+                ObservationDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    evidence=evidence,
+                )
+            )
+            continue
+
+        physical_candidates = raw_endpoint.get("physical_candidates", [])
+        if not isinstance(physical_candidates, list):
+            physical_candidates = []
+
+        if (
+            raw_endpoint.get("status") == "unique_physical_candidate"
+            and len(physical_candidates) == 1
+            and isinstance(physical_candidates[0], dict)
+        ):
+            entity_key = _circle_center_entity_key(
+                physical_candidates[0],
+                entity_keys,
+            )
+            if entity_key is not None:
+                output.append(
+                    ObservationDimensionEndpoint(
+                        role="entity_center",
+                        entity_key=entity_key,
+                        basis="circle_center",
+                        evidence=evidence,
+                    )
+                )
+                continue
+
+        output.append(
+            ObservationDimensionEndpoint(
+                role="unresolved",
+                unresolved_kind="intermediate_surface",
+                evidence=evidence,
+            )
+        )
+
+    reason = (
+        None
+        if all(item.role != "unresolved" for item in output)
+        else (
+            "Hybrid OCR confirms value and measured axis; deterministic endpoint "
+            "candidates close only the explicitly supported physical owners."
+        )
+    )
+    return output, reason
+
+
 def _point_in_bbox(
     point: tuple[float, float],
     bbox: list[Any],
@@ -560,27 +657,18 @@ def adapt_hybrid_ocr_report(
         dimension_key = f"{region_id}.{candidate_id}"
         evidence = _candidate_evidence(candidate_id)
 
+        dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
+            raw_candidate,
+            entity_keys={item.key for item in entities},
+            evidence=evidence,
+        )
         dimensions.append(
             ObservationDimension(
                 key=dimension_key,
                 value=value,
                 axis=axis,
-                endpoints=[
-                    ObservationDimensionEndpoint(
-                        role="unresolved",
-                        unresolved_kind="intermediate_surface",
-                        evidence=evidence,
-                    ),
-                    ObservationDimensionEndpoint(
-                        role="unresolved",
-                        unresolved_kind="intermediate_surface",
-                        evidence=evidence,
-                    ),
-                ],
-                unresolved_reason=(
-                    "Hybrid OCR confirms value and measured axis only; "
-                    "endpoint ownership remains unresolved."
-                ),
+                endpoints=dimension_endpoints,
+                unresolved_reason=unresolved_reason,
                 evidence=evidence,
                 required_for_modeling=True,
             )

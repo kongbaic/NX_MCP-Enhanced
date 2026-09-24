@@ -172,7 +172,6 @@ def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
     }
 
 
-
 def _conflict_candidate(
     *,
     local_tokens: list[str] | None = None,
@@ -209,9 +208,9 @@ def _conflict_candidate(
             None,
         )
     else:
-        candidate["witness_anchor_evidence"][1]["nearest_anchors"][0][
-            "relative_extreme_side"
-        ] = right_side
+        candidate["witness_anchor_evidence"][1]["nearest_anchors"][0]["relative_extreme_side"] = (
+            right_side
+        )
     return candidate
 
 

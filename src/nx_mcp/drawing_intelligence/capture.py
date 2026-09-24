@@ -45,6 +45,7 @@ AssociationEvidenceKind = Literal[
     "shared_center_mark",
     "leader_correspondence",
     "matching_specification",
+    "unique_orthographic_counterpart",
     "explicit_section_correspondence",
 ]
 
@@ -56,6 +57,7 @@ def _association_basis_sufficient(basis: list[AssociationEvidenceKind]) -> bool:
     identity_support = {
         "matching_specification",
         "leader_correspondence",
+        "unique_orthographic_counterpart",
     }
     return "projection_alignment" in kinds and bool(kinds & identity_support)
 

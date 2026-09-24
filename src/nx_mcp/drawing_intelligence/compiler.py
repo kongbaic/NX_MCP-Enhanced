@@ -172,9 +172,9 @@ def _target_axis(target: str) -> str | None:
 
 
 def _overall_center_value(graph: EvidenceGraph, axis: str) -> float:
-    if axis in {"X", "Y"}:
-        return 0.0
-    return graph.overall_dimensions.height_z / 2.0
+    """Return the center in Reader-local 0..overall engineering coordinates."""
+
+    return _overall_value(graph, axis) / 2.0
 
 
 def _compile_datum_alignments(

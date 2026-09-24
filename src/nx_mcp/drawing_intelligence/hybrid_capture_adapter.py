@@ -828,6 +828,14 @@ def _engineering_callout_routing(
                     annotation_lines,
                     region,
                     view_kind=region_view.view_kind,
+                    profile_inventory=(
+                        report.get("structural_profile_inventory")
+                        if isinstance(
+                            report.get("structural_profile_inventory"),
+                            list,
+                        )
+                        else []
+                    ),
                 )
                 if candidate_pattern_binding.get("status") == "bound":
                     linear_pattern_binding = candidate_pattern_binding

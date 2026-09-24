@@ -639,3 +639,84 @@ def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
     assert dimension.endpoints[1].unresolved_kind == "intermediate_surface"
     assert dimension.unresolved_reason is not None
 
+
+def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
+    report = _report()
+    candidate = report["candidates"][0]
+    candidate["accepted_token"] = "40"
+    candidate["global_assignments"][0]["token"] = "40"
+    candidate["witness_anchor_evidence"] = [
+        {
+            "witness_index": 0,
+            "axis": "x",
+            "nearest_anchors": [
+                {
+                    "kind": "profile_edge_candidate",
+                    "ref": "R1.structural.vertical.001",
+                    "position_px": 100.0,
+                    "relative_extreme_side": "min",
+                    "candidate_only": True,
+                    "ownership_claimed": False,
+                    "distance_px": 0.0,
+                    "distance_local_norm": 0.0,
+                }
+            ],
+        },
+        {
+            "witness_index": 1,
+            "axis": "x",
+            "nearest_anchors": [
+                {
+                    "kind": "profile_edge_candidate",
+                    "ref": "R1.structural.vertical.003",
+                    "position_px": 200.0,
+                    "relative_extreme_side": "max",
+                    "candidate_only": True,
+                    "ownership_claimed": False,
+                    "distance_px": 0.0,
+                    "distance_local_norm": 0.0,
+                }
+            ],
+        },
+    ]
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+            "overall_dimension_facts": [
+                {
+                    "axis": "X",
+                    "value": 40,
+                    "evidence": ["overall:X"],
+                }
+            ],
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, context)
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_view_metric_calibration_ledger"
+    )
+    assert ledger["schema"] == "1.0"
+    assert len(ledger["items"]) == 1
+    calibration = ledger["items"][0]
+    assert calibration["region_id"] == "R1"
+    assert calibration["axis"] == "X"
+    assert calibration["min_anchor"]["coordinate_mm"] == -20
+    assert calibration["max_anchor"]["coordinate_mm"] == 20
+    assert calibration["basis"] == "overall_dimension_with_opposite_profile_extremes"
+

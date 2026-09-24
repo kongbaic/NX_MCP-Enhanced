@@ -649,6 +649,8 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
                     "kind": "profile_edge_candidate",
                     "ref": "R1.structural.vertical.001",
                     "position_px": 100.0,
+                    "source_orientation": "vertical",
+                    "span_px": [20, 180],
                     "relative_extreme_side": "min",
                     "candidate_only": True,
                     "ownership_claimed": False,
@@ -665,6 +667,8 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
                     "kind": "profile_edge_candidate",
                     "ref": "R1.structural.vertical.003",
                     "position_px": 200.0,
+                    "source_orientation": "vertical",
+                    "span_px": [20, 180],
                     "relative_extreme_side": "max",
                     "candidate_only": True,
                     "ownership_claimed": False,
@@ -714,3 +718,17 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
     assert calibration["min_anchor"]["coordinate_mm"] == -20
     assert calibration["max_anchor"]["coordinate_mm"] == 20
     assert calibration["basis"] == "overall_dimension_with_opposite_profile_extremes"
+
+    metric_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_metric_profile_edge_ledger"
+    )
+    assert metric_ledger["schema"] == "1.0"
+    assert {
+        item["ref"]: item["coordinate_mm"]
+        for item in metric_ledger["items"]
+    } == {
+        "R1.structural.vertical.001": -20.0,
+        "R1.structural.vertical.003": 20.0,
+    }

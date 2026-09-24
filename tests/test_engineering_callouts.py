@@ -34,9 +34,7 @@ def test_leading_zero_through_hole_does_not_invent_diameter():
         "count": 2,
         "through": True,
     }
-    assert parsed["ambiguities"] == [
-        "leading_zero_diameter_like_token_not_promoted"
-    ]
+    assert parsed["ambiguities"] == ["leading_zero_diameter_like_token_not_promoted"]
     assert "diameter" not in parsed["facts"]
 
 

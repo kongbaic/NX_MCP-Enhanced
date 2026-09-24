@@ -595,22 +595,47 @@ def _engineering_callout_routing(
             if center is not None
             else []
         )
-        binding = bind_callout_to_circle_entity(
+        leader_binding = bind_callout_to_circle_entity(
             item.get("bbox"),
             annotation_lines,
             regions,
         )
+        dimension_binding: dict[str, Any] | None = None
         if (
-            binding.get("status") != "bound"
-            and isinstance(parsed["facts"].get("diameter"), (int, float))
+            isinstance(parsed["facts"].get("diameter"), (int, float))
             and len(region_candidates) == 1
         ):
-            dimension_binding = bind_callout_to_dimension_candidate(
+            candidate_binding = bind_callout_to_dimension_candidate(
                 item.get("bbox"),
                 candidates,
                 region_id=region_candidates[0],
             )
-            if dimension_binding.get("status") == "bound":
+            if candidate_binding.get("status") == "bound":
+                dimension_binding = candidate_binding
+
+        binding = leader_binding
+        if dimension_binding is not None:
+            dimension_distance = float(
+                dimension_binding.get("text_geometry_distance_px", float("inf"))
+            )
+            leader_support = (
+                leader_binding.get("support", [])
+                if leader_binding.get("status") == "bound"
+                else []
+            )
+            leader_distance = min(
+                (
+                    float(item.get("text_touch_distance_px", float("inf")))
+                    for item in leader_support
+                    if isinstance(item, dict)
+                ),
+                default=float("inf"),
+            )
+
+            if (
+                leader_binding.get("status") != "bound"
+                or dimension_distance + 1e-9 < leader_distance
+            ):
                 projection_entity_key = (
                     f"{region_candidates[0]}."
                     f"{dimension_binding['candidate_id']}."
@@ -620,6 +645,11 @@ def _engineering_callout_routing(
                     **dimension_binding,
                     "status": "dimension_backed",
                     "entity_key": projection_entity_key,
+                    "competing_leader_binding": (
+                        leader_binding
+                        if leader_binding.get("status") == "bound"
+                        else None
+                    ),
                 }
                 if projection_entity_key not in callout_entity_keys:
                     callout_entity_keys.add(projection_entity_key)
@@ -639,6 +669,13 @@ def _engineering_callout_routing(
                             required_for_modeling=False,
                         )
                     )
+            elif abs(dimension_distance - leader_distance) <= 1e-9:
+                binding = {
+                    "status": "unresolved",
+                    "reason": "competing_callout_geometry_bindings",
+                    "leader_binding": leader_binding,
+                    "dimension_binding": dimension_binding,
+                }
 
         record = {
             "source_item_index": source_item_index,

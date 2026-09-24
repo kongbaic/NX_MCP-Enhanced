@@ -311,9 +311,7 @@ def adapt_hybrid_ocr_report(
                 "witness_line_evidence",
                 [],
             ),
-            "endpoint_candidate_evidence": derive_dimension_endpoint_candidates(
-                candidate
-            ),
+            "endpoint_candidate_evidence": derive_dimension_endpoint_candidates(candidate),
         }
         for candidate in candidates
         if isinstance(candidate, dict) and candidate.get("accepted_token") is not None

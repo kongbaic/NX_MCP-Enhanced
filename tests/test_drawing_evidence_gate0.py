@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _capture(**overrides):
     base = {
         "schema_version": "1.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": {
             "length_x": 40,
             "width_y": 32,

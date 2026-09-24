@@ -49,6 +49,20 @@ def _report() -> dict:
                 "region_id": "R1",
                 "orientation": "horizontal",
                 "accepted_token": "24",
+                "witness_anchor_evidence": [
+                    {
+                        "witness_index": 0,
+                        "axis": "x",
+                        "nearest_anchors": [
+                            {
+                                "kind": "circle_center_axis",
+                                "ref": "R1.CG001.center_x",
+                                "distance_px": 0.0,
+                                "distance_local_norm": 0.0,
+                            }
+                        ],
+                    }
+                ],
             },
             {
                 "candidate_id": "DG17",
@@ -101,6 +115,18 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     assert "R1.DG17" not in by_key
     assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
     assert by_key["R2.DG13"].axis == "Y"
+
+    anchor_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_dimension_anchor_ledger"
+    )
+    dg12 = next(
+        item
+        for item in anchor_ledger["items"]
+        if item["candidate_id"] == "DG12"
+    )
+    assert dg12["witness_anchor_evidence"][0]["nearest_anchors"][0]["kind"] == "circle_center_axis"
 
 
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():

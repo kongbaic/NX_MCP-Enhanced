@@ -309,6 +309,38 @@ def bind_callout_to_linear_pattern(
             int(item["pattern_index"]),
         )
     )
+
+    duplicate_axis_tolerance = max(4.0, target_tolerance * 0.30)
+    distinct_matches: list[dict[str, Any]] = []
+    for match in matches:
+        orientation = str(match.get("orientation") or "")
+        axis = float(match["pattern_axis_px"])
+        span = match.get("pattern_span_px", [])
+        duplicate = False
+        for existing in distinct_matches:
+            if str(existing.get("orientation") or "") != orientation:
+                continue
+            if abs(float(existing["pattern_axis_px"]) - axis) > duplicate_axis_tolerance:
+                continue
+            existing_span = existing.get("pattern_span_px", [])
+            if not (
+                isinstance(span, list)
+                and len(span) == 2
+                and isinstance(existing_span, list)
+                and len(existing_span) == 2
+            ):
+                continue
+            start_a, end_a = sorted(float(value) for value in span)
+            start_b, end_b = sorted(float(value) for value in existing_span)
+            overlap = max(0.0, min(end_a, end_b) - max(start_a, start_b))
+            shorter = min(end_a - start_a, end_b - start_b)
+            if shorter > 0 and overlap / shorter >= 0.75:
+                duplicate = True
+                break
+        if not duplicate:
+            distinct_matches.append(match)
+
+    matches = distinct_matches
     if not matches:
         return {
             "status": "unresolved",

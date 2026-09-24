@@ -30,7 +30,7 @@ EndpointRole = Literal[
 
 
 class OverallDimensions(BaseModel):
-    """Global extents in the fixed part_center_xy_bottom_z0 frame."""
+    """Global extents in the fixed overall_min_xyz frame."""
 
     length_x: float = Field(gt=0)
     width_y: float = Field(gt=0)
@@ -192,7 +192,7 @@ class EvidenceGraph(BaseModel):
     """Machine-readable output of the visual evidence extraction stage."""
 
     schema_version: Literal["1.0"] = "1.0"
-    coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
+    coordinate_system: Literal["overall_min_xyz"] = "overall_min_xyz"
     overall_dimensions: OverallDimensions
     views: list[ViewEvidence] = Field(default_factory=list)
     projections: list[ProjectionEvidence] = Field(default_factory=list)

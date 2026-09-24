@@ -165,3 +165,18 @@ def test_reader_visual_aid_rejects_non_v1_input():
         assert "raw-evidence-v1" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+
+def test_reader_visual_aid_retains_full_structural_profile_inventory():
+    result = build_reader_visual_aid(_raw())
+
+    inventory = result["structural_profile_inventory"]
+    assert inventory
+    refs = {item["ref"] for item in inventory}
+    assert "R1.structural.vertical.001" in refs
+    assert all(item["region_id"] == "R1" for item in inventory)
+    assert all(item["kind"] == "profile_edge_candidate" for item in inventory)
+    assert all(item["candidate_only"] is True for item in inventory)
+    assert all(item["ownership_claimed"] is False for item in inventory)
+    assert result["summary"]["structural_profile_edge_count"] == len(inventory)

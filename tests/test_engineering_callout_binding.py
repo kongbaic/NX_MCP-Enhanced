@@ -140,4 +140,3 @@ def test_fragmented_collinear_leader_chain_binds_without_nearest_geometry_guess(
     assert result["entity_key"] == "R1.C1"
     assert result["support"][0]["segment_count"] == 3
     assert result["support"][0]["line_indices"] == [0, 1, 2]
-

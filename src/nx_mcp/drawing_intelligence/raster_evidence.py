@@ -363,6 +363,7 @@ def _circle_candidates(
             )
     return enriched
 
+
 def _fragment_groups(
     edges: Any,
     region: dict[str, int],

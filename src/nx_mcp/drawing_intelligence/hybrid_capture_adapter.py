@@ -11,6 +11,7 @@ from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
 from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
+from .hidden_projection_centers import derive_hidden_projection_center_candidates
 from .evidence import Axis, ViewKind
 from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
@@ -242,6 +243,129 @@ def _circle_center_entity_key(
     return entity_key if entity_key in entity_keys else None
 
 
+def _center_entity_candidate(
+    physical_candidate: dict[str, Any],
+    entity_keys: set[str],
+) -> tuple[str, Literal["circle_center", "centerline"]] | None:
+    circle_key = _circle_center_entity_key(
+        physical_candidate,
+        entity_keys,
+    )
+    if circle_key is not None:
+        return circle_key, "circle_center"
+
+    if physical_candidate.get("kind") == "hidden_projection_center_axis":
+        entity_key = str(physical_candidate.get("entity_key") or "")
+        if entity_key in entity_keys:
+            return entity_key, "centerline"
+    return None
+
+
+def _dimension_direction_from_image_order(
+    view_kind: str,
+    orientation: str,
+) -> Literal[-1, 1] | None:
+    if view_kind == "front" and orientation == "horizontal":
+        return 1
+    if view_kind == "front" and orientation == "vertical":
+        return -1
+    return None
+
+
+def _enrich_candidate_with_hidden_projection_centers(
+    candidate: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if candidate.get("accepted_token") is None:
+        return candidate, []
+
+    region_id = str(candidate.get("region_id") or "")
+    region_view = view_lookup.get(region_id)
+    if region_view is None:
+        return candidate, []
+
+    region = next(
+        (
+            item
+            for item in report.get("regions", [])
+            if isinstance(item, dict)
+            and str(item.get("region_id") or "") == region_id
+        ),
+        None,
+    )
+    if region is None:
+        return candidate, []
+
+    center_candidates = derive_hidden_projection_center_candidates(
+        candidate,
+        region=region,
+        view_kind=region_view.view_kind,
+        profile_inventory=profile_inventory,
+    )
+    if not center_candidates:
+        return candidate, []
+
+    evidence_by_index = {
+        int(item["witness_index"]): dict(item)
+        for item in candidate.get("witness_anchor_evidence", [])
+        if isinstance(item, dict) and isinstance(item.get("witness_index"), int)
+    }
+    witness_positions = candidate.get("witness_positions_px", [])
+    enriched: list[dict[str, Any]] = []
+    for witness_index, raw_position in enumerate(witness_positions):
+        if not isinstance(raw_position, (int, float)):
+            continue
+        existing = evidence_by_index.get(witness_index, {})
+        nearest = [
+            dict(item)
+            for item in existing.get("nearest_anchors", [])
+            if isinstance(item, dict)
+        ]
+        existing_refs = {str(item.get("ref") or "") for item in nearest}
+        for center in center_candidates:
+            if center.get("witness_index") != witness_index:
+                continue
+            ref = str(center.get("ref") or "")
+            if not ref or ref in existing_refs:
+                continue
+            nearest.append(
+                {
+                    key: value
+                    for key, value in center.items()
+                    if key != "witness_index"
+                }
+            )
+            existing_refs.add(ref)
+
+        enriched.append(
+            {
+                **existing,
+                "witness_index": witness_index,
+                "position_px": float(raw_position),
+                "axis": existing.get(
+                    "axis",
+                    (
+                        "x"
+                        if candidate.get("orientation") == "horizontal"
+                        else "y"
+                    ),
+                ),
+                "nearest_anchors": nearest,
+            }
+        )
+
+    return (
+        {
+            **candidate,
+            "witness_anchor_evidence": enriched,
+        },
+        center_candidates,
+    )
+
+
 def _region_profile_match_tolerance(
     report: dict[str, Any],
     region_id: str,
@@ -428,16 +552,17 @@ def _dimension_endpoints_from_candidates(
             and len(physical_candidates) == 1
             and isinstance(physical_candidates[0], dict)
         ):
-            entity_key = _circle_center_entity_key(
+            center_candidate = _center_entity_candidate(
                 physical_candidates[0],
                 entity_keys,
             )
-            if entity_key is not None:
+            if center_candidate is not None:
+                entity_key, center_basis = center_candidate
                 output.append(
                     ObservationDimensionEndpoint(
                         role="entity_center",
                         entity_key=entity_key,
-                        basis="circle_center",
+                        basis=center_basis,
                         evidence=evidence,
                     )
                 )
@@ -456,10 +581,29 @@ def _dimension_endpoints_from_candidates(
                     )
                     continue
 
+        candidate_entity_keys = sorted(
+            {
+                center_candidate[0]
+                for physical_candidate in physical_candidates
+                if isinstance(physical_candidate, dict)
+                for center_candidate in [
+                    _center_entity_candidate(
+                        physical_candidate,
+                        entity_keys,
+                    )
+                ]
+                if center_candidate is not None
+            }
+        )
         output.append(
             ObservationDimensionEndpoint(
                 role="unresolved",
-                unresolved_kind="intermediate_surface",
+                candidate_entity_keys=candidate_entity_keys,
+                unresolved_kind=(
+                    "ambiguous_owner"
+                    if candidate_entity_keys
+                    else "intermediate_surface"
+                ),
                 evidence=evidence,
             )
         )
@@ -1423,10 +1567,74 @@ def adapt_hybrid_ocr_report(
     )
     boundary_roles = _boundary_role_lookup(boundaries)
 
+    dimension_candidates: list[dict[str, Any]] = []
+    hidden_center_records: list[dict[str, Any]] = []
+    for candidate in working_candidates:
+        enriched_candidate, center_records = (
+            _enrich_candidate_with_hidden_projection_centers(
+                candidate,
+                report=report,
+                view_lookup=view_lookup,
+                profile_inventory=profile_inventory,
+            )
+        )
+        dimension_candidates.append(enriched_candidate)
+        hidden_center_records.extend(center_records)
+
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
+
+    hidden_entity_records: dict[str, dict[str, Any]] = {}
+    for record in hidden_center_records:
+        entity_key = str(record.get("entity_key") or "")
+        if entity_key:
+            hidden_entity_records.setdefault(entity_key, record)
+    entities.extend(
+        ObservationEntity(
+            key=entity_key,
+            view_key=f"view.{str(record['entity_key']).split('.', 1)[0]}",
+            shape="hidden_parallel",
+            cross_view_disposition=None,
+            evidence=[
+                (
+                    "hybrid:hidden-pair:"
+                    + ",".join(
+                        str(item)
+                        for item in record.get(
+                            "source_pattern_indices",
+                            [],
+                        )
+                    )
+                )
+            ],
+            required_for_modeling=False,
+        )
+        for entity_key, record in sorted(hidden_entity_records.items())
+    )
+    geometry_values = [
+        ObservationValue(
+            entity_key=entity_key,
+            field="axis",
+            value=record["feature_axis"],
+            semantic="axis",
+            evidence=[
+                (
+                    "hybrid:hidden-pair:"
+                    + ",".join(
+                        str(item)
+                        for item in record.get(
+                            "source_pattern_indices",
+                            [],
+                        )
+                    )
+                )
+            ],
+        )
+        for entity_key, record in sorted(hidden_entity_records.items())
+        if record.get("feature_axis") in {"X", "Y", "Z"}
+    ]
     circle_alignment_records = derive_circle_overall_center_alignments(
         regions=[
             item for item in report.get("regions", []) if isinstance(item, dict)
@@ -1437,7 +1645,7 @@ def adapt_hybrid_ocr_report(
     )
     datum_alignments: list[ObservationDatumAlignment] = []
 
-    for raw_candidate in working_candidates:
+    for raw_candidate in dimension_candidates:
         if not isinstance(raw_candidate, dict):
             raise HybridCaptureAdapterError("Hybrid candidate must be an object")
         candidate_id = str(raw_candidate.get("candidate_id") or "")
@@ -1478,6 +1686,10 @@ def adapt_hybrid_ocr_report(
                 axis=axis,
                 endpoints=dimension_endpoints,
                 unresolved_reason=unresolved_reason,
+                direction=_dimension_direction_from_image_order(
+                    region_view.view_kind,
+                    orientation,
+                ),
                 evidence=evidence,
                 required_for_modeling=True,
             )
@@ -1544,7 +1756,7 @@ def adapt_hybrid_ocr_report(
             ),
             "endpoint_candidate_evidence": derive_dimension_endpoint_candidates(candidate),
         }
-        for candidate in working_candidates
+        for candidate in dimension_candidates
         if candidate.get("accepted_token") is not None
     ]
     calibration_candidates = working_candidates
@@ -1668,7 +1880,7 @@ def adapt_hybrid_ocr_report(
         views=views,
         entities=entities,
         associations=associations,
-        values=callout_values,
+        values=[*geometry_values, *callout_values],
         dimensions=dimensions,
         datum_alignments=datum_alignments,
         observations=observations,

@@ -203,6 +203,7 @@ def _association_basis_sufficient(basis: list[str]) -> bool:
     supporting = {
         "matching_specification",
         "leader_correspondence",
+        "unique_orthographic_counterpart",
     }
     return (
         "projection_alignment" in kinds

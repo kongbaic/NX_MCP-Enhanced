@@ -98,7 +98,6 @@ def finalize_partial_reader_observations(
     )
 
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("partial")

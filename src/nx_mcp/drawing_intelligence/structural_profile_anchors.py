@@ -343,11 +343,17 @@ def derive_structural_profile_anchors(
             float(line["span_length_px"]) / span_denominator
         )
 
-        if span_local_norm < 0.15:
-            continue
-        if junction_count < 2:
-            continue
-        if endpoint_junction_count < 1:
+        strong_topology = (
+            span_local_norm >= 0.15
+            and junction_count >= 2
+            and endpoint_junction_count >= 1
+        )
+        long_single_corner = (
+            span_local_norm >= 0.25
+            and junction_count >= 1
+            and endpoint_junction_count >= 1
+        )
+        if not (strong_topology or long_single_corner):
             continue
 
         profile_lines.append(

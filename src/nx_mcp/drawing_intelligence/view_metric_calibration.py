@@ -1,3 +1,14 @@
+"""Visual-scale diagnostics only.
+
+Pixel-derived millimeter estimates in this module are non-authoritative and
+must never feed canonical ReaderObservations, Resolver engineering coordinates,
+Planner geometry, or NX operations. Engineering coordinates are solved only
+from dimension constraints, datum relations, symmetry/alignment, and explicit
+engineering facts.
+"""
+
+ENGINEERING_AUTHORITATIVE = False
+
 from __future__ import annotations
 
 from typing import Any

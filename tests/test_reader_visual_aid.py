@@ -166,6 +166,7 @@ def test_reader_visual_aid_rejects_non_v1_input():
     else:
         raise AssertionError("expected ValueError")
 
+
 def test_reader_visual_aid_retains_full_structural_profile_inventory():
     raw = _raw()
     structural = _candidate(

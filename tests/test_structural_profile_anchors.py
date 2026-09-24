@@ -71,10 +71,7 @@ def test_structural_profile_anchors_find_extremes_and_internal_shoulder():
         "horizontal",
     )
 
-    by_position = {
-        round(float(anchor["position_px"]), 3): anchor
-        for anchor in anchors
-    }
+    by_position = {round(float(anchor["position_px"]), 3): anchor for anchor in anchors}
 
     assert by_position[20.0]["kind"] == "silhouette_extreme_candidate"
     assert by_position[20.0]["extreme_side"] == "min"
@@ -115,14 +112,14 @@ def test_structural_profile_anchors_flow_into_witness_evidence():
     evidence = candidate["witness_anchor_evidence"]
 
     kinds_by_witness = [
-        {item["kind"] for item in witness["nearest_anchors"]}
-        for witness in evidence
+        {item["kind"] for item in witness["nearest_anchors"]} for witness in evidence
     ]
 
     assert "silhouette_extreme_candidate" in kinds_by_witness[0]
     assert "step_or_shoulder_candidate" in kinds_by_witness[1]
     assert "silhouette_extreme_candidate" in kinds_by_witness[2]
     assert result["anchor_schema_version"] == "1.1"
+
 
 def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
     raw = {
@@ -166,4 +163,3 @@ def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
     assert anchors[0]["position_px"] == 60.0
     assert anchors[0]["candidate_only"] is True
     assert anchors[0]["ownership_claimed"] is False
-

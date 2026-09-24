@@ -566,6 +566,7 @@ CANONICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "counterbore_diameter",
         "counterbore_depth",
         "type",
+        "axis",
     }
 )
 

@@ -13,14 +13,8 @@ from nx_mcp.drawing_intelligence.reader_observation_finalizer import (
 )
 from nx_mcp.drawing_intelligence.reader_observations import assemble_reader_capture
 
-
 ROOT = Path(__file__).resolve().parents[1]
-CONTEXT_PATH = (
-    ROOT
-    / "benchmarks"
-    / "hybrid_integration"
-    / "shkss20-40-adapter-context.json"
-)
+CONTEXT_PATH = ROOT / "benchmarks" / "hybrid_integration" / "shkss20-40-adapter-context.json"
 
 
 def _minimal_hybrid_report() -> dict:

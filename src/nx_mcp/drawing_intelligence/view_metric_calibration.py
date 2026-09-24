@@ -114,9 +114,7 @@ def metricize_profile_edge_candidates(
                     if cal_region != region_id:
                         continue
                     view_kind = str(calibration.get("view_kind") or "")
-                    expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get(
-                        (view_kind, axis)
-                    )
+                    expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get((view_kind, axis))
                     if expected_orientation != source_orientation:
                         continue
 
@@ -135,8 +133,7 @@ def metricize_profile_edge_candidates(
                         "axis": axis,
                         "source_orientation": source_orientation,
                         "position_px": float(position_px),
-                        "coordinate_mm": float(mm_per_px) * float(position_px)
-                        + float(offset_mm),
+                        "coordinate_mm": float(mm_per_px) * float(position_px) + float(offset_mm),
                         "span_px": list(item.get("span_px", []))
                         if isinstance(item.get("span_px"), list)
                         else [],

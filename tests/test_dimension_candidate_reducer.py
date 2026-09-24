@@ -36,9 +36,7 @@ def _candidate(
                 "source_lines": [
                     {
                         "orientation": (
-                            "vertical"
-                            if orientation == "horizontal"
-                            else "horizontal"
+                            "vertical" if orientation == "horizontal" else "horizontal"
                         ),
                         "axis_px": value,
                         "span_px": [0, 100],
@@ -144,10 +142,7 @@ def test_reducer_keeps_expected_small_candidate_pool(query, expected_ids):
 
     assert result["status"] == "reduced"
     assert result["candidate_count"] == len(expected_ids)
-    assert {
-        item["candidate_id"]
-        for item in result["candidates"]
-    } == expected_ids
+    assert {item["candidate_id"] for item in result["candidates"]} == expected_ids
     assert result["candidate_count"] <= 2
     assert all(
         len(item["witness_line_evidence"]) == len(item["witness_positions_px"])
@@ -165,10 +160,7 @@ def test_reducer_does_not_mix_orientation():
         },
     )
 
-    assert all(
-        item["orientation"] == "vertical"
-        for item in result["candidates"]
-    )
+    assert all(item["orientation"] == "vertical" for item in result["candidates"])
 
 
 def test_reducer_does_not_arbitrarily_truncate_more_than_four_candidates():
@@ -269,17 +261,11 @@ def test_reduce_dimension_candidates_cli_e2e(tmp_path: Path):
     output = json.loads(out_path.read_text(encoding="utf-8"))
     assert output["dimension_count"] == 4
 
-    by_id = {
-        item["dimension_id"]: item
-        for item in output["dimensions"]
-    }
+    by_id = {item["dimension_id"]: item for item in output["dimensions"]}
     assert by_id["D_FRONT_8"]["candidate_count"] == 2
     assert by_id["D_FRONT_40TOL"]["candidate_count"] == 2
     assert by_id["D_FRONT_24"]["candidate_count"] == 2
     assert by_id["D_SIDE_24"]["candidate_count"] == 2
 
-    front_40_ids = {
-        item["candidate_id"]
-        for item in by_id["D_FRONT_40TOL"]["candidates"]
-    }
+    front_40_ids = {item["candidate_id"] for item in by_id["D_FRONT_40TOL"]["candidates"]}
     assert front_40_ids == {"DG19", "DG20"}

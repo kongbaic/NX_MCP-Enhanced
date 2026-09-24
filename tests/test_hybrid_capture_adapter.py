@@ -288,13 +288,13 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     assert [(item.key, item.shape) for item in partial.entities] == [
         ("R1.C1", "circle"),
         ("R2.C1", "concentric_circles"),
-        ("R1.CALLOUT.1", "profile"),
-        ("R2.CALLOUT.7", "profile"),
+        ("R1.CALLOUT.1", "other"),
+        ("R2.CALLOUT.7", "other"),
     ]
     assert partial.entities[0].required_for_modeling is False
     assert partial.entities[1].required_for_modeling is False
-    assert partial.entities[2].required_for_modeling is True
-    assert partial.entities[3].required_for_modeling is True
+    assert partial.entities[2].required_for_modeling is False
+    assert partial.entities[3].required_for_modeling is False
 
     ledger = next(
         item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
@@ -498,27 +498,23 @@ def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():
     entity = callout_entities[0]
     assert entity.key == "R1.CALLOUT.1"
     assert entity.view_key == "view.R1"
-    assert entity.shape == "profile"
-    assert entity.cross_view_disposition == "unresolved"
-    assert entity.required_for_modeling is True
+    assert entity.shape == "other"
+    assert entity.cross_view_disposition is None
+    assert entity.required_for_modeling is False
 
     assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
         ("R1.CALLOUT.1", "thread_depth", 12.0),
         ("R1.CALLOUT.1", "thread_spec", "M6"),
     ]
 
-    identity = [
+    ownership = [
         item
         for item in partial.unresolved
-        if item.kind == "cross_view_identity"
+        if item.kind == "feature_inventory"
         and item.entity_keys == ["R1.CALLOUT.1"]
+        and item.field == "engineering_callout_geometry_binding"
     ]
-    assert len(identity) == 1
-    assert not [
-        item
-        for item in partial.unresolved
-        if item.field == "engineering_callout_geometry_binding"
-    ]
+    assert len(ownership) == 1
 
     ledger = next(
         item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"

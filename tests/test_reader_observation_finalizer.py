@@ -169,3 +169,30 @@ def test_finalizer_rejects_missing_explicit_view():
         match="at least one explicit view",
     ):
         finalize_partial_reader_observations(partial)
+
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "hybrid_view_metric_calibration_ledger",
+        "hybrid_metric_profile_edge_ledger",
+        "hybrid_metric_profile_segment_ledger",
+        "hybrid_metric_circle_primitive_ledger",
+    ],
+)
+def test_finalizer_rejects_pixel_derived_metric_observations(kind: str):
+    partial = _partial()
+    partial.observations.append(
+        {
+            "kind": kind,
+            "engineering_authoritative": False,
+            "items": [],
+        }
+    )
+
+    with pytest.raises(
+        ReaderObservationFinalizationError,
+        match="pixel-derived metric observations are diagnostic-only",
+    ):
+        finalize_partial_reader_observations(partial)

@@ -3,9 +3,18 @@ from __future__ import annotations
 from nx_mcp.drawing_intelligence.engineering_dimension_binding import (
     bind_callout_to_dimension_candidate,
 )
+from nx_mcp.drawing_intelligence import (
+    compile_evidence_graph,
+    link_reader_capture,
+)
+from nx_mcp.drawing_intelligence.evidence import OverallDimensions
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
     adapt_hybrid_ocr_report,
+)
+from nx_mcp.drawing_intelligence.reader_observations import (
+    ReaderObservations,
+    assemble_reader_capture,
 )
 
 
@@ -160,3 +169,135 @@ def test_adapter_materializes_diameter_projection_instead_of_advisory_callout():
     assert binding["status"] == "dimension_backed"
     assert binding["candidate_id"] == "DG_DIAMETER"
     assert binding["projected_center_axis_px"] == 150.0
+
+
+
+def _two_view_report(*, duplicate_circle: bool = False) -> dict[str, object]:
+    report = _report()
+    circles = [
+        {
+            "circle_group_id": "C_MAIN",
+            "center_px": [100, 150],
+            "rings": [{"radius_px": 30}],
+        }
+    ]
+    if duplicate_circle:
+        circles.append(
+            {
+                "circle_group_id": "C_AMBIGUOUS",
+                "center_px": [180, 151],
+                "rings": [{"radius_px": 25}],
+            }
+        )
+
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 200, 300],
+            "circle_groups": circles,
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [200, 0, 200, 300],
+            "circle_groups": [],
+        },
+    ]
+    return report
+
+
+def _two_view_context() -> HybridAdapterContext:
+    return HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+        }
+    )
+
+
+def test_unique_orthographic_circle_and_diameter_projection_merge_into_one_feature():
+    partial = adapt_hybrid_ocr_report(
+        _two_view_report(),
+        _two_view_context(),
+    )
+
+    assert len(partial.associations) == 1
+    association = partial.associations[0]
+    assert association.entity_keys == [
+        "R2.DG_DIAMETER.DIAMETER_PROJECTION",
+        "R1.C_MAIN",
+    ]
+    assert association.basis == [
+        "projection_alignment",
+        "unique_orthographic_counterpart",
+    ]
+
+    observations = ReaderObservations(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=partial.views,
+        entities=partial.entities,
+        associations=partial.associations,
+        values=partial.values,
+    )
+    capture = assemble_reader_capture(observations)
+    linked = link_reader_capture(capture)
+
+    projection_entity_id = next(
+        item.id
+        for item in capture.entities
+        if item.shape == "hidden_parallel"
+    )
+    circle_entity_id = next(
+        item.id
+        for item in capture.entities
+        if item.shape == "circle"
+    )
+    assert linked.entity_to_feature[projection_entity_id] == (
+        linked.entity_to_feature[circle_entity_id]
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    feature_id = linked.entity_to_feature[circle_entity_id]
+    direct = {
+        item.target: item.value
+        for item in compiled.direct_values
+    }
+    assert direct[f"feature:{feature_id}.diameter"] == 20.0
+    assert direct[f"feature:{feature_id}.fit"] == "H7"
+    assert direct[f"feature:{feature_id}.axis"] == "Y"
+
+
+def test_multiple_aligned_circles_fail_closed_instead_of_auto_associating():
+    partial = adapt_hybrid_ocr_report(
+        _two_view_report(duplicate_circle=True),
+        _two_view_context(),
+    )
+
+    assert partial.associations == []
+    blockers = [
+        item
+        for item in partial.unresolved
+        if item.kind == "cross_view_identity"
+        and item.required_for_modeling
+    ]
+    assert len(blockers) == 1
+    assert blockers[0].basis == ["projection_alignment"]
+    assert set(blockers[0].entity_keys) == {
+        "R2.DG_DIAMETER.DIAMETER_PROJECTION",
+        "R1.C_MAIN",
+        "R1.C_AMBIGUOUS",
+    }

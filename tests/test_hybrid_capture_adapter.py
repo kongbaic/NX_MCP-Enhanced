@@ -317,7 +317,11 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
         ("R2.CALLOUT.7", "fit", "H7"),
     ]
     callout_unresolved = [
-        item for item in partial.unresolved if item.kind == "cross_view_identity"
+        item
+        for item in partial.unresolved
+        if item.kind == "feature_inventory"
+        and item.field == "engineering_callout_geometry_binding"
+        and item.entity_keys
     ]
     assert len(callout_unresolved) == 2
     assert all(item.required_for_modeling for item in callout_unresolved)
@@ -404,8 +408,9 @@ def test_adapter_transports_nearby_callout_without_claiming_geometry_binding():
     unresolved = [
         item
         for item in partial.unresolved
-        if item.kind == "cross_view_identity"
+        if item.kind == "feature_inventory"
         and item.entity_keys == ["R1.CALLOUT.7"]
+        and item.field == "engineering_callout_geometry_binding"
     ]
     assert len(unresolved) == 1
     ledger = next(
@@ -557,4 +562,3 @@ def test_adapter_does_not_transport_unbound_callout_without_unique_view_region()
     ]
     assert len(unresolved) == 1
     assert unresolved[0].kind == "feature_inventory"
-

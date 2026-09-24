@@ -51,9 +51,7 @@ def classify_candidate_band(candidate: dict[str, Any]) -> Band:
 def _dedupe_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     witnesses = candidate.get("witness_positions_px", [])
     rounded_witnesses = tuple(
-        round(float(value) / 3.0) * 3
-        for value in witnesses
-        if isinstance(value, (int, float))
+        round(float(value) / 3.0) * 3 for value in witnesses if isinstance(value, (int, float))
     )
     return (
         candidate.get("region_id"),
@@ -102,9 +100,7 @@ def reduce_dimension_candidates(
                 "axis_local_norm": candidate.get("axis_local_norm"),
                 "line_span_px": candidate.get("line_span_px"),
                 "witness_positions_px": candidate.get("witness_positions_px", []),
-                "witness_positions_local_norm": candidate.get(
-                    "witness_positions_local_norm", []
-                ),
+                "witness_positions_local_norm": candidate.get("witness_positions_local_norm", []),
                 "witness_line_evidence": candidate.get(
                     "witness_line_evidence",
                     [],

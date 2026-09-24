@@ -214,7 +214,7 @@ def test_identity_linker_quarantines_legacy_same_view_multi_entity_association()
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)
@@ -271,7 +271,7 @@ def test_identity_linker_output_passes_strict_evidence_schema():
     validated = type(result.evidence).model_validate(raw)
 
     assert validated.schema_version == "1.0"
-    assert validated.coordinate_system == "part_center_xy_bottom_z0"
+    assert validated.coordinate_system == "overall_min_xyz"
 
 
 def test_link_capture_cli_produces_strict_downstream_consumable_evidence(tmp_path: Path):
@@ -392,7 +392,7 @@ def test_reader_capture_normalizes_string_observations():
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -496,7 +496,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -860,7 +860,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -883,7 +883,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -908,7 +908,7 @@ def test_reader_capture_rejects_non_numeric_overall_scalar():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": "50",
@@ -1821,7 +1821,7 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)

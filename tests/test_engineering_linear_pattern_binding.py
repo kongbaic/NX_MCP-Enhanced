@@ -220,3 +220,69 @@ def test_linear_pattern_coincident_with_structural_profile_is_not_hidden_owner()
 
     assert result["status"] == "unresolved"
     assert result["reason"] == "no_leader_to_linear_pattern_match"
+
+
+
+def test_truncated_leader_can_reach_unique_linear_pattern_by_short_extension():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 66], [155, 142]],
+                "angle_deg": 62.2,
+                "length_px": 85.9,
+                "candidate_only": True,
+            }
+        ],
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 300],
+            "circle_groups": [],
+            "linear_pattern_candidates": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 180.0,
+                    "span_px": [120, 260],
+                    "kind": "dashed_or_centerline_candidate",
+                }
+            ],
+        },
+        view_kind="front",
+    )
+
+    assert result["status"] == "bound"
+    assert result["binding_mode"] == "bounded_forward_extension_to_linear_pattern"
+    assert 0 < result["leader_forward_extension_px"] < 60
+
+
+def test_forward_extension_to_linear_pattern_fails_when_target_is_too_far():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 66], [155, 142]],
+                "angle_deg": 62.2,
+                "length_px": 85.9,
+                "candidate_only": True,
+            }
+        ],
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 500, 300],
+            "circle_groups": [],
+            "linear_pattern_candidates": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 260.0,
+                    "span_px": [120, 260],
+                    "kind": "dashed_or_centerline_candidate",
+                }
+            ],
+        },
+        view_kind="front",
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "no_leader_to_linear_pattern_match"

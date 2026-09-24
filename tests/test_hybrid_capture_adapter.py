@@ -720,15 +720,10 @@ def test_adapter_exposes_only_fail_closed_overall_metric_calibration():
     assert calibration["basis"] == "overall_dimension_with_opposite_profile_extremes"
 
     metric_ledger = next(
-        item
-        for item in partial.observations
-        if item["kind"] == "hybrid_metric_profile_edge_ledger"
+        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
     )
     assert metric_ledger["schema"] == "1.0"
-    assert {
-        item["ref"]: item["coordinate_mm"]
-        for item in metric_ledger["items"]
-    } == {
+    assert {item["ref"]: item["coordinate_mm"] for item in metric_ledger["items"]} == {
         "R1.structural.vertical.001": -20.0,
         "R1.structural.vertical.003": 20.0,
     }

@@ -90,12 +90,8 @@ def test_text_bracket_selects_adjacent_pair_without_using_dimension_value():
     assert result["selected_witness_positions_px"] == [235.0, 315.3]
     assert result["numeric_value_used_for_geometry"] is False
     assert result["all_endpoint_candidates_unique"] is True
-    assert result["endpoints"][0]["physical_candidates"][0]["kind"] == (
-        "profile_edge_candidate"
-    )
-    assert result["endpoints"][1]["physical_candidates"][0]["kind"] == (
-        "circle_center_axis"
-    )
+    assert result["endpoints"][0]["physical_candidates"][0]["kind"] == ("profile_edge_candidate")
+    assert result["endpoints"][1]["physical_candidates"][0]["kind"] == ("circle_center_axis")
 
 
 def test_profile_candidate_wins_without_treating_linear_pattern_as_owner():
@@ -122,9 +118,7 @@ def test_profile_candidate_wins_without_treating_linear_pattern_as_owner():
     first = result["endpoints"][0]
     assert len(first["physical_candidates"]) == 1
     assert first["physical_candidates"][0]["kind"] == "profile_edge_candidate"
-    assert first["ignored_nonownership_anchors"][0]["kind"] == (
-        "linear_pattern_axis"
-    )
+    assert first["ignored_nonownership_anchors"][0]["kind"] == ("linear_pattern_axis")
 
 
 def test_bracket_can_remain_unresolved_when_no_physical_anchor_exists():
@@ -167,6 +161,4 @@ def test_duplicate_accepted_assignment_fails_closed():
     result = derive_dimension_endpoint_candidates(candidate)
 
     assert result["status"] == "unresolved"
-    assert result["reason"] == (
-        "accepted_token_does_not_have_one_unique_global_assignment"
-    )
+    assert result["reason"] == ("accepted_token_does_not_have_one_unique_global_assignment")

@@ -986,3 +986,203 @@ def test_adapter_exposes_metric_profile_segments_with_both_front_axes_calibrated
         item.required_for_modeling and item.field == "dimension_value_candidate"
         for item in partial.unresolved
     )
+
+
+
+def test_adapter_full_profile_inventory_adds_unreferenced_edge_to_metric_geometry():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 300],
+            "circle_groups": [],
+        }
+    ]
+
+    dg12 = next(item for item in report["candidates"] if item["candidate_id"] == "DG12")
+    dg12["accepted_token"] = "40"
+    dg12["global_assignments"][0]["token"] = "40"
+    dg12["witness_positions_px"] = [100.0, 300.0]
+    dg12["witness_anchor_evidence"] = [
+        {
+            "witness_index": 0,
+            "position_px": 100.0,
+            "axis": "x",
+            "nearest_anchors": [
+                {
+                    "kind": "profile_edge_candidate",
+                    "ref": "R1.structural.vertical.001",
+                    "position_px": 100.0,
+                    "source_orientation": "vertical",
+                    "span_px": [40, 260],
+                    "relative_extreme_side": "min",
+                }
+            ],
+        },
+        {
+            "witness_index": 1,
+            "position_px": 300.0,
+            "axis": "x",
+            "nearest_anchors": [
+                {
+                    "kind": "profile_edge_candidate",
+                    "ref": "R1.structural.vertical.003",
+                    "position_px": 300.0,
+                    "source_orientation": "vertical",
+                    "span_px": [40, 260],
+                    "relative_extreme_side": "max",
+                }
+            ],
+        },
+    ]
+
+    dg17 = next(item for item in report["candidates"] if item["candidate_id"] == "DG17")
+    dg17.update(
+        {
+            "global_proposal_token": "6",
+            "decision_reason": "global_local_token_disagreement",
+            "wide_local_linear_tokens": ["66"],
+            "global_assignments": [
+                {
+                    "source_item_index": 9,
+                    "text": "6",
+                    "token": "6",
+                    "perpendicular_distance_px": 19.0,
+                    "bbox": [
+                        [7.0, 130.0],
+                        [47.0, 130.0],
+                        [47.0, 170.0],
+                        [7.0, 170.0],
+                    ],
+                    "confidence": 0.99,
+                }
+            ],
+            "witness_positions_px": [80.0, 220.0],
+            "witness_anchor_evidence": [
+                {
+                    "witness_index": 0,
+                    "position_px": 80.0,
+                    "axis": "y",
+                    "nearest_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.horizontal.001",
+                            "position_px": 80.0,
+                            "source_orientation": "horizontal",
+                            "span_px": [95, 305],
+                            "relative_extreme_side": "min",
+                        }
+                    ],
+                },
+                {
+                    "witness_index": 1,
+                    "position_px": 220.0,
+                    "axis": "y",
+                    "nearest_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.horizontal.004",
+                            "position_px": 220.0,
+                            "source_orientation": "horizontal",
+                            "span_px": [95, 305],
+                            "relative_extreme_side": "max",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    report["structural_profile_inventory"] = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.001",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "span_px": [40, 260],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.002",
+            "position_px": 200.0,
+            "source_orientation": "vertical",
+            "span_px": [40, 260],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.003",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "span_px": [40, 260],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.horizontal.001",
+            "position_px": 80.0,
+            "source_orientation": "horizontal",
+            "span_px": [95, 305],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.horizontal.004",
+            "position_px": 220.0,
+            "source_orientation": "horizontal",
+            "span_px": [95, 305],
+        },
+    ]
+
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+            "overall_dimension_facts": [
+                {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+            ],
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, context)
+
+    metric_ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_metric_profile_edge_ledger"
+    )
+    assert {item["ref"] for item in metric_ledger["items"]} == {
+        "R1.structural.vertical.001",
+        "R1.structural.vertical.002",
+        "R1.structural.vertical.003",
+        "R1.structural.horizontal.001",
+        "R1.structural.horizontal.004",
+    }
+    middle = next(
+        item
+        for item in metric_ledger["items"]
+        if item["ref"] == "R1.structural.vertical.002"
+    )
+    assert middle["coordinate_mm"] == pytest.approx(0.0)
+    assert middle["source_scope"] == "full_structural_profile_inventory"
+
+    segment_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_metric_profile_segment_ledger"
+    )
+    assert len(segment_ledger["junctions"]) == 6
+    assert len(segment_ledger["items"]) == 7
+    assert segment_ledger["unresolved_edges"] == []

@@ -44,10 +44,11 @@ them contract-valid and blocking rather than hiding them behind `kind=other`.
 The full coverage ledger is also preserved in `observations`.
 
 Accepted Hybrid dimension candidates also carry their geometry-only
-`witness_anchor_evidence` into a `hybrid_dimension_anchor_ledger` observation.
+`witness_anchor_evidence` and the merged orthogonal `witness_line_evidence`
+that produced each witness into a `hybrid_dimension_anchor_ledger` observation.
 This preserves deterministic endpoint evidence for later structural resolution
-without promoting region bounding boxes, circle centers, or pattern axes to
-dimension ownership by themselves.
+without promoting region bounding boxes, circle centers, pattern axes, or source
+lines to dimension ownership by themselves.
 
 ## SHKSS integration fixture
 

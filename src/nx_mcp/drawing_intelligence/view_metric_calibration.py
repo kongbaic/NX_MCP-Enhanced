@@ -109,13 +109,13 @@ def metricize_profile_edge_candidates(
     *,
     candidates: list[dict[str, Any]],
     calibrations: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert only the calibrated coordinate of observed profile-edge candidates.
+    """Convert calibrated profile-edge coordinates without inventing geometry.
 
-    This is deliberately partial.  A vertical edge in a front view can receive
-    an X coordinate from an X calibration while its Y-pixel span remains
-    unconverted until a Z calibration exists.  No segment endpoints or missing
-    coordinates are invented.
+    When a complete structural profile inventory is available, it is the
+    authoritative geometry-only source.  Older reports fall back to the
+    dimension-witness nearest-anchor evidence.
     """
 
     calibration_lookup = {
@@ -123,62 +123,79 @@ def metricize_profile_edge_candidates(
         for item in calibrations
         if isinstance(item, dict)
     }
-    output: dict[tuple[str, str], dict[str, Any]] = {}
 
-    for candidate in candidates:
-        region_id = str(candidate.get("region_id") or "")
-        witness_evidence = candidate.get("witness_anchor_evidence", [])
-        if not region_id or not isinstance(witness_evidence, list):
+    source_items: list[dict[str, Any]] = []
+    source_scope = "dimension_witness_nearest_anchors"
+    if isinstance(profile_inventory, list) and profile_inventory:
+        source_scope = "full_structural_profile_inventory"
+        source_items = [item for item in profile_inventory if isinstance(item, dict)]
+    else:
+        for candidate in candidates:
+            region_id = str(candidate.get("region_id") or "")
+            witness_evidence = candidate.get("witness_anchor_evidence", [])
+            if not region_id or not isinstance(witness_evidence, list):
+                continue
+            for witness in witness_evidence:
+                if not isinstance(witness, dict):
+                    continue
+                nearest = witness.get("nearest_anchors", [])
+                if not isinstance(nearest, list):
+                    continue
+                for item in nearest:
+                    if not isinstance(item, dict):
+                        continue
+                    source_items.append(
+                        {
+                            "region_id": region_id,
+                            **item,
+                        }
+                    )
+
+    output: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in source_items:
+        if item.get("kind") != "profile_edge_candidate":
+            continue
+        region_id = str(item.get("region_id") or "")
+        ref = str(item.get("ref") or "")
+        source_orientation = str(item.get("source_orientation") or "")
+        position_px = item.get("position_px")
+        if not region_id or not ref or source_orientation not in {"horizontal", "vertical"}:
+            continue
+        if not isinstance(position_px, (int, float)):
             continue
 
-        for witness in witness_evidence:
-            if not isinstance(witness, dict):
+        for (cal_region, axis), calibration in calibration_lookup.items():
+            if cal_region != region_id:
                 continue
-            nearest = witness.get("nearest_anchors", [])
-            if not isinstance(nearest, list):
+            view_kind = str(calibration.get("view_kind") or "")
+            expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get((view_kind, axis))
+            if expected_orientation != source_orientation:
                 continue
 
-            for item in nearest:
-                if not isinstance(item, dict) or item.get("kind") != "profile_edge_candidate":
-                    continue
-                ref = str(item.get("ref") or "")
-                source_orientation = str(item.get("source_orientation") or "")
-                position_px = item.get("position_px")
-                if not ref or source_orientation not in {"horizontal", "vertical"}:
-                    continue
-                if not isinstance(position_px, (int, float)):
-                    continue
+            mm_per_px = calibration.get("mm_per_px")
+            offset_mm = calibration.get("offset_mm")
+            if not isinstance(mm_per_px, (int, float)) or not isinstance(
+                offset_mm,
+                (int, float),
+            ):
+                continue
 
-                for (cal_region, axis), calibration in calibration_lookup.items():
-                    if cal_region != region_id:
-                        continue
-                    view_kind = str(calibration.get("view_kind") or "")
-                    expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get((view_kind, axis))
-                    if expected_orientation != source_orientation:
-                        continue
-
-                    mm_per_px = calibration.get("mm_per_px")
-                    offset_mm = calibration.get("offset_mm")
-                    if not isinstance(mm_per_px, (int, float)) or not isinstance(
-                        offset_mm, (int, float)
-                    ):
-                        continue
-
-                    key = (ref, axis)
-                    output[key] = {
-                        "ref": ref,
-                        "region_id": region_id,
-                        "view_kind": view_kind,
-                        "axis": axis,
-                        "source_orientation": source_orientation,
-                        "position_px": float(position_px),
-                        "coordinate_mm": float(mm_per_px) * float(position_px) + float(offset_mm),
-                        "span_px": list(item.get("span_px", []))
-                        if isinstance(item.get("span_px"), list)
-                        else [],
-                        "calibration_candidate_id": calibration.get("candidate_id"),
-                        "basis": "view_metric_calibration",
-                    }
+            key = (ref, axis)
+            output[key] = {
+                "ref": ref,
+                "region_id": region_id,
+                "view_kind": view_kind,
+                "axis": axis,
+                "source_orientation": source_orientation,
+                "position_px": float(position_px),
+                "coordinate_mm": float(mm_per_px) * float(position_px) + float(offset_mm),
+                "span_px": list(item.get("span_px", []))
+                if isinstance(item.get("span_px"), list)
+                else [],
+                "calibration_candidate_id": calibration.get("candidate_id"),
+                "basis": "view_metric_calibration",
+                "source_scope": source_scope,
+            }
 
     return sorted(
         output.values(),

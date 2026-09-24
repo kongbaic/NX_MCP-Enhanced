@@ -388,3 +388,81 @@ def test_metric_profile_segments_fail_closed_without_explicit_gap_tolerance():
     assert len(tolerant["segments"]) == 1
     assert tolerant["segments"][0]["source_edge_ref"] == "H_ONLY_NEAR"
     assert tolerant["segments"][0]["length_mm"] == pytest.approx(40.0)
+
+
+
+def test_metricize_profile_inventory_includes_edges_not_referenced_by_dimensions():
+    candidate = _candidate()
+    calibrations = derive_view_metric_calibrations(
+        candidates=[candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0},
+    )
+    inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.001",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "span_px": [50, 350],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.002",
+            "position_px": 200.0,
+            "source_orientation": "vertical",
+            "span_px": [80, 220],
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.003",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "span_px": [50, 350],
+        },
+    ]
+
+    edges = metricize_profile_edge_candidates(
+        candidates=[candidate],
+        calibrations=calibrations,
+        profile_inventory=inventory,
+    )
+
+    assert {item["ref"] for item in edges} == {
+        "R1.structural.vertical.001",
+        "R1.structural.vertical.002",
+        "R1.structural.vertical.003",
+    }
+    by_ref = {item["ref"]: item for item in edges}
+    assert by_ref["R1.structural.vertical.002"]["coordinate_mm"] == pytest.approx(0.0)
+    assert all(item["source_scope"] == "full_structural_profile_inventory" for item in edges)
+
+
+def test_metricize_profile_inventory_does_not_fall_back_to_witness_subset_when_present():
+    candidate = _candidate()
+    calibrations = derive_view_metric_calibrations(
+        candidates=[candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0},
+    )
+    inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.002",
+            "position_px": 200.0,
+            "source_orientation": "vertical",
+            "span_px": [80, 220],
+        }
+    ]
+
+    edges = metricize_profile_edge_candidates(
+        candidates=[candidate],
+        calibrations=calibrations,
+        profile_inventory=inventory,
+    )
+
+    assert [item["ref"] for item in edges] == ["R1.structural.vertical.002"]

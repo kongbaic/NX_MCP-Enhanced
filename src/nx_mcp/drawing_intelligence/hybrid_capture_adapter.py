@@ -270,7 +270,7 @@ def _circle_entities(
                     shape=("concentric_circles" if len(rings) > 1 else "circle"),
                     cross_view_disposition=None,
                     evidence=[f"hybrid:geometry:{region_id}:{group_id}"],
-                    required_for_modeling=True,
+                    required_for_modeling=False,
                 )
             )
     return output

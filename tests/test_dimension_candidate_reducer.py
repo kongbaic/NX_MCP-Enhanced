@@ -29,6 +29,26 @@ def _candidate(
         "line_span_px": [0, 100],
         "witness_positions_px": witnesses,
         "witness_positions_local_norm": [value / 1000 for value in witnesses],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "position_px": value,
+                "source_lines": [
+                    {
+                        "orientation": (
+                            "vertical"
+                            if orientation == "horizontal"
+                            else "horizontal"
+                        ),
+                        "axis_px": value,
+                        "span_px": [0, 100],
+                        "span_length_px": 100,
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+            for index, value in enumerate(witnesses)
+        ],
     }
 
 
@@ -129,6 +149,10 @@ def test_reducer_keeps_expected_small_candidate_pool(query, expected_ids):
         for item in result["candidates"]
     } == expected_ids
     assert result["candidate_count"] <= 2
+    assert all(
+        len(item["witness_line_evidence"]) == len(item["witness_positions_px"])
+        for item in result["candidates"]
+    )
 
 
 def test_reducer_does_not_mix_orientation():

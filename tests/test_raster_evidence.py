@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
+    _compact_fragments,
     _adapt_probe,
     _oblique_annotation_lines,
     _witness_line_evidence,
@@ -195,3 +196,35 @@ def test_oblique_annotation_lines_stay_geometry_only():
     assert all(item["kind"] == "oblique_line_candidate" for item in candidates)
     assert all(item["candidate_only"] is True for item in candidates)
     assert all(8 < item["angle_deg"] < 82 for item in candidates)
+
+
+
+def test_compact_fragments_does_not_silently_drop_ninth_valid_pattern():
+    groups = [
+        {
+            "orientation": "vertical",
+            "axis_px": 20.0 + index * 12.0,
+            "segments": [
+                [100, 112],
+                [120, 132],
+                [140, 152],
+            ],
+            "positive_gaps_px": [8, 8],
+            "kind": "dashed_or_centerline_candidate",
+        }
+        for index in range(10)
+    ]
+
+    items = _compact_fragments(
+        groups,
+        image_width=1000,
+        image_height=800,
+        region={
+            "x": 0,
+            "y": 0,
+            "width": 400,
+            "height": 500,
+        },
+    )
+
+    assert len(items) == 10

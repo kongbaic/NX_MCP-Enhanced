@@ -13,7 +13,6 @@ from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
 from .hidden_projection_centers import derive_hidden_projection_center_candidates
 from .evidence import Axis, ViewKind
-from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
     ObservationAssociation,
     ObservationDimension,
@@ -27,12 +26,7 @@ from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
 )
-from .view_metric_calibration import (
-    derive_metric_profile_segments,
-    derive_view_axis_boundaries,
-    derive_view_metric_calibrations,
-    metricize_profile_edge_candidates,
-)
+from .view_metric_calibration import derive_view_axis_boundaries
 
 
 class HybridCaptureAdapterError(ValueError):
@@ -1759,49 +1753,6 @@ def adapt_hybrid_ocr_report(
         for candidate in dimension_candidates
         if candidate.get("accepted_token") is not None
     ]
-    calibration_candidates = working_candidates
-    calibrations = derive_view_metric_calibrations(
-        candidates=calibration_candidates,
-        region_views={item.region_id: item.view_kind for item in context.region_views},
-        overall_dimensions=overall_dimensions,
-    )
-    metric_profile_edges = metricize_profile_edge_candidates(
-        candidates=calibration_candidates,
-        calibrations=calibrations,
-        profile_inventory=(
-            report.get("structural_profile_inventory")
-            if isinstance(report.get("structural_profile_inventory"), list)
-            else None
-        ),
-    )
-    junction_tolerance_by_region: dict[str, float] = {}
-    for region in report.get("regions", []):
-        if not isinstance(region, dict):
-            continue
-        region_id = str(region.get("region_id") or "")
-        bbox = region.get("bbox_px")
-        if not (
-            region_id
-            and isinstance(bbox, list)
-            and len(bbox) == 4
-            and isinstance(bbox[2], (int, float))
-            and float(bbox[2]) > 0
-        ):
-            continue
-        junction_tolerance_by_region[region_id] = max(
-            5.0,
-            round(float(bbox[2]) * 0.0075),
-        )
-    metric_profile_geometry = derive_metric_profile_segments(
-        metric_edges=metric_profile_edges,
-        junction_tolerance_by_region=junction_tolerance_by_region,
-    )
-    metric_circle_geometry = derive_metric_circle_primitives(
-        regions=[item for item in report.get("regions", []) if isinstance(item, dict)],
-        region_views={item.region_id: item.view_kind for item in context.region_views},
-        calibrations=calibrations,
-        callout_ledger=callout_ledger,
-    )
 
     observations = [
         {
@@ -1832,37 +1783,6 @@ def adapt_hybrid_ocr_report(
             "engineering_authoritative": False,
             "purpose": "visual_symmetry_diagnostic_only",
             "engineering_coordinate_inferred_from_pixels": False,
-        },
-        {
-            "kind": "hybrid_view_metric_calibration_ledger",
-            "schema": "1.0",
-            "items": calibrations,
-            "engineering_authoritative": False,
-            "purpose": "visual_scale_diagnostic_only",
-        },
-        {
-            "kind": "hybrid_metric_profile_edge_ledger",
-            "schema": "1.0",
-            "items": metric_profile_edges,
-            "engineering_authoritative": False,
-            "purpose": "visual_scale_diagnostic_only",
-        },
-        {
-            "kind": "hybrid_metric_profile_segment_ledger",
-            "schema": "1.0",
-            "items": metric_profile_geometry["segments"],
-            "engineering_authoritative": False,
-            "purpose": "visual_topology_diagnostic_only",
-            "junctions": metric_profile_geometry["junctions"],
-            "unresolved_edges": metric_profile_geometry["unresolved_edges"],
-        },
-        {
-            "kind": "hybrid_metric_circle_primitive_ledger",
-            "schema": "1.0",
-            "items": metric_circle_geometry["items"],
-            "engineering_authoritative": False,
-            "purpose": "visual_center_diagnostic_only",
-            "unresolved": metric_circle_geometry["unresolved"],
         },
     ]
 

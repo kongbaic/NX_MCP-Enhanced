@@ -394,3 +394,61 @@ def test_adapter_does_not_bind_nearby_callout_without_annotation_geometry():
     ]
     assert len(unresolved) == 1
     assert unresolved[0].kind == "feature_inventory"
+
+
+def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresolved():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [220, 220],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[96, 96], [125, 125]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[130, 130], [155, 155]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[160, 160], [192, 192]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 5,
+            "text": "011沉孔深6.5",
+            "bbox": [[20, 20], [100, 20], [100, 100], [20, 100]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    fields = {
+        item.field
+        for item in partial.unresolved
+        if item.kind == "feature_value" and item.entity_keys == ["R1.C1"]
+    }
+    assert "recess_depth" in fields
+    assert "recessed_hole" in fields
+    assert "diameter" in fields
+    assert "recessed_hole_subtype" in fields
+

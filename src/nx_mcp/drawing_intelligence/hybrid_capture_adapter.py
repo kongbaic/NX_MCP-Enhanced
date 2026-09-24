@@ -10,6 +10,7 @@ from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
 from .engineering_dimension_binding import bind_callout_to_dimension_candidate
+from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
 from .evidence import Axis, ViewKind
 from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
@@ -672,7 +673,7 @@ def _recover_geometry_backed_leading_zero_hole_value(
     diameter until the recess subtype is independently resolved.
     """
 
-    if binding.get("status") not in {"bound", "dimension_backed"}:
+    if binding.get("status") not in {"bound", "dimension_backed", "pattern_backed"}:
         return parsed
     ambiguities = parsed.get("ambiguities", [])
     if (
@@ -734,6 +735,7 @@ def _recover_geometry_backed_leading_zero_hole_value(
 def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -796,6 +798,40 @@ def _engineering_callout_routing(
             annotation_lines,
             regions,
         )
+        linear_pattern_binding: dict[str, Any] | None = None
+        if (
+            len(region_candidates) == 1
+            and any(
+                key in parsed["facts"]
+                for key in {
+                    "diameter",
+                    "thread_spec",
+                    "through",
+                    "recessed_hole",
+                }
+            )
+        ):
+            region_id = region_candidates[0]
+            region = next(
+                (
+                    candidate_region
+                    for candidate_region in regions
+                    if isinstance(candidate_region, dict)
+                    and str(candidate_region.get("region_id") or "") == region_id
+                ),
+                None,
+            )
+            region_view = view_lookup.get(region_id)
+            if region is not None and region_view is not None:
+                candidate_pattern_binding = bind_callout_to_linear_pattern(
+                    binding_bbox,
+                    annotation_lines,
+                    region,
+                    view_kind=region_view.view_kind,
+                )
+                if candidate_pattern_binding.get("status") == "bound":
+                    linear_pattern_binding = candidate_pattern_binding
+
         dimension_binding: dict[str, Any] | None = None
         if (
             isinstance(parsed["facts"].get("diameter"), (int, float))
@@ -873,6 +909,47 @@ def _engineering_callout_routing(
                     "dimension_binding": dimension_binding,
                 }
 
+        if binding.get("status") != "dimension_backed":
+            if (
+                binding.get("status") == "bound"
+                and linear_pattern_binding is not None
+            ):
+                binding = {
+                    "status": "unresolved",
+                    "reason": "competing_callout_geometry_bindings",
+                    "leader_binding": binding,
+                    "linear_pattern_binding": linear_pattern_binding,
+                }
+            elif (
+                binding.get("status") != "bound"
+                and linear_pattern_binding is not None
+            ):
+                pattern_entity_key = str(
+                    linear_pattern_binding["entity_key"]
+                )
+                binding = {
+                    **linear_pattern_binding,
+                    "status": "pattern_backed",
+                }
+                if pattern_entity_key not in callout_entity_keys:
+                    callout_entity_keys.add(pattern_entity_key)
+                    callout_entities.append(
+                        ObservationEntity(
+                            key=pattern_entity_key,
+                            view_key=f"view.{linear_pattern_binding['region_id']}",
+                            shape="hidden_parallel",
+                            cross_view_disposition=None,
+                            evidence=[
+                                *evidence,
+                                (
+                                    "hybrid:linear-pattern:"
+                                    f"{linear_pattern_binding['pattern_index']}"
+                                ),
+                            ],
+                            required_for_modeling=False,
+                        )
+                    )
+
         parsed = _recover_geometry_backed_leading_zero_hole_value(
             parsed,
             binding,
@@ -907,7 +984,7 @@ def _engineering_callout_routing(
             }
         }
 
-        if binding.get("status") not in {"bound", "dimension_backed"}:
+        if binding.get("status") not in {"bound", "dimension_backed", "pattern_backed"}:
             if len(region_candidates) == 1 and safe_facts:
                 region_id = region_candidates[0]
                 entity_key = f"{region_id}.CALLOUT.{source_item_index}"
@@ -960,6 +1037,23 @@ def _engineering_callout_routing(
         else:
             entity_key = str(binding["entity_key"])
 
+        if binding.get("status") == "pattern_backed":
+            axis_target = (entity_key, "axis")
+            axis_value = binding.get("axis")
+            if axis_value in {"X", "Y", "Z"}:
+                value_records[axis_target] = {
+                    "entity_key": entity_key,
+                    "field": "axis",
+                    "value": axis_value,
+                    "evidence": [
+                        *evidence,
+                        (
+                            "hybrid:linear-pattern:"
+                            f"{binding.get('pattern_index')}"
+                        ),
+                    ],
+                }
+
         for field, value in safe_facts.items():
             target = (entity_key, field)
             previous = value_records.get(target)
@@ -986,7 +1080,7 @@ def _engineering_callout_routing(
             )
 
         if (
-            binding.get("status") == "dimension_backed"
+            binding.get("status") in {"dimension_backed", "pattern_backed"}
             and "diameter" in safe_facts
             and not any(
                 key in parsed["facts"]
@@ -1427,6 +1521,7 @@ def adapt_hybrid_ocr_report(
     ) = _engineering_callout_routing(
         report,
         working_candidates,
+        view_lookup,
     )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)

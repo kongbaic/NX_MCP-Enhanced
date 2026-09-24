@@ -109,6 +109,17 @@ def _raw() -> dict:
                         "dash_score": 0.9,
                     },
                 ],
+                "parallel_dash_pair_candidates": [
+                    {
+                        "pair_id": "HP001",
+                        "kind": "parallel_dash_pair_candidate",
+                        "orientation": "vertical",
+                        "axes_px": [10.0, 20.0],
+                        "span_px": [30.0, 80.0],
+                        "candidate_only": True,
+                        "ownership_claimed": False,
+                    }
+                ],
             }
         ],
         "dimension_geometry_candidates": candidates,
@@ -138,6 +149,17 @@ def test_reader_visual_aid_bounds_and_enriches_small_buckets():
             "angle_deg": 45.0,
             "length_px": 28.28,
             "candidate_only": True,
+        }
+    ]
+    assert result["regions"][0]["parallel_dash_pair_candidates"] == [
+        {
+            "pair_id": "HP001",
+            "kind": "parallel_dash_pair_candidate",
+            "orientation": "vertical",
+            "axes_px": [10.0, 20.0],
+            "span_px": [30.0, 80.0],
+            "candidate_only": True,
+            "ownership_claimed": False,
         }
     ]
 

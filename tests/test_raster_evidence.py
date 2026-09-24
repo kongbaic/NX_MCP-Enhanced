@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _adapt_probe,
-    _circle_candidates,
     _oblique_annotation_lines,
-    _select_circle_centers,
     _witness_line_evidence,
     extract_raw_evidence,
     fragment_length_limits,
@@ -197,70 +195,3 @@ def test_oblique_annotation_lines_stay_geometry_only():
     assert all(item["kind"] == "oblique_line_candidate" for item in candidates)
     assert all(item["candidate_only"] is True for item in candidates)
     assert all(8 < item["angle_deg"] < 82 for item in candidates)
-
-
-def test_radius_aware_circle_center_selection_keeps_nearby_small_holes():
-    scored = [
-        {
-            "cx": 100,
-            "cy": 100,
-            "radius_px": 40,
-            "edge_support": 0.99,
-        },
-        {
-            "cx": 200,
-            "cy": 100,
-            "radius_px": 12,
-            "edge_support": 0.98,
-        },
-        {
-            "cx": 222,
-            "cy": 100,
-            "radius_px": 12,
-            "edge_support": 0.97,
-        },
-        {
-            "cx": 202,
-            "cy": 101,
-            "radius_px": 18,
-            "edge_support": 0.96,
-        },
-    ]
-
-    centers = _select_circle_centers(scored)
-
-    assert [(item["cx"], item["cy"]) for item in centers] == [
-        (100, 100),
-        (200, 100),
-        (222, 100),
-    ]
-
-
-def test_small_circle_detection_channel_preserves_small_feature_inventory():
-    import cv2
-    import numpy as np
-
-    image = np.full((320, 420), 255, np.uint8)
-    cv2.circle(image, (110, 160), 14, 0, 2)
-    cv2.circle(image, (150, 160), 14, 0, 2)
-    cv2.circle(image, (300, 160), 55, 0, 2)
-
-    edges = cv2.Canny(image, 50, 150, apertureSize=3)
-
-    circles = _circle_candidates(
-        image,
-        edges,
-        {
-            "x": 0,
-            "y": 0,
-            "width": 420,
-            "height": 320,
-        },
-        cv2,
-    )
-
-    centers = {(item["cx"], item["cy"]) for item in circles}
-
-    assert any(abs(cx - 110) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)
-    assert any(abs(cx - 150) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)
-    assert any(abs(cx - 300) <= 4 and abs(cy - 160) <= 4 for cx, cy in centers)

@@ -116,7 +116,7 @@ class ObservationDimensionEndpoint(_StrictObservationModel):
                 raise ValueError("entity_center endpoint must not carry unresolved_kind")
             if self.basis is None:
                 raise ValueError(
-                    "entity_center endpoint requires centerline/center_mark/explicit_midline/circle_center basis"
+                    "entity_center endpoint requires centerline/center_mark/explicit_midline basis, or circle_center basis"
                 )
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_key is not None:

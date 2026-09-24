@@ -390,9 +390,7 @@ def _engineering_callout_routing(
             )
 
         unsupported_explicit_facts = {
-            key: value
-            for key, value in parsed["facts"].items()
-            if key not in safe_facts
+            key: value for key, value in parsed["facts"].items() if key not in safe_facts
         }
         for field, value in sorted(unsupported_explicit_facts.items()):
             unresolved.append(

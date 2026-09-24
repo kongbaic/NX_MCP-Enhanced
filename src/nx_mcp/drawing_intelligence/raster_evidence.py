@@ -101,6 +101,83 @@ def _axis_lines(edges: Any, cv2: Any, np: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _oblique_annotation_lines(
+    edges: Any,
+    image_width: int,
+    image_height: int,
+    cv2: Any,
+    np: Any,
+) -> list[dict[str, Any]]:
+    """Return geometry-only oblique line candidates for later annotation routing."""
+
+    raw = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 180,
+        threshold=max(18, round(image_width * 0.014)),
+        minLineLength=max(14, round(image_width * 0.009)),
+        maxLineGap=max(3, round(image_width * 0.0035)),
+    )
+    if raw is None:
+        return []
+
+    minimum_length = max(14.0, image_width * 0.009)
+    maximum_length = math.hypot(image_width, image_height) * 0.28
+    candidates: list[dict[str, Any]] = []
+
+    for x1, y1, x2, y2 in raw[:, 0]:
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
+        length = math.hypot(dx, dy)
+        if length < minimum_length or length > maximum_length:
+            continue
+
+        angle = math.degrees(math.atan2(dy, dx))
+        normalized = abs(angle) % 180.0
+        if normalized > 90.0:
+            normalized = 180.0 - normalized
+        if normalized <= 8.0 or abs(normalized - 90.0) <= 8.0:
+            continue
+
+        first = (int(x1), int(y1))
+        second = (int(x2), int(y2))
+        if second < first:
+            first, second = second, first
+
+        candidate = {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [
+                [first[0], first[1]],
+                [second[0], second[1]],
+            ],
+            "angle_deg": round(float(normalized), 3),
+            "length_px": round(float(length), 2),
+            "candidate_only": True,
+        }
+
+        duplicate = False
+        for previous in candidates:
+            p0, p1 = previous["endpoints_px"]
+            if (
+                math.hypot(first[0] - p0[0], first[1] - p0[1]) <= 4.0
+                and math.hypot(second[0] - p1[0], second[1] - p1[1]) <= 4.0
+                and abs(float(previous["angle_deg"]) - normalized) <= 3.0
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda item: (
+            -float(item["length_px"]),
+            item["endpoints_px"][0],
+            item["endpoints_px"][1],
+        )
+    )
+    return candidates[:128]
+
+
 def _view_regions(
     shape: tuple[int, int],
     axis_lines: list[dict[str, Any]],
@@ -544,6 +621,10 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
         },
         "semantics_policy": "geometry_only_no_engineering_claims",
         "probe_parameters": probe.get("probe_parameters", {}),
+        "annotation_line_candidates": probe.get(
+            "oblique_annotation_lines",
+            [],
+        ),
         "regions": regions,
         "summary": {
             "region_count": len(regions),
@@ -553,6 +634,9 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
             ),
             "linear_pattern_candidate_count": sum(
                 len(region["linear_pattern_candidates"]) for region in regions
+            ),
+            "annotation_line_candidate_count": len(
+                probe.get("oblique_annotation_lines", [])
             ),
         },
     }
@@ -928,6 +1012,13 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
             ],
         },
         "axis_line_count": len(lines),
+        "oblique_annotation_lines": _oblique_annotation_lines(
+            edges,
+            int(gray.shape[1]),
+            int(gray.shape[0]),
+            cv2,
+            np,
+        ),
         "regions": probe_regions,
     }
 

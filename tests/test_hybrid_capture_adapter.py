@@ -451,3 +451,96 @@ def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresol
     assert "recessed_hole" in fields
     assert "diameter" in fields
     assert "recessed_hole_subtype" in fields
+
+
+def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [],
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    callout_entities = [
+        item for item in partial.entities if ".CALLOUT." in item.key
+    ]
+    assert len(callout_entities) == 1
+    entity = callout_entities[0]
+    assert entity.key == "R1.CALLOUT.1"
+    assert entity.view_key == "view.R1"
+    assert entity.shape == "profile"
+    assert entity.cross_view_disposition == "unresolved"
+    assert entity.required_for_modeling is True
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.1", "thread_depth", 12.0),
+        ("R1.CALLOUT.1", "thread_spec", "M6"),
+    ]
+
+    identity = [
+        item
+        for item in partial.unresolved
+        if item.kind == "cross_view_identity"
+        and item.entity_keys == ["R1.CALLOUT.1"]
+    ]
+    assert len(identity) == 1
+    assert not [
+        item
+        for item in partial.unresolved
+        if item.field == "engineering_callout_geometry_binding"
+    ]
+
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "callout_backed"
+    assert ledger["items"][0]["binding"]["basis"] == "unique_region_callout_fact_transport"
+
+
+def test_adapter_does_not_transport_unbound_callout_without_unique_view_region():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 100, 100],
+            "circle_groups": [],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [200, 0, 100, 100],
+            "circle_groups": [],
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[120, 20], [180, 20], [180, 50], [120, 50]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert not [item for item in partial.entities if ".CALLOUT." in item.key]
+    assert partial.values == []
+    unresolved = [
+        item
+        for item in partial.unresolved
+        if item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0].kind == "feature_inventory"
+

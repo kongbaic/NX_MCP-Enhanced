@@ -115,15 +115,11 @@ def _merge_near_duplicate_lines(
         for group in groups:
             if group[0]["orientation"] != line["orientation"]:
                 continue
-            total_weight = sum(
-                max(1, int(item["span_length_px"]))
-                for item in group
+            total_weight = sum(max(1, int(item["span_length_px"])) for item in group)
+            group_axis = (
+                sum(float(item["axis_px"]) * max(1, int(item["span_length_px"])) for item in group)
+                / total_weight
             )
-            group_axis = sum(
-                float(item["axis_px"])
-                * max(1, int(item["span_length_px"]))
-                for item in group
-            ) / total_weight
             if abs(float(line["axis_px"]) - group_axis) > axis_tolerance:
                 continue
 
@@ -133,10 +129,7 @@ def _merge_near_duplicate_lines(
                     max(int(item["span_px"][1]) for item in group),
                 ]
             }
-            if (
-                _overlap_ratio(line, group_proxy)
-                < minimum_overlap_ratio
-            ):
+            if _overlap_ratio(line, group_proxy) < minimum_overlap_ratio:
                 continue
 
             group.append(line)
@@ -148,15 +141,11 @@ def _merge_near_duplicate_lines(
 
     merged: list[dict[str, Any]] = []
     for group in groups:
-        total_weight = sum(
-            max(1, int(item["span_length_px"]))
-            for item in group
+        total_weight = sum(max(1, int(item["span_length_px"])) for item in group)
+        axis = (
+            sum(float(item["axis_px"]) * max(1, int(item["span_length_px"])) for item in group)
+            / total_weight
         )
-        axis = sum(
-            float(item["axis_px"])
-            * max(1, int(item["span_length_px"]))
-            for item in group
-        ) / total_weight
         start = min(int(item["span_px"][0]) for item in group)
         end = max(int(item["span_px"][1]) for item in group)
         merged.append(
@@ -198,18 +187,12 @@ def _junction_metrics(
             continue
 
         other_axis = float(other["axis_px"])
-        other_start, other_end = (
-            float(value) for value in other["span_px"]
-        )
+        other_start, other_end = (float(value) for value in other["span_px"])
 
         if orientation == "vertical":
             inside = (
-                start - junction_tolerance
-                <= other_axis
-                <= end + junction_tolerance
-                and other_start - junction_tolerance
-                <= axis
-                <= other_end + junction_tolerance
+                start - junction_tolerance <= other_axis <= end + junction_tolerance
+                and other_start - junction_tolerance <= axis <= other_end + junction_tolerance
             )
             line_endpoint_distance = min(
                 abs(other_axis - start),
@@ -243,19 +226,13 @@ def _junction_metrics(
             continue
 
         junction_positions.append(position)
-        if (
-            min(line_endpoint_distance, other_endpoint_distance)
-            <= junction_tolerance
-        ):
+        if min(line_endpoint_distance, other_endpoint_distance) <= junction_tolerance:
             endpoint_positions.append(position)
 
     def distinct_count(values: list[float]) -> int:
         groups: list[list[float]] = []
         for value in sorted(values):
-            if (
-                not groups
-                or value - groups[-1][-1] > junction_tolerance
-            ):
+            if not groups or value - groups[-1][-1] > junction_tolerance:
                 groups.append([value])
             else:
                 groups[-1].append(value)
@@ -308,9 +285,7 @@ def derive_structural_profile_anchors(
     elif dimension_orientation == "vertical":
         source_orientation = "horizontal"
     else:
-        raise ValueError(
-            "dimension_orientation must be horizontal or vertical"
-        )
+        raise ValueError("dimension_orientation must be horizontal or vertical")
 
     all_lines = _merge_near_duplicate_lines(
         _collect_source_lines(raw_evidence, region_id),
@@ -318,14 +293,8 @@ def derive_structural_profile_anchors(
         minimum_overlap_ratio=0.8,
     )
 
-    _, _, region_width, region_height = (
-        float(value) for value in bbox
-    )
-    span_denominator = (
-        region_height
-        if source_orientation == "vertical"
-        else region_width
-    )
+    _, _, region_width, region_height = (float(value) for value in bbox)
+    span_denominator = region_height if source_orientation == "vertical" else region_width
     if span_denominator <= 0:
         raise ValueError("region span must be positive")
 
@@ -339,19 +308,13 @@ def derive_structural_profile_anchors(
             all_lines,
             junction_tolerance=junction_tolerance,
         )
-        span_local_norm = (
-            float(line["span_length_px"]) / span_denominator
-        )
+        span_local_norm = float(line["span_length_px"]) / span_denominator
 
         strong_topology = (
-            span_local_norm >= 0.15
-            and junction_count >= 2
-            and endpoint_junction_count >= 1
+            span_local_norm >= 0.15 and junction_count >= 2 and endpoint_junction_count >= 1
         )
         long_single_corner = (
-            span_local_norm >= 0.25
-            and junction_count >= 1
-            and endpoint_junction_count >= 1
+            span_local_norm >= 0.25 and junction_count >= 1 and endpoint_junction_count >= 1
         )
         if not (strong_topology or long_single_corner):
             continue
@@ -368,12 +331,8 @@ def derive_structural_profile_anchors(
     if not profile_lines:
         return []
 
-    minimum_axis = min(
-        float(item["axis_px"]) for item in profile_lines
-    )
-    maximum_axis = max(
-        float(item["axis_px"]) for item in profile_lines
-    )
+    minimum_axis = min(float(item["axis_px"]) for item in profile_lines)
+    maximum_axis = max(float(item["axis_px"]) for item in profile_lines)
 
     anchors: list[dict[str, Any]] = []
     for index, line in enumerate(profile_lines, start=1):
@@ -383,15 +342,11 @@ def derive_structural_profile_anchors(
         is_extreme = at_minimum or at_maximum
 
         strong_extreme = (
-            (
-                float(line["span_local_norm"]) >= 0.30
-                and int(line["endpoint_junction_count"]) >= 2
-            )
-            or (
-                float(line["span_local_norm"]) >= 0.75
-                and int(line["junction_count"]) >= 3
-                and int(line["endpoint_junction_count"]) >= 1
-            )
+            float(line["span_local_norm"]) >= 0.30 and int(line["endpoint_junction_count"]) >= 2
+        ) or (
+            float(line["span_local_norm"]) >= 0.75
+            and int(line["junction_count"]) >= 3
+            and int(line["endpoint_junction_count"]) >= 1
         )
 
         if is_extreme and strong_extreme:
@@ -406,22 +361,15 @@ def derive_structural_profile_anchors(
 
         anchor = {
             "kind": kind,
-            "ref": (
-                f"{region_id}.structural."
-                f"{source_orientation}.{index:03d}"
-            ),
+            "ref": (f"{region_id}.structural.{source_orientation}.{index:03d}"),
             "position_px": round(axis, 3),
             "source_orientation": source_orientation,
             "span_px": list(line["span_px"]),
             "span_length_px": int(line["span_length_px"]),
             "span_local_norm": float(line["span_local_norm"]),
             "junction_count": int(line["junction_count"]),
-            "endpoint_junction_count": int(
-                line["endpoint_junction_count"]
-            ),
-            "merged_source_line_count": int(
-                line["merged_source_line_count"]
-            ),
+            "endpoint_junction_count": int(line["endpoint_junction_count"]),
+            "merged_source_line_count": int(line["merged_source_line_count"]),
             "candidate_only": True,
             "ownership_claimed": False,
         }

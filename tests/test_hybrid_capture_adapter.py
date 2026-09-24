@@ -316,3 +316,91 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     assert all(item.required_for_modeling for item in callout_unresolved)
     assert all(not item.entity_keys for item in callout_unresolved)
 
+
+def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[95, 45], [228, 228]],
+            "candidate_only": True,
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[20, 20], [100, 20], [100, 50], [20, 50]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.C1", "diameter", 20.0),
+        ("R1.C1", "fit", "H7"),
+    ]
+    assert not [
+        item
+        for item in partial.unresolved
+        if item.field == "engineering_callout_geometry_binding"
+    ]
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "bound"
+    assert ledger["items"][0]["binding"]["entity_key"] == "R1.C1"
+
+
+def test_adapter_does_not_bind_nearby_callout_without_annotation_geometry():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[140, 120], [220, 120], [220, 150], [140, 150]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert partial.values == []
+    unresolved = [
+        item
+        for item in partial.unresolved
+        if item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0].kind == "feature_inventory"
+

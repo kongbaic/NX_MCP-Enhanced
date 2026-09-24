@@ -667,3 +667,105 @@ def test_exact_dimension_carrier_beats_incidental_circle_leader_binding():
         ("R2.DG_DIAMETER.DIAMETER_PROJECTION", "diameter"): 20.0,
         ("R2.DG_DIAMETER.DIAMETER_PROJECTION", "fit"): "H7",
     }
+
+
+
+def test_multiline_hole_note_uses_one_shared_leader_binding():
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [],
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 3,
+                    "text": "Ø6.6通孔",
+                    "bbox": [
+                        [80.0, 40.0],
+                        [180.0, 40.0],
+                        [180.0, 80.0],
+                        [80.0, 80.0],
+                    ],
+                    "confidence": 0.99,
+                },
+                {
+                    "source_item_index": 5,
+                    "text": "Ø11沉孔深6.5",
+                    "bbox": [
+                        [80.0, 82.0],
+                        [200.0, 82.0],
+                        [200.0, 122.0],
+                        [80.0, 122.0],
+                    ],
+                    "confidence": 0.99,
+                },
+            ],
+        },
+        "regions": [
+            {
+                "region_id": "R2",
+                "bbox_px": [0, 0, 320, 260],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [250, 170],
+                        "rings": [
+                            {"radius_px": 22},
+                            {"radius_px": 38},
+                        ],
+                    }
+                ],
+            }
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[192, 112], [220, 140]],
+                "angle_deg": 45.0,
+                "length_px": 39.6,
+                "candidate_only": True,
+            }
+        ],
+        "candidates": [],
+    }
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                }
+            ],
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, context)
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert len(ledger["items"]) == 2
+    assert {
+        tuple(item["binding_group_source_item_indices"])
+        for item in ledger["items"]
+    } == {(3, 5)}
+    assert {
+        item["binding"]["entity_key"]
+        for item in ledger["items"]
+    } == {"R2.C1"}
+    assert all(
+        item["binding"]["status"] == "bound"
+        for item in ledger["items"]
+    )
+    assert all(
+        item["binding"]["support"][0]["binding_mode"]
+        == "bounded_arrow_extension_to_circle_ring"
+        for item in ledger["items"]
+    )

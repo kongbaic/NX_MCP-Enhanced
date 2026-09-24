@@ -227,36 +227,6 @@ def _view_regions(
     return boxes[:4]
 
 
-def _select_circle_centers(
-    scored: list[dict[str, Any]],
-    *,
-    limit: int = 12,
-) -> list[dict[str, Any]]:
-    centers: list[dict[str, Any]] = []
-    for item in scored:
-        radius = float(item["radius_px"])
-        duplicate = False
-        for previous in centers:
-            previous_radius = float(previous["radius_px"])
-            center_distance = math.hypot(
-                int(item["cx"]) - int(previous["cx"]),
-                int(item["cy"]) - int(previous["cy"]),
-            )
-            same_center_tolerance = max(
-                5.0,
-                min(radius, previous_radius) * 0.45,
-            )
-            if center_distance <= same_center_tolerance:
-                duplicate = True
-                break
-        if duplicate:
-            continue
-        centers.append(item)
-        if len(centers) >= limit:
-            break
-    return centers
-
-
 def _circle_candidates(
     gray: Any,
     edges: Any,
@@ -269,73 +239,58 @@ def _circle_candidates(
     height = region["height"]
     roi = gray[y : y + height, x : x + width]
     max_radius = max(12, min(120, min(width, height) // 2))
-    small_max_radius = max(12, min(42, min(width, height) // 5))
 
-    passes: list[dict[str, Any]] = [
-        {
-            "param2": 45,
-            "min_radius": 8,
-            "max_radius": max_radius,
-            "min_dist": max(18, min(width, height) // 12),
-            "support_min": 0.82,
-            "channel": "primary",
-        },
-        {
-            "param2": 26,
-            "min_radius": 6,
-            "max_radius": small_max_radius,
-            "min_dist": max(10, min(width, height) // 24),
-            "support_min": 0.90,
-            "channel": "small_feature",
-        },
-    ]
+    circles = cv2.HoughCircles(
+        roi,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=max(18, min(width, height) // 12),
+        param1=120,
+        param2=45,
+        minRadius=8,
+        maxRadius=max_radius,
+    )
+    if circles is None:
+        return []
 
     scored: list[dict[str, Any]] = []
-    for config in passes:
-        circles = cv2.HoughCircles(
-            roi,
-            cv2.HOUGH_GRADIENT,
-            dp=1.2,
-            minDist=int(config["min_dist"]),
-            param1=120,
-            param2=float(config["param2"]),
-            minRadius=int(config["min_radius"]),
-            maxRadius=int(config["max_radius"]),
-        )
-        if circles is None:
+    for raw_circle in circles[0]:
+        cx, cy, radius = (int(round(float(value))) for value in raw_circle)
+        global_x, global_y = x + cx, y + cy
+        support = _edge_support(edges, global_x, global_y, radius)
+        if support < 0.82:
             continue
+        scored.append(
+            {
+                "cx": global_x,
+                "cy": global_y,
+                "radius_px": radius,
+                "edge_support": round(float(support), 3),
+            }
+        )
 
-        for raw_circle in circles[0]:
-            cx, cy, radius = (int(round(float(value))) for value in raw_circle)
-            global_x, global_y = x + cx, y + cy
-            support = _edge_support(edges, global_x, global_y, radius)
-            if support < float(config["support_min"]):
-                continue
-            scored.append(
-                {
-                    "cx": global_x,
-                    "cy": global_y,
-                    "radius_px": radius,
-                    "edge_support": round(float(support), 3),
-                    "detection_channel": str(config["channel"]),
-                }
+    scored.sort(key=lambda item: float(item["edge_support"]), reverse=True)
+    centers: list[dict[str, Any]] = []
+    min_center_dist = max(12, min(width, height) * 0.08)
+    for item in scored:
+        if any(
+            math.hypot(
+                int(item["cx"]) - int(previous["cx"]),
+                int(item["cy"]) - int(previous["cy"]),
             )
-
-    scored.sort(
-        key=lambda item: (
-            float(item["edge_support"]),
-            int(item["radius_px"]),
-        ),
-        reverse=True,
-    )
-
-    centers = _select_circle_centers(scored)
+            < min_center_dist
+            for previous in centers
+        ):
+            continue
+        centers.append(item)
+        if len(centers) >= 4:
+            break
 
     enriched: list[dict[str, Any]] = []
     for center in centers:
         cx, cy = int(center["cx"]), int(center["cy"])
         radial: list[tuple[float, int]] = []
-        for radius in range(6, max_radius + 1):
+        for radius in range(8, max_radius + 1):
             support = _edge_support(edges, cx, cy, radius, tol=1)
             if support >= 0.90:
                 radial.append((support, radius))
@@ -355,10 +310,6 @@ def _circle_candidates(
                     "cy": cy,
                     "radius_px": radius,
                     "edge_support": round(float(support), 3),
-                    "detection_channel": center.get(
-                        "detection_channel",
-                        "primary",
-                    ),
                 }
             )
     return enriched

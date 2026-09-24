@@ -222,7 +222,8 @@ def test_different_feature_centers_compile_to_center_distance():
     assert compiled.relations[0].kind == "center_distance"
 
 
-def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
+def test_raw_evidence_compiles_resolves_and_transforms_at_planner_boundary():
+    x = "feature:F_MAIN.centerline.x"
     z = "feature:F_MAIN.centerline.z"
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
@@ -233,6 +234,14 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 feature_id="F_MAIN",
                 view_id="V_FRONT",
                 shape="circle",
+            )
+        ],
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id="A_MAIN_X_CENTER",
+                target=x,
+                axis="X",
+                source_ids=["CENTERLINE_X"],
             )
         ],
         dimensions=[
@@ -254,11 +263,6 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 value="through_hole",
             ),
             DirectValueEvidence(
-                id="S_MAIN_X",
-                target="feature:F_MAIN.centerline.x",
-                value=0,
-            ),
-            DirectValueEvidence(
                 id="S_MAIN_D",
                 target="feature:F_MAIN.diameter",
                 value=20,
@@ -269,16 +273,33 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 value=1,
             ),
         ],
-        required_targets=[z],
+        required_targets=[x, z],
     )
 
     compiled = compile_evidence_graph(graph)
     result = resolve_evidence_graph(compiled)
-    draft = build_semantic_draft(compiled, result)
 
+    assert result.values[x] == 20
+    assert result.values[z] == 40
+
+    draft = build_semantic_draft(compiled, result)
     feature = draft["features"][0]
     assert feature["axis"] == "Y"
-    assert feature["centerline"] == {"x": 0, "z": 40}
+    assert feature["centerline"] == {"x": 0.0, "z": 40.0}
+
+    coordinate_system = draft["coordinate_system"]
+    assert coordinate_system["source_origin"] == "overall_min_xyz"
+    assert coordinate_system["reader_local_bounds"]["x"] == [0.0, 40]
+    assert coordinate_system["reader_to_planner_translation"]["x"] == -20
+
+    center_source = next(
+        item
+        for item in draft["source_ledger"]
+        if item["id"] == "A_MAIN_X_CENTER"
+    )
+    assert center_source["value"] == 0.0
+    assert center_source["reader_local_value"] == 20.0
+
     assert result.ok
     assert R.check_drawing_json(draft) == []
 

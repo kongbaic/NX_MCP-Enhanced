@@ -603,6 +603,52 @@ def _deduplicate(values: list[float], tolerance: int) -> list[float]:
     return [round(sum(group) / len(group), 1) for group in groups]
 
 
+def _witness_line_evidence(
+    witnesses: list[float],
+    source_lines: list[tuple[str, float, int, int]],
+    *,
+    dimension_axis: float,
+    witness_axis_tolerance: float,
+    cross_tolerance: float,
+) -> list[dict[str, Any]]:
+    """Preserve the merged orthogonal lines that produced each witness axis."""
+
+    output: list[dict[str, Any]] = []
+    for witness_index, witness in enumerate(witnesses):
+        matched: list[dict[str, Any]] = []
+        for orientation, axis, start, end in source_lines:
+            if abs(float(axis) - float(witness)) > witness_axis_tolerance:
+                continue
+            matched.append(
+                {
+                    "orientation": orientation,
+                    "axis_px": round(float(axis), 3),
+                    "span_px": [int(start), int(end)],
+                    "span_length_px": int(end - start),
+                    "crosses_dimension_axis": (
+                        float(start) - cross_tolerance
+                        <= float(dimension_axis)
+                        <= float(end) + cross_tolerance
+                    ),
+                }
+            )
+        matched.sort(
+            key=lambda item: (
+                abs(float(item["axis_px"]) - float(witness)),
+                -int(item["span_length_px"]),
+                int(item["span_px"][0]),
+            )
+        )
+        output.append(
+            {
+                "witness_index": witness_index,
+                "position_px": float(witness),
+                "source_lines": matched,
+            }
+        )
+    return output
+
+
 def _dimension_geometry(
     gray: Any,
     raw_evidence: dict[str, Any],
@@ -715,6 +761,13 @@ def _dimension_geometry(
                     "witness_positions_local_norm": [
                         round((value - x) / region_width, 5) for value in witnesses
                     ],
+                    "witness_line_evidence": _witness_line_evidence(
+                        witnesses,
+                        vertical,
+                        dimension_axis=axis,
+                        witness_axis_tolerance=float(witness_dedup),
+                        cross_tolerance=float(witness_tolerance),
+                    ),
                     "status": "candidate_only_no_semantics",
                 }
             )
@@ -758,6 +811,13 @@ def _dimension_geometry(
                     "witness_positions_local_norm": [
                         round((value - y) / region_height, 5) for value in witnesses
                     ],
+                    "witness_line_evidence": _witness_line_evidence(
+                        witnesses,
+                        horizontal,
+                        dimension_axis=axis,
+                        witness_axis_tolerance=float(witness_dedup),
+                        cross_tolerance=float(witness_tolerance),
+                    ),
                     "status": "candidate_only_no_semantics",
                 }
             )

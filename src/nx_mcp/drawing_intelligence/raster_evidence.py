@@ -122,7 +122,7 @@ def _oblique_annotation_lines(
         return []
 
     minimum_length = max(14.0, image_width * 0.009)
-    maximum_length = math.hypot(image_width, image_height) * 0.28
+    maximum_length = math.hypot(image_width, image_height) * 0.45
     candidates: list[dict[str, Any]] = []
 
     for x1, y1, x2, y2 in raw[:, 0]:

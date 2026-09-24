@@ -572,104 +572,6 @@ def _compact_fragments(
     return scored[:limit]
 
 
-def _parallel_dash_pair_candidates(
-    patterns: list[dict[str, Any]],
-    region_bbox: list[int],
-    *,
-    limit: int = 16,
-) -> list[dict[str, Any]]:
-    """Group strongly overlapping parallel dash-pattern lines without assigning semantics."""
-
-    _, _, region_width, region_height = (float(value) for value in region_bbox)
-    pairs: list[dict[str, Any]] = []
-
-    for left_index, left in enumerate(patterns):
-        for right_index in range(left_index + 1, len(patterns)):
-            right = patterns[right_index]
-            if left.get("orientation") != right.get("orientation"):
-                continue
-
-            left_span = left.get("span_px")
-            right_span = right.get("span_px")
-            if not (
-                isinstance(left_span, list)
-                and len(left_span) == 2
-                and isinstance(right_span, list)
-                and len(right_span) == 2
-            ):
-                continue
-
-            left_start, left_end = (float(value) for value in left_span)
-            right_start, right_end = (float(value) for value in right_span)
-            overlap = max(
-                0.0,
-                min(left_end, right_end) - max(left_start, right_start),
-            )
-            shorter = min(
-                left_end - left_start,
-                right_end - right_start,
-            )
-            if shorter <= 0:
-                continue
-
-            overlap_ratio = overlap / shorter
-            if overlap_ratio < 0.70:
-                continue
-
-            left_axis = float(left["axis_px"])
-            right_axis = float(right["axis_px"])
-            separation = abs(left_axis - right_axis)
-            cross_extent = (
-                region_height
-                if left["orientation"] == "horizontal"
-                else region_width
-            )
-            if cross_extent <= 0:
-                continue
-
-            separation_norm = separation / cross_extent
-            if not 0.015 <= separation_norm <= 0.12:
-                continue
-
-            dash_score = min(
-                float(left.get("dash_score") or 0.0),
-                float(right.get("dash_score") or 0.0),
-            )
-            score = overlap_ratio * dash_score
-
-            pairs.append(
-                {
-                    "kind": "parallel_dash_pair_candidate",
-                    "orientation": left["orientation"],
-                    "axes_px": sorted([left_axis, right_axis]),
-                    "span_px": [
-                        max(left_start, right_start),
-                        min(left_end, right_end),
-                    ],
-                    "span_overlap_ratio": round(overlap_ratio, 5),
-                    "separation_px": round(separation, 2),
-                    "separation_local_norm": round(separation_norm, 5),
-                    "candidate_score": round(score, 5),
-                    "member_pattern_indices": [left_index, right_index],
-                    "candidate_only": True,
-                    "ownership_claimed": False,
-                }
-            )
-
-    pairs.sort(
-        key=lambda item: (
-            -float(item["candidate_score"]),
-            str(item["orientation"]),
-            item["axes_px"],
-            item["span_px"],
-        )
-    )
-    output = pairs[:limit]
-    for index, item in enumerate(output, start=1):
-        item["pair_id"] = f"HP{index:03d}"
-    return output
-
-
 def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
     image_width = int(probe["image"]["width"])
     image_height = int(probe["image"]["height"])
@@ -682,16 +584,6 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
             region.get("circle_evidence", []),
             image_width,
             image_height,
-        )
-        linear_patterns = _compact_fragments(
-            region.get("fragment_groups", []),
-            image_width,
-            image_height,
-            bbox,
-        )
-        parallel_dash_pairs = _parallel_dash_pair_candidates(
-            linear_patterns,
-            [x, y, width, height],
         )
         for circle_group in circle_groups:
             cx, cy = circle_group["center_px"]
@@ -711,8 +603,12 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
                     _norm(height, image_height),
                 ],
                 "circle_groups": circle_groups,
-                "linear_pattern_candidates": linear_patterns,
-                "parallel_dash_pair_candidates": parallel_dash_pairs,
+                "linear_pattern_candidates": _compact_fragments(
+                    region.get("fragment_groups", []),
+                    image_width,
+                    image_height,
+                    bbox,
+                ),
             }
         )
 
@@ -738,9 +634,6 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
             ),
             "linear_pattern_candidate_count": sum(
                 len(region["linear_pattern_candidates"]) for region in regions
-            ),
-            "parallel_dash_pair_candidate_count": sum(
-                len(region["parallel_dash_pair_candidates"]) for region in regions
             ),
             "annotation_line_candidate_count": len(probe.get("oblique_annotation_lines", [])),
         },

@@ -4,6 +4,7 @@ import pytest
 
 from nx_mcp.drawing_intelligence.view_metric_calibration import (
     derive_view_metric_calibrations,
+    metricize_profile_edge_candidates,
 )
 
 
@@ -115,3 +116,53 @@ def test_mismatched_overall_dimension_fails_closed():
     )
 
     assert items == []
+
+
+def test_metricize_profile_edge_candidates_converts_only_calibrated_axis():
+    candidate = _candidate()
+    calibrations = derive_view_metric_calibrations(
+        candidates=[candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0, "width_y": 32.0, "height_z": 66.0},
+    )
+
+    edges = metricize_profile_edge_candidates(
+        candidates=[candidate],
+        calibrations=calibrations,
+    )
+
+    assert len(edges) == 2
+    by_ref = {item["ref"]: item for item in edges}
+    assert by_ref["R1.structural.vertical.001"]["axis"] == "X"
+    assert by_ref["R1.structural.vertical.001"]["coordinate_mm"] == pytest.approx(-20.0)
+    assert by_ref["R1.structural.vertical.002"]["coordinate_mm"] == pytest.approx(20.0)
+    assert all(item["basis"] == "view_metric_calibration" for item in edges)
+
+
+def test_metricize_profile_edge_candidates_does_not_invent_uncalibrated_axis():
+    candidate = _candidate()
+    candidate["witness_anchor_evidence"][0]["nearest_anchors"].append(
+        {
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.horizontal.001",
+            "position_px": 120.0,
+            "source_orientation": "horizontal",
+            "span_px": [100, 300],
+        }
+    )
+    calibrations = derive_view_metric_calibrations(
+        candidates=[candidate],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0, "width_y": 32.0, "height_z": 66.0},
+    )
+
+    edges = metricize_profile_edge_candidates(
+        candidates=[candidate],
+        calibrations=calibrations,
+    )
+
+    assert {item["ref"] for item in edges} == {
+        "R1.structural.vertical.001",
+        "R1.structural.vertical.002",
+    }
+

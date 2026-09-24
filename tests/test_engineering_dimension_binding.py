@@ -344,9 +344,67 @@ def _integrated_circle_report() -> dict[str, object]:
             "candidate_only": True,
             "ownership_claimed": False,
         },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.LEFT",
+            "position_px": 20.0,
+            "source_orientation": "vertical",
+            "span_px": [80, 300],
+            "relative_extreme_side": "min",
+            "candidate_only": True,
+            "ownership_claimed": False,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.CENTER_AXIS",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "span_px": [80, 220],
+            "candidate_only": True,
+            "ownership_claimed": False,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.RIGHT",
+            "position_px": 180.0,
+            "source_orientation": "vertical",
+            "span_px": [80, 300],
+            "relative_extreme_side": "max",
+            "candidate_only": True,
+            "ownership_claimed": False,
+        },
     ]
     report["candidates"].extend(
         [
+            {
+                "candidate_id": "DG_WIDTH",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": "40",
+                "global_proposal_token": "40",
+                "decision_reason": (
+                    "global_geometry_assignment_confirmed_by_local_roi"
+                ),
+                "wide_local_linear_tokens": ["40"],
+                "global_assignments": [
+                    {
+                        "source_item_index": 20,
+                        "text": "40",
+                        "token": "40",
+                        "bbox": [
+                            [80.0, 260.0],
+                            [120.0, 260.0],
+                            [120.0, 290.0],
+                            [80.0, 290.0],
+                        ],
+                    }
+                ],
+                "witness_positions_px": [20.0, 180.0],
+                "witness_anchor_evidence": [],
+            },
             {
                 "candidate_id": "DG_OVERALL",
                 "region_id": "R1",
@@ -437,10 +495,15 @@ def _integrated_context() -> HybridAdapterContext:
             ],
             "overall_dimension_facts": [
                 {
+                    "axis": "X",
+                    "value": 40,
+                    "evidence": ["overall:X"],
+                },
+                {
                     "axis": "Z",
                     "value": 66,
                     "evidence": ["overall:Z"],
-                }
+                },
             ],
         }
     )
@@ -479,6 +542,7 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
         associations=partial.associations,
         values=partial.values,
         dimensions=[center_dimension],
+        datum_alignments=partial.datum_alignments,
     )
     capture = assemble_reader_capture(observations)
     linked = link_reader_capture(capture)
@@ -499,6 +563,7 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
     assert direct[f"feature:{feature_id}.axis"] == "Y"
     assert direct[f"feature:{feature_id}.diameter"] == 20.0
     assert direct[f"feature:{feature_id}.fit"] == "H7"
+    assert resolution.values[f"feature:{feature_id}.centerline.x"] == 0.0
     assert resolution.values[f"feature:{feature_id}.centerline.z"] == 40.0
 
 

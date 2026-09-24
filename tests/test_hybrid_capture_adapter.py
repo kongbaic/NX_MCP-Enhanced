@@ -49,6 +49,18 @@ def _report() -> dict:
                 "region_id": "R1",
                 "orientation": "horizontal",
                 "accepted_token": "24",
+                "global_assignments": [
+                    {
+                        "token": "24",
+                        "bbox": [
+                            [140.0, 80.0],
+                            [160.0, 80.0],
+                            [160.0, 100.0],
+                            [140.0, 100.0],
+                        ],
+                    }
+                ],
+                "witness_positions_px": [100.0, 200.0],
                 "witness_anchor_evidence": [
                     {
                         "witness_index": 0,
@@ -61,7 +73,22 @@ def _report() -> dict:
                                 "distance_local_norm": 0.0,
                             }
                         ],
-                    }
+                    },
+                    {
+                        "witness_index": 1,
+                        "axis": "x",
+                        "nearest_anchors": [
+                            {
+                                "kind": "profile_edge_candidate",
+                                "ref": "R1.structural.vertical.001",
+                                "position_px": 200.0,
+                                "candidate_only": True,
+                                "ownership_claimed": False,
+                                "distance_px": 0.0,
+                                "distance_local_norm": 0.0,
+                            }
+                        ],
+                    },
                 ],
                 "witness_line_evidence": [
                     {
@@ -76,7 +103,20 @@ def _report() -> dict:
                                 "crosses_dimension_axis": True,
                             }
                         ],
-                    }
+                    },
+                    {
+                        "witness_index": 1,
+                        "position_px": 200.0,
+                        "source_lines": [
+                            {
+                                "orientation": "vertical",
+                                "axis_px": 200.0,
+                                "span_px": [20, 180],
+                                "span_length_px": 160,
+                                "crosses_dimension_axis": True,
+                            }
+                        ],
+                    },
                 ],
             },
             {
@@ -137,6 +177,11 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     dg12 = next(item for item in anchor_ledger["items"] if item["candidate_id"] == "DG12")
     assert dg12["witness_anchor_evidence"][0]["nearest_anchors"][0]["kind"] == "circle_center_axis"
     assert dg12["witness_line_evidence"][0]["source_lines"][0]["span_length_px"] == 160
+    assert anchor_ledger["schema"] == "1.1"
+    endpoint_candidates = dg12["endpoint_candidate_evidence"]
+    assert endpoint_candidates["status"] == "bracketed"
+    assert endpoint_candidates["selected_witness_indices"] == [0, 1]
+    assert endpoint_candidates["all_endpoint_candidates_unique"] is True
     assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
 
 

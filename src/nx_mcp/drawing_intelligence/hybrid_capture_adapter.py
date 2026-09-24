@@ -12,6 +12,7 @@ from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .evidence import Axis, ViewKind
 from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
+    ObservationAssociation,
     ObservationDimension,
     ObservationDimensionEndpoint,
     ObservationEntity,
@@ -810,6 +811,186 @@ def _engineering_callout_routing(
     return ledger, callout_entities, values, unresolved
 
 
+_PIXEL_INDEX_BY_VIEW_AXIS: dict[tuple[str, str], int] = {
+    ("front", "X"): 0,
+    ("front", "Z"): 1,
+    ("side", "Y"): 0,
+    ("side", "Z"): 1,
+    ("top", "X"): 0,
+    ("top", "Y"): 1,
+}
+
+
+def _projection_alignment_tolerance(
+    report: dict[str, Any],
+    region_id: str,
+) -> float:
+    for region in report.get("regions", []):
+        if not isinstance(region, dict) or str(region.get("region_id") or "") != region_id:
+            continue
+        bbox = region.get("bbox_px")
+        if (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and isinstance(bbox[2], (int, float))
+            and isinstance(bbox[3], (int, float))
+        ):
+            return max(3.0, min(float(bbox[2]), float(bbox[3])) * 0.006)
+    return 3.0
+
+
+def _unique_orthographic_associations(
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    entity_keys: set[str],
+    callout_ledger: list[dict[str, Any]],
+) -> tuple[list[ObservationAssociation], list[ObservationUnresolved]]:
+    associations: list[ObservationAssociation] = []
+    unresolved: list[ObservationUnresolved] = []
+    claimed_entities: set[str] = set()
+
+    regions = [
+        item for item in report.get("regions", []) if isinstance(item, dict)
+    ]
+
+    for record in callout_ledger:
+        if not isinstance(record, dict):
+            continue
+        binding = record.get("binding")
+        if not (
+            isinstance(binding, dict)
+            and binding.get("status") == "dimension_backed"
+        ):
+            continue
+
+        projection_entity = str(binding.get("entity_key") or "")
+        source_region = str(binding.get("region_id") or "")
+        orientation = str(binding.get("orientation") or "")
+        projected_center = binding.get("projected_center_axis_px")
+        source_view = view_lookup.get(source_region)
+        if (
+            not projection_entity
+            or projection_entity not in entity_keys
+            or source_view is None
+            or orientation not in {"horizontal", "vertical"}
+            or not isinstance(projected_center, (int, float))
+        ):
+            continue
+
+        shared_axis = _axis_for(source_view.view_kind, orientation)
+        source_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (source_view.view_kind, shared_axis)
+        )
+        if source_pixel_index is None:
+            continue
+
+        matches: list[tuple[str, float]] = []
+        for region in regions:
+            target_region = str(region.get("region_id") or "")
+            if not target_region or target_region == source_region:
+                continue
+            target_view = view_lookup.get(target_region)
+            if target_view is None:
+                continue
+
+            target_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+                (target_view.view_kind, shared_axis)
+            )
+            if target_pixel_index is None or target_pixel_index != source_pixel_index:
+                continue
+
+            tolerance = max(
+                _projection_alignment_tolerance(report, source_region),
+                _projection_alignment_tolerance(report, target_region),
+            )
+            groups = region.get("circle_groups", [])
+            if not isinstance(groups, list):
+                continue
+
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                group_id = str(group.get("circle_group_id") or "")
+                center = group.get("center_px")
+                if not (
+                    group_id
+                    and isinstance(center, list)
+                    and len(center) >= 2
+                    and isinstance(center[target_pixel_index], (int, float))
+                ):
+                    continue
+                circle_entity = f"{target_region}.{group_id}"
+                if circle_entity not in entity_keys:
+                    continue
+
+                residual = abs(
+                    float(center[target_pixel_index]) - float(projected_center)
+                )
+                if residual <= tolerance:
+                    matches.append((circle_entity, residual))
+
+        matches.sort(key=lambda item: (item[1], item[0]))
+        evidence = [
+            f"hybrid:whole:{record.get('source_item_index')}",
+            f"hybrid:{binding.get('candidate_id')}:geometry",
+        ]
+
+        if len(matches) != 1:
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="cross_view_identity",
+                    reason=(
+                        "Diameter projection has no unique orthographic circular "
+                        "counterpart on the shared engineering axis."
+                    ),
+                    entity_keys=[
+                        projection_entity,
+                        *[item[0] for item in matches],
+                    ],
+                    basis=["projection_alignment"],
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
+            )
+            continue
+
+        circle_entity, residual = matches[0]
+        if projection_entity in claimed_entities or circle_entity in claimed_entities:
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="cross_view_identity",
+                    reason=(
+                        "A unique projection match reuses an entity already claimed "
+                        "by another deterministic cross-view association."
+                    ),
+                    entity_keys=[projection_entity, circle_entity],
+                    basis=["projection_alignment"],
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
+            )
+            continue
+
+        claimed_entities.update({projection_entity, circle_entity})
+        associations.append(
+            ObservationAssociation(
+                entity_keys=[projection_entity, circle_entity],
+                basis=[
+                    "projection_alignment",
+                    "unique_orthographic_counterpart",
+                ],
+                evidence=[
+                    *evidence,
+                    f"hybrid:projection_alignment_residual_px:{residual:.3f}",
+                ],
+                required_for_modeling=True,
+            )
+        )
+
+    return associations, unresolved
+
+
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
     context: HybridAdapterContext,
@@ -935,6 +1116,13 @@ def adapt_hybrid_ocr_report(
     )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)
+    associations, association_unresolved = _unique_orthographic_associations(
+        report=report,
+        view_lookup=view_lookup,
+        entity_keys={item.key for item in entities},
+        callout_ledger=callout_ledger,
+    )
+    unresolved.extend(association_unresolved)
 
     coverage = report["coverage"]
     anchor_items = [
@@ -1068,6 +1256,7 @@ def adapt_hybrid_ocr_report(
         overall_dimension_facts=context.overall_dimension_facts,
         views=views,
         entities=entities,
+        associations=associations,
         values=callout_values,
         dimensions=dimensions,
         observations=observations,

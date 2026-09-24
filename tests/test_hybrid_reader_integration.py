@@ -111,9 +111,7 @@ def test_unowned_callout_facts_reach_backend_without_inventing_geometry():
 
     assert validate_reader_capture_contract(capture) == []
 
-    carrier = next(
-        item for item in capture.entities if "hybrid:whole:1" in item.source_ids
-    )
+    carrier = next(item for item in capture.entities if "hybrid:whole:1" in item.source_ids)
     assert carrier.shape == "other"
     assert carrier.required_for_modeling is False
     assert carrier.cross_view_disposition is None
@@ -121,10 +119,7 @@ def test_unowned_callout_facts_reach_backend_without_inventing_geometry():
     linked = link_reader_capture(capture)
     feature_id = linked.entity_to_feature[carrier.id]
 
-    direct = {
-        item.target: item.value
-        for item in linked.evidence.direct_values
-    }
+    direct = {item.target: item.value for item in linked.evidence.direct_values}
     assert direct[f"feature:{feature_id}.thread_spec"] == "M6"
     assert direct[f"feature:{feature_id}.thread_depth"] == 12.0
     assert not any(
@@ -137,9 +132,7 @@ def test_unowned_callout_facts_reach_backend_without_inventing_geometry():
     resolution = resolve_evidence_graph(compiled)
     draft = build_semantic_draft(compiled, resolution)
 
-    feature = next(
-        item for item in draft["features"] if item["id"] == feature_id
-    )
+    feature = next(item for item in draft["features"] if item["id"] == feature_id)
     assert feature["thread_spec"] == "M6"
     assert feature["thread_depth"] == 12.0
     assert "axis" not in feature
@@ -150,4 +143,3 @@ def test_unowned_callout_facts_reach_backend_without_inventing_geometry():
         and item.get("field") == "engineering_callout_geometry_binding"
         for item in draft["unresolved"]
     )
-

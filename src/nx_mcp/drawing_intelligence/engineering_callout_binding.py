@@ -177,9 +177,7 @@ def bind_callout_to_circle_entity(
         }
 
     entity_key = unique_entities[0]
-    entity_bindings = [
-        item for item in bindings if item["entity_key"] == entity_key
-    ]
+    entity_bindings = [item for item in bindings if item["entity_key"] == entity_key]
     return {
         "status": "bound",
         "basis": "callout_bbox_to_oblique_line_to_circle_ring",

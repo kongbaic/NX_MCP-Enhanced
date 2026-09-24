@@ -6,6 +6,7 @@ from nx_mcp.drawing_intelligence.engineering_dimension_binding import (
 from nx_mcp.drawing_intelligence import (
     compile_evidence_graph,
     link_reader_capture,
+    resolve_evidence_graph,
 )
 from nx_mcp.drawing_intelligence.evidence import OverallDimensions
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
@@ -301,3 +302,201 @@ def test_multiple_aligned_circles_fail_closed_instead_of_auto_associating():
         "R1.C_MAIN",
         "R1.C_AMBIGUOUS",
     }
+
+
+
+def _integrated_circle_report() -> dict[str, object]:
+    report = _two_view_report()
+    report["coverage"]["conflicting_linear_observations"] = [
+        {
+            "candidate_id": "DG_OVERALL",
+            "source_item_index": 9,
+            "token": "6",
+            "local_tokens": ["66"],
+        }
+    ]
+    report["coverage"]["local_only_linear_observations"] = [
+        {
+            "candidate_id": "DG_OVERALL",
+            "token": "66",
+        }
+    ]
+    report["structural_profile_inventory"] = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.horizontal.TOP",
+            "position_px": 100.0,
+            "source_orientation": "horizontal",
+            "span_px": [40, 190],
+            "relative_extreme_side": "min",
+            "candidate_only": True,
+            "ownership_claimed": False,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.horizontal.BOTTOM",
+            "position_px": 300.0,
+            "source_orientation": "horizontal",
+            "span_px": [40, 190],
+            "relative_extreme_side": "max",
+            "candidate_only": True,
+            "ownership_claimed": False,
+        },
+    ]
+    report["candidates"].extend(
+        [
+            {
+                "candidate_id": "DG_OVERALL",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "accepted_token": None,
+                "global_proposal_token": "6",
+                "decision_reason": "global_local_token_disagreement",
+                "wide_local_linear_tokens": ["66"],
+                "global_assignments": [
+                    {
+                        "source_item_index": 9,
+                        "text": "6",
+                        "token": "6",
+                        "bbox": [
+                            [10.0, 180.0],
+                            [40.0, 180.0],
+                            [40.0, 220.0],
+                            [10.0, 220.0],
+                        ],
+                    }
+                ],
+                "witness_positions_px": [100.0, 300.0],
+                "witness_anchor_evidence": [],
+            },
+            {
+                "candidate_id": "DG_CENTER_FROM_BOTTOM",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "accepted_token": "40±0.02",
+                "global_proposal_token": "40±0.02",
+                "decision_reason": (
+                    "global_geometry_assignment_confirmed_by_local_roi"
+                ),
+                "wide_local_linear_tokens": ["40±0.02"],
+                "global_assignments": [
+                    {
+                        "source_item_index": 10,
+                        "text": "40±0.02",
+                        "token": "40±0.02",
+                        "bbox": [
+                            [180.0, 200.0],
+                            [198.0, 200.0],
+                            [198.0, 240.0],
+                            [180.0, 240.0],
+                        ],
+                    }
+                ],
+                "witness_positions_px": [150.0, 300.0],
+                "witness_anchor_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 150.0,
+                        "nearest_anchors": [
+                            {
+                                "kind": "circle_center_axis",
+                                "ref": "R1.C_MAIN.center_y",
+                                "position_px": 150.0,
+                            }
+                        ],
+                    },
+                    {
+                        "witness_index": 1,
+                        "position_px": 300.0,
+                        "nearest_anchors": [],
+                    },
+                ],
+            },
+        ]
+    )
+    return report
+
+
+def _integrated_context() -> HybridAdapterContext:
+    return HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+            "overall_dimension_facts": [
+                {
+                    "axis": "Z",
+                    "value": 66,
+                    "evidence": ["overall:Z"],
+                }
+            ],
+        }
+    )
+
+
+def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z():
+    partial = adapt_hybrid_ocr_report(
+        _integrated_circle_report(),
+        _integrated_context(),
+    )
+
+    conflict_blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling
+        and item.field == "dimension_value_candidate"
+    ]
+    assert len(conflict_blockers) == 1
+
+    center_dimension = next(
+        item
+        for item in partial.dimensions
+        if item.key == "R1.DG_CENTER_FROM_BOTTOM"
+    )
+    assert center_dimension.unresolved_reason is None
+    assert len(partial.associations) == 1
+
+    observations = ReaderObservations(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=partial.views,
+        entities=partial.entities,
+        associations=partial.associations,
+        values=partial.values,
+        dimensions=[center_dimension],
+    )
+    capture = assemble_reader_capture(observations)
+    linked = link_reader_capture(capture)
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    circle_entity_id = next(
+        item.id
+        for item in capture.entities
+        if item.shape == "circle"
+    )
+    feature_id = linked.entity_to_feature[circle_entity_id]
+
+    direct = {
+        item.target: item.value
+        for item in compiled.direct_values
+    }
+    assert direct[f"feature:{feature_id}.axis"] == "Y"
+    assert direct[f"feature:{feature_id}.diameter"] == 20.0
+    assert direct[f"feature:{feature_id}.fit"] == "H7"
+    assert resolution.values[f"feature:{feature_id}.centerline.z"] == 40.0

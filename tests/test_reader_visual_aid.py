@@ -166,15 +166,60 @@ def test_reader_visual_aid_rejects_non_v1_input():
     else:
         raise AssertionError("expected ValueError")
 
-
-
 def test_reader_visual_aid_retains_full_structural_profile_inventory():
-    result = build_reader_visual_aid(_raw())
+    raw = _raw()
+    structural = _candidate(
+        "DG_STRUCTURE",
+        orientation="horizontal",
+        axis_local_norm=0.5,
+        witnesses=[20.0, 80.0],
+    )
+    structural["witness_line_evidence"] = [
+        {
+            "witness_index": 0,
+            "position_px": 20.0,
+            "source_lines": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 20.0,
+                    "span_px": [20, 80],
+                    "span_length_px": 60,
+                    "crosses_dimension_axis": False,
+                },
+                {
+                    "orientation": "vertical",
+                    "axis_px": 80.0,
+                    "span_px": [20, 80],
+                    "span_length_px": 60,
+                    "crosses_dimension_axis": False,
+                },
+                {
+                    "orientation": "horizontal",
+                    "axis_px": 20.0,
+                    "span_px": [20, 80],
+                    "span_length_px": 60,
+                    "crosses_dimension_axis": False,
+                },
+                {
+                    "orientation": "horizontal",
+                    "axis_px": 80.0,
+                    "span_px": [20, 80],
+                    "span_length_px": 60,
+                    "crosses_dimension_axis": False,
+                },
+            ],
+        }
+    ]
+    raw["dimension_geometry_candidates"].append(structural)
+
+    result = build_reader_visual_aid(raw)
 
     inventory = result["structural_profile_inventory"]
     assert inventory
-    refs = {item["ref"] for item in inventory}
-    assert "R1.structural.vertical.001" in refs
+    assert {item["source_orientation"] for item in inventory} == {
+        "horizontal",
+        "vertical",
+    }
     assert all(item["region_id"] == "R1" for item in inventory)
     assert all(item["kind"] == "profile_edge_candidate" for item in inventory)
     assert all(item["candidate_only"] is True for item in inventory)

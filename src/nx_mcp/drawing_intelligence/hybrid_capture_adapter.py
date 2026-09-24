@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
+from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
 from .evidence import Axis, ViewKind
 from .reader_observations import (
@@ -13,6 +14,7 @@ from .reader_observations import (
     ObservationDimensionEndpoint,
     ObservationEntity,
     ObservationUnresolved,
+    ObservationValue,
     ObservationView,
 )
 from .reader_semantic_answers import (
@@ -282,12 +284,17 @@ def _circle_entities(
 
 def _engineering_callout_routing(
     report: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[ObservationUnresolved]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[ObservationValue],
+    list[ObservationUnresolved],
+]:
     coverage = report.get("coverage")
     if not isinstance(coverage, dict):
-        return [], []
+        return [], [], []
 
     regions = report.get("regions", [])
+    annotation_lines = report.get("annotation_line_candidates", [])
     region_boxes: list[tuple[str, list[Any]]] = []
     if isinstance(regions, list):
         for region in regions:
@@ -300,6 +307,9 @@ def _engineering_callout_routing(
 
     ledger: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
+    value_records: dict[tuple[str, str], dict[str, Any]] = {}
+    conflicted_targets: set[tuple[str, str]] = set()
+
     for item in coverage.get("routed_elsewhere_or_unclassified_observations", []):
         if not isinstance(item, dict):
             continue
@@ -319,38 +329,144 @@ def _engineering_callout_routing(
             if center is not None
             else []
         )
+        binding = bind_callout_to_circle_entity(
+            item.get("bbox"),
+            annotation_lines,
+            regions,
+        )
         record = {
             "source_item_index": source_item_index,
             "bbox": item.get("bbox"),
             "confidence": item.get("confidence"),
             "region_candidates": region_candidates,
+            "binding": binding,
             **parsed,
         }
         ledger.append(record)
 
-        if len(region_candidates) == 1:
-            reason = (
-                "Engineering callout semantics were parsed, but visible geometry "
-                "ownership is not yet deterministically bound inside region "
-                f"{region_candidates[0]!r}."
+        if binding.get("status") != "bound":
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="feature_inventory",
+                    reason=(
+                        "Engineering callout semantics were parsed, but visible "
+                        "geometry ownership is not deterministically proven."
+                    ),
+                    field="engineering_callout_geometry_binding",
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
             )
-        else:
-            reason = (
-                "Engineering callout semantics were parsed, but the callout does "
-                "not have one deterministic view-region geometry owner."
+            continue
+
+        entity_key = str(binding["entity_key"])
+        safe_facts = {
+            key: value
+            for key, value in parsed["facts"].items()
+            if key
+            in {
+                "diameter",
+                "fit",
+                "thread_spec",
+                "thread_depth",
+                "through",
+                "count",
+            }
+        }
+        for field, value in safe_facts.items():
+            target = (entity_key, field)
+            previous = value_records.get(target)
+            if previous is None:
+                value_records[target] = {
+                    "entity_key": entity_key,
+                    "field": field,
+                    "value": value,
+                    "evidence": list(evidence),
+                }
+                continue
+            if previous["value"] == value:
+                previous["evidence"] = list(
+                    dict.fromkeys([*previous["evidence"], *evidence])
+                )
+                continue
+            conflicted_targets.add(target)
+
+        for ambiguity in parsed["ambiguities"]:
+            if ambiguity == "leading_zero_diameter_like_token_not_promoted":
+                field = "diameter"
+            elif ambiguity == "recessed_hole_subtype_not_explicit":
+                field = "recessed_hole_subtype"
+            else:
+                field = "engineering_callout_value"
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="feature_value",
+                    reason=(
+                        "Engineering callout is bound to one visible entity but "
+                        f"field {field!r} remains ambiguous: {ambiguity}."
+                    ),
+                    entity_keys=[entity_key],
+                    field=field,
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
             )
+
+        if parsed["facts"].get("recessed_hole") is True:
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="feature_value",
+                    reason=(
+                        "Visible callout says recessed hole, but the source text "
+                        "does not deterministically distinguish counterbore from "
+                        "countersink."
+                    ),
+                    entity_keys=[entity_key],
+                    field="recessed_hole_subtype",
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
+            )
+
+    for entity_key, field in sorted(conflicted_targets):
+        records = [
+            item
+            for target, item in value_records.items()
+            if target == (entity_key, field)
+        ]
+        evidence = list(
+            dict.fromkeys(
+                source_id
+                for record in records
+                for source_id in record["evidence"]
+            )
+        )
         unresolved.append(
             ObservationUnresolved(
-                kind="feature_inventory",
-                reason=reason,
-                field="engineering_callout_geometry_binding",
-                evidence=evidence,
+                kind="feature_value",
+                reason=(
+                    "Multiple geometry-bound engineering callouts disagree for "
+                    f"{entity_key}.{field}; no value was selected."
+                ),
+                entity_keys=[entity_key],
+                field=field,
+                evidence=evidence or ["hybrid:callout:conflict"],
                 required_for_modeling=True,
             )
         )
 
-    return ledger, unresolved
-
+    values = [
+        ObservationValue(
+            entity_key=record["entity_key"],
+            field=record["field"],
+            value=record["value"],
+            semantic=None,
+            evidence=record["evidence"],
+        )
+        for target, record in sorted(value_records.items())
+        if target not in conflicted_targets
+    ]
+    return ledger, values, unresolved
 
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
@@ -449,7 +565,9 @@ def adapt_hybrid_ocr_report(
             view_lookup,
         )
     )
-    callout_ledger, callout_unresolved = _engineering_callout_routing(report)
+    callout_ledger, callout_values, callout_unresolved = (
+        _engineering_callout_routing(report)
+    )
     unresolved.extend(callout_unresolved)
 
     coverage = report["coverage"]
@@ -503,6 +621,7 @@ def adapt_hybrid_ocr_report(
         overall_dimension_facts=context.overall_dimension_facts,
         views=views,
         entities=entities,
+        values=callout_values,
         dimensions=dimensions,
         observations=observations,
         unresolved=unresolved,

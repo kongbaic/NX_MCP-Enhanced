@@ -136,9 +136,6 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         for item in raw["dimension_geometry_candidates"]
     )
     assert all(
-        all(
-            "source_lines" in witness
-            for witness in item["witness_line_evidence"]
-        )
+        all("source_lines" in witness for witness in item["witness_line_evidence"])
         for item in raw["dimension_geometry_candidates"]
     )

@@ -16,7 +16,7 @@ def _graph(*, facts=None, relations=None, required_targets=None):
     )
 
 
-def test_mount_hole_max_edge_offset_resolves_to_minus_8():
+def test_mount_hole_max_edge_offset_resolves_to_8_in_local_coordinates():
     graph = _graph(
         relations=[
             RelationEvidence(
@@ -37,8 +37,8 @@ def test_mount_hole_max_edge_offset_resolves_to_minus_8():
     result = resolve_evidence_graph(graph)
 
     assert result.ok
-    assert result.values["feature:F_MOUNT_HOLES.explicit_centers.0.1"] == -8
-    assert result.values["feature:F_MOUNT_HOLES.explicit_centers.1.1"] == -8
+    assert result.values["feature:F_MOUNT_HOLES.explicit_centers.0.1"] == 8
+    assert result.values["feature:F_MOUNT_HOLES.explicit_centers.1.1"] == 8
 
 
 def test_bottom_datum_offset_resolves_main_hole_z_to_40():
@@ -116,7 +116,7 @@ def test_signed_center_spacing_can_be_resolved():
     a = "feature:F_A.centerline.x"
     b = "feature:F_B.centerline.x"
     graph = _graph(
-        facts=[CoordinateFact(target=a, axis="X", value=-12, source_ids=["ANN_A_X"])],
+        facts=[CoordinateFact(target=a, axis="X", value=8, source_ids=["ANN_A_X"])],
         relations=[
             RelationEvidence(
                 id="R_SPACING",
@@ -134,7 +134,7 @@ def test_signed_center_spacing_can_be_resolved():
     result = resolve_evidence_graph(graph)
 
     assert result.ok
-    assert result.values[b] == 12
+    assert result.values[b] == 32
 
 
 def test_conflicting_writers_are_reported_not_overwritten():

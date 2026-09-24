@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .evidence import Axis, ViewKind
 from .reader_observations import (
     ObservationDimension,
@@ -310,6 +311,9 @@ def adapt_hybrid_ocr_report(
                 "witness_line_evidence",
                 [],
             ),
+            "endpoint_candidate_evidence": derive_dimension_endpoint_candidates(
+                candidate
+            ),
         }
         for candidate in candidates
         if isinstance(candidate, dict) and candidate.get("accepted_token") is not None
@@ -322,7 +326,7 @@ def adapt_hybrid_ocr_report(
         },
         {
             "kind": "hybrid_dimension_anchor_ledger",
-            "schema": "1.0",
+            "schema": "1.1",
             "items": anchor_items,
         },
     ]

@@ -116,6 +116,7 @@ def bind_callout_to_linear_pattern(
     region: dict[str, Any],
     *,
     view_kind: str,
+    profile_inventory: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Bind one callout leader to one dashed/centerline pattern candidate.
 
@@ -133,6 +134,28 @@ def bind_callout_to_linear_pattern(
     patterns = region.get("linear_pattern_candidates", [])
     if not isinstance(patterns, list) or not patterns:
         return {"status": "unresolved", "reason": "linear_pattern_geometry_unavailable"}
+
+    region_id = str(region.get("region_id") or "")
+    profile_items = profile_inventory or []
+    profile_axis_tolerance = 2.0
+
+    def overlaps_structural_profile(pattern: dict[str, Any]) -> bool:
+        orientation = str(pattern.get("orientation") or "")
+        axis = pattern.get("axis_px")
+        if orientation not in {"horizontal", "vertical"} or not isinstance(
+            axis,
+            (int, float),
+        ):
+            return False
+        return any(
+            isinstance(item, dict)
+            and str(item.get("region_id") or "") == region_id
+            and str(item.get("source_orientation") or "") == orientation
+            and isinstance(item.get("position_px"), (int, float))
+            and abs(float(item["position_px"]) - float(axis))
+            <= profile_axis_tolerance
+            for item in profile_items
+        )
 
     text_height = max(1.0, bounds[3] - bounds[1])
     touch_tolerance = max(5.0, text_height * 0.30)
@@ -167,6 +190,8 @@ def bind_callout_to_linear_pattern(
 
             for pattern_index, pattern in enumerate(patterns):
                 if not isinstance(pattern, dict):
+                    continue
+                if overlaps_structural_profile(pattern):
                     continue
                 target_distance = _point_to_pattern_distance(exit_point, pattern)
                 if target_distance is None or target_distance > target_tolerance:
@@ -221,7 +246,6 @@ def bind_callout_to_linear_pattern(
                 "candidate_bindings": matches,
             }
 
-    region_id = str(region.get("region_id") or "")
     if not region_id:
         return {"status": "unresolved", "reason": "region_id_missing"}
 

@@ -734,10 +734,7 @@ def adapt_hybrid_ocr_report(
     }
     calibrations = derive_view_metric_calibrations(
         candidates=[item for item in candidates if isinstance(item, dict)],
-        region_views={
-            item.region_id: item.view_kind
-            for item in context.region_views
-        },
+        region_views={item.region_id: item.view_kind for item in context.region_views},
         overall_dimensions=overall_dimensions,
     )
 

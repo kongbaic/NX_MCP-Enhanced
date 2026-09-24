@@ -936,13 +936,29 @@ def _unique_orthographic_associations(
             f"hybrid:{binding.get('candidate_id')}:geometry",
         ]
 
-        if len(matches) != 1:
+        if not matches:
+            unresolved.append(
+                ObservationUnresolved(
+                    kind="feature_inventory",
+                    reason=(
+                        "Diameter projection has no orthographic circular "
+                        "counterpart on the shared engineering axis."
+                    ),
+                    entity_keys=[projection_entity],
+                    field="orthographic_circular_counterpart",
+                    evidence=evidence,
+                    required_for_modeling=True,
+                )
+            )
+            continue
+
+        if len(matches) > 1:
             unresolved.append(
                 ObservationUnresolved(
                     kind="cross_view_identity",
                     reason=(
-                        "Diameter projection has no unique orthographic circular "
-                        "counterpart on the shared engineering axis."
+                        "Diameter projection has multiple orthographic circular "
+                        "counterparts on the shared engineering axis."
                     ),
                     entity_keys=[
                         projection_entity,

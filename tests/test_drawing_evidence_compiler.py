@@ -144,7 +144,7 @@ def test_conflicting_circular_views_do_not_choose_an_axis():
     )
 
 
-def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_minus_8():
+def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_local_8():
     target = "feature:F_MOUNT.centerline.y"
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
@@ -169,7 +169,7 @@ def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_minus
 
     assert relation.kind == "edge_offset"
     assert relation.from_side == "max"
-    assert result.values[target] == -8
+    assert result.values[target] == 8
 
 
 def test_same_feature_centers_compile_to_center_spacing():
@@ -297,7 +297,7 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
 
     It does NOT, by those dimensions alone, anchor the pair's absolute X
     coordinates. The resolver must leave those X coordinates unresolved rather
-    than silently choosing +/-12.
+    than silently centering the pair around X=20.
     """
 
     main_z = "feature:F_MAIN_HOLE.centerline.z"
@@ -412,8 +412,8 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     assert clamp_axis.value == "X"
     assert result.values[main_z] == 40
     assert result.values[clamp_z] == 58
-    assert result.values[clamp_y] == 8
-    assert result.values[mount_y] == -8
+    assert result.values[clamp_y] == 24
+    assert result.values[mount_y] == 8
 
     assert mount_x0 not in result.values
     assert mount_x1 not in result.values
@@ -592,8 +592,8 @@ def test_real_shwts20_40_first_pass_resolves_supported_geometry_and_blocks_unanc
     assert axes["feature:F_MOUNT_PAIR.axis"] == "Z"
 
     assert result.values[main_z] == 40
-    assert result.values[mount_y0] == -1
-    assert result.values[mount_y1] == -1
+    assert result.values[mount_y0] == 15
+    assert result.values[mount_y1] == 15
 
     assert mount_x0 not in result.values
     assert mount_x1 not in result.values
@@ -767,11 +767,11 @@ def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unres
         if item.target == "feature:F_SIDE_HOLES.axis"
     )
     assert axis == "Z"
-    assert result.values[left_x] == -50
-    assert result.values[right_x] == 50
+    assert result.values[left_x] == 10
+    assert result.values[right_x] == 110
 
-    assert result.values[left_y] == 0
-    assert result.values[right_y] == 0
+    assert result.values[left_y] == 40
+    assert result.values[right_y] == 40
     assert result.ok
 
 

@@ -240,3 +240,79 @@ def test_adapter_rejects_old_hybrid_report_schema():
 
     with pytest.raises(HybridCaptureAdapterError, match="requires"):
         adapt_hybrid_ocr_report(report, _context())
+
+
+def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessing_owner():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [500, 0, 300, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [650, 200],
+                    "rings": [{"radius_px": 20}, {"radius_px": 35}],
+                }
+            ],
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+            "confidence": 0.99,
+        },
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[650, 250], [720, 250], [720, 290], [650, 290]],
+            "confidence": 0.99,
+        },
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.key, item.shape) for item in partial.entities] == [
+        ("R1.C1", "circle"),
+        ("R2.C1", "concentric_circles"),
+    ]
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["facts"] == {
+        "thread_spec": "M6",
+        "thread_depth": 12.0,
+    }
+    assert ledger["items"][0]["region_candidates"] == ["R1"]
+    assert ledger["items"][1]["facts"] == {
+        "diameter": 20.0,
+        "fit": "H7",
+    }
+    assert ledger["items"][1]["region_candidates"] == ["R2"]
+
+    callout_unresolved = [
+        item
+        for item in partial.unresolved
+        if item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(callout_unresolved) == 2
+    assert all(item.kind == "feature_inventory" for item in callout_unresolved)
+    assert all(item.required_for_modeling for item in callout_unresolved)
+    assert all(not item.entity_keys for item in callout_unresolved)
+

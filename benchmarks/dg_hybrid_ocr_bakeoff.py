@@ -18,6 +18,12 @@ from dg_local_ocr_bakeoff import (
 ASSIGNMENT_MARGIN_MIN_PX = 6.0
 
 
+def _stdout_json(payload: dict[str, Any]) -> str:
+    """Render JSON safely for Windows legacy stdout encodings."""
+
+    return json.dumps(payload, ensure_ascii=True, indent=2)
+
+
 def _normalize(text: str) -> str:
     return (
         text.strip()
@@ -560,7 +566,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    print(_stdout_json(report))
     return 0
 
 

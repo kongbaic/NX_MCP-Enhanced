@@ -306,6 +306,10 @@ def adapt_hybrid_ocr_report(
                 "witness_anchor_evidence",
                 [],
             ),
+            "witness_line_evidence": candidate.get(
+                "witness_line_evidence",
+                [],
+            ),
         }
         for candidate in candidates
         if isinstance(candidate, dict) and candidate.get("accepted_token") is not None

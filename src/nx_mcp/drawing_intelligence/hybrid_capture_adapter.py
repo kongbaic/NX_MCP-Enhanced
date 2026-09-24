@@ -359,22 +359,22 @@ def _engineering_callout_routing(
                     ObservationEntity(
                         key=entity_key,
                         view_key=f"view.{region_id}",
-                        shape="profile",
-                        cross_view_disposition="unresolved",
+                        shape="other",
+                        cross_view_disposition=None,
                         evidence=evidence,
-                        required_for_modeling=True,
+                        required_for_modeling=False,
                     )
                 )
                 unresolved.append(
                     ObservationUnresolved(
-                        kind="cross_view_identity",
+                        kind="feature_inventory",
                         reason=(
-                            "Engineering callout facts are preserved on a "
-                            "view-local callout-backed feature, but physical "
-                            "cross-view identity remains unresolved."
+                            "Engineering callout facts are preserved on an "
+                            "advisory view-local carrier, but exact geometry "
+                            "ownership and physical feature identity remain unresolved."
                         ),
                         entity_keys=[entity_key],
-                        field="physical_feature_identity",
+                        field="engineering_callout_geometry_binding",
                         evidence=evidence,
                         required_for_modeling=True,
                     )

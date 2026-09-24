@@ -87,6 +87,7 @@ def finalize_partial_reader_observations(
         overall_dimensions=overall,
         views=partial.views,
         entities=partial.entities,
+        associations=partial.associations,
         values=partial.values,
         dimensions=partial.dimensions,
         datum_alignments=partial.datum_alignments,

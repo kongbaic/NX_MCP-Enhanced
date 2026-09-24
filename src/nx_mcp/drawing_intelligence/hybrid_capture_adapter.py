@@ -261,19 +261,13 @@ def _circle_entities(
                 continue
             key = f"{region_id}.{group_id}"
             if key in seen:
-                raise HybridCaptureAdapterError(
-                    f"duplicate Hybrid circle entity key {key!r}"
-                )
+                raise HybridCaptureAdapterError(f"duplicate Hybrid circle entity key {key!r}")
             seen.add(key)
             output.append(
                 ObservationEntity(
                     key=key,
                     view_key=f"view.{region_id}",
-                    shape=(
-                        "concentric_circles"
-                        if len(rings) > 1
-                        else "circle"
-                    ),
+                    shape=("concentric_circles" if len(rings) > 1 else "circle"),
                     cross_view_disposition=None,
                     evidence=[f"hybrid:geometry:{region_id}:{group_id}"],
                     required_for_modeling=True,
@@ -322,11 +316,7 @@ def _engineering_callout_routing(
         evidence = [f"hybrid:whole:{source_item_index}"]
         center = _bbox_center(item.get("bbox"))
         region_candidates = (
-            sorted(
-                region_id
-                for region_id, bbox in region_boxes
-                if _point_in_bbox(center, bbox)
-            )
+            sorted(region_id for region_id, bbox in region_boxes if _point_in_bbox(center, bbox))
             if center is not None
             else []
         )
@@ -386,9 +376,7 @@ def _engineering_callout_routing(
                 }
                 continue
             if previous["value"] == value:
-                previous["evidence"] = list(
-                    dict.fromkeys([*previous["evidence"], *evidence])
-                )
+                previous["evidence"] = list(dict.fromkeys([*previous["evidence"], *evidence]))
                 continue
             conflicted_targets.add(target)
             conflict_evidence[target] = list(
@@ -450,6 +438,7 @@ def _engineering_callout_routing(
         if target not in conflicted_targets
     ]
     return ledger, values, unresolved
+
 
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
@@ -548,9 +537,7 @@ def adapt_hybrid_ocr_report(
             view_lookup,
         )
     )
-    callout_ledger, callout_values, callout_unresolved = (
-        _engineering_callout_routing(report)
-    )
+    callout_ledger, callout_values, callout_unresolved = _engineering_callout_routing(report)
     unresolved.extend(callout_unresolved)
 
     coverage = report["coverage"]

@@ -271,7 +271,6 @@ def test_conflict_backed_calibration_still_requires_opposite_profile_extremes():
     assert items == []
 
 
-
 def _metric_edge(
     ref: str,
     *,

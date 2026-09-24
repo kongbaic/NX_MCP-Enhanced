@@ -205,12 +205,8 @@ def _junction_metrics(
             position = other_axis
         else:
             inside = (
-                start - junction_tolerance
-                <= other_axis
-                <= end + junction_tolerance
-                and other_start - junction_tolerance
-                <= axis
-                <= other_end + junction_tolerance
+                start - junction_tolerance <= other_axis <= end + junction_tolerance
+                and other_start - junction_tolerance <= axis <= other_end + junction_tolerance
             )
             line_endpoint_distance = min(
                 abs(other_axis - start),

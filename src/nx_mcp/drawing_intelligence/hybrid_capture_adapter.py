@@ -9,6 +9,7 @@ from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .engineering_callout_binding import bind_callout_to_circle_entity
 from .engineering_callouts import parse_engineering_callout
 from .evidence import Axis, ViewKind
+from .metric_circle_primitives import derive_metric_circle_primitives
 from .reader_observations import (
     ObservationDimension,
     ObservationDimensionEndpoint,
@@ -773,6 +774,16 @@ def adapt_hybrid_ocr_report(
         metric_edges=metric_profile_edges,
         junction_tolerance_by_region=junction_tolerance_by_region,
     )
+    metric_circle_geometry = derive_metric_circle_primitives(
+        regions=[
+            item for item in report.get("regions", []) if isinstance(item, dict)
+        ],
+        region_views={
+            item.region_id: item.view_kind for item in context.region_views
+        },
+        calibrations=calibrations,
+        callout_ledger=callout_ledger,
+    )
 
     observations = [
         {
@@ -806,6 +817,12 @@ def adapt_hybrid_ocr_report(
             "items": metric_profile_geometry["segments"],
             "junctions": metric_profile_geometry["junctions"],
             "unresolved_edges": metric_profile_geometry["unresolved_edges"],
+        },
+        {
+            "kind": "hybrid_metric_circle_primitive_ledger",
+            "schema": "1.0",
+            "items": metric_circle_geometry["items"],
+            "unresolved": metric_circle_geometry["unresolved"],
         },
     ]
 

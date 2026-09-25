@@ -783,7 +783,13 @@ def _metric_profile_topology_hints(
     boundaries: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Classify a unique orthogonal L profile from geometry topology only."""
+    """Classify a unique orthogonal L profile from geometry topology only.
+
+    Overall-boundary ownership is engineering evidence. Pixel spans are used
+    only to prove which outer side is continuous and which two internal profile
+    edges form the unique L-corner. No pixel distance becomes an engineering
+    coordinate.
+    """
 
     boundary_refs: dict[tuple[str, str, str], str] = {}
     conflicted: set[tuple[str, str, str]] = set()
@@ -821,13 +827,28 @@ def _metric_profile_topology_hints(
         and str(item.get("ref") or "")
     }
 
+    def position(item: dict[str, Any]) -> float | None:
+        segment = _profile_line_segment_px(item)
+        return segment[1] if segment is not None else None
+
+    def covers(
+        item: dict[str, Any],
+        coordinate: float,
+        *,
+        tolerance: float,
+    ) -> bool:
+        segment = _profile_line_segment_px(item)
+        return (
+            segment is not None
+            and segment[2] - tolerance <= coordinate <= segment[3] + tolerance
+        )
+
     hints: list[dict[str, Any]] = []
     for region_id, region_view in sorted(view_lookup.items()):
         plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
         if plane is None:
             continue
-        axes = list(plane)
-        axis_u, axis_v = axes[0], axes[1]
+        axis_u, axis_v = plane[0], plane[1]
         required = {
             "u_min": boundary_refs.get((region_id, axis_u, "overall_min")),
             "u_max": boundary_refs.get((region_id, axis_u, "overall_max")),
@@ -848,7 +869,7 @@ def _metric_profile_topology_hints(
         u_orientation = "vertical" if u_pixel_index == 0 else "horizontal"
         v_orientation = "vertical" if v_pixel_index == 0 else "horizontal"
 
-        outer_refs = set(required.values())
+        outer_refs = {str(ref) for ref in required.values()}
         internal_u = [
             item
             for item in profile_inventory
@@ -870,96 +891,98 @@ def _metric_profile_topology_hints(
             and str(item.get("ref") or "") in profile_entity_by_ref
         ]
 
-        tolerance = _region_profile_match_tolerance(report, region_id)
-        matches: list[dict[str, Any]] = []
-        for u_item in internal_u:
-            for v_item in internal_v:
-                refs = [
-                    required["u_min"],
-                    required["u_max"],
-                    required["v_min"],
-                    required["v_max"],
-                    str(u_item.get("ref") or ""),
-                    str(v_item.get("ref") or ""),
-                ]
-                if len(set(refs)) != 6:
-                    continue
-                adjacency = {ref: set() for ref in refs}
-                for left_index, left_ref in enumerate(refs):
-                    for right_ref in refs[left_index + 1 :]:
-                        if _profile_lines_touch(
-                            by_ref[left_ref],
-                            by_ref[right_ref],
-                            tolerance=tolerance,
-                        ):
-                            adjacency[left_ref].add(right_ref)
-                            adjacency[right_ref].add(left_ref)
+        # Topology needs a slightly wider junction tolerance than endpoint
+        # ownership matching because structural line extraction may fragment
+        # physical corners by a few pixels.
+        tolerance = max(
+            5.0,
+            _region_profile_match_tolerance(report, region_id) * 2.0,
+        )
 
-                if any(len(adjacency[ref]) != 2 for ref in refs):
-                    continue
-                visited: set[str] = set()
-                stack = [refs[0]]
-                while stack:
-                    current = stack.pop()
-                    if current in visited:
-                        continue
-                    visited.add(current)
-                    stack.extend(adjacency[current] - visited)
-                if len(visited) != 6:
-                    continue
+        u_min_pos = position(by_ref[str(required["u_min"])])
+        u_max_pos = position(by_ref[str(required["u_max"])])
+        v_min_pos = position(by_ref[str(required["v_min"])])
+        v_max_pos = position(by_ref[str(required["v_max"])])
+        if None in {u_min_pos, u_max_pos, v_min_pos, v_max_pos}:
+            continue
 
-                upright_candidates = [
-                    role
-                    for role, ref in (
-                        ("min", required["u_min"]),
-                        ("max", required["u_max"]),
-                    )
-                    if {
-                        required["v_min"],
-                        required["v_max"],
-                    }.issubset(adjacency[ref])
-                ]
-                base_candidates = [
-                    role
-                    for role, ref in (
-                        ("min", required["v_min"]),
-                        ("max", required["v_max"]),
-                    )
-                    if {
-                        required["u_min"],
-                        required["u_max"],
-                    }.issubset(adjacency[ref])
-                ]
-                if len(upright_candidates) != 1 or len(base_candidates) != 1:
-                    continue
+        upright_candidates = [
+            role
+            for role, ref in (
+                ("min", str(required["u_min"])),
+                ("max", str(required["u_max"])),
+            )
+            if covers(by_ref[ref], float(v_min_pos), tolerance=tolerance)
+            and covers(by_ref[ref], float(v_max_pos), tolerance=tolerance)
+        ]
+        base_candidates = [
+            role
+            for role, ref in (
+                ("min", str(required["v_min"])),
+                ("max", str(required["v_max"])),
+            )
+            if covers(by_ref[ref], float(u_min_pos), tolerance=tolerance)
+            and covers(by_ref[ref], float(u_max_pos), tolerance=tolerance)
+        ]
+        if len(upright_candidates) != 1 or len(base_candidates) != 1:
+            continue
 
-                matches.append(
-                    {
-                        "region_id": region_id,
-                        "plane": plane,
-                        "topology": "L",
-                        "upright_side": upright_candidates[0],
-                        "base_side": base_candidates[0],
-                        "internal_u_ref": str(u_item["ref"]),
-                        "internal_v_ref": str(v_item["ref"]),
-                        "internal_u_entity_key": profile_entity_by_ref[
-                            str(u_item["ref"])
-                        ],
-                        "internal_v_entity_key": profile_entity_by_ref[
-                            str(v_item["ref"])
-                        ],
-                        "outer_refs": dict(required),
-                        "basis": (
-                            "unique_six_edge_orthogonal_cycle_with_"
-                            "full_span_outer_u_and_v_edges"
-                        ),
-                        "engineering_coordinate_inferred_from_pixels": False,
-                        "pixel_geometry_used_for_topology_only": True,
-                    }
-                )
+        upright_side = upright_candidates[0]
+        base_side = base_candidates[0]
 
-        if len(matches) == 1:
-            hints.append(matches[0])
+        opposite_base_coordinate = (
+            float(v_max_pos) if base_side == "min" else float(v_min_pos)
+        )
+        opposite_upright_coordinate = (
+            float(u_max_pos) if upright_side == "min" else float(u_min_pos)
+        )
+
+        corner_pairs = [
+            (u_item, v_item)
+            for u_item in internal_u
+            if covers(
+                u_item,
+                opposite_base_coordinate,
+                tolerance=tolerance,
+            )
+            for v_item in internal_v
+            if covers(
+                v_item,
+                opposite_upright_coordinate,
+                tolerance=tolerance,
+            )
+            and _profile_lines_touch(
+                u_item,
+                v_item,
+                tolerance=tolerance,
+            )
+        ]
+        if len(corner_pairs) != 1:
+            continue
+
+        u_item, v_item = corner_pairs[0]
+        u_ref = str(u_item.get("ref") or "")
+        v_ref = str(v_item.get("ref") or "")
+        hints.append(
+            {
+                "region_id": region_id,
+                "plane": plane,
+                "topology": "L",
+                "upright_side": upright_side,
+                "base_side": base_side,
+                "internal_u_ref": u_ref,
+                "internal_v_ref": v_ref,
+                "internal_u_entity_key": profile_entity_by_ref[u_ref],
+                "internal_v_entity_key": profile_entity_by_ref[v_ref],
+                "outer_refs": dict(required),
+                "basis": (
+                    "unique_internal_corner_with_full_span_outer_"
+                    "u_and_v_boundaries"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
 
     return hints
 
@@ -2973,6 +2996,32 @@ def _recover_unassigned_profile_edge_offsets(
                     midpoint = (first_value + second_value) / 2.0
                     along_residual = abs(along - midpoint)
                     if along_residual > max(12.0, pair_span * 0.60):
+                        continue
+
+                    region_minor_span = 0.0
+                    for region in report.get("regions", []):
+                        if (
+                            isinstance(region, dict)
+                            and str(region.get("region_id") or "") == region_id
+                        ):
+                            bbox = region.get("bbox_px")
+                            if (
+                                isinstance(bbox, list)
+                                and len(bbox) == 4
+                                and isinstance(bbox[2], (int, float))
+                                and isinstance(bbox[3], (int, float))
+                            ):
+                                region_minor_span = min(
+                                    float(bbox[2]),
+                                    float(bbox[3]),
+                                )
+                            break
+                    perpendicular_limit = max(
+                        32.0,
+                        region_minor_span * 0.22,
+                        pair_span * 0.75,
+                    )
+                    if perpendicular_gap > perpendicular_limit:
                         continue
 
                     matches.append(

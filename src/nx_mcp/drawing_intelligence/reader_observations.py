@@ -107,17 +107,17 @@ class ObservationDimensionEndpoint(_StrictObservationModel):
 
     @model_validator(mode="after")
     def _shape(self) -> ObservationDimensionEndpoint:
-        if self.role == "entity_center":
+        if self.role in {"entity_center", "profile_boundary"}:
             if not self.entity_key:
-                raise ValueError("entity_center endpoint requires entity_key")
+                raise ValueError(f"{self.role} endpoint requires entity_key")
             if self.candidate_entity_keys:
-                raise ValueError("entity_center endpoint must not carry candidate_entity_keys")
+                raise ValueError(f"{self.role} endpoint must not carry candidate_entity_keys")
             if self.unresolved_kind is not None:
-                raise ValueError("entity_center endpoint must not carry unresolved_kind")
+                raise ValueError(f"{self.role} endpoint must not carry unresolved_kind")
             if self.basis is None:
-                raise ValueError(
-                    "entity_center endpoint requires centerline/center_mark/explicit_midline basis, or circle_center basis"
-                )
+                raise ValueError(f"{self.role} endpoint requires explicit evidence basis")
+            if self.role == "profile_boundary" and self.basis != "profile_edge":
+                raise ValueError("profile_boundary endpoint requires profile_edge basis")
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_key is not None:
                 raise ValueError(f"{self.role} endpoint must not carry entity_key")

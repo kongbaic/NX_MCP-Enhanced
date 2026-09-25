@@ -14,6 +14,7 @@ from .evidence import (
     DirectValueEvidence,
     EvidenceGraph,
     ProjectionEvidence,
+    RelationEvidence,
     ViewEvidence,
 )
 
@@ -76,6 +77,23 @@ def _canonical_field(
         return "thread_depth"
 
     return field
+
+
+_SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
+
+_TRANSVERSE_CENTER_INDEX: dict[str, dict[str, int]] = {
+    "X": {"Y": 0, "Z": 1},
+    "Y": {"X": 0, "Z": 1},
+    "Z": {"X": 0, "Y": 1},
+}
+
+
+def _direct_target_value(
+    direct_values: list[DirectValueEvidence],
+    target: str,
+) -> Any:
+    matches = [item.value for item in direct_values if item.target == target]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
@@ -640,6 +658,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     unresolved.extend(direct_unresolved)
 
     dimensions: list[DimensionObservation] = []
+    synthetic_relations: list[RelationEvidence] = []
     for item in capture.dimensions:
         if any(endpoint.role == "unresolved" for endpoint in item.endpoints):
             related_entity_ids = sorted(
@@ -768,23 +787,144 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             len(feature_center_targets) == 2
             and feature_center_targets[0] == feature_center_targets[1]
         ):
-            unresolved.append(
-                {
-                    "id": f"U_DIM_COLLAPSE_{item.id}",
-                    "kind": "dimension_endpoint",
-                    "reason": (
-                        "dimension endpoints collapse to the same physical "
-                        "center target after identity linking"
-                    ),
-                    "required_for_modeling": item.required_for_modeling,
-                    "entity_ids": sorted(set(local_endpoint_entities)),
-                    "capture_dimension_id": item.id,
-                    "dimension_value": item.value,
-                    "axis": item.axis,
-                    "source_ids": item.source_ids,
-                }
+            endpoint_source_ids = [
+                source_id
+                for endpoint in item.endpoints
+                for source_id in endpoint.source_ids
+            ]
+            all_source_ids = list(
+                dict.fromkeys([*item.source_ids, *endpoint_source_ids])
             )
-            continue
+            feature_ids = {
+                entity_to_feature[entity_id]
+                for entity_id in local_endpoint_entities
+                if entity_id in entity_to_feature
+            }
+            feature_id = next(iter(feature_ids)) if len(feature_ids) == 1 else None
+            count_value = (
+                _direct_target_value(
+                    direct_values,
+                    f"feature:{feature_id}.count",
+                )
+                if feature_id is not None
+                else None
+            )
+            feature_axis = str(
+                _direct_target_value(
+                    direct_values,
+                    f"feature:{feature_id}.axis",
+                )
+                if feature_id is not None
+                else ""
+            ).upper()
+            center_indexes = _TRANSVERSE_CENTER_INDEX.get(feature_axis, {})
+            coordinate_index = center_indexes.get(item.axis)
+            marker_present = _SYMMETRIC_COUNT_TWO_MARKER in all_source_ids
+            count_is_two = (
+                not isinstance(count_value, bool)
+                and isinstance(count_value, (int, float))
+                and float(count_value) == 2.0
+            )
+            overall_extent = {
+                "X": capture.overall_dimensions.length_x,
+                "Y": capture.overall_dimensions.width_y,
+                "Z": capture.overall_dimensions.height_z,
+            }[item.axis]
+            can_expand_symmetric_pair = (
+                marker_present
+                and feature_id is not None
+                and count_is_two
+                and coordinate_index is not None
+                and item.direction in {-1, 1}
+                and item.value <= overall_extent + 1e-9
+            )
+
+            if can_expand_symmetric_pair:
+                assert feature_id is not None
+                assert coordinate_index is not None
+                member_targets = [
+                    (
+                        f"feature:{feature_id}.explicit_centers."
+                        f"{member_index}.{coordinate_index}"
+                    )
+                    for member_index in range(2)
+                ]
+                endpoints = [
+                    DimensionEndpoint(
+                        role="feature_center",
+                        target=member_targets[0],
+                    ),
+                    DimensionEndpoint(
+                        role="feature_center",
+                        target=member_targets[1],
+                    ),
+                ]
+
+                offset = max(0.0, (overall_extent - item.value) / 2.0)
+                synthetic_relations.append(
+                    RelationEvidence(
+                        id=f"R_SYMMETRIC_ANCHOR_{item.id}",
+                        kind="edge_offset",
+                        axis=item.axis,
+                        value=offset,
+                        from_side=(
+                            "min"
+                            if item.direction == 1
+                            else "max"
+                        ),
+                        targets=[member_targets[0]],
+                        source_ids=all_source_ids,
+                        required_for_modeling=item.required_for_modeling,
+                        metadata={
+                            "basis": "overall_center_symmetry_plus_spacing",
+                            "overall_extent": overall_extent,
+                        },
+                    )
+                )
+
+                other_axes = [
+                    axis_name
+                    for axis_name in center_indexes
+                    if axis_name != item.axis
+                ]
+                if len(other_axes) == 1:
+                    other_axis = other_axes[0]
+                    other_index = center_indexes[other_axis]
+                    synthetic_relations.append(
+                        RelationEvidence(
+                            id=f"R_SYMMETRIC_ROW_{item.id}",
+                            kind="alignment",
+                            axis=other_axis,
+                            targets=[
+                                f"feature:{feature_id}.centerline.{other_axis.lower()}",
+                                f"feature:{feature_id}.explicit_centers.0.{other_index}",
+                                f"feature:{feature_id}.explicit_centers.1.{other_index}",
+                            ],
+                            source_ids=all_source_ids,
+                            required_for_modeling=item.required_for_modeling,
+                            metadata={
+                                "basis": "collapsed_projection_shared_transverse_center",
+                            },
+                        )
+                    )
+            else:
+                unresolved.append(
+                    {
+                        "id": f"U_DIM_COLLAPSE_{item.id}",
+                        "kind": "dimension_endpoint",
+                        "reason": (
+                            "dimension endpoints collapse to the same physical "
+                            "center target after identity linking"
+                        ),
+                        "required_for_modeling": item.required_for_modeling,
+                        "entity_ids": sorted(set(local_endpoint_entities)),
+                        "capture_dimension_id": item.id,
+                        "dimension_value": item.value,
+                        "axis": item.axis,
+                        "source_ids": item.source_ids,
+                    }
+                )
+                continue
 
         endpoint_source_ids = [
             source_id
@@ -834,6 +974,9 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     for item in datum_alignments:
         if item.required_for_modeling:
             required_targets.add(item.target)
+    for relation in synthetic_relations:
+        if relation.required_for_modeling:
+            required_targets.update(relation.targets)
     required_targets = sorted(required_targets)
 
     evidence = EvidenceGraph(
@@ -845,7 +988,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         dimensions=dimensions,
         datum_alignments=datum_alignments,
         direct_values=direct_values,
-        relations=[],
+        relations=synthetic_relations,
         required_targets=required_targets,
         observations=[
             *capture.observations,

@@ -752,6 +752,181 @@ def _profile_boundary_entities(
     return entities, by_ref
 
 
+_SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
+
+
+def _symmetric_count_two_pattern_owner(
+    candidate: dict[str, Any],
+    *,
+    region_view: HybridRegionView,
+    axis: Axis,
+    boundaries: list[dict[str, Any]],
+    callout_ledger: list[dict[str, Any]],
+    entity_keys: set[str],
+) -> dict[str, Any] | None:
+    """Identify a count-two feature whose measured centers are visually symmetric.
+
+    Pixel coordinates are used only to prove topology/identity and symmetry.
+    Engineering coordinates remain derived from the accepted dimension values
+    and overall dimensions downstream.
+    """
+
+    accepted_token = candidate.get("accepted_token")
+    if not isinstance(accepted_token, str):
+        return None
+    try:
+        spacing_value, _ = _dimension_value(accepted_token)
+    except HybridCaptureAdapterError:
+        return None
+
+    endpoint_evidence = derive_dimension_endpoint_candidates(candidate)
+    raw_endpoints = endpoint_evidence.get("endpoints")
+    witness_positions = endpoint_evidence.get("selected_witness_positions_px")
+    if not (
+        isinstance(raw_endpoints, list)
+        and len(raw_endpoints) == 2
+        and all(
+            isinstance(item, dict)
+            and item.get("status") == "no_physical_candidate"
+            for item in raw_endpoints
+        )
+        and isinstance(witness_positions, list)
+        and len(witness_positions) == 2
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in witness_positions
+        )
+    ):
+        return None
+
+    region_id = str(candidate.get("region_id") or "")
+    boundary_matches = [
+        item
+        for item in boundaries
+        if isinstance(item, dict)
+        and item.get("status") == "resolved"
+        and str(item.get("region_id") or "") == region_id
+        and str(item.get("axis") or "") == axis
+        and item.get("engineering_coordinate_inferred_from_pixels") is False
+    ]
+    if len(boundary_matches) != 1:
+        return None
+
+    boundary = boundary_matches[0]
+    overall_value = boundary.get("overall_dimension_value")
+    anchors = [
+        item
+        for item in boundary.get("anchors", [])
+        if isinstance(item, dict)
+        and item.get("role") in {"overall_min", "overall_max"}
+        and isinstance(item.get("position_px"), (int, float))
+        and not isinstance(item.get("position_px"), bool)
+    ]
+    if (
+        not isinstance(overall_value, (int, float))
+        or isinstance(overall_value, bool)
+        or float(overall_value) <= 0
+        or spacing_value > float(overall_value) + 1e-9
+        or {str(item.get("role") or "") for item in anchors}
+        != {"overall_min", "overall_max"}
+        or len(anchors) != 2
+    ):
+        return None
+
+    boundary_positions = sorted(float(item["position_px"]) for item in anchors)
+    witness_values = [float(value) for value in witness_positions]
+    if not all(
+        boundary_positions[0] <= value <= boundary_positions[1]
+        for value in witness_values
+    ):
+        return None
+
+    boundary_span = boundary_positions[1] - boundary_positions[0]
+    if boundary_span <= 0:
+        return None
+    boundary_midpoint = sum(boundary_positions) / 2.0
+    witness_midpoint = sum(witness_values) / 2.0
+    midpoint_residual = abs(witness_midpoint - boundary_midpoint)
+    midpoint_tolerance = max(2.0, boundary_span * 0.015)
+    if midpoint_residual > midpoint_tolerance:
+        return None
+
+    witness_line_axes: dict[int, set[Axis]] = {}
+    for record in candidate.get("witness_line_evidence", []):
+        if not isinstance(record, dict):
+            continue
+        witness_index = record.get("witness_index")
+        if not isinstance(witness_index, int):
+            continue
+        axes: set[Axis] = set()
+        for line in record.get("source_lines", []):
+            if not isinstance(line, dict):
+                continue
+            orientation = str(line.get("orientation") or "")
+            try:
+                axes.add(_axis_for(region_view.view_kind, orientation))
+            except HybridCaptureAdapterError:
+                continue
+        witness_line_axes[witness_index] = axes
+
+    selected_indices = endpoint_evidence.get("selected_witness_indices")
+    if not (
+        isinstance(selected_indices, list)
+        and len(selected_indices) == 2
+        and all(isinstance(index, int) for index in selected_indices)
+    ):
+        return None
+
+    owner_records: dict[str, dict[str, Any]] = {}
+    for record in callout_ledger:
+        if not isinstance(record, dict):
+            continue
+        binding = record.get("binding")
+        facts = record.get("facts")
+        if not isinstance(binding, dict) or not isinstance(facts, dict):
+            continue
+        count = facts.get("count")
+        owner_axis = str(binding.get("axis") or "")
+        entity_key = str(binding.get("entity_key") or "")
+        if (
+            binding.get("status") != "pattern_backed"
+            or isinstance(count, bool)
+            or not isinstance(count, (int, float))
+            or float(count) != 2.0
+            or owner_axis not in {"X", "Y", "Z"}
+            or owner_axis == axis
+            or entity_key not in entity_keys
+        ):
+            continue
+        if not all(
+            owner_axis in witness_line_axes.get(index, set())
+            for index in selected_indices
+        ):
+            continue
+        owner_records[entity_key] = record
+
+    if len(owner_records) != 1:
+        return None
+
+    entity_key, owner_record = next(iter(owner_records.items()))
+    binding = owner_record["binding"]
+    return {
+        "entity_key": entity_key,
+        "feature_axis": binding["axis"],
+        "dimension_axis": axis,
+        "spacing_dimension_value": spacing_value,
+        "overall_dimension_value": float(overall_value),
+        "selected_witness_positions_px": witness_values,
+        "overall_boundary_positions_px": boundary_positions,
+        "midpoint_residual_px": round(midpoint_residual, 3),
+        "midpoint_tolerance_px": round(midpoint_tolerance, 3),
+        "basis": "unique_count_two_pattern_plus_overall_center_symmetry",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+        "marker": _SYMMETRIC_COUNT_TWO_MARKER,
+    }
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
@@ -2223,6 +2398,7 @@ def adapt_hybrid_ocr_report(
 
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
+    symmetric_pair_records: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
     profile_entities, profile_entity_by_ref = _profile_boundary_entities(
@@ -2369,14 +2545,49 @@ def adapt_hybrid_ocr_report(
         dimension_key = f"{region_id}.{candidate_id}"
         evidence = _candidate_evidence(candidate_id)
 
-        dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
+        symmetric_pair = _symmetric_count_two_pattern_owner(
             raw_candidate,
+            region_view=region_view,
+            axis=axis,
+            boundaries=boundaries,
+            callout_ledger=callout_ledger,
             entity_keys={item.key for item in entities},
-            boundary_roles=boundary_roles,
-            profile_entity_by_ref=profile_entity_by_ref,
-            pattern_entity_by_ref=pattern_entity_by_ref,
-            evidence=evidence,
         )
+        dimension_evidence = list(evidence)
+        if symmetric_pair is not None:
+            dimension_evidence.append(_SYMMETRIC_COUNT_TWO_MARKER)
+            owner = str(symmetric_pair["entity_key"])
+            dimension_endpoints = [
+                ObservationDimensionEndpoint(
+                    role="entity_center",
+                    entity_key=owner,
+                    basis="centerline",
+                    evidence=dimension_evidence,
+                ),
+                ObservationDimensionEndpoint(
+                    role="entity_center",
+                    entity_key=owner,
+                    basis="centerline",
+                    evidence=dimension_evidence,
+                ),
+            ]
+            unresolved_reason = None
+            symmetric_pair_records.append(
+                {
+                    "dimension_key": dimension_key,
+                    **symmetric_pair,
+                }
+            )
+        else:
+            dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
+                raw_candidate,
+                entity_keys={item.key for item in entities},
+                boundary_roles=boundary_roles,
+                profile_entity_by_ref=profile_entity_by_ref,
+                pattern_entity_by_ref=pattern_entity_by_ref,
+                evidence=evidence,
+            )
+
         dimensions.append(
             ObservationDimension(
                 key=dimension_key,
@@ -2388,7 +2599,7 @@ def adapt_hybrid_ocr_report(
                     region_view.view_kind,
                     orientation,
                 ),
-                evidence=evidence,
+                evidence=dimension_evidence,
                 required_for_modeling=True,
             )
         )
@@ -2496,6 +2707,13 @@ def adapt_hybrid_ocr_report(
             "schema": "1.0",
             "items": symmetric_chain_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
+            "kind": "hybrid_symmetric_count_two_ledger",
+            "schema": "1.0",
+            "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
         },
     ]
 

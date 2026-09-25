@@ -2639,3 +2639,85 @@ def test_capture_accepts_circle_center_as_entity_center_basis():
     assert endpoint.entity_id == "E1"
     assert endpoint.basis == "circle_center"
 
+def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explicit_centers():
+    marker = "hybrid:symmetric-count2-overall-center"
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[CaptureView(id="VS", kind="side")],
+        entities=[
+            CaptureEntity(
+                id="E_PAIR",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+            )
+        ],
+        values=[
+            CaptureValue(id="V_AXIS", entity_id="E_PAIR", field="axis", value="Z"),
+            CaptureValue(id="V_COUNT", entity_id="E_PAIR", field="count", value=2),
+            CaptureValue(id="V_DIA", entity_id="E_PAIR", field="diameter", value=6.6),
+            CaptureValue(id="V_THROUGH", entity_id="E_PAIR", field="through", value=True),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_X24",
+                value=24,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                ],
+                source_ids=[marker],
+            ),
+            CaptureDimension(
+                id="D_Y24",
+                value=24,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    feature_id = linked.entity_to_feature["E_PAIR"]
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+
+    reader_x0 = f"feature:{feature_id}.explicit_centers.0.0"
+    reader_x1 = f"feature:{feature_id}.explicit_centers.1.0"
+    reader_y0 = f"feature:{feature_id}.explicit_centers.0.1"
+    reader_y1 = f"feature:{feature_id}.explicit_centers.1.1"
+
+    assert resolution.values[reader_x0] == 8.0
+    assert resolution.values[reader_x1] == 32.0
+    assert resolution.values[reader_y0] == 8.0
+    assert resolution.values[reader_y1] == 8.0
+    assert resolution.ok
+
+    feature = next(item for item in draft["features"] if item["id"] == feature_id)
+    assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
+    assert draft["dimension_closure"] == {"status": "closed"}
+

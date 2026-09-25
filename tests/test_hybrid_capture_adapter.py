@@ -1435,3 +1435,152 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     assert endpoints[0].basis == "centerline"
     assert endpoints[1].role == "overall_max"
 
+def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():
+    candidate = {
+        "candidate_id": "DG_PAIR",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[45, 20], [55, 20], [55, 40], [45, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "position_px": 10.0, "nearest_anchors": []},
+            {"witness_index": 1, "position_px": 90.0, "nearest_anchors": []},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 10.0, "span_px": [50, 100]}
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 90.0, "span_px": [50, 100]}
+                ],
+            },
+        ],
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "X",
+            "overall_dimension_value": 40.0,
+            "anchors": [
+                {"role": "overall_min", "position_px": 0.0},
+                {"role": "overall_max", "position_px": 100.0},
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+        }
+    ]
+    callout_ledger = [
+        {
+            "binding": {
+                "status": "pattern_backed",
+                "entity_key": "R2.PAIR",
+                "axis": "Z",
+            },
+            "facts": {"count": 2, "diameter": 6.6, "through": True},
+        }
+    ]
+
+    result = hybrid_adapter._symmetric_count_two_pattern_owner(
+        candidate,
+        region_view=hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        axis="X",
+        boundaries=boundaries,
+        callout_ledger=callout_ledger,
+        entity_keys={"R2.PAIR"},
+    )
+
+    assert result is not None
+    assert result["entity_key"] == "R2.PAIR"
+    assert result["engineering_coordinate_inferred_from_pixels"] is False
+    assert result["pixel_geometry_used_for_identity_only"] is True
+    assert result["spacing_dimension_value"] == 24.0
+
+
+def test_symmetric_count_two_pattern_owner_rejects_visually_off_center_pair():
+    candidate = {
+        "candidate_id": "DG_PAIR",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[45, 20], [55, 20], [55, 40], [45, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 70.0],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "position_px": 10.0, "nearest_anchors": []},
+            {"witness_index": 1, "position_px": 70.0, "nearest_anchors": []},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 10.0, "span_px": [50, 100]}
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 70.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 70.0, "span_px": [50, 100]}
+                ],
+            },
+        ],
+    }
+
+    result = hybrid_adapter._symmetric_count_two_pattern_owner(
+        candidate,
+        region_view=hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        axis="X",
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "overall_dimension_value": 40.0,
+                "anchors": [
+                    {"role": "overall_min", "position_px": 0.0},
+                    {"role": "overall_max", "position_px": 100.0},
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+        callout_ledger=[
+            {
+                "binding": {
+                    "status": "pattern_backed",
+                    "entity_key": "R2.PAIR",
+                    "axis": "Z",
+                },
+                "facts": {"count": 2},
+            }
+        ],
+        entity_keys={"R2.PAIR"},
+    )
+
+    assert result is None
+

@@ -146,6 +146,31 @@ class DrawingGateATests(unittest.TestCase):
     def test_canonical_reader_fixture_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(canonical_reader_fixture()))
 
+    def test_modeling_body_gate_accepts_evidence_backed_profile(self) -> None:
+        self.assertEqual([], R._drawing_modeling_body_errors(canonical_reader_fixture()))
+
+    def test_modeling_body_gate_rejects_subtractive_only_drawing(self) -> None:
+        data = canonical_reader_fixture()
+        data.pop("profile", None)
+        data["source_ledger"] = [
+            item
+            for item in data["source_ledger"]
+            if not str(item.get("target") or "").startswith("profile.")
+            and not any(
+                str(target).startswith("profile.")
+                for target in item.get("targets") or []
+            )
+        ]
+        data["derived"] = [
+            item
+            for item in data["derived"]
+            if not str(item.get("target") or "").startswith("profile.")
+        ]
+        errors = R._drawing_modeling_body_errors(data)
+        self.assertEqual(1, len(errors))
+        self.assertIn("lacks body-defining geometry", errors[0])
+
+
     def test_canonical_reader_fixture_covers_required_field_contracts(self) -> None:
         data = canonical_reader_fixture()
         targets = {

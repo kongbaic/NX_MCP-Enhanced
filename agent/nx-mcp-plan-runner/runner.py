@@ -2514,6 +2514,42 @@ def _drawing_target_covered(target: str, covered: set[str]) -> bool:
     return any(target.startswith(f"{ancestor}.") for ancestor in covered)
 
 
+_SUBTRACTIVE_MODELING_FEATURE_TYPES = {
+    "hole",
+    "through_hole",
+    "threaded_hole",
+    "counterbore_hole",
+    "countersink_hole",
+    "slot",
+    "cut",
+    "slit",
+}
+
+
+def _drawing_modeling_body_errors(data: dict) -> list[str]:
+    """Reject Planner/Runner input that has no evidence-backed body geometry."""
+    profile = data.get("profile")
+    if isinstance(profile, dict) and _drawing_hard_paths(profile):
+        return []
+
+    required_features = [
+        item
+        for item in data.get("features", [])
+        if isinstance(item, dict) and item.get("required_for_modeling", True) is not False
+    ]
+    if any(
+        str(item.get("type") or "").lower()
+        not in _SUBTRACTIVE_MODELING_FEATURE_TYPES
+        for item in required_features
+    ):
+        return []
+
+    return [
+        "drawing lacks body-defining geometry: provide an evidence-backed profile "
+        "or an additive/base modeling feature before Planner/Runner"
+    ]
+
+
 def _drawing_equal(a: Any, b: Any, tol: float = 1e-9) -> bool:
     na, nb = _num(a), _num(b)
     if na is not None and nb is not None:
@@ -3799,7 +3835,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
     errs = check_plan(plan, executable=not args.frozen)
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         errs.extend(drawing_errors)
         if not drawing_errors:
             errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
@@ -3820,7 +3857,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
     geometries: list[dict] = []
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         frozen_errs.extend(drawing_errors)
     if frozen_errs:
         result = {

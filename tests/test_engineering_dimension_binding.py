@@ -524,13 +524,14 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
         _integrated_context(),
     )
 
-    conflict_blockers = [
+    conflict_items = [
         item
         for item in partial.unresolved
-        if item.required_for_modeling
-        and item.field == "dimension_value_candidate"
+        if item.field == "dimension_value_candidate"
     ]
-    assert len(conflict_blockers) == 1
+    assert len(conflict_items) == 1
+    assert conflict_items[0].required_for_modeling is False
+    assert "preserved as advisory evidence" in conflict_items[0].reason
     termination_blockers = [
         item
         for item in partial.unresolved

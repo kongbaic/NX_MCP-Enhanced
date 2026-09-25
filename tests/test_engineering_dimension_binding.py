@@ -579,7 +579,7 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
     assert direct[f"feature:{feature_id}.axis"] == "Y"
     assert direct[f"feature:{feature_id}.diameter"] == 20.0
     assert direct[f"feature:{feature_id}.fit"] == "H7"
-    assert f"feature:{feature_id}.centerline.x" not in resolution.values
+    assert resolution.values[f"feature:{feature_id}.centerline.x"] == 20.0
     assert resolution.values[f"feature:{feature_id}.centerline.z"] == 40.0
 
     symmetry_ledger = next(
@@ -587,9 +587,14 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
         for item in partial.observations
         if item["kind"] == "hybrid_circle_datum_alignment_ledger"
     )
-    assert symmetry_ledger["engineering_authoritative"] is False
-    assert symmetry_ledger["purpose"] == "visual_symmetry_diagnostic_only"
-    assert partial.datum_alignments == []
+    assert symmetry_ledger["engineering_authoritative"] is True
+    assert symmetry_ledger["purpose"] == (
+        "overall_center_datum_alignment_from_explicit_center_axis"
+    )
+    assert symmetry_ledger["engineering_coordinate_inferred_from_pixels"] is False
+    assert len(partial.datum_alignments) == 1
+    assert partial.datum_alignments[0].entity_key == "R1.C1"
+    assert partial.datum_alignments[0].axis == "X"
 
 
 

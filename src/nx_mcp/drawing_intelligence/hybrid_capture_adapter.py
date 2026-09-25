@@ -2832,8 +2832,8 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_circle_datum_alignment_ledger",
             "schema": "1.0",
             "items": circle_alignment_records,
-            "engineering_authoritative": False,
-            "purpose": "visual_symmetry_diagnostic_only",
+            "engineering_authoritative": True,
+            "purpose": "overall_center_datum_alignment_from_explicit_center_axis",
             "engineering_coordinate_inferred_from_pixels": False,
         },
         {

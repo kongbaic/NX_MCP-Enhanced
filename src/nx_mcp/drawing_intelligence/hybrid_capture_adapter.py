@@ -1209,30 +1209,36 @@ def _engineering_callout_routing(
             regions,
         )
         linear_pattern_binding: dict[str, Any] | None = None
-        if (
-            len(region_candidates) == 1
-            and any(
-                key in parsed["facts"]
-                for key in {
-                    "diameter",
-                    "thread_spec",
-                    "through",
-                    "recessed_hole",
-                }
-            )
+        linear_pattern_ambiguity: dict[str, Any] | None = None
+        if any(
+            key in parsed["facts"]
+            for key in {
+                "diameter",
+                "thread_spec",
+                "through",
+                "recessed_hole",
+            }
         ):
-            region_id = region_candidates[0]
-            region = next(
-                (
-                    candidate_region
-                    for candidate_region in regions
-                    if isinstance(candidate_region, dict)
-                    and str(candidate_region.get("region_id") or "") == region_id
-                ),
-                None,
+            search_region_ids = (
+                list(region_candidates)
+                if region_candidates
+                else sorted(view_lookup)
             )
-            region_view = view_lookup.get(region_id)
-            if region is not None and region_view is not None:
+            pattern_matches: list[dict[str, Any]] = []
+            for region_id in search_region_ids:
+                region = next(
+                    (
+                        candidate_region
+                        for candidate_region in regions
+                        if isinstance(candidate_region, dict)
+                        and str(candidate_region.get("region_id") or "") == region_id
+                    ),
+                    None,
+                )
+                region_view = view_lookup.get(region_id)
+                if region is None or region_view is None:
+                    continue
+
                 candidate_pattern_binding = bind_callout_to_linear_pattern(
                     binding_bbox,
                     annotation_lines,
@@ -1247,26 +1253,38 @@ def _engineering_callout_routing(
                         else []
                     ),
                 )
-                if candidate_pattern_binding.get("status") == "bound":
-                    pattern_index = candidate_pattern_binding.get("pattern_index")
-                    hidden_owner = (
-                        hidden_pattern_owner_by_index.get(
-                            (region_id, int(pattern_index))
-                        )
-                        if isinstance(pattern_index, int)
-                        else None
+                if candidate_pattern_binding.get("status") != "bound":
+                    continue
+
+                pattern_index = candidate_pattern_binding.get("pattern_index")
+                hidden_owner = (
+                    hidden_pattern_owner_by_index.get(
+                        (region_id, int(pattern_index))
                     )
-                    if hidden_owner is not None:
-                        linear_pattern_binding = {
-                            **candidate_pattern_binding,
-                            "entity_key": hidden_owner,
-                            "hidden_pair_owner_reused": True,
-                            "basis": (
-                                "callout_oblique_leader_to_hidden_pair_member"
-                            ),
-                        }
-                    else:
-                        linear_pattern_binding = candidate_pattern_binding
+                    if isinstance(pattern_index, int)
+                    else None
+                )
+                if hidden_owner is not None:
+                    candidate_pattern_binding = {
+                        **candidate_pattern_binding,
+                        "entity_key": hidden_owner,
+                        "hidden_pair_owner_reused": True,
+                        "basis": (
+                            "callout_oblique_leader_to_hidden_pair_member"
+                        ),
+                    }
+                pattern_matches.append(candidate_pattern_binding)
+
+            if len(pattern_matches) == 1:
+                linear_pattern_binding = pattern_matches[0]
+            elif len(pattern_matches) > 1:
+                linear_pattern_ambiguity = {
+                    "status": "unresolved",
+                    "reason": (
+                        "multiple_callout_linear_pattern_regions_without_unique_target"
+                    ),
+                    "candidate_bindings": pattern_matches,
+                }
 
         dimension_binding: dict[str, Any] | None = None
         if (
@@ -1388,6 +1406,11 @@ def _engineering_callout_routing(
                             required_for_modeling=False,
                         )
                     )
+            elif (
+                binding.get("status") != "bound"
+                and linear_pattern_ambiguity is not None
+            ):
+                binding = linear_pattern_ambiguity
 
         parsed = _recover_geometry_backed_leading_zero_hole_value(
             parsed,

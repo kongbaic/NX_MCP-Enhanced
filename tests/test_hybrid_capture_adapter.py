@@ -1192,3 +1192,182 @@ def test_equal_local_only_value_without_shared_witness_topology_stays_blocking()
     item = next(entry for entry in unresolved if entry.field == "local_only_linear_text")
     assert item.required_for_modeling is True
 
+def test_off_region_callout_can_bind_one_unique_linear_pattern(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 11,
+                    "text": "2-06.6通孔",
+                    "bbox": [[120, 40], [180, 40], [180, 70], [120, 70]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+            {
+                "region_id": "R2",
+                "bbox_px": [200, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        ),
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+
+    def fake_pattern_binding(*args, **kwargs):
+        region = args[2]
+        if region["region_id"] == "R2":
+            return {
+                "status": "bound",
+                "entity_key": "R2.LINEAR_PATTERN.003",
+                "region_id": "R2",
+                "pattern_index": 2,
+                "orientation": "horizontal",
+                "axis": "Y",
+            }
+        return {"status": "unresolved"}
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        fake_pattern_binding,
+    )
+
+    ledger, entities, values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={},
+        existing_entity_keys=set(),
+    )
+
+    assert ledger[0]["region_candidates"] == []
+    assert ledger[0]["binding"]["status"] == "pattern_backed"
+    assert ledger[0]["binding"]["region_id"] == "R2"
+    assert not any(
+        item.field == "engineering_callout_geometry_binding"
+        and item.required_for_modeling
+        for item in unresolved
+    )
+    assert {
+        (item.field, item.value)
+        for item in values
+        if item.entity_key == "R2.LINEAR_PATTERN.003"
+    } >= {
+        ("count", 2),
+        ("through", True),
+        ("diameter", 6.6),
+    }
+
+
+def test_off_region_callout_with_multiple_pattern_targets_stays_unresolved(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 11,
+                    "text": "2-06.6通孔",
+                    "bbox": [[120, 40], [180, 40], [180, 70], [120, 70]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+            {
+                "region_id": "R2",
+                "bbox_px": [200, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        ),
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+
+    def fake_pattern_binding(*args, **kwargs):
+        region = args[2]
+        region_id = region["region_id"]
+        return {
+            "status": "bound",
+            "entity_key": f"{region_id}.LINEAR_PATTERN.003",
+            "region_id": region_id,
+            "pattern_index": 2,
+            "orientation": "horizontal",
+            "axis": "X" if region_id == "R1" else "Y",
+        }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        fake_pattern_binding,
+    )
+
+    ledger, _entities, _values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={},
+        existing_entity_keys=set(),
+    )
+
+    assert ledger[0]["binding"]["status"] == "unresolved"
+    assert (
+        ledger[0]["binding"]["reason"]
+        == "multiple_callout_linear_pattern_regions_without_unique_target"
+    )
+    blockers = [
+        item
+        for item in unresolved
+        if item.required_for_modeling
+        and item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(blockers) == 1
+

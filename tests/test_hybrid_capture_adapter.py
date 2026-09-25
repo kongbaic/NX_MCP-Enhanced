@@ -963,10 +963,7 @@ def test_overall_ocr_conflict_becomes_advisory_only_with_independent_closed_over
         if item.field == "dimension_value_candidate"
     )
     assert conflict.required_for_modeling is False
-    assert conflict.basis == [
-        "independent_overall_dimension_fact",
-        "resolved_overall_boundary_identity",
-    ]
+    assert conflict.basis == []
     assert "preserved as advisory evidence" in conflict.reason
 
 

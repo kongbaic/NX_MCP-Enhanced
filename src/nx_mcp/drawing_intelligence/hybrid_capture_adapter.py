@@ -248,14 +248,6 @@ def _coverage_unresolved(
                 reason=reason,
                 field="dimension_value_candidate",
                 axis=axis,
-                basis=(
-                    [
-                        "independent_overall_dimension_fact",
-                        "resolved_overall_boundary_identity",
-                    ]
-                    if superseded
-                    else []
-                ),
                 evidence=_candidate_evidence(candidate_id),
                 required_for_modeling=not superseded,
             )

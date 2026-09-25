@@ -167,10 +167,12 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
             elif role in {"overall_min", "overall_max"}:
                 record["requires_confirmation"] = False
                 record["fixed"] = {"role": role}
-            elif role == "feature_center" and isinstance(spec.get("target"), str):
+            elif role in {"feature_center", "profile_boundary"} and isinstance(
+                spec.get("target"), str
+            ):
                 record["requires_confirmation"] = False
                 record["fixed"] = {
-                    "role": "feature_center",
+                    "role": role,
                     "target": spec["target"],
                 }
             else:
@@ -335,13 +337,13 @@ def apply_confirmation_answers(
                 role = fixed["role"]
                 target = fixed.get("target")
 
-            if role == "feature_center":
+            if role in {"feature_center", "profile_boundary"}:
                 if not isinstance(target, str) or not target:
                     raise ConfirmationError(
-                        f"{confirmation_id}: feature_center target missing"
+                        f"{confirmation_id}: {role} target missing"
                     )
                 endpoints.append(
-                    DimensionEndpoint(role="feature_center", target=target)
+                    DimensionEndpoint(role=role, target=target)
                 )
                 required_targets.add(target)
             elif role in {"overall_min", "overall_max"}:

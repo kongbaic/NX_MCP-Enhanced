@@ -1178,6 +1178,9 @@ def _engineering_callout_routing(
                 "thread_depth",
                 "through",
                 "count",
+                "recess_diameter",
+                "recess_depth",
+                "recessed_hole",
             }
         }
 

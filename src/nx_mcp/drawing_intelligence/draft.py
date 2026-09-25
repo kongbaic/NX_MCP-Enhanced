@@ -848,7 +848,7 @@ def _materialize_metric_profile(
         [
             {
                 "id": "METRIC_PROFILE_PLANE",
-                "semantic": "profile_topology",
+                "semantic": "profile_dimension",
                 "value": solution.plane,
                 "target": "profile.plane",
                 "evidence": evidence,
@@ -856,7 +856,7 @@ def _materialize_metric_profile(
             },
             {
                 "id": "METRIC_PROFILE_TOPOLOGY",
-                "semantic": "profile_topology",
+                "semantic": "profile_dimension",
                 "value": solution.topology,
                 "target": "profile.topology",
                 "evidence": evidence,

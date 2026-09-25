@@ -330,6 +330,7 @@ def test_build_semantic_draft_auto_derives_metric_profile_from_topology_and_reso
         if item.get("solver") == "metric_profile_solver"
     ]
     assert metric_sources
+    assert all(item["semantic"] == "profile_dimension" for item in metric_sources)
     assert "D_UPRIGHT_16" in metric_sources[0]["evidence"]
     assert "D_BASE_8" in metric_sources[0]["evidence"]
 

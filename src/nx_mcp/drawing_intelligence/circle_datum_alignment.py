@@ -27,6 +27,7 @@ def derive_circle_overall_center_alignments(
     region_views: dict[str, str],
     boundaries: list[dict[str, Any]],
     profile_inventory: list[dict[str, Any]],
+    candidates: list[dict[str, Any]] | None = None,
     relative_tolerance: float = 0.012,
 ) -> list[dict[str, Any]]:
     """Identify circle centers coincident with an overall center datum.
@@ -64,6 +65,8 @@ def derive_circle_overall_center_alignments(
             and len(anchors) == 2
             and all(isinstance(item, dict) for item in anchors)
         ):
+            continue
+        if boundary.get("engineering_coordinate_inferred_from_pixels") is not False:
             continue
         positions = [
             item.get("position_px") for item in anchors
@@ -131,7 +134,113 @@ def derive_circle_overall_center_alignments(
                     continue
                 start, end = sorted(float(value) for value in line_span)
                 if start - tolerance <= center_cross_px <= end + tolerance:
-                    supporting_lines.append(line)
+                    supporting_lines.append(
+                        {
+                            **line,
+                            "support_kind": "profile_inventory_axis",
+                        }
+                    )
+
+            center_ref = (
+                f"{region_id}.{group_id}.center_"
+                f"{'x' if pixel_index == 0 else 'y'}"
+            )
+            for candidate in candidates or []:
+                if (
+                    not isinstance(candidate, dict)
+                    or str(candidate.get("region_id") or "") != region_id
+                ):
+                    continue
+
+                witness_lines_by_index = {
+                    item.get("witness_index"): item
+                    for item in candidate.get("witness_line_evidence", [])
+                    if isinstance(item, dict)
+                    and isinstance(item.get("witness_index"), int)
+                }
+                for anchor_record in candidate.get("witness_anchor_evidence", []):
+                    if not (
+                        isinstance(anchor_record, dict)
+                        and isinstance(anchor_record.get("witness_index"), int)
+                    ):
+                        continue
+                    witness_index = anchor_record["witness_index"]
+                    has_circle_center_anchor = any(
+                        isinstance(anchor, dict)
+                        and anchor.get("kind") == "circle_center_axis"
+                        and str(anchor.get("ref") or "") == center_ref
+                        for anchor in anchor_record.get("nearest_anchors", [])
+                    )
+                    if not has_circle_center_anchor:
+                        continue
+
+                    witness_record = witness_lines_by_index.get(witness_index)
+                    if not isinstance(witness_record, dict):
+                        continue
+                    for line_index, line in enumerate(
+                        witness_record.get("source_lines", [])
+                    ):
+                        if (
+                            not isinstance(line, dict)
+                            or str(line.get("orientation") or "")
+                            != line_orientation
+                            or not isinstance(line.get("axis_px"), (int, float))
+                        ):
+                            continue
+                        position = float(line["axis_px"])
+                        if abs(position - center_axis_px) > tolerance:
+                            continue
+                        line_span = line.get("span_px")
+                        if not (
+                            isinstance(line_span, list)
+                            and len(line_span) == 2
+                            and all(
+                                isinstance(value, (int, float))
+                                for value in line_span
+                            )
+                        ):
+                            continue
+                        start, end = sorted(float(value) for value in line_span)
+                        if not (
+                            start - tolerance
+                            <= center_cross_px
+                            <= end + tolerance
+                        ):
+                            continue
+                        supporting_lines.append(
+                            {
+                                "ref": (
+                                    f"{candidate.get('candidate_id')}"
+                                    f".witness.{witness_index}.line.{line_index}"
+                                ),
+                                "position_px": position,
+                                "span_px": [start, end],
+                                "support_kind": (
+                                    "circle_center_anchored_witness_axis"
+                                ),
+                                "candidate_id": candidate.get("candidate_id"),
+                                "witness_index": witness_index,
+                            }
+                        )
+
+            deduplicated_support: dict[
+                tuple[float, float, float],
+                dict[str, Any],
+            ] = {}
+            for line in supporting_lines:
+                span_values = line.get("span_px")
+                if not (
+                    isinstance(span_values, list)
+                    and len(span_values) == 2
+                ):
+                    continue
+                key = (
+                    round(float(line["position_px"]), 1),
+                    round(float(span_values[0]), 1),
+                    round(float(span_values[1]), 1),
+                )
+                deduplicated_support.setdefault(key, line)
+            supporting_lines = list(deduplicated_support.values())
 
             if len(supporting_lines) != 1:
                 continue
@@ -150,6 +259,8 @@ def derive_circle_overall_center_alignments(
                     ],
                     "axis_line_ref": str(support.get("ref") or ""),
                     "axis_line_position_px": float(support["position_px"]),
+                    "axis_line_support_kind": support.get("support_kind"),
+                    "axis_line_candidate_id": support.get("candidate_id"),
                     "overall_midpoint_px": midpoint,
                     "circle_center_axis_px": center_axis_px,
                     "coincidence_tolerance_px": tolerance,

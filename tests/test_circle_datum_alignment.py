@@ -113,3 +113,104 @@ def test_circle_center_alignment_fails_closed_with_multiple_axis_lines():
     )
 
     assert items == []
+
+def test_circle_center_alignment_accepts_unique_circle_center_witness_axis():
+    candidates = [
+        {
+            "candidate_id": "DG_HALF",
+            "region_id": "R1",
+            "witness_anchor_evidence": [
+                {
+                    "witness_index": 1,
+                    "nearest_anchors": [
+                        {
+                            "kind": "circle_center_axis",
+                            "ref": "R1.C1.center_x",
+                            "position_px": 100.0,
+                        }
+                    ],
+                }
+            ],
+            "witness_line_evidence": [
+                {
+                    "witness_index": 1,
+                    "source_lines": [
+                        {
+                            "orientation": "vertical",
+                            "axis_px": 101.0,
+                            "span_px": [80, 220],
+                        },
+                        {
+                            "orientation": "vertical",
+                            "axis_px": 108.0,
+                            "span_px": [80, 120],
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+    items = derive_circle_overall_center_alignments(
+        regions=_regions(center_x=100.0),
+        region_views={"R1": "front"},
+        boundaries=[_boundary()],
+        profile_inventory=[],
+        candidates=candidates,
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["entity_key"] == "R1.C1"
+    assert item["axis"] == "X"
+    assert item["datum"] == "overall_center"
+    assert item["axis_line_support_kind"] == (
+        "circle_center_anchored_witness_axis"
+    )
+    assert item["axis_line_candidate_id"] == "DG_HALF"
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert "coordinate_mm" not in item
+
+
+def test_circle_center_witness_axis_fails_closed_when_line_misses_circle_center():
+    candidates = [
+        {
+            "candidate_id": "DG_HALF",
+            "region_id": "R1",
+            "witness_anchor_evidence": [
+                {
+                    "witness_index": 1,
+                    "nearest_anchors": [
+                        {
+                            "kind": "circle_center_axis",
+                            "ref": "R1.C1.center_x",
+                            "position_px": 100.0,
+                        }
+                    ],
+                }
+            ],
+            "witness_line_evidence": [
+                {
+                    "witness_index": 1,
+                    "source_lines": [
+                        {
+                            "orientation": "vertical",
+                            "axis_px": 100.0,
+                            "span_px": [20, 60],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    items = derive_circle_overall_center_alignments(
+        regions=_regions(center_x=100.0),
+        region_views={"R1": "front"},
+        boundaries=[_boundary()],
+        profile_inventory=[],
+        candidates=candidates,
+    )
+
+    assert items == []
+

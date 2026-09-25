@@ -2629,8 +2629,27 @@ def adapt_hybrid_ocr_report(
         region_views={item.region_id: item.view_kind for item in context.region_views},
         boundaries=boundaries,
         profile_inventory=profile_inventory,
+        candidates=working_candidates,
     )
-    datum_alignments: list[ObservationDatumAlignment] = []
+    datum_alignments: list[ObservationDatumAlignment] = [
+        ObservationDatumAlignment(
+            entity_key=str(record["entity_key"]),
+            axis=record["axis"],
+            evidence=[
+                (
+                    "hybrid:circle-datum:"
+                    f"{record['entity_key']}:{record['axis']}"
+                ),
+                str(record.get("axis_line_ref") or "circle-center-axis"),
+            ],
+            required_for_modeling=True,
+        )
+        for record in circle_alignment_records
+        if str(record.get("entity_key") or "")
+        in {item.key for item in entities}
+        and record.get("axis") in {"X", "Y", "Z"}
+        and record.get("engineering_coordinate_inferred_from_pixels") is False
+    ]
 
     for raw_candidate in dimension_candidates:
         if not isinstance(raw_candidate, dict):

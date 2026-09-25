@@ -254,8 +254,8 @@ def bind_callout_to_linear_pattern(
                         max_extension=max(
                             6.0,
                             min(
-                                leader_length * 0.65,
-                                text_height * 0.75,
+                                leader_length * 0.70,
+                                text_height * 1.25,
                             ),
                         ),
                         target_tolerance=target_tolerance,
@@ -310,17 +310,20 @@ def bind_callout_to_linear_pattern(
         )
     )
 
-    duplicate_axis_tolerance = max(4.0, target_tolerance * 0.30)
+    duplicate_axis_tolerance = max(3.5, target_tolerance * 0.25)
     distinct_matches: list[dict[str, Any]] = []
     for match in matches:
         orientation = str(match.get("orientation") or "")
-        axis = float(match["pattern_axis_px"])
+        pattern_axis_value = float(match["pattern_axis_px"])
         span = match.get("pattern_span_px", [])
         duplicate = False
         for existing in distinct_matches:
             if str(existing.get("orientation") or "") != orientation:
                 continue
-            if abs(float(existing["pattern_axis_px"]) - axis) > duplicate_axis_tolerance:
+            if (
+                abs(float(existing["pattern_axis_px"]) - pattern_axis_value)
+                > duplicate_axis_tolerance
+            ):
                 continue
             existing_span = existing.get("pattern_span_px", [])
             if not (

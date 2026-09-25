@@ -1,6 +1,9 @@
 from nx_mcp.drawing_intelligence.engineering_callouts import (
     parse_engineering_callout,
 )
+from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+    _recover_geometry_backed_leading_zero_hole_value,
+)
 
 
 def test_thread_callout_preserves_thread_and_depth():

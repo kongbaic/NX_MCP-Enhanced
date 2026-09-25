@@ -3085,6 +3085,19 @@ def _drawing_check_feature_structure(errors: list[str], feature: dict) -> None:
                 f"feature {fid!r} axis {axis} requires center coordinate {coord}"
             )
 
+    if feature_type in {"counterbore_hole", "countersink_hole"} and axis in {"X", "Y"}:
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} axis {axis} {feature_type} requires "
+                "start_side/side min|max"
+            )
+
 
 def _drawing_check_count(errors: list[str], item: dict, label: str) -> None:
     count = item.get("count")

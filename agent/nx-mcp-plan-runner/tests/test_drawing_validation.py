@@ -543,6 +543,35 @@ class DrawingGateATests(unittest.TestCase):
             R._drawing_check_feature_structure(errors := [], {"id": axis, "type": "threaded_hole", "axis": axis, "centerline": missing[axis]})
             self.assertTrue(errors, axis)
 
+    def test_transverse_recessed_holes_require_start_side(self) -> None:
+        centers = {
+            "X": {"y": 8, "z": 58},
+            "Y": {"x": 0, "z": 40},
+        }
+        for feature_type in ("counterbore_hole", "countersink_hole"):
+            for axis in ("X", "Y"):
+                base = {
+                    "id": f"{feature_type}-{axis}",
+                    "type": feature_type,
+                    "axis": axis,
+                    "centerline": centers[axis],
+                }
+                R._drawing_check_feature_structure(errors := [], base)
+                self.assertTrue(
+                    any("requires start_side/side min|max" in error for error in errors),
+                    (feature_type, axis, errors),
+                )
+                for field in ("start_side", "side"):
+                    for value in ("min", "max"):
+                        feature = dict(base)
+                        feature[field] = value
+                        R._drawing_check_feature_structure(errors := [], feature)
+                        self.assertEqual(
+                            [],
+                            errors,
+                            (feature_type, axis, field, value),
+                        )
+
     def test_explicit_centers_are_tracked_per_coordinate(self) -> None:
         paths = R._drawing_hard_paths({"explicit_centers": [[-3, 4], [3, 4]]})
         self.assertEqual(

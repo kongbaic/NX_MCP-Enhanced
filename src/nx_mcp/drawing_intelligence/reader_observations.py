@@ -314,7 +314,7 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
 
     payload: dict[str, Any] = {
         "schema_version": "2.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": observations.overall_dimensions.model_dump(),
         "views": [
             {

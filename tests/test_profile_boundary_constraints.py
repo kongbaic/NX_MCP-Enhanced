@@ -72,10 +72,11 @@ def test_internal_profile_boundary_resolves_from_overall_max_dimension():
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
 
-    profile_entity = next(
-        item for item in capture.entities if item.source_key == "R2.STEP_EDGE"
-    )
-    feature_id = linked.entity_to_feature[profile_entity.id]
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    feature_id = linked.entity_to_feature[entity_id_by_key["R2.STEP_EDGE"]]
     target = f"feature:{feature_id}.boundary.y"
 
     assert resolution.values[target] == 8.0
@@ -290,12 +291,16 @@ def test_adapter_turns_unique_internal_profile_edge_into_constraint_endpoint():
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
 
-    profile_entity = next(
-        item
-        for item in capture.entities
-        if item.source_key.endswith("R2.structural.vertical.STEP")
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    step_key = next(
+        item.key
+        for item in observations.entities
+        if item.key.endswith("R2.structural.vertical.STEP")
     )
-    feature_id = linked.entity_to_feature[profile_entity.id]
+    feature_id = linked.entity_to_feature[entity_id_by_key[step_key]]
     target = f"feature:{feature_id}.boundary.y"
     assert resolution.values[target] == 8.0
 

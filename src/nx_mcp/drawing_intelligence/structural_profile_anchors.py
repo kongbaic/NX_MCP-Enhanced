@@ -240,6 +240,57 @@ def _junction_metrics(
     )
 
 
+def _is_circle_centerline(
+    line: dict[str, Any],
+    region: dict[str, Any],
+    *,
+    axis_tolerance: float,
+) -> bool:
+    """Reject structural lines that are explicit center axes through a circle."""
+
+    orientation = str(line.get("orientation") or "")
+    axis = line.get("axis_px")
+    span = line.get("span_px")
+    if not (
+        orientation in {"horizontal", "vertical"}
+        and isinstance(axis, (int, float))
+        and isinstance(span, list)
+        and len(span) == 2
+        and all(isinstance(value, (int, float)) for value in span)
+    ):
+        return False
+
+    start, end = sorted(float(value) for value in span)
+    groups = region.get("circle_groups", [])
+    if not isinstance(groups, list):
+        return False
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        center = group.get("center_px")
+        if not (
+            isinstance(center, list)
+            and len(center) >= 2
+            and isinstance(center[0], (int, float))
+            and isinstance(center[1], (int, float))
+        ):
+            continue
+        center_x = float(center[0])
+        center_y = float(center[1])
+        if orientation == "vertical":
+            if abs(float(axis) - center_x) <= axis_tolerance and (
+                start - axis_tolerance <= center_y <= end + axis_tolerance
+            ):
+                return True
+        else:
+            if abs(float(axis) - center_y) <= axis_tolerance and (
+                start - axis_tolerance <= center_x <= end + axis_tolerance
+            ):
+                return True
+    return False
+
+
 def _is_hidden_pair_midline(
     line: dict[str, Any],
     region: dict[str, Any],
@@ -366,6 +417,12 @@ def derive_structural_profile_anchors(
     profile_lines: list[dict[str, Any]] = []
     for line in all_lines:
         if line["orientation"] != source_orientation:
+            continue
+        if _is_circle_centerline(
+            line,
+            region,
+            axis_tolerance=axis_tolerance,
+        ):
             continue
         if _is_hidden_pair_midline(
             line,

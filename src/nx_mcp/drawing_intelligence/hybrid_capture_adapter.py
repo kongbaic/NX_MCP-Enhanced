@@ -758,6 +758,7 @@ def _dimension_endpoints_from_candidates(
     entity_keys: set[str],
     boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
     profile_entity_by_ref: dict[str, str],
+    pattern_entity_by_ref: dict[str, str] | None = None,
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
     endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
@@ -797,6 +798,29 @@ def _dimension_endpoints_from_candidates(
         physical_candidates = raw_endpoint.get("physical_candidates", [])
         if not isinstance(physical_candidates, list):
             physical_candidates = []
+
+        owned_pattern_entities = sorted(
+            {
+                pattern_entity_by_ref[ref]
+                for anchor in raw_endpoint.get("ignored_nonownership_anchors", [])
+                if isinstance(anchor, dict)
+                and anchor.get("kind") == "linear_pattern_axis"
+                for ref in [str(anchor.get("ref") or "")]
+                if pattern_entity_by_ref is not None
+                and ref in pattern_entity_by_ref
+                and pattern_entity_by_ref[ref] in entity_keys
+            }
+        )
+        if len(owned_pattern_entities) == 1:
+            output.append(
+                ObservationDimensionEndpoint(
+                    role="entity_center",
+                    entity_key=owned_pattern_entities[0],
+                    basis="centerline",
+                    evidence=evidence,
+                )
+            )
+            continue
 
         if (
             raw_endpoint.get("status") == "unique_physical_candidate"
@@ -2272,6 +2296,41 @@ def adapt_hybrid_ocr_report(
         for entity_key, record in sorted(hidden_entity_records.items())
         if record.get("feature_axis") in {"X", "Y", "Z"}
     ]
+
+    (
+        callout_ledger,
+        callout_entities,
+        callout_values,
+        callout_unresolved,
+    ) = _engineering_callout_routing(
+        report,
+        working_candidates,
+        view_lookup,
+        hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
+        existing_entity_keys={item.key for item in entities},
+    )
+    entities.extend(callout_entities)
+    unresolved.extend(callout_unresolved)
+
+    pattern_entity_by_ref: dict[str, str] = {}
+    for record in callout_ledger:
+        if not isinstance(record, dict):
+            continue
+        binding = record.get("binding")
+        if not isinstance(binding, dict) or binding.get("status") != "pattern_backed":
+            continue
+        region_id = str(binding.get("region_id") or "")
+        pattern_index = binding.get("pattern_index")
+        entity_key = str(binding.get("entity_key") or "")
+        if (
+            region_id
+            and isinstance(pattern_index, int)
+            and entity_key in {item.key for item in entities}
+        ):
+            pattern_entity_by_ref[
+                f"{region_id}.linear_pattern.{pattern_index + 1:03d}"
+            ] = entity_key
+
     circle_alignment_records = derive_circle_overall_center_alignments(
         regions=[
             item for item in report.get("regions", []) if isinstance(item, dict)
@@ -2315,6 +2374,7 @@ def adapt_hybrid_ocr_report(
             entity_keys={item.key for item in entities},
             boundary_roles=boundary_roles,
             profile_entity_by_ref=profile_entity_by_ref,
+            pattern_entity_by_ref=pattern_entity_by_ref,
             evidence=evidence,
         )
         dimensions.append(
@@ -2371,20 +2431,7 @@ def adapt_hybrid_ocr_report(
             overall_dimension_facts=context.overall_dimension_facts,
         )
     )
-    (
-        callout_ledger,
-        callout_entities,
-        callout_values,
-        callout_unresolved,
-    ) = _engineering_callout_routing(
-        report,
-        working_candidates,
-        view_lookup,
-        hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
-        existing_entity_keys={item.key for item in entities},
-    )
-    entities.extend(callout_entities)
-    unresolved.extend(callout_unresolved)
+
     associations, association_unresolved = _unique_orthographic_associations(
         report=report,
         view_lookup=view_lookup,

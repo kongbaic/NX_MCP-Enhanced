@@ -161,10 +161,11 @@ def test_real_like_right_view_16_and_8_resolve_upper_hole_y24():
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
 
-    circle_entity = next(
-        item for item in capture.entities if item.source_key == "R2.C1"
-    )
-    feature_id = linked.entity_to_feature[circle_entity.id]
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    feature_id = linked.entity_to_feature[entity_id_by_key["R2.C1"]]
     assert resolution.values[f"feature:{feature_id}.centerline.y"] == 24.0
 
     ledger = next(

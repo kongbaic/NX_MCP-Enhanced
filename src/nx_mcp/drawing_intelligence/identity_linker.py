@@ -670,9 +670,14 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             axis_leaf = item.axis.lower()
             endpoint_specs: list[dict[str, Any]] = []
             for endpoint_index, endpoint in enumerate(item.endpoints):
+                downstream_role = (
+                    "feature_center"
+                    if endpoint.role == "entity_center"
+                    else endpoint.role
+                )
                 spec: dict[str, Any] = {
                     "index": endpoint_index,
-                    "role": endpoint.role,
+                    "role": downstream_role,
                     "unresolved_kind": endpoint.unresolved_kind,
                     "source_ids": endpoint.source_ids,
                 }

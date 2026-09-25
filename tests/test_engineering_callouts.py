@@ -55,3 +55,13 @@ def test_recessed_hole_depth_does_not_invent_subtype_or_diameter():
 
 def test_plain_linear_value_is_not_an_engineering_callout():
     assert parse_engineering_callout("24") is None
+
+
+
+def test_recess_note_keeps_neutral_geometry_facts_and_subtype_ambiguity():
+    parsed = parse_engineering_callout("011沉孔深6.5")
+
+    assert parsed is not None
+    assert parsed["facts"]["recessed_hole"] is True
+    assert parsed["facts"]["recess_depth"] == 6.5
+    assert "recessed_hole_subtype_not_explicit" in parsed["ambiguities"]

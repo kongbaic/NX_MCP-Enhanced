@@ -195,8 +195,10 @@ The following enum values are complete. Do not use synonyms or invent new values
   `slot_edges`, `profile`, `other`
 - dimension endpoint `role`: `overall_min`, `overall_max`,
   `entity_center`, `unresolved`
+  `profile_boundary`, `unresolved`
 - endpoint `basis` when `role="entity_center"`: `centerline`,
   `center_mark`, `explicit_midline`, `circle_center`
+  `center_mark`, `explicit_midline`, `profile_edge`
 - endpoint `unresolved_kind` when `role="unresolved"`:
   `intermediate_surface`, `ambiguous_owner`, `unsupported_reference`
 - dimension `direction`: `-1`, `1`, or `null`

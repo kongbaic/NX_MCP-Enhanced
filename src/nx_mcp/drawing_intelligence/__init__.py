@@ -17,6 +17,12 @@ from .hybrid_capture_adapter import (
     adapt_hybrid_ocr_report,
 )
 from .identity_linker import IdentityLinkError, IdentityLinkResult, link_reader_capture
+from .metric_profile_solver import (
+    MetricProfileSolution,
+    MetricProfileSolveError,
+    MetricProfileSpec,
+    solve_metric_profile,
+)
 
 """Deterministic drawing-evidence compilation and resolution.
 
@@ -77,6 +83,9 @@ __all__ = [
     "Gate0Error",
     "Gate0Result",
     "OverallDimensions",
+    "MetricProfileSpec",
+    "MetricProfileSolution",
+    "MetricProfileSolveError",
     "ProjectionEvidence",
     "RelationEvidence",
     "ResolutionResult",
@@ -87,6 +96,7 @@ __all__ = [
     "compile_evidence_graph",
     "logical_snapshot",
     "resolve_evidence_graph",
+    "solve_metric_profile",
     "snapshot_fingerprint",
     "write_strict_evidence",
 ]

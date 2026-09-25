@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from nx_mcp.drawing_intelligence import (
     link_reader_capture,
     resolve_evidence_graph,
 )
+from nx_mcp.drawing_intelligence.draft import build_semantic_draft
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
     adapt_hybrid_ocr_report,
@@ -25,6 +27,20 @@ from nx_mcp.drawing_intelligence.reader_observations import (
     assemble_reader_capture,
 )
 from nx_mcp.drawing_intelligence.reader_visual_aid import build_reader_visual_aid
+
+
+def _load_gate_a_runner() -> Any:
+    root = Path(__file__).resolve().parents[1]
+    runner_path = root / "agent" / "nx-mcp-plan-runner" / "runner.py"
+    spec = importlib.util.spec_from_file_location(
+        "hybrid_constraint_bridge_gate_a",
+        runner_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load Gate A runner from {runner_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -149,7 +165,11 @@ def replay_hybrid_constraint_bridge(
             "linked": False,
             "compiled": False,
             "resolved": False,
+            "drafted": False,
+            "gate_a_checked": False,
         },
+        "gate_a_pass": False,
+        "gate_a_errors": [],
     }
 
     try:
@@ -167,6 +187,15 @@ def replay_hybrid_constraint_bridge(
         result["entity_to_feature"] = dict(sorted(linked.entity_to_feature.items()))
         result["compiled"] = compiled.model_dump(mode="json")
         result["resolution"] = resolution.to_dict()
+
+        draft = build_semantic_draft(compiled, resolution)
+        result["pipeline"]["drafted"] = True
+        result["draft"] = draft
+        gate_a_runner = _load_gate_a_runner()
+        gate_a_errors = gate_a_runner.check_drawing_json(draft)
+        result["pipeline"]["gate_a_checked"] = True
+        result["gate_a_errors"] = list(gate_a_errors)
+        result["gate_a_pass"] = not gate_a_errors
     except (
         ReaderObservationFinalizationError,
         ReaderObservationAssemblyError,
@@ -240,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
                 "association_count": result["association_count"],
                 "blocking_unresolved_count": len(blocking),
                 "pipeline": result["pipeline"],
+                "gate_a_pass": result["gate_a_pass"],
+                "gate_a_error_count": len(result["gate_a_errors"]),
             },
             ensure_ascii=False,
         )

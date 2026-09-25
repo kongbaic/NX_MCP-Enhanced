@@ -274,7 +274,9 @@ def bind_callout_to_linear_pattern(
 
             profile_overlap = overlaps_structural_profile(pattern)
             strong_fragmented_support = _strong_fragmented_pattern_support(pattern)
-            if profile_overlap and not strong_fragmented_support:
+            if profile_overlap and not (
+                len(path) > 1 and strong_fragmented_support
+            ):
                 continue
 
             target_distance = _point_to_pattern_distance(exit_point, pattern)

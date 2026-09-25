@@ -437,3 +437,47 @@ def test_fragmented_leader_does_not_override_profile_without_dashed_support():
     assert result["status"] == "unresolved"
     assert result["reason"] == "no_leader_to_linear_pattern_match"
 
+def test_single_segment_leader_does_not_override_profile_even_with_dashed_support():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 66], [160, 197]],
+                "angle_deg": 71.0,
+                "length_px": 138.5,
+                "candidate_only": True,
+            }
+        ],
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 300],
+            "circle_groups": [],
+            "linear_pattern_candidates": [
+                {
+                    "orientation": "horizontal",
+                    "axis_px": 200.0,
+                    "span_px": [140, 360],
+                    "segment_count": 5,
+                    "gap_count": 3,
+                    "dash_score": 0.687,
+                    "kind": "dashed_or_centerline_candidate",
+                }
+            ],
+        },
+        view_kind="front",
+        profile_inventory=[
+            {
+                "region_id": "R1",
+                "kind": "profile_edge_candidate",
+                "ref": "R1.structural.horizontal.001",
+                "position_px": 200.5,
+                "source_orientation": "horizontal",
+                "span_px": [100, 360],
+            }
+        ],
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "no_leader_to_linear_pattern_match"
+

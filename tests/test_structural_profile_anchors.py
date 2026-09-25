@@ -314,3 +314,50 @@ def test_strong_profile_topology_survives_incidental_linear_pattern_label():
     assert 653.4 in positions
 
 
+
+
+
+def test_line_through_circle_center_is_not_physical_profile_boundary():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1034, "height": 693},
+        "regions": [
+            {
+                "region_id": "R2",
+                "bbox_px": [617, 109, 250, 561],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [745.0, 234.0],
+                        "rings": [{"radius_px": 28.0}],
+                    }
+                ],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_TOP",
+                "region_id": "R2",
+                "orientation": "horizontal",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 744.0,
+                        "source_lines": [
+                            _source("vertical", 703.7, 110, 482),
+                            _source("vertical", 744.0, 150, 282),
+                            _source("vertical", 785.8, 110, 667),
+                            _source("horizontal", 160.0, 703, 786),
+                            _source("horizontal", 315.0, 703, 786),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(raw, "R2", "horizontal")
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+
+    assert 744.0 not in positions

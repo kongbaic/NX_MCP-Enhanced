@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+import nx_mcp.drawing_intelligence.hybrid_capture_adapter as hybrid_adapter
+
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
     HybridCaptureAdapterError,
@@ -830,3 +832,75 @@ def test_full_profile_inventory_remains_visual_evidence_not_metric_truth():
         if isinstance(item, dict)
     )
 
+
+
+
+def test_pattern_backed_m6_reuses_existing_hidden_pair_entity(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 1,
+                    "text": "M6深12",
+                    "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 400, 400],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        lambda *args, **kwargs: {
+            "status": "bound",
+            "entity_key": "R1.LINEAR_PATTERN.004",
+            "region_id": "R1",
+            "pattern_index": 3,
+            "orientation": "horizontal",
+            "axis": "X",
+        },
+    )
+
+    ledger, entities, values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={
+            ("R1", 3): "R1.HIDDEN_PAIR.horizontal.004.005"
+        },
+        existing_entity_keys={"R1.HIDDEN_PAIR.horizontal.004.005"},
+    )
+
+    assert entities == []
+    assert unresolved == []
+    assert {
+        (item.entity_key, item.field, item.value)
+        for item in values
+    } == {
+        ("R1.HIDDEN_PAIR.horizontal.004.005", "thread_depth", 12.0),
+        ("R1.HIDDEN_PAIR.horizontal.004.005", "thread_spec", "M6"),
+    }
+    assert ledger[0]["binding"]["entity_key"] == "R1.HIDDEN_PAIR.horizontal.004.005"
+    assert ledger[0]["binding"]["hidden_pair_owner_reused"] is True

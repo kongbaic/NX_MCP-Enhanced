@@ -676,12 +676,15 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     "unresolved_kind": endpoint.unresolved_kind,
                     "source_ids": endpoint.source_ids,
                 }
-                if endpoint.role == "entity_center" and endpoint.entity_id:
+                if endpoint.role in {"entity_center", "profile_boundary"} and endpoint.entity_id:
                     feature_id = entity_to_feature.get(endpoint.entity_id)
                     if feature_id:
-                        spec["target"] = (
-                            f"feature:{feature_id}.centerline.{axis_leaf}"
+                        suffix = (
+                            f"centerline.{axis_leaf}"
+                            if endpoint.role == "entity_center"
+                            else f"boundary.{axis_leaf}"
                         )
+                        spec["target"] = f"feature:{feature_id}.{suffix}"
                 if endpoint.role == "unresolved":
                     spec["candidate_targets"] = sorted(
                         {
@@ -722,17 +725,24 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             if endpoint.role in {"overall_min", "overall_max"}:
                 endpoints.append(DimensionEndpoint(role=endpoint.role))
             else:
-                assert endpoint.role == "entity_center"
+                assert endpoint.role in {"entity_center", "profile_boundary"}
                 assert endpoint.entity_id is not None
                 local_endpoint_entities.append(endpoint.entity_id)
                 axis_leaf = item.axis.lower()
+                linked_role = (
+                    "feature_center"
+                    if endpoint.role == "entity_center"
+                    else "profile_boundary"
+                )
+                suffix = (
+                    f"centerline.{axis_leaf}"
+                    if endpoint.role == "entity_center"
+                    else f"boundary.{axis_leaf}"
+                )
                 endpoints.append(
                     DimensionEndpoint(
-                        role="feature_center",
-                        target=(
-                            f"feature:{entity_to_feature[endpoint.entity_id]}"
-                            f".centerline.{axis_leaf}"
-                        ),
+                        role=linked_role,
+                        target=f"feature:{entity_to_feature[endpoint.entity_id]}.{suffix}",
                     )
                 )
 
@@ -806,7 +816,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         if not item.required_for_modeling:
             continue
         for endpoint in item.endpoints:
-            if endpoint.role == "feature_center" and endpoint.target:
+            if endpoint.role in {"feature_center", "profile_boundary"} and endpoint.target:
                 required_targets.add(endpoint.target)
     for item in datum_alignments:
         if item.required_for_modeling:

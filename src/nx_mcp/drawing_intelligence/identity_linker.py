@@ -727,27 +727,35 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         endpoints: list[DimensionEndpoint] = []
         local_endpoint_entities: list[str] = []
         for endpoint in item.endpoints:
-            if endpoint.role in {"overall_min", "overall_max"}:
-                endpoints.append(DimensionEndpoint(role=endpoint.role))
-            else:
-                assert endpoint.role in {"entity_center", "profile_boundary"}
-                assert endpoint.entity_id is not None
-                local_endpoint_entities.append(endpoint.entity_id)
-                axis_leaf = item.axis.lower()
-                linked_role = (
-                    "feature_center"
-                    if endpoint.role == "entity_center"
-                    else "profile_boundary"
-                )
-                suffix = (
-                    f"centerline.{axis_leaf}"
-                    if endpoint.role == "entity_center"
-                    else f"boundary.{axis_leaf}"
-                )
+            if endpoint.role == "overall_min":
+                endpoints.append(DimensionEndpoint(role="overall_min"))
+                continue
+            if endpoint.role == "overall_max":
+                endpoints.append(DimensionEndpoint(role="overall_max"))
+                continue
+
+            assert endpoint.role in {"entity_center", "profile_boundary"}
+            assert endpoint.entity_id is not None
+            local_endpoint_entities.append(endpoint.entity_id)
+            axis_leaf = item.axis.lower()
+            if endpoint.role == "entity_center":
                 endpoints.append(
                     DimensionEndpoint(
-                        role=linked_role,
-                        target=f"feature:{entity_to_feature[endpoint.entity_id]}.{suffix}",
+                        role="feature_center",
+                        target=(
+                            f"feature:{entity_to_feature[endpoint.entity_id]}"
+                            f".centerline.{axis_leaf}"
+                        ),
+                    )
+                )
+            else:
+                endpoints.append(
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target=(
+                            f"feature:{entity_to_feature[endpoint.entity_id]}"
+                            f".boundary.{axis_leaf}"
+                        ),
                     )
                 )
 

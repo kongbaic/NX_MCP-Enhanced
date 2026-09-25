@@ -261,15 +261,15 @@ def _compile_edge_offset(
         ),
         None,
     )
-    center = next(
+    measured = next(
         (
             endpoint
             for endpoint in observation.endpoints
-            if endpoint.role == "feature_center"
+            if endpoint.role in {"feature_center", "profile_boundary"}
         ),
         None,
     )
-    if boundary is None or center is None or not center.target:
+    if boundary is None or measured is None or not measured.target:
         return False
     _append_relation(
         relations,
@@ -279,7 +279,7 @@ def _compile_edge_offset(
             axis=observation.axis,
             value=observation.value,
             from_side="min" if boundary.role == "overall_min" else "max",
-            targets=[center.target],
+            targets=[measured.target],
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),

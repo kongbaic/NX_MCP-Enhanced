@@ -266,14 +266,14 @@ def test_realistic_upper_hidden_pair_midline_is_suppressed_but_outer_profiles_su
 
 
 
-def test_line_coincident_with_linear_pattern_is_not_profile_boundary():
+def test_strong_profile_topology_survives_incidental_linear_pattern_label():
     raw = {
         "schema": "raw-evidence-v1",
-        "image": {"width": 1000, "height": 700},
+        "image": {"width": 1034, "height": 693},
         "regions": [
             {
                 "region_id": "R2",
-                "bbox_px": [600, 100, 250, 560],
+                "bbox_px": [617, 109, 250, 561],
                 "circle_groups": [],
                 "linear_pattern_candidates": [
                     {
@@ -295,10 +295,11 @@ def test_line_coincident_with_linear_pattern_is_not_profile_boundary():
                         "witness_index": 0,
                         "position_px": 653.0,
                         "source_lines": [
+                            _source("vertical", 620.667, 482, 667),
                             _source("vertical", 653.4, 485, 580),
-                            _source("vertical", 620.7, 482, 667),
                             _source("vertical", 785.8, 110, 667),
-                            _source("horizontal", 485.0, 620, 703),
+                            _source("horizontal", 481.0, 621, 700),
+                            _source("horizontal", 550.0, 619, 787),
                             _source("horizontal", 580.0, 620, 703),
                         ],
                     }
@@ -310,4 +311,6 @@ def test_line_coincident_with_linear_pattern_is_not_profile_boundary():
     anchors = derive_structural_profile_anchors(raw, "R2", "horizontal")
     positions = {round(float(item["position_px"]), 1) for item in anchors}
 
-    assert 653.4 not in positions
+    assert 653.4 in positions
+
+

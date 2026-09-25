@@ -321,7 +321,7 @@ def _is_hidden_pair_midline(
 
     axis_extent = float(bbox[3] if orientation == "horizontal" else bbox[2])
     minimum_pair_separation = max(4.0, axis_extent * 0.008)
-    maximum_pair_separation = axis_extent * 0.18
+    maximum_pair_separation = axis_extent * 0.25
 
     eligible = [
         item
@@ -438,9 +438,7 @@ def derive_structural_profile_anchors(
         )
         span_local_norm = float(line["span_length_px"]) / span_denominator
 
-        strong_topology = (
-            span_local_norm >= 0.15 and junction_count >= 2 and endpoint_junction_count >= 1
-        )
+        strong_topology = span_local_norm >= 0.15 and junction_count >= 2
         long_single_corner = (
             span_local_norm >= 0.25 and junction_count >= 1 and endpoint_junction_count >= 1
         )

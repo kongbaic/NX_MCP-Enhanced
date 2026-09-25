@@ -1386,6 +1386,304 @@ _PIXEL_INDEX_BY_VIEW_AXIS: dict[tuple[str, str], int] = {
 }
 
 
+def _token_numeric_value(token: Any) -> float | None:
+    if not isinstance(token, str):
+        return None
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
+def _bbox_center(bbox: Any) -> tuple[float, float] | None:
+    bounds = _bbox_bounds(bbox)
+    if bounds is None:
+        return None
+    left, top, right, bottom = bounds
+    return (left + right) / 2.0, (top + bottom) / 2.0
+
+
+def _candidate_text_distance(
+    candidate: dict[str, Any],
+    bbox: Any,
+) -> float | None:
+    bounds = _bbox_bounds(bbox)
+    if bounds is None:
+        return None
+    orientation = str(candidate.get("orientation") or "")
+    axis = candidate.get("axis_px")
+    span = candidate.get("line_span_px")
+    if not (
+        orientation in {"horizontal", "vertical"}
+        and isinstance(axis, (int, float))
+        and isinstance(span, list)
+        and len(span) == 2
+        and all(isinstance(value, (int, float)) for value in span)
+    ):
+        return None
+    left, top, right, bottom = bounds
+    start, end = sorted(float(value) for value in span)
+    if orientation == "horizontal":
+        dx = max(left - end, 0.0, start - right)
+        dy = max(top - float(axis), 0.0, float(axis) - bottom)
+    else:
+        dx = max(left - float(axis), 0.0, float(axis) - right)
+        dy = max(top - end, 0.0, start - bottom)
+    return math.hypot(dx, dy)
+
+
+def _recover_symmetric_half_dimensions(
+    *,
+    report: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+    boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
+    entity_keys: set[str],
+) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
+    """Recover a half-span dimension from a uniquely corroborated symmetric chain.
+
+    Pixel geometry establishes only identity/topology. The engineering value
+    comes from OCR tokens whose numeric relation is total = 2 * half.
+    """
+
+    coverage = report.get("coverage", {})
+    unassigned = [
+        item
+        for item in coverage.get("unassigned_linear_observations", [])
+        if isinstance(item, dict)
+        and _token_numeric_value(item.get("token")) is not None
+        and _bbox_center(item.get("bbox")) is not None
+    ]
+    if len(unassigned) < 2:
+        return [], []
+
+    recovered: list[ObservationDimension] = []
+    ledger: list[dict[str, Any]] = []
+
+    for region in report.get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        view = view_lookup.get(region_id)
+        if view is None:
+            continue
+        bbox = region.get("bbox_px")
+        if not (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and all(isinstance(value, (int, float)) for value in bbox)
+        ):
+            continue
+        rx, ry, rw, rh = (float(value) for value in bbox)
+        region_tokens = []
+        for item in unassigned:
+            center = _bbox_center(item.get("bbox"))
+            if center is None:
+                continue
+            cx, cy = center
+            if (
+                rx - rw * 0.20 <= cx <= rx + rw * 1.20
+                and ry - rh * 0.20 <= cy <= ry + rh * 1.20
+            ):
+                region_tokens.append(item)
+        if len(region_tokens) < 2:
+            continue
+
+        groups = region.get("circle_groups", [])
+        if not isinstance(groups, list):
+            continue
+        horizontal_axis = _axis_for(view.view_kind, "horizontal")
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("circle_group_id") or "")
+            center_px = group.get("center_px")
+            entity_key = f"{region_id}.{group_id}"
+            if not (
+                group_id
+                and entity_key in entity_keys
+                and isinstance(center_px, list)
+                and len(center_px) >= 2
+                and isinstance(center_px[0], (int, float))
+            ):
+                continue
+            center_x = float(center_px[0])
+
+            vertical_edges = sorted(
+                [
+                    item
+                    for item in profile_inventory
+                    if isinstance(item, dict)
+                    and item.get("kind") == "profile_edge_candidate"
+                    and str(item.get("region_id") or "") == region_id
+                    and str(item.get("source_orientation") or "") == "vertical"
+                    and isinstance(item.get("position_px"), (int, float))
+                ],
+                key=lambda item: float(item["position_px"]),
+            )
+            left_edges = [
+                item for item in vertical_edges if float(item["position_px"]) < center_x
+            ]
+            right_edges = [
+                item for item in vertical_edges if float(item["position_px"]) > center_x
+            ]
+            if not left_edges or not right_edges:
+                continue
+            left = left_edges[-1]
+            right = right_edges[0]
+            left_x = float(left["position_px"])
+            right_x = float(right["position_px"])
+            span = right_x - left_x
+            if span <= 0:
+                continue
+            midpoint = (left_x + right_x) / 2.0
+            if abs(midpoint - center_x) > max(2.0, span * 0.03):
+                continue
+
+            left_role = boundary_roles.get(str(left.get("ref") or ""))
+            right_role = boundary_roles.get(str(right.get("ref") or ""))
+            if left_role not in {"overall_min", "overall_max"} and right_role not in {
+                "overall_min",
+                "overall_max",
+            }:
+                continue
+
+            chain_candidates = []
+            for candidate in candidates:
+                if (
+                    str(candidate.get("region_id") or "") != region_id
+                    or str(candidate.get("orientation") or "") != "horizontal"
+                ):
+                    continue
+                witnesses = [
+                    float(value)
+                    for value in candidate.get("witness_positions_px", [])
+                    if isinstance(value, (int, float))
+                ]
+                if len(witnesses) != 3:
+                    continue
+                tolerance = max(3.0, rw * 0.015)
+                expected = [left_x, center_x, right_x]
+                if all(
+                    min(abs(witness - target) for witness in witnesses) <= tolerance
+                    for target in expected
+                ):
+                    chain_candidates.append(candidate)
+            if not chain_candidates:
+                continue
+
+            token_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+            for total in region_tokens:
+                total_value = _token_numeric_value(total.get("token"))
+                if total_value is None:
+                    continue
+                for half in region_tokens:
+                    if half is total:
+                        continue
+                    half_value = _token_numeric_value(half.get("token"))
+                    if half_value is None or half_value <= 0:
+                        continue
+                    if abs(total_value - 2.0 * half_value) <= max(
+                        1e-6, abs(total_value) * 1e-6
+                    ):
+                        token_pairs.append((total, half))
+            if not token_pairs:
+                continue
+
+            scored: list[tuple[float, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+            for candidate in chain_candidates:
+                for total, half in token_pairs:
+                    total_distance = _candidate_text_distance(candidate, total.get("bbox"))
+                    half_distance = _candidate_text_distance(candidate, half.get("bbox"))
+                    if total_distance is None or half_distance is None:
+                        continue
+                    scored.append(
+                        (
+                            total_distance + half_distance,
+                            candidate,
+                            total,
+                            half,
+                        )
+                    )
+            scored.sort(key=lambda item: (item[0], str(item[1].get("candidate_id") or "")))
+            if not scored:
+                continue
+            if len(scored) > 1 and scored[1][0] - scored[0][0] < max(10.0, rh * 0.03):
+                continue
+
+            _, candidate, total, half = scored[0]
+            half_center = _bbox_center(half.get("bbox"))
+            if half_center is None:
+                continue
+            half_x = half_center[0]
+            if half_x > right_x and right_role in {"overall_min", "overall_max"}:
+                boundary_role = right_role
+            elif half_x < left_x and left_role in {"overall_min", "overall_max"}:
+                boundary_role = left_role
+            else:
+                continue
+
+            half_value = _token_numeric_value(half.get("token"))
+            if half_value is None:
+                continue
+            source_index = half.get("source_item_index")
+            total_index = total.get("source_item_index")
+            dimension_key = f"{region_id}.RECOVERED_HALF_{source_index}"
+            recovered.append(
+                ObservationDimension(
+                    key=dimension_key,
+                    value=half_value,
+                    axis=horizontal_axis,
+                    endpoints=[
+                        ObservationDimensionEndpoint(
+                            role="entity_center",
+                            entity_key=entity_key,
+                            basis="circle_center",
+                            evidence=[
+                                f"hybrid:whole:{source_index}",
+                                f"hybrid:whole:{total_index}",
+                            ],
+                        ),
+                        ObservationDimensionEndpoint(
+                            role=boundary_role,
+                            evidence=[
+                                f"hybrid:whole:{source_index}",
+                                f"hybrid:whole:{total_index}",
+                            ],
+                        ),
+                    ],
+                    evidence=[
+                        f"hybrid:whole:{source_index}",
+                        f"hybrid:whole:{total_index}",
+                        f"hybrid:{candidate.get('candidate_id')}:symmetric-chain",
+                    ],
+                    required_for_modeling=True,
+                )
+            )
+            ledger.append(
+                {
+                    "dimension_key": dimension_key,
+                    "region_id": region_id,
+                    "entity_key": entity_key,
+                    "axis": horizontal_axis,
+                    "half_value": half_value,
+                    "total_value": _token_numeric_value(total.get("token")),
+                    "half_source_item_index": source_index,
+                    "total_source_item_index": total_index,
+                    "candidate_id": candidate.get("candidate_id"),
+                    "boundary_role": boundary_role,
+                    "basis": (
+                        "unique_three_witness_symmetric_chain_with_total_equals_two_half"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                }
+            )
+
+    return recovered, ledger
+
+
 def _projection_alignment_tolerance(
     report: dict[str, Any],
     region_id: str,
@@ -1763,6 +2061,18 @@ def adapt_hybrid_ocr_report(
                 )
             )
 
+    recovered_half_dimensions, symmetric_chain_ledger = (
+        _recover_symmetric_half_dimensions(
+            report=report,
+            candidates=working_candidates,
+            view_lookup=view_lookup,
+            profile_inventory=profile_inventory,
+            boundary_roles=boundary_roles,
+            entity_keys={item.key for item in entities},
+        )
+    )
+    dimensions.extend(recovered_half_dimensions)
+
     unresolved.extend(
         _coverage_unresolved(
             report,
@@ -1839,6 +2149,12 @@ def adapt_hybrid_ocr_report(
             "items": circle_alignment_records,
             "engineering_authoritative": False,
             "purpose": "visual_symmetry_diagnostic_only",
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
+            "kind": "hybrid_symmetric_dimension_recovery_ledger",
+            "schema": "1.0",
+            "items": symmetric_chain_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
         },
     ]

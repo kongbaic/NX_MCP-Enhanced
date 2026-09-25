@@ -174,6 +174,22 @@ class ObservationDatumAlignment(_StrictObservationModel):
     _validate_evidence = field_validator("evidence")(_clean_evidence)
 
 
+class ObservationCenterlineAlignment(_StrictObservationModel):
+    entity_keys: list[str] = Field(min_length=2)
+    feature_axis: Axis
+    evidence: list[str] = Field(min_length=1)
+    required_for_modeling: bool = True
+
+    @field_validator("entity_keys")
+    @classmethod
+    def _unique_entity_keys(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("centerline alignment entity_keys must be unique")
+        return value
+
+    _validate_evidence = field_validator("evidence")(_clean_evidence)
+
+
 class ObservationUnresolved(_StrictObservationModel):
     kind: ReaderObservationUnresolvedKind
     reason: str = Field(min_length=1)
@@ -217,6 +233,7 @@ class ReaderObservations(_StrictObservationModel):
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)
+    centerline_alignments: list[ObservationCenterlineAlignment] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved: list[ObservationUnresolved] = Field(default_factory=list)
 
@@ -273,6 +290,13 @@ class ReaderObservations(_StrictObservationModel):
             if alignment.entity_key not in entity_set:
                 raise ValueError(
                     f"datum alignment references unknown entity key {alignment.entity_key!r}"
+                )
+
+        for alignment in self.centerline_alignments:
+            missing = [item for item in alignment.entity_keys if item not in entity_set]
+            if missing:
+                raise ValueError(
+                    f"centerline alignment references unknown entity keys {missing}"
                 )
 
         for unresolved in self.unresolved:
@@ -339,6 +363,7 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
         "values": [],
         "dimensions": [],
         "datum_alignments": [],
+        "centerline_alignments": [],
         "required_targets": [],
         "observations": observations.observations,
         "unresolved_evidence": [],
@@ -420,6 +445,20 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
                 ),
                 "axis": alignment.axis,
                 "datum": "overall_center",
+                "source_ids": alignment.evidence,
+                "required_for_modeling": alignment.required_for_modeling,
+            }
+        )
+
+    for index, alignment in enumerate(observations.centerline_alignments, start=1):
+        payload["centerline_alignments"].append(
+            {
+                "id": f"CA{index:03d}",
+                "entity_ids": [
+                    _mapped(entity_ids, key, "entity")
+                    for key in alignment.entity_keys
+                ],
+                "feature_axis": alignment.feature_axis,
                 "source_ids": alignment.evidence,
                 "required_for_modeling": alignment.required_for_modeling,
             }

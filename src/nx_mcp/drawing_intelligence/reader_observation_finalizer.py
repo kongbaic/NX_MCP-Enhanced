@@ -131,6 +131,7 @@ def finalize_partial_reader_observations(
         values=partial.values,
         dimensions=partial.dimensions,
         datum_alignments=partial.datum_alignments,
+        centerline_alignments=partial.centerline_alignments,
         observations=[
             *partial.observations,
             overall_ledger,

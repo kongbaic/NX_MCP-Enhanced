@@ -207,6 +207,21 @@ class CaptureDatumAlignment(_StrictCaptureModel):
     required_for_modeling: bool = True
 
 
+class CaptureCenterlineAlignment(_StrictCaptureModel):
+    id: str = Field(min_length=1)
+    entity_ids: list[str] = Field(min_length=2)
+    feature_axis: Axis
+    source_ids: list[str] = Field(default_factory=list)
+    required_for_modeling: bool = True
+
+    @field_validator("entity_ids")
+    @classmethod
+    def _unique_entity_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("centerline alignment entity_ids must be unique")
+        return value
+
+
 class CaptureRequiredTarget(_StrictCaptureModel):
     entity_id: str = Field(min_length=1)
     field: str = Field(min_length=1)
@@ -279,6 +294,7 @@ class ReaderCapture(_StrictCaptureModel):
     values: list[CaptureValue] = Field(default_factory=list)
     dimensions: list[CaptureDimension] = Field(default_factory=list)
     datum_alignments: list[CaptureDatumAlignment] = Field(default_factory=list)
+    centerline_alignments: list[CaptureCenterlineAlignment] = Field(default_factory=list)
     required_targets: list[CaptureRequiredTarget] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_evidence: list[CaptureUnresolvedEvidence] = Field(default_factory=list)
@@ -435,6 +451,14 @@ class ReaderCapture(_StrictCaptureModel):
                     f"{alignment.entity_id!r}"
                 )
 
+        for alignment in self.centerline_alignments:
+            missing = [item for item in alignment.entity_ids if item not in entity_set]
+            if missing:
+                raise ValueError(
+                    f"centerline alignment {alignment.id!r} references unknown "
+                    f"entities {missing}"
+                )
+
         for target in self.required_targets:
             if target.entity_id not in entity_set:
                 raise ValueError(
@@ -457,6 +481,7 @@ class ReaderCapture(_StrictCaptureModel):
             + [item.id for item in self.values]
             + [item.id for item in self.dimensions]
             + [item.id for item in self.datum_alignments]
+            + [item.id for item in self.centerline_alignments]
             + [item.id for item in self.unresolved_evidence]
         )
         if len(ids) != len(set(ids)):

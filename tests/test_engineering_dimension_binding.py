@@ -593,7 +593,7 @@ def test_integrated_circle_feature_resolves_axis_diameter_fit_and_exact_center_z
     )
     assert symmetry_ledger["engineering_coordinate_inferred_from_pixels"] is False
     assert len(partial.datum_alignments) == 1
-    assert partial.datum_alignments[0].entity_key == "R1.C1"
+    assert partial.datum_alignments[0].entity_key == "R1.C_MAIN"
     assert partial.datum_alignments[0].axis == "X"
 
 

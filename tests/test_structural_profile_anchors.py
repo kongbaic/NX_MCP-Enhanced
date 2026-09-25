@@ -263,3 +263,51 @@ def test_realistic_upper_hidden_pair_midline_is_suppressed_but_outer_profiles_su
     assert 234.0 not in positions
     assert 483.7 in positions
     assert 550.6 in positions
+
+
+
+def test_line_coincident_with_linear_pattern_is_not_profile_boundary():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1000, "height": 700},
+        "regions": [
+            {
+                "region_id": "R2",
+                "bbox_px": [600, 100, 250, 560],
+                "circle_groups": [],
+                "linear_pattern_candidates": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 654.0,
+                        "span_px": [455, 580],
+                        "kind": "dashed_or_centerline_candidate",
+                    }
+                ],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG13",
+                "region_id": "R2",
+                "orientation": "horizontal",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 653.0,
+                        "source_lines": [
+                            _source("vertical", 653.4, 485, 580),
+                            _source("vertical", 620.7, 482, 667),
+                            _source("vertical", 785.8, 110, 667),
+                            _source("horizontal", 485.0, 620, 703),
+                            _source("horizontal", 580.0, 620, 703),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(raw, "R2", "horizontal")
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+
+    assert 653.4 not in positions

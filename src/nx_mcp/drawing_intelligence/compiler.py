@@ -91,6 +91,67 @@ def _append_relation(
     relations.append(relation)
 
 
+def _compile_overall_dimension_facts(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    expected = {
+        "X": ("overall_dimensions.length_x", graph.overall_dimensions.length_x),
+        "Y": ("overall_dimensions.width_y", graph.overall_dimensions.width_y),
+        "Z": ("overall_dimensions.height_z", graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") != "overall_dimension_fact_ledger":
+            continue
+        facts = observation.get("facts")
+        if not isinstance(facts, list):
+            continue
+
+        for fact_index, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                continue
+            axis = str(fact.get("axis") or "").upper()
+            if axis not in expected:
+                continue
+            value = fact.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            target, expected_value = expected[axis]
+            source_ids = [
+                item
+                for item in fact.get("evidence", [])
+                if isinstance(item, str) and item
+            ]
+            if abs(float(value) - float(expected_value)) > 1e-9:
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_FACT_{axis}_{observation_index}_{fact_index}",
+                    reason=(
+                        f"overall dimension fact for axis {axis} disagrees with "
+                        f"canonical overall_dimensions: {value!r} vs {expected_value!r}"
+                    ),
+                    target=target,
+                    evidence=source_ids,
+                )
+                continue
+
+            _append_direct(
+                direct,
+                unresolved,
+                DirectValueEvidence(
+                    id=f"ODF_{axis}_{observation_index}_{fact_index}",
+                    target=target,
+                    value=float(value),
+                    semantic="overall_dimension",
+                    source_ids=source_ids,
+                ),
+            )
+
+
 def _compile_axis_evidence(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -358,6 +419,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     relations = [item.model_copy(deep=True) for item in graph.relations]
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
+    _compile_overall_dimension_facts(graph, direct, unresolved)
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)

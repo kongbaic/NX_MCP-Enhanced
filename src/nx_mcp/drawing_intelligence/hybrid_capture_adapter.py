@@ -877,7 +877,72 @@ def _symmetric_count_two_pattern_owner(
     ):
         return None
 
+    def witness_projection_span(
+        witness_index: int,
+        owner_axis: Axis,
+    ) -> tuple[float, float] | None:
+        records = [
+            item
+            for item in candidate.get("witness_line_evidence", [])
+            if isinstance(item, dict)
+            and item.get("witness_index") == witness_index
+        ]
+        if len(records) != 1:
+            return None
+
+        spans: list[tuple[float, float]] = []
+        for line in records[0].get("source_lines", []):
+            if (
+                not isinstance(line, dict)
+                or line.get("crosses_dimension_axis") is True
+            ):
+                continue
+            orientation = str(line.get("orientation") or "")
+            try:
+                line_axis = _axis_for(region_view.view_kind, orientation)
+            except HybridCaptureAdapterError:
+                continue
+            if line_axis != owner_axis:
+                continue
+            raw_span = line.get("span_px")
+            if (
+                isinstance(raw_span, list)
+                and len(raw_span) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in raw_span
+                )
+            ):
+                spans.append(
+                    (
+                        float(raw_span[0]),
+                        float(raw_span[1]),
+                    )
+                )
+
+        if not spans:
+            return None
+        return (
+            min(min(span) for span in spans),
+            max(max(span) for span in spans),
+        )
+
+    def overlap_ratio(
+        first: tuple[float, float],
+        second: tuple[float, float],
+    ) -> float:
+        first_min, first_max = sorted(first)
+        second_min, second_max = sorted(second)
+        overlap = max(
+            0.0,
+            min(first_max, second_max) - max(first_min, second_min),
+        )
+        shorter = min(first_max - first_min, second_max - second_min)
+        return overlap / shorter if shorter > 1e-9 else 0.0
+
     owner_records: dict[str, dict[str, Any]] = {}
+    projection_support_by_entity: dict[str, dict[str, Any]] = {}
     for record in callout_ledger:
         if not isinstance(record, dict):
             continue
@@ -903,13 +968,59 @@ def _symmetric_count_two_pattern_owner(
             for index in selected_indices
         ):
             continue
+
+        raw_pattern_span = binding.get("pattern_span_px")
+        if not (
+            isinstance(raw_pattern_span, list)
+            and len(raw_pattern_span) == 2
+            and all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in raw_pattern_span
+            )
+        ):
+            continue
+        pattern_span = (
+            float(raw_pattern_span[0]),
+            float(raw_pattern_span[1]),
+        )
+        witness_spans = [
+            witness_projection_span(index, owner_axis)
+            for index in selected_indices
+        ]
+        if any(span is None for span in witness_spans):
+            continue
+        typed_witness_spans = [
+            span for span in witness_spans if span is not None
+        ]
+        overlap_ratios = [
+            overlap_ratio(span, pattern_span)
+            for span in typed_witness_spans
+        ]
+        if not all(ratio >= 0.80 for ratio in overlap_ratios):
+            continue
+
         owner_records[entity_key] = record
+        projection_support_by_entity[entity_key] = {
+            "pattern_span_px": [
+                round(pattern_span[0], 3),
+                round(pattern_span[1], 3),
+            ],
+            "witness_projection_spans_px": [
+                [round(span[0], 3), round(span[1], 3)]
+                for span in typed_witness_spans
+            ],
+            "overlap_ratios": [
+                round(ratio, 6) for ratio in overlap_ratios
+            ],
+        }
 
     if len(owner_records) != 1:
         return None
 
     entity_key, owner_record = next(iter(owner_records.items()))
     binding = owner_record["binding"]
+    projection_support = projection_support_by_entity[entity_key]
     return {
         "entity_key": entity_key,
         "feature_axis": binding["axis"],
@@ -920,7 +1031,11 @@ def _symmetric_count_two_pattern_owner(
         "overall_boundary_positions_px": boundary_positions,
         "midpoint_residual_px": round(midpoint_residual, 3),
         "midpoint_tolerance_px": round(midpoint_tolerance, 3),
-        "basis": "unique_count_two_pattern_plus_overall_center_symmetry",
+        "projection_support": projection_support,
+        "basis": (
+            "unique_count_two_pattern_plus_overall_center_symmetry"
+            "_plus_orthographic_span_overlap"
+        ),
         "engineering_coordinate_inferred_from_pixels": False,
         "pixel_geometry_used_for_identity_only": True,
         "marker": _SYMMETRIC_COUNT_TWO_MARKER,

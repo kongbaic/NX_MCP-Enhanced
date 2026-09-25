@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
+    CaptureCenterlineAlignment,
     CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
@@ -2720,4 +2721,115 @@ def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explici
     feature = next(item for item in draft["features"] if item["id"] == feature_id)
     assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
     assert draft["dimension_closure"] == {"status": "closed"}
+
+def test_centerline_alignment_propagates_transverse_coordinates_without_merging_features():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["front"]),
+            CaptureView(id="VS", kind="side", source_ids=["side"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="THREAD",
+                view_id="VF",
+                shape="hidden_parallel",
+                source_ids=["thread"],
+            ),
+            CaptureEntity(
+                id="RECESS",
+                view_id="VS",
+                shape="concentric_circles",
+                source_ids=["recess"],
+            ),
+        ],
+        values=[
+            CaptureValue(
+                id="V1",
+                entity_id="THREAD",
+                field="axis",
+                value="X",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V2",
+                entity_id="THREAD",
+                field="thread_spec",
+                value="M6",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V3",
+                entity_id="RECESS",
+                field="recessed_hole",
+                value=True,
+                source_ids=["recess"],
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="DZ",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="THREAD",
+                        basis="centerline",
+                        source_ids=["dz-thread"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_min",
+                        source_ids=["dz-base"],
+                    ),
+                ],
+                source_ids=["dz"],
+            ),
+            CaptureDimension(
+                id="DY",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="RECESS",
+                        basis="circle_center",
+                        source_ids=["dy-recess"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["dy-edge"],
+                    ),
+                ],
+                source_ids=["dy"],
+            ),
+        ],
+        centerline_alignments=[
+            CaptureCenterlineAlignment(
+                id="CA001",
+                entity_ids=["THREAD", "RECESS"],
+                feature_axis="X",
+                source_ids=["coaxial"],
+            )
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    assert linked.entity_to_feature["THREAD"] != linked.entity_to_feature["RECESS"]
+
+    compiled = compile_evidence_graph(linked.evidence)
+    relation_ids = {item.id for item in compiled.relations}
+    assert {"CA001_Y", "CA001_Z"} <= relation_ids
+
+    resolution = resolve_evidence_graph(compiled)
+    thread_feature = linked.entity_to_feature["THREAD"]
+    recess_feature = linked.entity_to_feature["RECESS"]
+    assert resolution.values[f"feature:{recess_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.z"] == 18
+    assert resolution.values[f"feature:{recess_feature}.centerline.z"] == 18
 

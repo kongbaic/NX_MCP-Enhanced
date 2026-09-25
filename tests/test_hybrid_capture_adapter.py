@@ -1668,3 +1668,145 @@ def test_symmetric_count_two_pattern_owner_rejects_disjoint_projection_span():
 
     assert result is None
 
+def test_unique_thread_recess_centerline_alignment_uses_pixels_only_for_identity():
+    alignments, ledger = hybrid_adapter._unique_thread_recess_centerline_alignments(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 200, 300],
+                    "circle_groups": [],
+                },
+                {
+                    "region_id": "R2",
+                    "bbox_px": [200, 0, 200, 300],
+                    "circle_groups": [
+                        {
+                            "circle_group_id": "C1",
+                            "center_px": [300.0, 101.0],
+                            "rings": [{"radius_px": 20}],
+                        }
+                    ],
+                },
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            ),
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["R2"],
+            ),
+        },
+        hidden_entity_records={
+            "R1.HIDDEN_PAIR.horizontal.001.002": {
+                "entity_key": "R1.HIDDEN_PAIR.horizontal.001.002",
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 100.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.HIDDEN_PAIR.horizontal.001.002",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C1",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            ),
+        ],
+        entity_keys={
+            "R1.HIDDEN_PAIR.horizontal.001.002",
+            "R2.C1",
+        },
+    )
+
+    assert len(alignments) == 1
+    assert alignments[0].entity_keys == [
+        "R1.HIDDEN_PAIR.horizontal.001.002",
+        "R2.C1",
+    ]
+    assert alignments[0].feature_axis == "X"
+    assert ledger[0]["projection_residual_px"] == 1.0
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_thread_recess_centerline_alignment_fails_closed_with_two_circle_matches():
+    alignments, ledger = hybrid_adapter._unique_thread_recess_centerline_alignments(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 200, 300],
+                    "circle_groups": [],
+                },
+                {
+                    "region_id": "R2",
+                    "bbox_px": [200, 0, 200, 300],
+                    "circle_groups": [
+                        {"circle_group_id": "C1", "center_px": [300.0, 100.0]},
+                        {"circle_group_id": "C2", "center_px": [340.0, 101.0]},
+                    ],
+                },
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            ),
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["R2"],
+            ),
+        },
+        hidden_entity_records={
+            "R1.HIDDEN_PAIR.horizontal.001.002": {
+                "entity_key": "R1.HIDDEN_PAIR.horizontal.001.002",
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 100.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.HIDDEN_PAIR.horizontal.001.002",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C1",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess-1"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C2",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess-2"],
+            ),
+        ],
+        entity_keys={
+            "R1.HIDDEN_PAIR.horizontal.001.002",
+            "R2.C1",
+            "R2.C2",
+        },
+    )
+
+    assert alignments == []
+    assert ledger == []
+

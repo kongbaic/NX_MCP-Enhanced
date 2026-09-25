@@ -202,3 +202,23 @@ def test_assemble_reader_capture_cli_e2e(tmp_path: Path):
     capture = json.loads(capture_path.read_text(encoding="utf-8"))
     assert capture["schema_version"] == "2.0"
     assert capture["required_targets"] == []
+
+def test_centerline_alignment_survives_capture_assembly():
+    payload = _base_observations()
+    payload["centerline_alignments"] = [
+        {
+            "entity_keys": ["front_bore", "side_bore"],
+            "feature_axis": "Y",
+            "evidence": ["coaxial:evidence"],
+        }
+    ]
+
+    observations = ReaderObservations.model_validate(payload)
+    capture = assemble_reader_capture(observations)
+
+    assert len(capture.centerline_alignments) == 1
+    alignment = capture.centerline_alignments[0]
+    assert alignment.entity_ids == ["E001", "E002"]
+    assert alignment.feature_axis == "Y"
+    assert alignment.source_ids == ["coaxial:evidence"]
+

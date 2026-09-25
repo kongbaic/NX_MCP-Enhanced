@@ -153,12 +153,29 @@ def replay_hybrid_constraint_bridge(
                 "hybrid_view_axis_boundary_ledger",
                 "hybrid_circle_datum_alignment_ledger",
                 "hybrid_engineering_callout_ledger",
+                "hybrid_symmetric_dimension_recovery_ledger",
                 "hybrid_view_metric_calibration_ledger",
                 "hybrid_metric_profile_edge_ledger",
                 "hybrid_metric_profile_segment_ledger",
                 "hybrid_metric_circle_primitive_ledger",
             )
         },
+        "blocking_unresolved": [
+            item.model_dump(mode="json")
+            for item in partial.unresolved
+            if item.required_for_modeling
+        ],
+        "blocking_summary": [
+            {
+                "kind": item.kind,
+                "field": item.field,
+                "dimension_key": item.dimension_key,
+                "entity_keys": list(item.entity_keys),
+                "reason": item.reason,
+            }
+            for item in partial.unresolved
+            if item.required_for_modeling
+        ],
         "pipeline": {
             "finalized": False,
             "capture_assembled": False,
@@ -246,11 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    blocking = [
-        item
-        for item in result["unresolved"]
-        if item.get("required_for_modeling", True)
-    ]
+    blocking = result["blocking_unresolved"]
     print(
         json.dumps(
             {

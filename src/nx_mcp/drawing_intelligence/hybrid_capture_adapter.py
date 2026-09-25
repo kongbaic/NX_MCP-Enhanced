@@ -1666,9 +1666,10 @@ def _dimension_backed_through_projection_support(
         high = float(crossing_edges[1]["position_px"])
         if high - low <= tolerance:
             continue
+        endpoint_tolerance = tolerance + 1.0
         if not (
-            rail_start <= low + tolerance
-            and rail_end >= high - tolerance
+            rail_start <= low + endpoint_tolerance
+            and rail_end >= high - endpoint_tolerance
         ):
             continue
 

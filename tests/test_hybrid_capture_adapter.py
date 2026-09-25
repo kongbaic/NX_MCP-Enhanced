@@ -474,15 +474,21 @@ def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresol
 
     partial = adapt_hybrid_ocr_report(report, _context())
 
+    values = {
+        item.field: item.value
+        for item in partial.values
+        if item.entity_key == "R1.C1"
+    }
+    assert values["recess_diameter"] == 11.0
+    assert values["recess_depth"] == 6.5
+    assert values["recessed_hole"] is True
+
     fields = {
         item.field
         for item in partial.unresolved
         if item.kind == "feature_value" and item.entity_keys == ["R1.C1"]
     }
-    assert "recess_depth" in fields
-    assert "recessed_hole" in fields
-    assert "diameter" in fields
-    assert "recessed_hole_subtype" in fields
+    assert fields == {"recessed_hole_subtype"}
 
 
 def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():

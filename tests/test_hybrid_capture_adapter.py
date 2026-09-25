@@ -1026,3 +1026,169 @@ def test_overall_ocr_conflict_stays_blocking_when_overall_fact_reuses_same_candi
     )
     assert conflict.required_for_modeling is True
 
+def test_local_only_duplicate_witness_topology_is_advisory():
+    shared_left = {
+        "orientation": "vertical",
+        "axis_px": 100.0,
+        "span_px": [20, 180],
+    }
+    shared_right = {
+        "orientation": "vertical",
+        "axis_px": 200.0,
+        "span_px": [20, 180],
+    }
+    accepted = {
+        "candidate_id": "DG_ACCEPTED",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "witness_line_evidence": [
+            {"witness_index": 0, "source_lines": [shared_left]},
+            {"witness_index": 1, "source_lines": [shared_right]},
+        ],
+    }
+    local_only = {
+        "candidate_id": "DG_LOCAL",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": None,
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 50.0,
+                        "span_px": [10, 190],
+                    }
+                ],
+            },
+            {"witness_index": 1, "source_lines": [shared_left]},
+            {"witness_index": 2, "source_lines": [shared_right]},
+        ],
+    }
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_LOCAL", "token": "24"}
+            ],
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG_ACCEPTED": accepted,
+            "DG_LOCAL": local_only,
+        },
+        view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    item = next(entry for entry in unresolved if entry.field == "local_only_linear_text")
+    assert item.required_for_modeling is False
+    assert "advisory duplicate coverage" in item.reason
+
+
+def test_equal_local_only_value_without_shared_witness_topology_stays_blocking():
+    accepted = {
+        "candidate_id": "DG_ACCEPTED",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 200.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+        ],
+    }
+    local_only = {
+        "candidate_id": "DG_LOCAL",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": None,
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 300.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 400.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_LOCAL", "token": "24"}
+            ],
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG_ACCEPTED": accepted,
+            "DG_LOCAL": local_only,
+        },
+        view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    item = next(entry for entry in unresolved if entry.field == "local_only_linear_text")
+    assert item.required_for_modeling is True
+

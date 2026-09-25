@@ -186,6 +186,114 @@ def _conflict_superseded_by_independent_overall(
     )
 
 
+def _witness_source_line_sets(
+    candidate: dict[str, Any],
+) -> list[set[tuple[str, float, float, float]]]:
+    """Return per-witness raw line identities for topology-only matching."""
+
+    result: list[set[tuple[str, float, float, float]]] = []
+    for witness in candidate.get("witness_line_evidence", []):
+        if not isinstance(witness, dict):
+            continue
+        signatures: set[tuple[str, float, float, float]] = set()
+        for line in witness.get("source_lines", []):
+            if not isinstance(line, dict):
+                continue
+            orientation = str(line.get("orientation") or "")
+            axis_px = line.get("axis_px")
+            span_px = line.get("span_px")
+            if (
+                not orientation
+                or not isinstance(axis_px, (int, float))
+                or isinstance(axis_px, bool)
+                or not isinstance(span_px, list)
+                or len(span_px) != 2
+                or not all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in span_px
+                )
+            ):
+                continue
+            signatures.add(
+                (
+                    orientation,
+                    round(float(axis_px), 3),
+                    round(float(span_px[0]), 3),
+                    round(float(span_px[1]), 3),
+                )
+            )
+        if signatures:
+            result.append(signatures)
+    return result
+
+
+def _witness_topology_contains(
+    candidate: dict[str, Any],
+    accepted: dict[str, Any],
+) -> bool:
+    """Whether candidate contains every accepted witness as the same raw line."""
+
+    accepted_sets = _witness_source_line_sets(accepted)
+    candidate_sets = _witness_source_line_sets(candidate)
+    if (
+        len(accepted_sets) < 2
+        or len(candidate_sets) < len(accepted_sets)
+    ):
+        return False
+
+    def match(index: int, used: set[int]) -> bool:
+        if index == len(accepted_sets):
+            return True
+        for candidate_index, candidate_set in enumerate(candidate_sets):
+            if candidate_index in used:
+                continue
+            if not (accepted_sets[index] & candidate_set):
+                continue
+            if match(index + 1, {*used, candidate_index}):
+                return True
+        return False
+
+    return match(0, set())
+
+
+def _local_only_redundant_with_accepted_dimension(
+    *,
+    item: dict[str, Any],
+    candidate: dict[str, Any],
+    candidate_lookup: dict[str, dict[str, Any]],
+) -> bool:
+    """Suppress duplicate local coverage only when visual witness identity proves it."""
+
+    token_value = _linear_token_number(item.get("token"))
+    if token_value is None:
+        return False
+
+    region_id = str(candidate.get("region_id") or "")
+    orientation = str(candidate.get("orientation") or "")
+    if not region_id or not orientation:
+        return False
+
+    for accepted in candidate_lookup.values():
+        if accepted is candidate:
+            continue
+        accepted_token = accepted.get("accepted_token")
+        if not isinstance(accepted_token, str):
+            continue
+        try:
+            accepted_value, _ = _dimension_value(accepted_token)
+        except HybridCaptureAdapterError:
+            continue
+        if not math.isclose(token_value, accepted_value, abs_tol=1e-9):
+            continue
+        if str(accepted.get("region_id") or "") != region_id:
+            continue
+        if str(accepted.get("orientation") or "") != orientation:
+            continue
+        if _witness_topology_contains(candidate, accepted):
+            return True
+    return False
+
+
 def _coverage_unresolved(
     report: dict[str, Any],
     candidate_lookup: dict[str, dict[str, Any]],
@@ -302,17 +410,31 @@ def _coverage_unresolved(
             raise HybridCaptureAdapterError(
                 f"local-only coverage references unknown candidate {candidate_id!r}"
             )
+        redundant = _local_only_redundant_with_accepted_dimension(
+            item=item,
+            candidate=candidate,
+            candidate_lookup=candidate_lookup,
+        )
         required = (
             candidate.get("accepted_token") is None
             and candidate_id not in conflicting_candidate_ids
+            and not redundant
         )
+        reason = (
+            "Wide local OCR found a linear token without a matching "
+            f"whole-drawing assignment: token={item.get('token')!r}."
+        )
+        if redundant:
+            reason += (
+                " An accepted dimension in the same view/orientation reuses the "
+                "same raw witness source-line topology and carries this value; "
+                "the local-only observation is preserved as advisory duplicate "
+                "coverage."
+            )
         unresolved.append(
             ObservationUnresolved(
                 kind="unsupported_representation",
-                reason=(
-                    "Wide local OCR found a linear token without a matching "
-                    f"whole-drawing assignment: token={item.get('token')!r}."
-                ),
+                reason=reason,
                 field="local_only_linear_text",
                 evidence=_candidate_evidence(candidate_id),
                 required_for_modeling=required,

@@ -792,13 +792,22 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
         ),
     }
     assert recoveries[5] == {
-        "field": "counterbore_diameter",
+        "field": "recess_diameter",
         "value": 11.0,
         "raw_token": "011",
         "basis": (
             "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
         ),
     }
+    recess_classification = next(
+        item.get("geometry_backed_recess_classification")
+        for item in ledger["items"]
+        if item["source_item_index"] == 5
+    )
+    assert recess_classification["subtype"] == "counterbore"
+    assert recess_classification["entity_key"] == "R2.C1"
+    assert recess_classification["engineering_coordinate_inferred_from_pixels"] is False
+    assert recess_classification["pixel_geometry_used_for_identity_only"] is True
 
     values = {
         (item.entity_key, item.field): item.value

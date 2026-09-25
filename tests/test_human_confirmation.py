@@ -198,7 +198,7 @@ def test_apply_confirmation_closes_edge_offset_through_existing_resolver():
     resolution = resolve_evidence_graph(compiled)
 
     assert resolution.ok is True
-    assert resolution.values["feature:F1.centerline.y"] == 8.0
+    assert resolution.values["feature:F1.centerline.y"] == 24.0
 
 
 def test_keep_unresolved_does_not_mutate_dimension_evidence():

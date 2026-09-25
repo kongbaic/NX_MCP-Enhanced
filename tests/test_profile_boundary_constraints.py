@@ -92,13 +92,17 @@ def test_internal_profile_boundary_resolves_from_overall_max_dimension():
     feature = next(item for item in draft["features"] if item["id"] == feature_id)
     assert feature["boundary"]["y"] == -8.0
 
-    derived = next(
+    assert draft["coordinate_system"]["reader_local_bounds"]["y"] == [0.0, 32]
+    assert draft["coordinate_system"]["reader_to_planner_translation"]["y"] == -16.0
+    relation_source = next(
         item
-        for item in draft["derived_dimensions"]
-        if item.get("target") == target
+        for item in draft["source_ledger"]
+        if item.get("id") == "R2.STEP_TO_RIGHT"
     )
-    assert derived["reader_local_value"] == 8.0
-    assert derived["value"] == -8.0
+    assert relation_source["semantic"] == "edge_offset"
+    assert relation_source["value"] == 24.0
+    assert relation_source["from"] == "max"
+    assert relation_source["targets"] == [target]
 
 
 
@@ -444,10 +448,14 @@ def test_side_24_uses_profile_step_and_independent_overall_y():
     linked = link_reader_capture(capture)
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
-    step_entity = next(
-        item
-        for item in capture.entities
-        if item.source_key.endswith("R2.structural.vertical.STEP")
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    step_key = next(
+        item.key
+        for item in observations.entities
+        if item.key.endswith("R2.structural.vertical.STEP")
     )
-    feature_id = linked.entity_to_feature[step_entity.id]
+    feature_id = linked.entity_to_feature[entity_id_by_key[step_key]]
     assert resolution.values[f"feature:{feature_id}.boundary.y"] == 8.0

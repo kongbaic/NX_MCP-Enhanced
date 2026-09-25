@@ -18,6 +18,7 @@ from .reader_observations import (
     ObservationAssociation,
     ObservationDimension,
     ObservationDimensionEndpoint,
+    ObservationDatumAlignment,
     ObservationEntity,
     ObservationUnresolved,
     ObservationValue,
@@ -506,8 +507,6 @@ def _profile_boundary_entities(
     seen_keys: set[str] = set()
 
     for item in profile_inventory:
-        if not isinstance(item, dict):
-            continue
         if item.get("kind") != "profile_edge_candidate":
             continue
         region_id = str(item.get("region_id") or "")
@@ -779,13 +778,13 @@ def _callout_binding_groups(
         bounds = _bbox_bounds(item.get("bbox"))
         if parsed is None or bounds is None:
             continue
-        left, top, right, bottom = bounds
+        bound_left, bound_top, bound_right, bound_bottom = bounds
         records.append(
             {
                 "source_item_index": source_item_index,
                 "bounds": bounds,
-                "width": max(1.0, right - left),
-                "height": max(1.0, bottom - top),
+                "width": max(1.0, bound_right - bound_left),
+                "height": max(1.0, bound_bottom - bound_top),
             }
         )
 
@@ -1888,9 +1887,10 @@ def adapt_hybrid_ocr_report(
         raise HybridCaptureAdapterError("Hybrid report candidates must be a list")
 
     view_lookup = {item.region_id: item for item in context.region_views}
-    profile_inventory = (
-        report.get("structural_profile_inventory")
-        if isinstance(report.get("structural_profile_inventory"), list)
+    raw_profile_inventory = report.get("structural_profile_inventory")
+    profile_inventory: list[dict[str, Any]] = (
+        [item for item in raw_profile_inventory if isinstance(item, dict)]
+        if isinstance(raw_profile_inventory, list)
         else []
     )
     working_candidates = [

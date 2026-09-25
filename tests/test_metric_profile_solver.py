@@ -103,3 +103,120 @@ def test_invalid_l_profile_constraints_fail_closed(
             base_height=base_height,
             upright_side="max",
         )
+
+
+def test_build_semantic_draft_materializes_metric_profile_with_provenance() -> None:
+    from nx_mcp.drawing_intelligence.draft import build_semantic_draft
+    from nx_mcp.drawing_intelligence.evidence import EvidenceGraph, OverallDimensions
+    from nx_mcp.drawing_intelligence.resolver import ResolutionResult
+
+    graph = EvidenceGraph(
+        schema_version="1.0",
+        coordinate_system="overall_min_xyz",
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[],
+        projections=[],
+        dimensions=[],
+        datum_alignments=[],
+        direct_values=[],
+        relations=[],
+        required_targets=[],
+        observations=[],
+        unresolved_evidence=[],
+    )
+    resolution = ResolutionResult(
+        values={},
+        derivations={},
+        unresolved=[],
+        conflicts=[],
+    )
+    draft = build_semantic_draft(
+        graph,
+        resolution,
+        metric_profile=MetricProfileSpec(
+            plane="YZ",
+            overall_u=32,
+            overall_v=66,
+            upright_width=16,
+            base_height=8,
+            upright_side="max",
+            source_ids=["engineering:overall-y32-z66-upright16-base8"],
+        ),
+    )
+
+    assert draft["profile"]["plane"] == "YZ"
+    assert draft["profile"]["topology"] == "L"
+    assert draft["profile"]["segments"][0] == {
+        "type": "line",
+        "y1": -16.0,
+        "z1": 0.0,
+        "y2": 16.0,
+        "z2": 0.0,
+    }
+    assert draft["profile"]["segments"][3] == {
+        "type": "line",
+        "y1": 0.0,
+        "z1": 66.0,
+        "y2": 0.0,
+        "z2": 8.0,
+    }
+
+    by_target = {
+        item["target"]: item
+        for item in draft["source_ledger"]
+        if item.get("target")
+    }
+    assert by_target["profile.segments.0.y1"]["value"] == -16.0
+    assert by_target["profile.segments.0.y1"]["solver"] == "metric_profile_solver"
+    assert by_target["profile.segments.0.y1"]["evidence"] == [
+        "engineering:overall-y32-z66-upright16-base8"
+    ]
+
+
+def test_build_semantic_draft_rejects_metric_profile_overall_mismatch() -> None:
+    from nx_mcp.drawing_intelligence.draft import DraftAssemblyError, build_semantic_draft
+    from nx_mcp.drawing_intelligence.evidence import EvidenceGraph, OverallDimensions
+    from nx_mcp.drawing_intelligence.resolver import ResolutionResult
+
+    graph = EvidenceGraph(
+        schema_version="1.0",
+        coordinate_system="overall_min_xyz",
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[],
+        projections=[],
+        dimensions=[],
+        datum_alignments=[],
+        direct_values=[],
+        relations=[],
+        required_targets=[],
+        observations=[],
+        unresolved_evidence=[],
+    )
+    resolution = ResolutionResult(
+        values={},
+        derivations={},
+        unresolved=[],
+        conflicts=[],
+    )
+
+    with pytest.raises(DraftAssemblyError):
+        build_semantic_draft(
+            graph,
+            resolution,
+            metric_profile=MetricProfileSpec(
+                plane="YZ",
+                overall_u=30,
+                overall_v=66,
+                upright_width=16,
+                base_height=8,
+                upright_side="max",
+            ),
+        )

@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from .evidence import DirectValueEvidence, EvidenceGraph, RelationEvidence
+from .metric_profile_solver import MetricProfileSpec, solve_metric_profile
 from .resolver import ResolutionResult
 
 
@@ -610,8 +611,105 @@ def _unresolved_entries(
     return entries
 
 
+def _expected_profile_overall(
+    graph: EvidenceGraph,
+    plane: str,
+) -> tuple[float, float]:
+    return {
+        "XY": (
+            float(graph.overall_dimensions.length_x),
+            float(graph.overall_dimensions.width_y),
+        ),
+        "XZ": (
+            float(graph.overall_dimensions.length_x),
+            float(graph.overall_dimensions.height_z),
+        ),
+        "YZ": (
+            float(graph.overall_dimensions.width_y),
+            float(graph.overall_dimensions.height_z),
+        ),
+    }[plane]
+
+
+def _materialize_metric_profile(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+    spec: MetricProfileSpec,
+) -> None:
+    expected_u, expected_v = _expected_profile_overall(graph, spec.plane)
+    if abs(float(spec.overall_u) - expected_u) > 1e-9:
+        raise DraftAssemblyError(
+            "metric profile overall_u disagrees with canonical overall dimensions"
+        )
+    if abs(float(spec.overall_v) - expected_v) > 1e-9:
+        raise DraftAssemblyError(
+            "metric profile overall_v disagrees with canonical overall dimensions"
+        )
+
+    planner_spec = spec.model_copy(
+        update={"coordinate_mode": "centered_u_bottom_v"}
+    )
+    solution = solve_metric_profile(planner_spec)
+    if solution.engineering_coordinate_inferred_from_pixels:
+        raise DraftAssemblyError(
+            "metric profile solver must not infer engineering coordinates from pixels"
+        )
+
+    existing = draft.get("profile")
+    solved_profile = {
+        "plane": solution.plane,
+        "topology": solution.topology,
+        "segments": copy.deepcopy(solution.segments),
+    }
+    if existing not in (None, {}) and not _equal(existing, solved_profile):
+        raise DraftAssemblyError(
+            "metric profile solution conflicts with existing canonical profile"
+        )
+    draft["profile"] = solved_profile
+
+    evidence = list(dict.fromkeys(spec.source_ids))
+    draft["source_ledger"].extend(
+        [
+            {
+                "id": "METRIC_PROFILE_PLANE",
+                "semantic": "profile_topology",
+                "value": solution.plane,
+                "target": "profile.plane",
+                "evidence": evidence,
+                "solver": "metric_profile_solver",
+            },
+            {
+                "id": "METRIC_PROFILE_TOPOLOGY",
+                "semantic": "profile_topology",
+                "value": solution.topology,
+                "target": "profile.topology",
+                "evidence": evidence,
+                "solver": "metric_profile_solver",
+            },
+        ]
+    )
+    for segment_index, segment in enumerate(solution.segments):
+        for field, value in segment.items():
+            target = f"profile.segments.{segment_index}.{field}"
+            draft["source_ledger"].append(
+                {
+                    "id": (
+                        "METRIC_PROFILE_"
+                        f"{segment_index}_{field.upper()}"
+                    ),
+                    "semantic": "profile_dimension",
+                    "value": copy.deepcopy(value),
+                    "target": target,
+                    "evidence": evidence,
+                    "solver": "metric_profile_solver",
+                }
+            )
+
+
 def build_semantic_draft(
-    graph: EvidenceGraph, resolution: ResolutionResult | None = None
+    graph: EvidenceGraph,
+    resolution: ResolutionResult | None = None,
+    metric_profile: MetricProfileSpec | None = None,
 ) -> dict[str, Any]:
     """Serialize resolved evidence into the existing semantic-draft contract.
 
@@ -658,6 +756,9 @@ def build_semantic_draft(
         "dimension_conflicts": copy.deepcopy(resolution.conflicts),
         "dimension_closure": {"status": "closed"},
     }
+
+    if metric_profile is not None:
+        _materialize_metric_profile(draft, graph, metric_profile)
 
     # Materialize all direct observations first so feature type is available
     # before semantic inference (for example slot width -> slot_width).

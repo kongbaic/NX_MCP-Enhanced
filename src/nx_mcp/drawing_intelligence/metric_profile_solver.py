@@ -29,6 +29,7 @@ class MetricProfileSpec(BaseModel):
     base_height: float = Field(gt=0)
     upright_side: ProfileSide
     coordinate_mode: ProfileCoordinateMode = "overall_min"
+    source_ids: list[str] = []
 
     @model_validator(mode="after")
     def _geometry_is_valid(self) -> "MetricProfileSpec":

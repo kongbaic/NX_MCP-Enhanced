@@ -101,6 +101,7 @@ CaptureEndpointRole = Literal[
     "overall_min",
     "overall_max",
     "entity_center",
+    "profile_boundary",
     "unresolved",
 ]
 DimensionEndpointEvidenceKind = Literal[
@@ -108,6 +109,7 @@ DimensionEndpointEvidenceKind = Literal[
     "center_mark",
     "explicit_midline",
     "circle_center",
+    "profile_edge",
 ]
 CaptureEndpointUnresolvedKind = Literal[
     "intermediate_surface",
@@ -133,16 +135,16 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "CaptureDimensionEndpoint":
-        if self.role == "entity_center":
+        if self.role in {"entity_center", "profile_boundary"}:
             if not self.entity_id:
-                raise ValueError("entity_center endpoint requires entity_id")
+                raise ValueError(f"{self.role} endpoint requires entity_id")
             if self.candidate_entity_ids:
                 raise ValueError(
-                    "entity_center endpoint must not carry candidate_entity_ids"
+                    f"{self.role} endpoint must not carry candidate_entity_ids"
                 )
             if self.unresolved_kind is not None:
                 raise ValueError(
-                    "entity_center endpoint must not carry unresolved_kind"
+                    f"{self.role} endpoint must not carry unresolved_kind"
                 )
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_id is not None:

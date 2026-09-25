@@ -3911,7 +3911,7 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_identity_only": True,
         },
         {
-            "kind": "hybrid_metric_profile_topology_ledger",
+            "kind": "hybrid_profile_topology_ledger",
             "schema": "1.0",
             "items": metric_profile_topology_hints,
             "engineering_coordinate_inferred_from_pixels": False,

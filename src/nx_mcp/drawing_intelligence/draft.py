@@ -80,7 +80,7 @@ def _transform_center_value(
         return output
 
     if isinstance(value, list):
-        output = copy.deepcopy(value)
+        output: list[Any] = copy.deepcopy(value)
         for index, axis in enumerate(("X", "Y", "Z")):
             if index >= len(output):
                 break

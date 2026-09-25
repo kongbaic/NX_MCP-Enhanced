@@ -235,6 +235,34 @@ def _get_target(root: dict[str, Any], target: str) -> Any:
     return current
 
 
+def _infer_feature_types(draft: dict[str, Any]) -> None:
+    """Assign only feature types implied by already-materialized semantics."""
+
+    for feature in draft.get("features", []):
+        if not isinstance(feature, dict) or feature.get("type"):
+            continue
+
+        keys = set(feature)
+        if "boundary" in keys and keys <= {"id", "boundary"}:
+            feature["type"] = "reference_boundary"
+            continue
+
+        if feature.get("thread_spec") is not None or feature.get("thread_depth") is not None:
+            feature["type"] = "threaded_hole"
+            continue
+
+        if (
+            feature.get("recessed_hole") is True
+            or feature.get("recess_diameter") is not None
+            or feature.get("recess_depth") is not None
+        ):
+            feature["type"] = "recessed_hole"
+            continue
+
+        if feature.get("diameter") is not None and feature.get("axis") in {"X", "Y", "Z"}:
+            feature["type"] = "hole"
+
+
 def _feature_type(root: dict[str, Any], target: str) -> str:
     if not target.startswith("feature:"):
         return ""
@@ -596,5 +624,6 @@ def build_semantic_draft(
     ):
         draft["dimension_closure"]["status"] = "incomplete"
 
+    _infer_feature_types(draft)
     draft["features"].sort(key=lambda item: str(item.get("id") or ""))
     return draft

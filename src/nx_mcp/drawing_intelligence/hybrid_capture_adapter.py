@@ -2296,6 +2296,27 @@ _VIEW_NORMAL_BY_KIND: dict[str, Axis] = {
 }
 
 
+def _projection_center_axis(
+    view_kind: ViewKind,
+    line_orientation: str,
+) -> Axis:
+    """Return the engineering axis represented by a line's axis_px position."""
+
+    pixel_index = 1 if line_orientation == "horizontal" else 0
+    matches = [
+        axis
+        for (candidate_view, axis), candidate_index
+        in _PIXEL_INDEX_BY_VIEW_AXIS.items()
+        if candidate_view == view_kind and candidate_index == pixel_index
+    ]
+    if len(matches) != 1:
+        raise HybridCaptureAdapterError(
+            "projection line center axis is not uniquely defined for "
+            f"{view_kind!r}/{line_orientation!r}"
+        )
+    return matches[0]
+
+
 def _unique_thread_recess_centerline_alignments(
     *,
     report: dict[str, Any],
@@ -2339,7 +2360,10 @@ def _unique_thread_recess_centerline_alignments(
         orientation = str(record.get("pattern_orientation") or "")
         if orientation not in {"horizontal", "vertical"}:
             continue
-        shared_axis = _axis_for(source_view.view_kind, orientation)
+        shared_axis = _projection_center_axis(
+            source_view.view_kind,
+            orientation,
+        )
         if shared_axis == feature_axis:
             continue
 

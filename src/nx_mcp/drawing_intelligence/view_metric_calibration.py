@@ -111,6 +111,7 @@ def derive_view_axis_boundaries(
     candidates: list[dict[str, Any]],
     region_views: dict[str, str],
     overall_dimensions: dict[str, float],
+    profile_inventory: list[dict[str, Any]] | None = None,
     relative_tolerance: float = 1e-6,
 ) -> list[dict[str, Any]]:
     """Identify overall boundary owners without inferring mm from pixel distance.
@@ -218,6 +219,76 @@ def derive_view_axis_boundaries(
             ),
         }
         resolved_by_axis.setdefault((region_id, axis), []).append(record)
+
+    if profile_inventory:
+        resolved_keys = set(resolved_by_axis)
+        for region_id, view_kind in region_views.items():
+            for axis in ("X", "Y", "Z"):
+                if (region_id, axis) in resolved_keys:
+                    continue
+                overall_value = _overall_value(overall_dimensions, axis)
+                expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get(
+                    (view_kind, axis)
+                )
+                if overall_value is None or expected_orientation is None:
+                    continue
+
+                edges = [
+                    item
+                    for item in profile_inventory
+                    if isinstance(item, dict)
+                    and item.get("kind") == "profile_edge_candidate"
+                    and str(item.get("region_id") or "") == region_id
+                    and str(item.get("source_orientation") or "")
+                    == expected_orientation
+                ]
+                minimum = [
+                    item for item in edges if item.get("relative_extreme_side") == "min"
+                ]
+                maximum = [
+                    item for item in edges if item.get("relative_extreme_side") == "max"
+                ]
+                if len(minimum) != 1 or len(maximum) != 1:
+                    continue
+
+                min_edge = minimum[0]
+                max_edge = maximum[0]
+                if str(min_edge.get("ref") or "") == str(max_edge.get("ref") or ""):
+                    continue
+
+                role_by_side = (
+                    {"min": "overall_min", "max": "overall_max"}
+                    if expected_orientation == "vertical"
+                    else {"min": "overall_max", "max": "overall_min"}
+                )
+                resolved_by_axis[(region_id, axis)] = [
+                    {
+                        "status": "resolved",
+                        "region_id": region_id,
+                        "view_kind": view_kind,
+                        "axis": axis,
+                        "candidate_id": None,
+                        "overall_dimension_value": overall_value,
+                        "anchors": [
+                            {
+                                "ref": str(min_edge.get("ref") or ""),
+                                "pixel_extreme_side": "min",
+                                "role": role_by_side["min"],
+                                "position_px": float(min_edge["position_px"]),
+                            },
+                            {
+                                "ref": str(max_edge.get("ref") or ""),
+                                "pixel_extreme_side": "max",
+                                "role": role_by_side["max"],
+                                "position_px": float(max_edge["position_px"]),
+                            },
+                        ],
+                        "basis": (
+                            "independent_overall_dimension_plus_unique_profile_extremes"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                    }
+                ]
 
     output: list[dict[str, Any]] = []
     for (region_id, axis), records in sorted(resolved_by_axis.items()):

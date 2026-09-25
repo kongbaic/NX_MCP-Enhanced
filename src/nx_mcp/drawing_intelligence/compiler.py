@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, Literal
 
 from .evidence import (
     DatumAlignmentEvidence,
@@ -294,11 +294,16 @@ def _compile_center_distance(
     if not all(endpoint.role == "feature_center" for endpoint in observation.endpoints):
         return False
     targets = [endpoint.target for endpoint in observation.endpoints]
-    if not all(isinstance(target, str) and target for target in targets):
+    typed_targets = [
+        target
+        for target in targets
+        if isinstance(target, str) and target
+    ]
+    if len(typed_targets) != 2:
         return False
-    first_feature = _feature_id(targets[0])
-    second_feature = _feature_id(targets[1])
-    kind = (
+    first_feature = _feature_id(typed_targets[0])
+    second_feature = _feature_id(typed_targets[1])
+    kind: Literal["center_spacing", "center_distance"] = (
         "center_spacing"
         if first_feature is not None and first_feature == second_feature
         else "center_distance"
@@ -311,7 +316,7 @@ def _compile_center_distance(
             axis=observation.axis,
             value=observation.value,
             direction=observation.direction,
-            targets=[targets[0], targets[1]],
+            targets=typed_targets,
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),

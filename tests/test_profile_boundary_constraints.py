@@ -97,7 +97,7 @@ def test_internal_profile_boundary_resolves_from_overall_max_dimension():
     relation_source = next(
         item
         for item in draft["source_ledger"]
-        if item.get("id") == "R2.STEP_TO_RIGHT"
+        if item.get("id") == relation.id
     )
     assert relation_source["semantic"] == "edge_offset"
     assert relation_source["value"] == 24.0

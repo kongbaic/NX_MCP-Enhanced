@@ -33,7 +33,7 @@ def _planner_axis_shift(graph: EvidenceGraph, axis: str) -> float:
 def _scalar_coordinate_axis(target: str) -> str | None:
     lower = target.lower()
 
-    match = re.search(r"\.centerline\.(x|y|z)$", lower)
+    match = re.search(r"\.(?:centerline|boundary)\.(x|y|z)$", lower)
     if match:
         return match.group(1).upper()
 

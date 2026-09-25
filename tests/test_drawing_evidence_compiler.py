@@ -860,3 +860,116 @@ def test_matching_overall_dimension_observations_remain_available_to_downstream(
         "overall_dimensions.height_z",
     }
     assert compiled.unresolved_evidence == []
+
+
+
+def test_overall_dimension_fact_ledger_becomes_gate_a_source_provenance():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        observations=[
+            {
+                "kind": "overall_dimension_fact_ledger",
+                "facts": [
+                    {"axis": "X", "value": 40, "evidence": ["context:overall-x"]},
+                    {"axis": "Y", "value": 32, "evidence": ["context:overall-y"]},
+                    {"axis": "Z", "value": 66, "evidence": ["context:overall-z"]},
+                ],
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    targets = {
+        item.target: item
+        for item in compiled.direct_values
+        if item.target.startswith("overall_dimensions.")
+    }
+
+    assert targets["overall_dimensions.length_x"].source_ids == ["context:overall-x"]
+    assert targets["overall_dimensions.width_y"].source_ids == ["context:overall-y"]
+    assert targets["overall_dimensions.height_z"].source_ids == ["context:overall-z"]
+
+    draft = build_semantic_draft(compiled, resolve_evidence_graph(compiled))
+    source_targets = {
+        item["target"]: item
+        for item in draft["source_ledger"]
+        if item.get("semantic") == "overall_dimension"
+    }
+    assert source_targets["overall_dimensions.length_x"]["evidence"] == [
+        "context:overall-x"
+    ]
+    assert source_targets["overall_dimensions.width_y"]["evidence"] == [
+        "context:overall-y"
+    ]
+    assert source_targets["overall_dimensions.height_z"]["evidence"] == [
+        "context:overall-z"
+    ]
+
+
+def test_draft_infers_only_semantically_implied_feature_types():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        direct_values=[
+            DirectValueEvidence(
+                id="BOUNDARY",
+                target="feature:F_BOUNDARY.boundary.y",
+                value=8,
+            ),
+            DirectValueEvidence(
+                id="HOLE_AXIS",
+                target="feature:F_HOLE.axis",
+                value="Y",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="HOLE_D",
+                target="feature:F_HOLE.diameter",
+                value=20,
+            ),
+            DirectValueEvidence(
+                id="THREAD_AXIS",
+                target="feature:F_THREAD.axis",
+                value="X",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="THREAD_SPEC",
+                target="feature:F_THREAD.thread_spec",
+                value="M6",
+            ),
+            DirectValueEvidence(
+                id="RECESS_AXIS",
+                target="feature:F_RECESS.axis",
+                value="X",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="RECESS_D",
+                target="feature:F_RECESS.diameter",
+                value=6.6,
+            ),
+            DirectValueEvidence(
+                id="RECESS_OUTER",
+                target="feature:F_RECESS.recess_diameter",
+                value=11,
+            ),
+            DirectValueEvidence(
+                id="RECESS_DEPTH",
+                target="feature:F_RECESS.recess_depth",
+                value=6.5,
+            ),
+            DirectValueEvidence(
+                id="RECESS_FLAG",
+                target="feature:F_RECESS.recessed_hole",
+                value=True,
+            ),
+        ],
+    )
+
+    draft = build_semantic_draft(graph, resolve_evidence_graph(graph))
+    features = {item["id"]: item for item in draft["features"]}
+
+    assert features["F_BOUNDARY"]["type"] == "reference_boundary"
+    assert features["F_HOLE"]["type"] == "hole"
+    assert features["F_THREAD"]["type"] == "threaded_hole"
+    assert features["F_RECESS"]["type"] == "recessed_hole"

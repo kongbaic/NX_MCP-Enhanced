@@ -26,6 +26,7 @@ EndpointRole = Literal[
     "overall_min",
     "overall_max",
     "feature_center",
+    "profile_boundary",
 ]
 
 
@@ -117,8 +118,8 @@ class DimensionEndpoint(BaseModel):
 
     @model_validator(mode="after")
     def _validate_endpoint(self) -> "DimensionEndpoint":
-        if self.role == "feature_center" and not self.target:
-            raise ValueError("feature_center endpoint requires target")
+        if self.role in {"feature_center", "profile_boundary"} and not self.target:
+            raise ValueError(f"{self.role} endpoint requires target")
         if self.role in {"overall_min", "overall_max"} and self.target is not None:
             raise ValueError(f"{self.role} endpoint must not carry target")
         return self

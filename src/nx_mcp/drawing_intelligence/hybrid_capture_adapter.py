@@ -496,11 +496,49 @@ def _boundary_role_lookup(
     return output
 
 
+def _profile_boundary_entities(
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+) -> tuple[list[ObservationEntity], dict[str, str]]:
+    entities: list[ObservationEntity] = []
+    by_ref: dict[str, str] = {}
+    seen_keys: set[str] = set()
+
+    for item in profile_inventory:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") != "profile_edge_candidate":
+            continue
+        region_id = str(item.get("region_id") or "")
+        ref = str(item.get("ref") or "")
+        if not region_id or not ref or region_id not in view_lookup:
+            continue
+
+        entity_key = f"{region_id}.PROFILE_BOUNDARY.{ref}"
+        if entity_key in seen_keys:
+            continue
+        seen_keys.add(entity_key)
+        by_ref[ref] = entity_key
+        entities.append(
+            ObservationEntity(
+                key=entity_key,
+                view_key=f"view.{region_id}",
+                shape="profile",
+                cross_view_disposition="single_view",
+                evidence=[f"hybrid:profile-edge:{ref}"],
+                required_for_modeling=False,
+            )
+        )
+
+    return entities, by_ref
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
     entity_keys: set[str],
     boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
+    profile_entity_by_ref: dict[str, str],
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
     endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
@@ -570,6 +608,18 @@ def _dimension_endpoints_from_candidates(
                     output.append(
                         ObservationDimensionEndpoint(
                             role=boundary_role,
+                            evidence=evidence,
+                        )
+                    )
+                    continue
+
+                profile_entity_key = profile_entity_by_ref.get(ref)
+                if profile_entity_key is not None:
+                    output.append(
+                        ObservationDimensionEndpoint(
+                            role="profile_boundary",
+                            entity_key=profile_entity_key,
+                            basis="profile_edge",
                             evidence=evidence,
                         )
                     )
@@ -1579,6 +1629,11 @@ def adapt_hybrid_ocr_report(
     dimensions: list[ObservationDimension] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
+    profile_entities, profile_entity_by_ref = _profile_boundary_entities(
+        profile_inventory,
+        view_lookup,
+    )
+    entities.extend(profile_entities)
 
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
@@ -1671,6 +1726,7 @@ def adapt_hybrid_ocr_report(
             raw_candidate,
             entity_keys={item.key for item in entities},
             boundary_roles=boundary_roles,
+            profile_entity_by_ref=profile_entity_by_ref,
             evidence=evidence,
         )
         dimensions.append(

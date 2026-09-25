@@ -1,5 +1,6 @@
 from .capture import (
     AssociationClaim,
+    CaptureCenterlineAlignment,
     CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
@@ -62,6 +63,7 @@ __all__ = [
     "CaptureEntity",
     "CaptureDimensionEndpoint",
     "CaptureDimension",
+    "CaptureCenterlineAlignment",
     "CaptureDatumAlignment",
     "AssociationClaim",
     "CoordinateFact",

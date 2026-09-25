@@ -114,6 +114,9 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     for item in capture.datum_alignments:
         referenced.add(item.entity_id)
 
+    for item in capture.centerline_alignments:
+        referenced.update(item.entity_ids)
+
     for item in capture.required_targets:
         referenced.add(item.entity_id)
 
@@ -959,6 +962,35 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         )
         for item in capture.datum_alignments
     ]
+
+    for item in capture.centerline_alignments:
+        feature_ids = [
+            entity_to_feature[entity_id]
+            for entity_id in item.entity_ids
+            if entity_id in entity_to_feature
+        ]
+        if len(feature_ids) != len(item.entity_ids) or len(set(feature_ids)) < 2:
+            continue
+        for axis in ("X", "Y", "Z"):
+            if axis == item.feature_axis:
+                continue
+            synthetic_relations.append(
+                RelationEvidence(
+                    id=f"{item.id}_{axis}",
+                    kind="alignment",
+                    axis=axis,
+                    targets=[
+                        f"feature:{feature_id}.centerline.{axis.lower()}"
+                        for feature_id in feature_ids
+                    ],
+                    source_ids=item.source_ids,
+                    required_for_modeling=item.required_for_modeling,
+                    metadata={
+                        "basis": "coaxial_centerline_alignment",
+                        "feature_axis": item.feature_axis,
+                    },
+                )
+            )
 
     required_targets = {
         item.target

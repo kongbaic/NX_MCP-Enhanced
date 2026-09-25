@@ -16,6 +16,7 @@ from .hidden_projection_centers import derive_hidden_projection_center_candidate
 from .evidence import Axis, ViewKind
 from .reader_observations import (
     ObservationAssociation,
+    ObservationCenterlineAlignment,
     ObservationDimension,
     ObservationDimensionEndpoint,
     ObservationDatumAlignment,
@@ -2288,6 +2289,165 @@ def _projection_alignment_tolerance(
     return 3.0
 
 
+_VIEW_NORMAL_BY_KIND: dict[str, Axis] = {
+    "front": "Y",
+    "side": "X",
+    "top": "Z",
+}
+
+
+def _unique_thread_recess_centerline_alignments(
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    hidden_entity_records: dict[str, dict[str, Any]],
+    callout_values: list[ObservationValue],
+    entity_keys: set[str],
+) -> tuple[list[ObservationCenterlineAlignment], list[dict[str, Any]]]:
+    """Identify a unique threaded/recessed coaxial continuation across views.
+
+    Pixels establish only orthographic centerline identity. The resolver gets
+    engineering coordinates from dimensions and propagates them by alignment.
+    """
+
+    values_by_entity: dict[str, dict[str, Any]] = {}
+    for item in callout_values:
+        values_by_entity.setdefault(item.entity_key, {})[item.field] = item.value
+
+    regions = {
+        str(item.get("region_id") or ""): item
+        for item in report.get("regions", [])
+        if isinstance(item, dict) and item.get("region_id")
+    }
+    alignments: list[ObservationCenterlineAlignment] = []
+    ledger: list[dict[str, Any]] = []
+
+    for hidden_entity, record in sorted(hidden_entity_records.items()):
+        if hidden_entity not in entity_keys:
+            continue
+        source_fields = values_by_entity.get(hidden_entity, {})
+        if not isinstance(source_fields.get("thread_spec"), str):
+            continue
+
+        feature_axis = str(record.get("feature_axis") or "").upper()
+        if feature_axis not in {"X", "Y", "Z"}:
+            continue
+        source_region = hidden_entity.split(".", 1)[0]
+        source_view = view_lookup.get(source_region)
+        if source_view is None:
+            continue
+        orientation = str(record.get("pattern_orientation") or "")
+        if orientation not in {"horizontal", "vertical"}:
+            continue
+        shared_axis = _axis_for(source_view.view_kind, orientation)
+        if shared_axis == feature_axis:
+            continue
+
+        source_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (source_view.view_kind, shared_axis)
+        )
+        source_position = record.get("position_px")
+        if (
+            source_pixel_index is None
+            or not isinstance(source_position, (int, float))
+            or isinstance(source_position, bool)
+        ):
+            continue
+
+        matches: list[dict[str, Any]] = []
+        for target_region, region in sorted(regions.items()):
+            if target_region == source_region:
+                continue
+            target_view = view_lookup.get(target_region)
+            if (
+                target_view is None
+                or _VIEW_NORMAL_BY_KIND.get(target_view.view_kind) != feature_axis
+            ):
+                continue
+            target_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+                (target_view.view_kind, shared_axis)
+            )
+            if target_pixel_index is None or target_pixel_index != source_pixel_index:
+                continue
+
+            tolerance = max(
+                _projection_alignment_tolerance(report, source_region),
+                _projection_alignment_tolerance(report, target_region),
+            )
+            groups = region.get("circle_groups", [])
+            if not isinstance(groups, list):
+                continue
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                group_id = str(group.get("circle_group_id") or "")
+                center = group.get("center_px")
+                target_entity = f"{target_region}.{group_id}" if group_id else ""
+                target_fields = values_by_entity.get(target_entity, {})
+                if (
+                    target_entity not in entity_keys
+                    or target_fields.get("recessed_hole") is not True
+                    or not isinstance(center, list)
+                    or len(center) < 2
+                    or not isinstance(center[target_pixel_index], (int, float))
+                    or isinstance(center[target_pixel_index], bool)
+                ):
+                    continue
+
+                residual = abs(
+                    float(center[target_pixel_index]) - float(source_position)
+                )
+                if residual <= tolerance:
+                    matches.append(
+                        {
+                            "entity_key": target_entity,
+                            "shared_axis": shared_axis,
+                            "residual_px": residual,
+                            "tolerance_px": tolerance,
+                        }
+                    )
+
+        matches.sort(key=lambda item: (item["residual_px"], item["entity_key"]))
+        if len(matches) != 1:
+            continue
+
+        match = matches[0]
+        target_entity = str(match["entity_key"])
+        evidence = [
+            f"hybrid:centerline:{hidden_entity}",
+            f"hybrid:centerline:{target_entity}",
+            (
+                "hybrid:orthographic_centerline_residual_px:"
+                f"{float(match['residual_px']):.3f}"
+            ),
+        ]
+        alignments.append(
+            ObservationCenterlineAlignment(
+                entity_keys=[hidden_entity, target_entity],
+                feature_axis=feature_axis,
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        ledger.append(
+            {
+                "entity_keys": [hidden_entity, target_entity],
+                "feature_axis": feature_axis,
+                "shared_projection_axis": match["shared_axis"],
+                "projection_residual_px": round(float(match["residual_px"]), 3),
+                "projection_tolerance_px": round(float(match["tolerance_px"]), 3),
+                "basis": (
+                    "unique_orthographic_centerline_alignment_plus_"
+                    "threaded_and_recessed_continuation_semantics"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return alignments, ledger
+
+
 def _unique_orthographic_associations(
     *,
     report: dict[str, Any],
@@ -2603,6 +2763,16 @@ def adapt_hybrid_ocr_report(
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)
 
+    centerline_alignments, centerline_alignment_ledger = (
+        _unique_thread_recess_centerline_alignments(
+            report=report,
+            view_lookup=view_lookup,
+            hidden_entity_records=hidden_entity_records,
+            callout_values=callout_values,
+            entity_keys={item.key for item in entities},
+        )
+    )
+
     pattern_entity_by_ref: dict[str, str] = {}
     for record in callout_ledger:
         if not isinstance(record, dict):
@@ -2829,6 +2999,13 @@ def adapt_hybrid_ocr_report(
             "engineering_coordinate_inferred_from_pixels": False,
         },
         {
+            "kind": "hybrid_centerline_alignment_ledger",
+            "schema": "1.0",
+            "items": centerline_alignment_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
             "kind": "hybrid_circle_datum_alignment_ledger",
             "schema": "1.0",
             "items": circle_alignment_records,
@@ -2868,6 +3045,7 @@ def adapt_hybrid_ocr_report(
         values=[*geometry_values, *callout_values],
         dimensions=dimensions,
         datum_alignments=datum_alignments,
+        centerline_alignments=centerline_alignments,
         observations=observations,
         unresolved=unresolved,
     )

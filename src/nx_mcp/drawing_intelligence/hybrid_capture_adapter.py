@@ -924,6 +924,9 @@ def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
     view_lookup: dict[str, HybridRegionView],
+    *,
+    hidden_pattern_owner_by_index: dict[tuple[str, int], str],
+    existing_entity_keys: set[str],
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -1026,7 +1029,25 @@ def _engineering_callout_routing(
                     ),
                 )
                 if candidate_pattern_binding.get("status") == "bound":
-                    linear_pattern_binding = candidate_pattern_binding
+                    pattern_index = candidate_pattern_binding.get("pattern_index")
+                    hidden_owner = (
+                        hidden_pattern_owner_by_index.get(
+                            (region_id, int(pattern_index))
+                        )
+                        if isinstance(pattern_index, int)
+                        else None
+                    )
+                    if hidden_owner is not None:
+                        linear_pattern_binding = {
+                            **candidate_pattern_binding,
+                            "entity_key": hidden_owner,
+                            "hidden_pair_owner_reused": True,
+                            "basis": (
+                                "callout_oblique_leader_to_hidden_pair_member"
+                            ),
+                        }
+                    else:
+                        linear_pattern_binding = candidate_pattern_binding
 
         dimension_binding: dict[str, Any] | None = None
         if (
@@ -1127,7 +1148,10 @@ def _engineering_callout_routing(
                     **linear_pattern_binding,
                     "status": "pattern_backed",
                 }
-                if pattern_entity_key not in callout_entity_keys:
+                if (
+                    pattern_entity_key not in existing_entity_keys
+                    and pattern_entity_key not in callout_entity_keys
+                ):
                     callout_entity_keys.add(pattern_entity_key)
                     callout_entities.append(
                         ObservationEntity(
@@ -1236,7 +1260,10 @@ def _engineering_callout_routing(
         else:
             entity_key = str(binding["entity_key"])
 
-        if binding.get("status") == "pattern_backed":
+        if (
+            binding.get("status") == "pattern_backed"
+            and not binding.get("hidden_pair_owner_reused")
+        ):
             axis_target = (entity_key, "axis")
             axis_value = binding.get("axis")
             if axis_value in {"X", "Y", "Z"}:
@@ -1965,6 +1992,22 @@ def adapt_hybrid_ocr_report(
         )
         for entity_key, record in sorted(hidden_entity_records.items())
     )
+    hidden_pattern_candidates: dict[tuple[str, int], set[str]] = {}
+    for entity_key, record in hidden_entity_records.items():
+        region_id = entity_key.split(".", 1)[0]
+        for raw_index in record.get("source_pattern_indices", []):
+            if not isinstance(raw_index, int):
+                continue
+            hidden_pattern_candidates.setdefault(
+                (region_id, raw_index),
+                set(),
+            ).add(entity_key)
+    hidden_pattern_owner_by_index = {
+        key: next(iter(owners))
+        for key, owners in hidden_pattern_candidates.items()
+        if len(owners) == 1
+    }
+
     geometry_values = [
         ObservationValue(
             entity_key=entity_key,
@@ -2093,6 +2136,8 @@ def adapt_hybrid_ocr_report(
         report,
         working_candidates,
         view_lookup,
+        hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
+        existing_entity_keys={item.key for item in entities},
     )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)

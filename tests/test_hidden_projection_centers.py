@@ -552,14 +552,12 @@ def test_real_like_dg23_resolves_upper_center_z58_from_constraints_only():
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
 
-    upper_entity = next(
-        item for item in capture.entities if item.source_key == upper_key
-    )
-    main_entity = next(
-        item for item in capture.entities if item.source_key == "R1.C_MAIN"
-    )
-    upper_feature = linked.entity_to_feature[upper_entity.id]
-    main_feature = linked.entity_to_feature[main_entity.id]
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    upper_feature = linked.entity_to_feature[entity_id_by_key[upper_key]]
+    main_feature = linked.entity_to_feature[entity_id_by_key["R1.C_MAIN"]]
 
     assert resolution.values[f"feature:{main_feature}.centerline.z"] == 40.0
     assert resolution.values[f"feature:{upper_feature}.centerline.z"] == 58.0

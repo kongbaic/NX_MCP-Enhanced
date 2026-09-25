@@ -904,3 +904,128 @@ def test_pattern_backed_m6_reuses_existing_hidden_pair_entity(monkeypatch):
     }
     assert ledger[0]["binding"]["entity_key"] == "R1.HIDDEN_PAIR.horizontal.004.005"
     assert ledger[0]["binding"]["hidden_pair_owner_reused"] is True
+
+def test_overall_ocr_conflict_becomes_advisory_only_with_independent_closed_overall(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_view_axis_boundaries",
+        lambda **kwargs: [
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "view_kind": "front",
+                "axis": "Z",
+                "candidate_id": "DG17",
+                "overall_dimension_value": 66.0,
+                "anchors": [
+                    {"role": "overall_max"},
+                    {"role": "overall_min"},
+                ],
+                "basis": "conflict_preserved_overall_dimension_endpoint_identity",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+    )
+
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {
+                        "axis": "Z",
+                        "value": 66,
+                        "evidence": ["independent:overall-Z-66"],
+                    },
+                ],
+            }
+        ),
+    )
+
+    conflict = next(
+        item
+        for item in partial.unresolved
+        if item.field == "dimension_value_candidate"
+    )
+    assert conflict.required_for_modeling is False
+    assert conflict.basis == [
+        "independent_overall_dimension_fact",
+        "resolved_overall_boundary_identity",
+    ]
+    assert "preserved as advisory evidence" in conflict.reason
+
+
+def test_overall_ocr_conflict_stays_blocking_when_overall_fact_reuses_same_candidate(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_view_axis_boundaries",
+        lambda **kwargs: [
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "view_kind": "front",
+                "axis": "Z",
+                "candidate_id": "DG17",
+                "overall_dimension_value": 66.0,
+                "anchors": [
+                    {"role": "overall_max"},
+                    {"role": "overall_min"},
+                ],
+                "basis": "conflict_preserved_overall_dimension_endpoint_identity",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+    )
+
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {
+                        "axis": "Z",
+                        "value": 66,
+                        "evidence": ["hybrid:DG17:wide"],
+                    },
+                ],
+            }
+        ),
+    )
+
+    conflict = next(
+        item
+        for item in partial.unresolved
+        if item.field == "dimension_value_candidate"
+    )
+    assert conflict.required_for_modeling is True
+

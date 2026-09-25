@@ -106,10 +106,93 @@ def _candidate_evidence(candidate_id: str) -> list[str]:
     ]
 
 
+def _linear_token_number(token: Any) -> float | None:
+    if not isinstance(token, str) or not re.fullmatch(r"\d+(?:\.\d+)?", token):
+        return None
+    value = float(token)
+    return value if value > 0 else None
+
+
+def _conflict_superseded_by_independent_overall(
+    *,
+    item: dict[str, Any],
+    candidate: dict[str, Any],
+    axis: Axis,
+    boundaries: list[dict[str, Any]],
+    overall_dimension_facts: list[PartialOverallDimensionFact],
+) -> bool:
+    """Return True only when independent engineering truth makes OCR conflict redundant."""
+
+    candidate_id = str(item.get("candidate_id") or "")
+    region_id = str(candidate.get("region_id") or "")
+    if not candidate_id or not region_id:
+        return False
+
+    boundary_matches = [
+        boundary
+        for boundary in boundaries
+        if isinstance(boundary, dict)
+        and boundary.get("status") == "resolved"
+        and str(boundary.get("region_id") or "") == region_id
+        and str(boundary.get("axis") or "") == axis
+        and str(boundary.get("candidate_id") or "") == candidate_id
+        and boundary.get("engineering_coordinate_inferred_from_pixels") is False
+    ]
+    if len(boundary_matches) != 1:
+        return False
+
+    boundary = boundary_matches[0]
+    boundary_value = boundary.get("overall_dimension_value")
+    if not isinstance(boundary_value, (int, float)) or isinstance(boundary_value, bool):
+        return False
+
+    roles = {
+        str(anchor.get("role") or "")
+        for anchor in boundary.get("anchors", [])
+        if isinstance(anchor, dict)
+    }
+    if roles != {"overall_min", "overall_max"}:
+        return False
+
+    matching_facts = [
+        fact
+        for fact in overall_dimension_facts
+        if fact.axis == axis and math.isclose(fact.value, float(boundary_value), abs_tol=1e-9)
+    ]
+    if len(matching_facts) != 1:
+        return False
+
+    fact = matching_facts[0]
+    if not fact.evidence:
+        return False
+    if any(candidate_id in str(evidence) for evidence in fact.evidence):
+        return False
+
+    observed_values = [
+        value
+        for value in [
+            _linear_token_number(item.get("token")),
+            *[
+                _linear_token_number(token)
+                for token in item.get("local_tokens", [])
+                if isinstance(token, str)
+            ],
+        ]
+        if value is not None
+    ]
+    return any(
+        math.isclose(value, fact.value, abs_tol=1e-9)
+        for value in observed_values
+    )
+
+
 def _coverage_unresolved(
     report: dict[str, Any],
     candidate_lookup: dict[str, dict[str, Any]],
     view_lookup: dict[str, HybridRegionView],
+    *,
+    boundaries: list[dict[str, Any]],
+    overall_dimension_facts: list[PartialOverallDimensionFact],
 ) -> list[ObservationUnresolved]:
     coverage = report.get("coverage")
     if not isinstance(coverage, dict):
@@ -141,18 +224,40 @@ def _coverage_unresolved(
             region_view.view_kind,
             str(candidate.get("orientation") or ""),
         )
+        superseded = _conflict_superseded_by_independent_overall(
+            item=item,
+            candidate=candidate,
+            axis=axis,
+            boundaries=boundaries,
+            overall_dimension_facts=overall_dimension_facts,
+        )
+        reason = (
+            "Hybrid whole/local OCR disagreement: "
+            f"whole={item.get('token')!r}, "
+            f"local={item.get('local_tokens')!r}."
+        )
+        if superseded:
+            reason += (
+                " Independent overall-dimension evidence plus resolved overall "
+                "boundary identity already closes this engineering axis; the OCR "
+                "conflict is preserved as advisory evidence."
+            )
         unresolved.append(
             ObservationUnresolved(
                 kind="unsupported_representation",
-                reason=(
-                    "Hybrid whole/local OCR disagreement: "
-                    f"whole={item.get('token')!r}, "
-                    f"local={item.get('local_tokens')!r}."
-                ),
+                reason=reason,
                 field="dimension_value_candidate",
                 axis=axis,
+                basis=(
+                    [
+                        "independent_overall_dimension_fact",
+                        "resolved_overall_boundary_identity",
+                    ]
+                    if superseded
+                    else []
+                ),
                 evidence=_candidate_evidence(candidate_id),
-                required_for_modeling=True,
+                required_for_modeling=not superseded,
             )
         )
 
@@ -2125,6 +2230,8 @@ def adapt_hybrid_ocr_report(
             report,
             candidate_lookup,
             view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=context.overall_dimension_facts,
         )
     )
     (

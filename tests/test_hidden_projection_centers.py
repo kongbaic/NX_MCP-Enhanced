@@ -384,18 +384,12 @@ def test_unique_hidden_center_plus_main_center_resolves_engineering_z58_without_
     compiled = compile_evidence_graph(linked.evidence)
     resolution = resolve_evidence_graph(compiled)
 
-    upper_entity = next(
-        item
-        for item in capture.entities
-        if item.source_key == upper_key
-    )
-    upper_feature = linked.entity_to_feature[upper_entity.id]
-    main_entity = next(
-        item
-        for item in capture.entities
-        if item.source_key == "R1.C_MAIN"
-    )
-    main_feature = linked.entity_to_feature[main_entity.id]
+    entity_id_by_key = {
+        observed.key: captured.id
+        for observed, captured in zip(observations.entities, capture.entities)
+    }
+    upper_feature = linked.entity_to_feature[entity_id_by_key[upper_key]]
+    main_feature = linked.entity_to_feature[entity_id_by_key["R1.C_MAIN"]]
 
     assert resolution.values[f"feature:{main_feature}.centerline.z"] == 40.0
     assert resolution.values[f"feature:{upper_feature}.centerline.z"] == 58.0

@@ -496,6 +496,9 @@ CYLINDRICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "through",
         "counterbore_diameter",
         "counterbore_depth",
+        "recess_diameter",
+        "recess_depth",
+        "recessed_hole",
     }
 )
 
@@ -571,6 +574,9 @@ CANONICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "width",
         "counterbore_diameter",
         "counterbore_depth",
+        "recess_diameter",
+        "recess_depth",
+        "recessed_hole",
         "type",
         "axis",
     }

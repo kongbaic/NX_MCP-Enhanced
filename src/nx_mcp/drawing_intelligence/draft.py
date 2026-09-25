@@ -664,6 +664,60 @@ def _auto_metric_profile_spec(
     if not topology_items or entity_to_feature is None:
         return None
 
+    def resolved_boundary_coordinate(
+        *,
+        axis: str,
+        entity_id: str,
+    ) -> tuple[float, list[str]] | None:
+        feature_id = entity_to_feature.get(entity_id)
+        if feature_id is not None:
+            direct_target = f"feature:{feature_id}.boundary.{axis}"
+            if direct_target in resolution.values:
+                return (
+                    float(resolution.values[direct_target]),
+                    list(resolution.traces.get(direct_target, [])),
+                )
+
+        # Orthographic views may materialize the same engineering boundary in
+        # only one view. Reuse it only when the resolved profile-boundary
+        # coordinate on this engineering axis is numerically unique.
+        candidates: list[tuple[float, str]] = []
+        for relation in graph.relations:
+            if relation.kind != "edge_offset" or relation.axis != axis.upper():
+                continue
+            if len(relation.targets) != 1:
+                continue
+            target = relation.targets[0]
+            if (
+                not target.startswith("feature:")
+                or not target.endswith(f".boundary.{axis}")
+                or target not in resolution.values
+            ):
+                continue
+            if not any(
+                "unassigned-profile-offset-recovery" in source_id
+                for source_id in relation.source_ids
+            ):
+                continue
+            candidates.append((float(resolution.values[target]), target))
+
+        if not candidates:
+            return None
+
+        unique_values: list[float] = []
+        for value, _ in candidates:
+            if not any(abs(value - existing) <= 1e-9 for existing in unique_values):
+                unique_values.append(value)
+        if len(unique_values) != 1:
+            return None
+
+        value = unique_values[0]
+        traces: list[str] = []
+        for candidate_value, target in candidates:
+            if abs(candidate_value - value) <= 1e-9:
+                traces.extend(resolution.traces.get(target, []))
+        return value, list(dict.fromkeys(traces))
+
     complete: list[MetricProfileSpec] = []
     for item in topology_items:
         plane = str(item.get("plane") or "")
@@ -682,20 +736,21 @@ def _auto_metric_profile_spec(
         ):
             continue
 
-        u_feature = entity_to_feature.get(internal_u_entity_id)
-        v_feature = entity_to_feature.get(internal_v_entity_id)
-        if u_feature is None or v_feature is None:
-            continue
-
         axis_u, axis_v = plane[0].lower(), plane[1].lower()
-        target_u = f"feature:{u_feature}.boundary.{axis_u}"
-        target_v = f"feature:{v_feature}.boundary.{axis_v}"
-        if target_u not in resolution.values or target_v not in resolution.values:
+        resolved_u = resolved_boundary_coordinate(
+            axis=axis_u,
+            entity_id=internal_u_entity_id,
+        )
+        resolved_v = resolved_boundary_coordinate(
+            axis=axis_v,
+            entity_id=internal_v_entity_id,
+        )
+        if resolved_u is None or resolved_v is None:
             continue
 
+        internal_u, sources_u = resolved_u
+        internal_v, sources_v = resolved_v
         overall_u, overall_v = _expected_profile_overall(graph, plane)
-        internal_u = float(resolution.values[target_u])
-        internal_v = float(resolution.values[target_v])
         upright_width = (
             internal_u
             if upright_side == "min"
@@ -710,8 +765,8 @@ def _auto_metric_profile_spec(
             continue
 
         sources: list[str] = []
-        sources.extend(resolution.traces.get(target_u, []))
-        sources.extend(resolution.traces.get(target_v, []))
+        sources.extend(sources_u)
+        sources.extend(sources_v)
         for key in ("internal_u_ref", "internal_v_ref"):
             value = item.get(key)
             if isinstance(value, str) and value:
@@ -749,6 +804,7 @@ def _auto_metric_profile_spec(
             "multiple complete metric profile solutions are available"
         )
     return complete[0] if complete else None
+
 
 
 def _materialize_metric_profile(

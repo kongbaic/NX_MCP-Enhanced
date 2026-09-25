@@ -325,3 +325,115 @@ def test_near_duplicate_pattern_edges_count_as_one_physical_target():
 
     assert result["status"] == "bound"
     assert result["binding_mode"] == "bounded_forward_extension_to_linear_pattern"
+
+def test_fragmented_leader_chain_reaches_profile_overlapping_dashed_pattern():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 75], [123, 90]],
+                "angle_deg": 61.9,
+                "length_px": 17.0,
+                "candidate_only": True,
+            },
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[124, 91], [139, 120]],
+                "angle_deg": 62.7,
+                "length_px": 32.6,
+                "candidate_only": True,
+            },
+        ],
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [],
+            "linear_pattern_candidates": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 154.0,
+                    "span_px": [130, 250],
+                    "segment_count": 3,
+                    "gap_count": 2,
+                    "dash_score": 0.62,
+                    "kind": "dashed_or_centerline_candidate",
+                }
+            ],
+        },
+        view_kind="side",
+        profile_inventory=[
+            {
+                "region_id": "R1",
+                "kind": "profile_edge_candidate",
+                "ref": "R1.structural.vertical.001",
+                "position_px": 153.4,
+                "source_orientation": "vertical",
+                "span_px": [130, 250],
+            }
+        ],
+    )
+
+    assert result["status"] == "bound"
+    assert result["pattern_index"] == 0
+    assert result["segment_count"] == 2
+    assert result["line_indices"] == [0, 1]
+    assert result["profile_overlap"] is True
+    assert result["fragmented_pattern_support"] == {
+        "segment_count": 3,
+        "gap_count": 2,
+        "dash_score": 0.62,
+    }
+    assert result["basis"] == (
+        "callout_fragmented_oblique_leader_to_unique_linear_pattern"
+    )
+
+
+def test_fragmented_leader_does_not_override_profile_without_dashed_support():
+    result = bind_callout_to_linear_pattern(
+        [[20, 20], [120, 20], [120, 70], [20, 70]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[115, 75], [123, 90]],
+                "angle_deg": 61.9,
+                "length_px": 17.0,
+                "candidate_only": True,
+            },
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[124, 91], [139, 120]],
+                "angle_deg": 62.7,
+                "length_px": 32.6,
+                "candidate_only": True,
+            },
+        ],
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [],
+            "linear_pattern_candidates": [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 154.0,
+                    "span_px": [130, 250],
+                    "kind": "dashed_or_centerline_candidate",
+                }
+            ],
+        },
+        view_kind="side",
+        profile_inventory=[
+            {
+                "region_id": "R1",
+                "kind": "profile_edge_candidate",
+                "ref": "R1.structural.vertical.001",
+                "position_px": 153.4,
+                "source_orientation": "vertical",
+                "span_px": [130, 250],
+            }
+        ],
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "no_leader_to_linear_pattern_match"
+

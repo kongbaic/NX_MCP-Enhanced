@@ -146,6 +146,10 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
                 raise ValueError(
                     f"{self.role} endpoint must not carry unresolved_kind"
                 )
+            if self.role == "profile_boundary" and self.basis != "profile_edge":
+                raise ValueError("profile_boundary endpoint requires profile_edge basis")
+            if self.role == "entity_center" and self.basis == "profile_edge":
+                raise ValueError("entity_center endpoint must not use profile_edge basis")
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_id is not None:
                 raise ValueError(f"{self.role} endpoint must not carry entity_id")

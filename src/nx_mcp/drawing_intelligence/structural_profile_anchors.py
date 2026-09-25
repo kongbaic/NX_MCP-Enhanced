@@ -240,42 +240,6 @@ def _junction_metrics(
     )
 
 
-def _is_linear_pattern_owned_line(
-    line: dict[str, Any],
-    region: dict[str, Any],
-    *,
-    axis_tolerance: float,
-) -> bool:
-    """Reject lines already explained by dashed/centerline pattern evidence."""
-
-    patterns = region.get("linear_pattern_candidates", [])
-    if not isinstance(patterns, list):
-        return False
-
-    orientation = str(line.get("orientation") or "")
-    if orientation not in {"horizontal", "vertical"}:
-        return False
-    axis = line.get("axis_px")
-    if not isinstance(axis, (int, float)):
-        return False
-
-    for pattern in patterns:
-        if not isinstance(pattern, dict):
-            continue
-        if str(pattern.get("orientation") or "") != orientation:
-            continue
-        pattern_axis = pattern.get("axis_px")
-        if not isinstance(pattern_axis, (int, float)):
-            continue
-        if abs(float(pattern_axis) - float(axis)) > axis_tolerance:
-            continue
-        if _overlap_ratio(line, pattern) < 0.50:
-            continue
-        return True
-
-    return False
-
-
 def _is_hidden_pair_midline(
     line: dict[str, Any],
     region: dict[str, Any],
@@ -402,12 +366,6 @@ def derive_structural_profile_anchors(
     profile_lines: list[dict[str, Any]] = []
     for line in all_lines:
         if line["orientation"] != source_orientation:
-            continue
-        if _is_linear_pattern_owned_line(
-            line,
-            region,
-            axis_tolerance=axis_tolerance,
-        ):
             continue
         if _is_hidden_pair_midline(
             line,

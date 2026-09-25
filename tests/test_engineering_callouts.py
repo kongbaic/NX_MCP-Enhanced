@@ -65,3 +65,24 @@ def test_recess_note_keeps_neutral_geometry_facts_and_subtype_ambiguity():
     assert parsed["facts"]["recessed_hole"] is True
     assert parsed["facts"]["recess_depth"] == 6.5
     assert "recessed_hole_subtype_not_explicit" in parsed["ambiguities"]
+
+
+
+def test_bound_recess_recovers_diameter_but_keeps_subtype_unresolved():
+    parsed = parse_engineering_callout("011沉孔深6.5")
+    assert parsed is not None
+
+    recovered = _recover_geometry_backed_leading_zero_hole_value(
+        parsed,
+        {
+            "status": "bound",
+            "entity_key": "R2.C1",
+        },
+    )
+
+    assert recovered["facts"]["recess_diameter"] == 11.0
+    assert recovered["facts"]["recess_depth"] == 6.5
+    assert recovered["facts"]["recessed_hole"] is True
+    assert "leading_zero_diameter_like_token_not_promoted" not in recovered["ambiguities"]
+    assert "recessed_hole_subtype_not_explicit" in recovered["ambiguities"]
+    assert recovered["geometry_backed_ocr_recovery"]["field"] == "recess_diameter"

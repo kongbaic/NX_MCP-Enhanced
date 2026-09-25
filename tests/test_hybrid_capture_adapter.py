@@ -1963,3 +1963,142 @@ def test_dimension_backed_through_support_rejects_blind_rail_before_far_boundary
 
     assert support is None
 
+
+
+def test_unassigned_profile_offset_recovery_uses_unique_subspan_without_pixel_metric():
+    candidate = {
+        "candidate_id": "DG_PROFILE",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "axis_px": 100.0,
+        "line_span_px": [10, 90],
+        "witness_positions_px": [10.0, 50.0, 90.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.001",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [],
+            },
+            {
+                "witness_index": 2,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.002",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 7,
+                    "token": "16",
+                    "bbox": [[42, 55], [58, 55], [58, 75], [42, 75]],
+                }
+            ]
+        }
+    }
+    view_lookup = {
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        )
+    }
+
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup=view_lookup,
+        boundary_roles={"R2.structural.vertical.002": "overall_max"},
+        profile_entity_by_ref={
+            "R2.structural.vertical.001": "R2.PROFILE.LEFT",
+            "R2.structural.vertical.002": "R2.PROFILE.RIGHT",
+        },
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0].value == 16
+    assert recovered[0].axis == "Y"
+    assert {endpoint.role for endpoint in recovered[0].endpoints} == {
+        "profile_boundary",
+        "overall_max",
+    }
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_unassigned_profile_offset_recovery_rejects_internal_to_internal_span():
+    candidate = {
+        "candidate_id": "DG_SLOT",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "axis_px": 100.0,
+        "line_span_px": [40, 60],
+        "witness_positions_px": [40.0, 60.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.structural.vertical.001",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.structural.vertical.002",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 2,
+                    "token": "2",
+                    "bbox": [[45, 60], [55, 60], [55, 80], [45, 80]],
+                }
+            ]
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup=view_lookup,
+        boundary_roles={},
+        profile_entity_by_ref={
+            "R1.structural.vertical.001": "R1.PROFILE.LEFT",
+            "R1.structural.vertical.002": "R1.PROFILE.RIGHT",
+        },
+    )
+
+    assert recovered == []
+    assert ledger == []

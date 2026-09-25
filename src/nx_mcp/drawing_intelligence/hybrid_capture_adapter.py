@@ -2583,6 +2583,276 @@ def _recover_symmetric_half_dimensions(
     return recovered, ledger
 
 
+def _recover_unassigned_profile_edge_offsets(
+    *,
+    report: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
+    profile_entity_by_ref: dict[str, str],
+    excluded_source_item_indices: set[Any] | None = None,
+) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
+    """Recover profile offsets only from uniquely owned dimension sub-spans.
+
+    OCR provides the engineering value. Pixel geometry is used only to bind one
+    unassigned text item to one dimension witness pair and its physical profile
+    endpoints. No pixel distance is converted into an engineering coordinate.
+    """
+
+    coverage = report.get("coverage", {})
+    raw_items = (
+        coverage.get("unassigned_linear_observations", [])
+        if isinstance(coverage, dict)
+        else []
+    )
+    excluded = excluded_source_item_indices or set()
+
+    def witness_owner(
+        candidate: dict[str, Any],
+        witness_index: int,
+    ) -> tuple[str, str | None, str] | None:
+        record = next(
+            (
+                item
+                for item in candidate.get("witness_anchor_evidence", [])
+                if isinstance(item, dict)
+                and item.get("witness_index") == witness_index
+            ),
+            None,
+        )
+        if record is None:
+            return None
+
+        refs = sorted(
+            {
+                str(anchor.get("ref") or "")
+                for anchor in record.get("nearest_anchors", [])
+                if isinstance(anchor, dict)
+                and anchor.get("kind") == "profile_edge_candidate"
+                and str(anchor.get("ref") or "")
+            }
+        )
+        resolved: list[tuple[str, str | None, str]] = []
+        for ref in refs:
+            boundary_role = boundary_roles.get(ref)
+            if boundary_role is not None:
+                resolved.append((boundary_role, None, ref))
+                continue
+            entity_key = profile_entity_by_ref.get(ref)
+            if entity_key is not None:
+                resolved.append(("profile_boundary", entity_key, ref))
+        return resolved[0] if len(resolved) == 1 else None
+
+    recovered: list[ObservationDimension] = []
+    ledger: list[dict[str, Any]] = []
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_item_index")
+        if source_index in excluded:
+            continue
+        value = _token_numeric_value(item.get("token"))
+        center = _bbox_center(item.get("bbox"))
+        bounds = _bbox_bounds(item.get("bbox"))
+        if value is None or value <= 0 or center is None or bounds is None:
+            continue
+
+        matches: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or candidate.get("accepted_token") is not None:
+                continue
+            region_id = str(candidate.get("region_id") or "")
+            region_view = view_lookup.get(region_id)
+            orientation = str(candidate.get("orientation") or "")
+            candidate_axis = candidate.get("axis_px")
+            witness_positions = candidate.get("witness_positions_px", [])
+            if (
+                region_view is None
+                or orientation not in {"horizontal", "vertical"}
+                or not isinstance(candidate_axis, (int, float))
+                or not isinstance(witness_positions, list)
+            ):
+                continue
+
+            typed_positions = [
+                (index, float(position))
+                for index, position in enumerate(witness_positions)
+                if isinstance(position, (int, float))
+                and not isinstance(position, bool)
+            ]
+            if len(typed_positions) < 2:
+                continue
+
+            left, top, right, bottom = bounds
+            if orientation == "horizontal":
+                along = center[0]
+                perpendicular_gap = max(
+                    top - float(candidate_axis),
+                    0.0,
+                    float(candidate_axis) - bottom,
+                )
+            else:
+                along = center[1]
+                perpendicular_gap = max(
+                    left - float(candidate_axis),
+                    0.0,
+                    float(candidate_axis) - right,
+                )
+
+            for first_pos in range(len(typed_positions)):
+                first_index, first_value = typed_positions[first_pos]
+                first_owner = witness_owner(candidate, first_index)
+                if first_owner is None:
+                    continue
+                for second_pos in range(first_pos + 1, len(typed_positions)):
+                    second_index, second_value = typed_positions[second_pos]
+                    second_owner = witness_owner(candidate, second_index)
+                    if second_owner is None:
+                        continue
+
+                    owners = [first_owner, second_owner]
+                    if (
+                        sum(owner[0] == "profile_boundary" for owner in owners) != 1
+                        or sum(
+                            owner[0] in {"overall_min", "overall_max"}
+                            for owner in owners
+                        ) != 1
+                    ):
+                        continue
+
+                    pair_span = abs(second_value - first_value)
+                    if pair_span <= 0:
+                        continue
+                    midpoint = (first_value + second_value) / 2.0
+                    along_residual = abs(along - midpoint)
+                    if along_residual > max(12.0, pair_span * 0.60):
+                        continue
+
+                    matches.append(
+                        {
+                            "candidate": candidate,
+                            "region_id": region_id,
+                            "orientation": orientation,
+                            "first_owner": first_owner,
+                            "second_owner": second_owner,
+                            "first_index": first_index,
+                            "second_index": second_index,
+                            "pair_span_px": pair_span,
+                            "along_residual_px": along_residual,
+                            "perpendicular_gap_px": perpendicular_gap,
+                            "score_px": along_residual + perpendicular_gap,
+                        }
+                    )
+
+        matches.sort(
+            key=lambda match: (
+                float(match["score_px"]),
+                float(match["along_residual_px"]),
+                str(match["candidate"].get("candidate_id") or ""),
+                int(match["first_index"]),
+                int(match["second_index"]),
+            )
+        )
+        if not matches:
+            continue
+        best = matches[0]
+        if len(matches) > 1:
+            uniqueness_margin = max(6.0, float(best["pair_span_px"]) * 0.10)
+            if float(matches[1]["score_px"]) - float(best["score_px"]) < uniqueness_margin:
+                continue
+
+        candidate = best["candidate"]
+        orientation = str(best["orientation"])
+        region_view = view_lookup[str(best["region_id"])]
+        axis = _axis_for(region_view.view_kind, orientation)
+        evidence = [
+            f"hybrid:whole:{source_index}",
+            (
+                "hybrid:"
+                f"{candidate.get('candidate_id')}:"
+                "unassigned-profile-offset-recovery"
+            ),
+        ]
+
+        endpoints: list[ObservationDimensionEndpoint] = []
+        for role, entity_key, _ref in [
+            best["first_owner"],
+            best["second_owner"],
+        ]:
+            if role == "profile_boundary":
+                assert entity_key is not None
+                endpoints.append(
+                    ObservationDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_key=entity_key,
+                        basis="profile_edge",
+                        evidence=evidence,
+                    )
+                )
+            else:
+                endpoints.append(
+                    ObservationDimensionEndpoint(
+                        role=role,
+                        evidence=evidence,
+                    )
+                )
+
+        dimension_key = (
+            f"{best['region_id']}.RECOVERED_PROFILE_OFFSET_{source_index}"
+        )
+        recovered.append(
+            ObservationDimension(
+                key=dimension_key,
+                value=value,
+                axis=axis,
+                endpoints=endpoints,
+                direction=_dimension_direction_from_image_order(
+                    region_view.view_kind,
+                    orientation,
+                ),
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        profile_owner = next(
+            owner
+            for owner in [best["first_owner"], best["second_owner"]]
+            if owner[0] == "profile_boundary"
+        )
+        overall_owner = next(
+            owner
+            for owner in [best["first_owner"], best["second_owner"]]
+            if owner[0] in {"overall_min", "overall_max"}
+        )
+        ledger.append(
+            {
+                "dimension_key": dimension_key,
+                "source_item_index": source_index,
+                "candidate_id": candidate.get("candidate_id"),
+                "region_id": best["region_id"],
+                "axis": axis,
+                "value": value,
+                "profile_entity_key": profile_owner[1],
+                "profile_ref": profile_owner[2],
+                "overall_role": overall_owner[0],
+                "overall_ref": overall_owner[2],
+                "witness_indices": [
+                    best["first_index"],
+                    best["second_index"],
+                ],
+                "basis": (
+                    "unique_unassigned_text_to_dimension_subspan_with_"
+                    "profile_and_overall_endpoint_ownership"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return recovered, ledger
+
+
 def _projection_alignment_tolerance(
     report: dict[str, Any],
     region_id: str,
@@ -3274,6 +3544,22 @@ def adapt_hybrid_ocr_report(
     )
     dimensions.extend(recovered_half_dimensions)
 
+    recovered_profile_dimensions, profile_offset_ledger = (
+        _recover_unassigned_profile_edge_offsets(
+            report=report,
+            candidates=dimension_candidates,
+            view_lookup=view_lookup,
+            boundary_roles=boundary_roles,
+            profile_entity_by_ref=profile_entity_by_ref,
+            excluded_source_item_indices={
+                item.get("half_source_item_index")
+                for item in symmetric_chain_ledger
+                if isinstance(item, dict)
+            },
+        )
+    )
+    dimensions.extend(recovered_profile_dimensions)
+
     unresolved.extend(
         _coverage_unresolved(
             report,
@@ -3360,6 +3646,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_symmetric_count_two_ledger",
             "schema": "1.0",
             "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_profile_offset_recovery_ledger",
+            "schema": "1.0",
+            "items": profile_offset_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

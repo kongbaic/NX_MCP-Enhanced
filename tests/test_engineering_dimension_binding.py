@@ -800,18 +800,13 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
     }
     assert values[("R2.C1", "diameter")] == 6.6
     assert values[("R2.C1", "through")] is True
-    assert ("R2.C1", "diameter") in values
-    assert 11.0 not in [
-        value
-        for (entity_key, field), value in values.items()
-        if entity_key == "R2.C1" and field == "diameter"
-    ]
+    assert values[("R2.C1", "recess_diameter")] == 11.0
+    assert values[("R2.C1", "recess_depth")] == 6.5
+    assert values[("R2.C1", "recessed_hole")] is True
 
     unresolved_fields = {
         item.field
         for item in partial.unresolved
         if item.entity_keys == ["R2.C1"]
     }
-    assert "recess_diameter" in unresolved_fields
-    assert "recess_depth" in unresolved_fields
-    assert "recessed_hole_subtype" in unresolved_fields
+    assert unresolved_fields == {"recessed_hole_subtype"}

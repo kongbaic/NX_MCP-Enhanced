@@ -292,8 +292,7 @@ def test_adapter_closes_bottom_to_circle_center_dimension_without_pixel_scaling(
             "hybrid_metric_circle_primitive_ledger",
         }
     ]
-    assert metric_ledgers
-    assert all(item["engineering_authoritative"] is False for item in metric_ledgers)
+    assert metric_ledgers == []
 
 
 def test_bottom_to_circle_center_dimension_resolves_exact_z40_through_existing_pipeline():

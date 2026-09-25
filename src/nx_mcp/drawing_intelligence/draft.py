@@ -235,6 +235,52 @@ def _get_target(root: dict[str, Any], target: str) -> Any:
     return current
 
 
+def _source_writes_target(source: dict[str, Any], target: str) -> bool:
+    if source.get("target") == target:
+        return True
+    targets = source.get("targets")
+    return isinstance(targets, list) and target in targets
+
+
+def _append_inferred_feature_type_source(
+    draft: dict[str, Any],
+    *,
+    feature_id: str,
+    feature_type: str,
+    basis_targets: list[str],
+) -> None:
+    """Record provenance for a type inferred from already-proven semantics."""
+
+    supporting_source_ids: list[str] = []
+    supporting_evidence: list[str] = []
+    for source in draft.get("source_ledger", []):
+        if not isinstance(source, dict):
+            continue
+        if not any(_source_writes_target(source, target) for target in basis_targets):
+            continue
+        source_id = source.get("id")
+        if isinstance(source_id, str) and source_id:
+            supporting_source_ids.append(source_id)
+        evidence = source.get("evidence")
+        if isinstance(evidence, list):
+            supporting_evidence.extend(
+                item for item in evidence if isinstance(item, str) and item
+            )
+
+    evidence = list(dict.fromkeys([*supporting_evidence, *supporting_source_ids]))
+    draft["source_ledger"].append(
+        {
+            "id": f"TYPE_{_stable_fragment(feature_id)}",
+            "semantic": "feature_kind",
+            "value": feature_type,
+            "target": f"feature:{feature_id}.type",
+            "evidence": evidence,
+            "inference_basis_targets": list(basis_targets),
+            "inference_basis_sources": list(dict.fromkeys(supporting_source_ids)),
+        }
+    )
+
+
 def _infer_feature_types(draft: dict[str, Any]) -> None:
     """Assign only feature types implied by already-materialized semantics."""
 
@@ -242,25 +288,62 @@ def _infer_feature_types(draft: dict[str, Any]) -> None:
         if not isinstance(feature, dict) or feature.get("type"):
             continue
 
+        feature_id = str(feature.get("id") or "")
+        if not feature_id:
+            continue
+
+        feature_type: str | None = None
+        basis_targets: list[str] = []
         keys = set(feature)
+
         if "boundary" in keys and keys <= {"id", "boundary"}:
-            feature["type"] = "reference_boundary"
-            continue
+            boundary = feature.get("boundary")
+            if isinstance(boundary, dict):
+                basis_targets = [
+                    f"feature:{feature_id}.boundary.{axis}"
+                    for axis in ("x", "y", "z")
+                    if boundary.get(axis) is not None
+                ]
+            if basis_targets:
+                feature_type = "reference_boundary"
 
-        if feature.get("thread_spec") is not None or feature.get("thread_depth") is not None:
-            feature["type"] = "threaded_hole"
-            continue
+        elif feature.get("thread_spec") is not None or feature.get("thread_depth") is not None:
+            feature_type = "threaded_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in ("thread_spec", "thread_depth")
+                if feature.get(field) is not None
+            ]
 
-        if (
+        elif (
             feature.get("recessed_hole") is True
             or feature.get("recess_diameter") is not None
             or feature.get("recess_depth") is not None
         ):
-            feature["type"] = "recessed_hole"
+            feature_type = "recessed_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in ("recessed_hole", "recess_diameter", "recess_depth")
+                if feature.get(field) is not None
+            ]
+
+        elif feature.get("diameter") is not None and feature.get("axis") in {"X", "Y", "Z"}:
+            feature_type = "hole"
+            basis_targets = [
+                f"feature:{feature_id}.diameter",
+                f"feature:{feature_id}.axis",
+            ]
+
+        if feature_type is None:
             continue
 
-        if feature.get("diameter") is not None and feature.get("axis") in {"X", "Y", "Z"}:
-            feature["type"] = "hole"
+        feature["type"] = feature_type
+        _append_inferred_feature_type_source(
+            draft,
+            feature_id=feature_id,
+            feature_type=feature_type,
+            basis_targets=basis_targets,
+        )
 
 
 def _feature_type(root: dict[str, Any], target: str) -> str:

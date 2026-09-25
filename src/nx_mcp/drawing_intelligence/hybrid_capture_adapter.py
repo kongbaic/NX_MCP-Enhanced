@@ -1428,10 +1428,7 @@ def _recover_geometry_backed_leading_zero_hole_value(
         return parsed
 
     recovered_facts = dict(facts)
-    if "counterbore_depth" in recovered_facts:
-        recovered_facts["counterbore_diameter"] = value
-        recovered_field = "counterbore_diameter"
-    elif recovered_facts.get("recessed_hole") is True:
+    if recovered_facts.get("recessed_hole") is True:
         recovered_facts["recess_diameter"] = value
         recovered_field = "recess_diameter"
     else:
@@ -1453,6 +1450,111 @@ def _recover_geometry_backed_leading_zero_hole_value(
             "basis": (
                 "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
             ),
+        },
+    }
+
+
+def _promote_bound_compound_recess_to_counterbore(
+    parsed: dict[str, Any],
+    binding: dict[str, Any],
+    *,
+    source_item_index: Any,
+    binding_group_by_index: dict[Any, list[Any]],
+    routed_items: list[Any],
+    regions: list[Any],
+) -> dict[str, Any]:
+    """Promote a neutral recess note only for a bound compound through-hole note.
+
+    The parser remains source-literal.  Adapter promotion requires all of:
+    one deterministic bound concentric-circle owner, recovered recess diameter
+    and explicit recess depth, and a sibling line in the same shared-leader
+    text group that explicitly says the primary hole is through.
+    """
+
+    if binding.get("status") != "bound":
+        return parsed
+    entity_key = str(binding.get("entity_key") or "")
+    if not entity_key or "." not in entity_key:
+        return parsed
+
+    facts = parsed.get("facts")
+    ambiguities = parsed.get("ambiguities")
+    if not isinstance(facts, dict) or not isinstance(ambiguities, list):
+        return parsed
+    if not (
+        facts.get("recessed_hole") is True
+        and isinstance(facts.get("recess_diameter"), (int, float))
+        and isinstance(facts.get("recess_depth"), (int, float))
+        and "recessed_hole_subtype_not_explicit" in ambiguities
+    ):
+        return parsed
+
+    member_ids = binding_group_by_index.get(
+        source_item_index,
+        [source_item_index],
+    )
+    if len(member_ids) < 2:
+        return parsed
+    member_set = set(member_ids)
+    sibling_has_explicit_through = False
+    for item in routed_items:
+        if not isinstance(item, dict):
+            continue
+        sibling_index = item.get("source_item_index")
+        if sibling_index == source_item_index or sibling_index not in member_set:
+            continue
+        sibling = parse_engineering_callout(str(item.get("text") or ""))
+        sibling_facts = sibling.get("facts") if isinstance(sibling, dict) else None
+        if isinstance(sibling_facts, dict) and sibling_facts.get("through") is True:
+            sibling_has_explicit_through = True
+            break
+    if not sibling_has_explicit_through:
+        return parsed
+
+    region_id, group_id = entity_key.split(".", 1)
+    circle_group = None
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        if str(region.get("region_id") or "") != region_id:
+            continue
+        for group in region.get("circle_groups", []):
+            if (
+                isinstance(group, dict)
+                and str(group.get("circle_group_id") or "") == group_id
+            ):
+                circle_group = group
+                break
+        if circle_group is not None:
+            break
+
+    rings = circle_group.get("rings") if isinstance(circle_group, dict) else None
+    if not isinstance(rings, list) or len(rings) < 2:
+        return parsed
+
+    promoted_facts = dict(facts)
+    promoted_facts["counterbore_diameter"] = promoted_facts.pop(
+        "recess_diameter"
+    )
+    promoted_facts["counterbore_depth"] = promoted_facts.pop("recess_depth")
+    return {
+        **parsed,
+        "facts": promoted_facts,
+        "ambiguities": [
+            item
+            for item in ambiguities
+            if item != "recessed_hole_subtype_not_explicit"
+        ],
+        "geometry_backed_recess_classification": {
+            "subtype": "counterbore",
+            "entity_key": entity_key,
+            "binding_group_source_item_indices": list(member_ids),
+            "basis": (
+                "bound_concentric_circle_plus_shared_leader_primary_through_"
+                "hole_plus_explicit_recess_depth"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
         },
     }
 
@@ -1623,7 +1725,7 @@ def _engineering_callout_routing(
     *,
     hidden_pattern_owner_by_index: dict[tuple[str, int], str],
     existing_entity_keys: set[str],
-    profile_inventory: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -1634,6 +1736,7 @@ def _engineering_callout_routing(
     if not isinstance(coverage, dict):
         return [], [], [], []
 
+    profile_inventory = profile_inventory or []
     regions = report.get("regions", [])
     annotation_lines = report.get("annotation_line_candidates", [])
     region_boxes: list[tuple[str, list[Any]]] = []
@@ -1893,6 +1996,16 @@ def _engineering_callout_routing(
         parsed = _recover_geometry_backed_leading_zero_hole_value(
             parsed,
             binding,
+        )
+        parsed = _promote_bound_compound_recess_to_counterbore(
+            parsed,
+            binding,
+            source_item_index=source_item_index,
+            binding_group_by_index=binding_group_by_index,
+            routed_items=(
+                routed_items if isinstance(routed_items, list) else []
+            ),
+            regions=(regions if isinstance(regions, list) else []),
         )
 
         through_projection_support = (

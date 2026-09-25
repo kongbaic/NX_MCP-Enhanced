@@ -7,9 +7,9 @@ from dimension constraints, datum relations, symmetry/alignment, and explicit
 engineering facts.
 """
 
-ENGINEERING_AUTHORITATIVE = False
-
 from __future__ import annotations
+
+ENGINEERING_AUTHORITATIVE = False
 
 from typing import Any
 

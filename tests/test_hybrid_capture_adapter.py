@@ -2102,3 +2102,203 @@ def test_unassigned_profile_offset_recovery_rejects_internal_to_internal_span():
 
     assert recovered == []
     assert ledger == []
+
+
+def test_metric_profile_topology_hint_finds_unique_l_cycle_without_pixel_metric():
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MIN",
+            "source_orientation": "vertical",
+            "position_px": 0.0,
+            "span_px": [0.0, 8.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MAX",
+            "source_orientation": "vertical",
+            "position_px": 32.0,
+            "span_px": [0.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MIN",
+            "source_orientation": "horizontal",
+            "position_px": 0.0,
+            "span_px": [0.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MAX",
+            "source_orientation": "horizontal",
+            "position_px": 66.0,
+            "span_px": [16.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL",
+            "source_orientation": "vertical",
+            "position_px": 16.0,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_INTERNAL",
+            "source_orientation": "horizontal",
+            "position_px": 8.0,
+            "span_px": [0.0, 16.0],
+        },
+    ]
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Y",
+            "anchors": [
+                {"ref": "U_MIN", "role": "overall_min"},
+                {"ref": "U_MAX", "role": "overall_max"},
+            ],
+        },
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Z",
+            "anchors": [
+                {"ref": "V_MIN", "role": "overall_min"},
+                {"ref": "V_MAX", "role": "overall_max"},
+            ],
+        },
+    ]
+    hints = hybrid_adapter._metric_profile_topology_hints(
+        report={"regions": [{"region_id": "R2", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundaries=boundaries,
+        profile_entity_by_ref={
+            "U_INTERNAL": "R2.PROFILE.U_INTERNAL",
+            "V_INTERNAL": "R2.PROFILE.V_INTERNAL",
+        },
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["plane"] == "YZ"
+    assert hint["topology"] == "L"
+    assert hint["upright_side"] == "max"
+    assert hint["base_side"] == "min"
+    assert hint["internal_u_entity_key"] == "R2.PROFILE.U_INTERNAL"
+    assert hint["internal_v_entity_key"] == "R2.PROFILE.V_INTERNAL"
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_metric_profile_topology_hint_rejects_non_unique_internal_cycles():
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MIN",
+            "source_orientation": "vertical",
+            "position_px": 0.0,
+            "span_px": [0.0, 8.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MAX",
+            "source_orientation": "vertical",
+            "position_px": 32.0,
+            "span_px": [0.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MIN",
+            "source_orientation": "horizontal",
+            "position_px": 0.0,
+            "span_px": [0.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MAX",
+            "source_orientation": "horizontal",
+            "position_px": 66.0,
+            "span_px": [16.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL_A",
+            "source_orientation": "vertical",
+            "position_px": 16.0,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL_B",
+            "source_orientation": "vertical",
+            "position_px": 16.2,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_INTERNAL",
+            "source_orientation": "horizontal",
+            "position_px": 8.0,
+            "span_px": [0.0, 16.2],
+        },
+    ]
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Y",
+            "anchors": [
+                {"ref": "U_MIN", "role": "overall_min"},
+                {"ref": "U_MAX", "role": "overall_max"},
+            ],
+        },
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Z",
+            "anchors": [
+                {"ref": "V_MIN", "role": "overall_min"},
+                {"ref": "V_MAX", "role": "overall_max"},
+            ],
+        },
+    ]
+    hints = hybrid_adapter._metric_profile_topology_hints(
+        report={"regions": [{"region_id": "R2", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundaries=boundaries,
+        profile_entity_by_ref={
+            "U_INTERNAL_A": "R2.PROFILE.U_INTERNAL_A",
+            "U_INTERNAL_B": "R2.PROFILE.U_INTERNAL_B",
+            "V_INTERNAL": "R2.PROFILE.V_INTERNAL",
+        },
+    )
+
+    assert hints == []

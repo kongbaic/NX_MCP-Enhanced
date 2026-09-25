@@ -718,6 +718,252 @@ def _boundary_role_lookup(
     return output
 
 
+_PROFILE_PLANE_BY_VIEW_KIND: dict[str, str] = {
+    "front": "XZ",
+    "side": "YZ",
+    "top": "XY",
+}
+
+
+def _profile_line_segment_px(
+    item: dict[str, Any],
+) -> tuple[str, float, float, float] | None:
+    orientation = str(item.get("source_orientation") or "")
+    position = item.get("position_px")
+    span = item.get("span_px")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(span, list)
+        or len(span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in span
+        )
+    ):
+        return None
+    start, end = sorted(float(value) for value in span)
+    if end <= start:
+        return None
+    return orientation, float(position), start, end
+
+
+def _profile_lines_touch(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    tolerance: float,
+) -> bool:
+    first = _profile_line_segment_px(left)
+    second = _profile_line_segment_px(right)
+    if first is None or second is None or first[0] == second[0]:
+        return False
+
+    if first[0] == "vertical":
+        vertical = first
+        horizontal = second
+    else:
+        vertical = second
+        horizontal = first
+
+    _, vx, vy0, vy1 = vertical
+    _, hy, hx0, hx1 = horizontal
+    return (
+        hx0 - tolerance <= vx <= hx1 + tolerance
+        and vy0 - tolerance <= hy <= vy1 + tolerance
+    )
+
+
+def _metric_profile_topology_hints(
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Classify a unique orthogonal L profile from geometry topology only."""
+
+    boundary_refs: dict[tuple[str, str, str], str] = {}
+    conflicted: set[tuple[str, str, str]] = set()
+    for boundary in boundaries:
+        if (
+            not isinstance(boundary, dict)
+            or boundary.get("status") != "resolved"
+        ):
+            continue
+        region_id = str(boundary.get("region_id") or "")
+        axis = str(boundary.get("axis") or "")
+        if not region_id or axis not in {"X", "Y", "Z"}:
+            continue
+        for item in boundary.get("anchors", []):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "")
+            ref = str(item.get("ref") or "")
+            if role not in {"overall_min", "overall_max"} or not ref:
+                continue
+            key = (region_id, axis, role)
+            previous = boundary_refs.get(key)
+            if previous is not None and previous != ref:
+                conflicted.add(key)
+            else:
+                boundary_refs[key] = ref
+    for key in conflicted:
+        boundary_refs.pop(key, None)
+
+    by_ref = {
+        str(item.get("ref") or ""): item
+        for item in profile_inventory
+        if isinstance(item, dict)
+        and item.get("kind") == "profile_edge_candidate"
+        and str(item.get("ref") or "")
+    }
+
+    hints: list[dict[str, Any]] = []
+    for region_id, region_view in sorted(view_lookup.items()):
+        plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
+        if plane is None:
+            continue
+        axes = list(plane)
+        axis_u, axis_v = axes[0], axes[1]
+        required = {
+            "u_min": boundary_refs.get((region_id, axis_u, "overall_min")),
+            "u_max": boundary_refs.get((region_id, axis_u, "overall_max")),
+            "v_min": boundary_refs.get((region_id, axis_v, "overall_min")),
+            "v_max": boundary_refs.get((region_id, axis_v, "overall_max")),
+        }
+        if any(ref is None or ref not in by_ref for ref in required.values()):
+            continue
+
+        u_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (region_view.view_kind, axis_u)
+        )
+        v_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (region_view.view_kind, axis_v)
+        )
+        if {u_pixel_index, v_pixel_index} != {0, 1}:
+            continue
+        u_orientation = "vertical" if u_pixel_index == 0 else "horizontal"
+        v_orientation = "vertical" if v_pixel_index == 0 else "horizontal"
+
+        outer_refs = set(required.values())
+        internal_u = [
+            item
+            for item in profile_inventory
+            if isinstance(item, dict)
+            and str(item.get("region_id") or "") == region_id
+            and item.get("kind") == "profile_edge_candidate"
+            and str(item.get("source_orientation") or "") == u_orientation
+            and str(item.get("ref") or "") not in outer_refs
+            and str(item.get("ref") or "") in profile_entity_by_ref
+        ]
+        internal_v = [
+            item
+            for item in profile_inventory
+            if isinstance(item, dict)
+            and str(item.get("region_id") or "") == region_id
+            and item.get("kind") == "profile_edge_candidate"
+            and str(item.get("source_orientation") or "") == v_orientation
+            and str(item.get("ref") or "") not in outer_refs
+            and str(item.get("ref") or "") in profile_entity_by_ref
+        ]
+
+        tolerance = _region_profile_match_tolerance(report, region_id)
+        matches: list[dict[str, Any]] = []
+        for u_item in internal_u:
+            for v_item in internal_v:
+                refs = [
+                    required["u_min"],
+                    required["u_max"],
+                    required["v_min"],
+                    required["v_max"],
+                    str(u_item.get("ref") or ""),
+                    str(v_item.get("ref") or ""),
+                ]
+                if len(set(refs)) != 6:
+                    continue
+                adjacency = {ref: set() for ref in refs}
+                for left_index, left_ref in enumerate(refs):
+                    for right_ref in refs[left_index + 1 :]:
+                        if _profile_lines_touch(
+                            by_ref[left_ref],
+                            by_ref[right_ref],
+                            tolerance=tolerance,
+                        ):
+                            adjacency[left_ref].add(right_ref)
+                            adjacency[right_ref].add(left_ref)
+
+                if any(len(adjacency[ref]) != 2 for ref in refs):
+                    continue
+                visited: set[str] = set()
+                stack = [refs[0]]
+                while stack:
+                    current = stack.pop()
+                    if current in visited:
+                        continue
+                    visited.add(current)
+                    stack.extend(adjacency[current] - visited)
+                if len(visited) != 6:
+                    continue
+
+                upright_candidates = [
+                    role
+                    for role, ref in (
+                        ("min", required["u_min"]),
+                        ("max", required["u_max"]),
+                    )
+                    if {
+                        required["v_min"],
+                        required["v_max"],
+                    }.issubset(adjacency[ref])
+                ]
+                base_candidates = [
+                    role
+                    for role, ref in (
+                        ("min", required["v_min"]),
+                        ("max", required["v_max"]),
+                    )
+                    if {
+                        required["u_min"],
+                        required["u_max"],
+                    }.issubset(adjacency[ref])
+                ]
+                if len(upright_candidates) != 1 or len(base_candidates) != 1:
+                    continue
+
+                matches.append(
+                    {
+                        "region_id": region_id,
+                        "plane": plane,
+                        "topology": "L",
+                        "upright_side": upright_candidates[0],
+                        "base_side": base_candidates[0],
+                        "internal_u_ref": str(u_item["ref"]),
+                        "internal_v_ref": str(v_item["ref"]),
+                        "internal_u_entity_key": profile_entity_by_ref[
+                            str(u_item["ref"])
+                        ],
+                        "internal_v_entity_key": profile_entity_by_ref[
+                            str(v_item["ref"])
+                        ],
+                        "outer_refs": dict(required),
+                        "basis": (
+                            "unique_six_edge_orthogonal_cycle_with_"
+                            "full_span_outer_u_and_v_edges"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                )
+
+        if len(matches) == 1:
+            hints.append(matches[0])
+
+    return hints
+
+
 def _profile_boundary_entities(
     profile_inventory: list[dict[str, Any]],
     view_lookup: dict[str, HybridRegionView],
@@ -3288,6 +3534,14 @@ def adapt_hybrid_ocr_report(
     )
     entities.extend(profile_entities)
 
+    metric_profile_topology_hints = _metric_profile_topology_hints(
+        report=report,
+        profile_inventory=profile_inventory,
+        view_lookup=view_lookup,
+        boundaries=boundaries,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
         entity_key = str(record.get("entity_key") or "")
@@ -3655,6 +3909,13 @@ def adapt_hybrid_ocr_report(
             "items": profile_offset_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_metric_profile_topology_ledger",
+            "schema": "1.0",
+            "items": metric_profile_topology_hints,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
         },
     ]
 

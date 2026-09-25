@@ -28,8 +28,9 @@ class MetricProfileSpec(BaseModel):
     upright_width: float = Field(gt=0)
     base_height: float = Field(gt=0)
     upright_side: ProfileSide
+    base_side: ProfileSide = "min"
     coordinate_mode: ProfileCoordinateMode = "overall_min"
-    source_ids: list[str] = []
+    source_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _geometry_is_valid(self) -> "MetricProfileSpec":
@@ -63,7 +64,7 @@ def _l_vertices(spec: MetricProfileSpec) -> list[tuple[float, float]]:
     w = float(spec.upright_width)
     h = float(spec.base_height)
 
-    if spec.upright_side == "max":
+    if spec.base_side == "min" and spec.upright_side == "max":
         points = [
             (0.0, 0.0),
             (u, 0.0),
@@ -72,7 +73,7 @@ def _l_vertices(spec: MetricProfileSpec) -> list[tuple[float, float]]:
             (u - w, h),
             (0.0, h),
         ]
-    else:
+    elif spec.base_side == "min" and spec.upright_side == "min":
         points = [
             (0.0, 0.0),
             (u, 0.0),
@@ -80,6 +81,24 @@ def _l_vertices(spec: MetricProfileSpec) -> list[tuple[float, float]]:
             (w, h),
             (w, v),
             (0.0, v),
+        ]
+    elif spec.base_side == "max" and spec.upright_side == "max":
+        points = [
+            (0.0, v),
+            (u, v),
+            (u, 0.0),
+            (u - w, 0.0),
+            (u - w, v - h),
+            (0.0, v - h),
+        ]
+    else:
+        points = [
+            (0.0, v),
+            (u, v),
+            (u, v - h),
+            (w, v - h),
+            (w, 0.0),
+            (0.0, 0.0),
         ]
 
     if spec.coordinate_mode == "centered_u_bottom_v":

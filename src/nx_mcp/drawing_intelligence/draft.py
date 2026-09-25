@@ -631,6 +631,126 @@ def _expected_profile_overall(
     }[plane]
 
 
+def _auto_metric_profile_spec(
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+) -> MetricProfileSpec | None:
+    topology_items: list[dict[str, Any]] = []
+    entity_to_feature: dict[str, str] | None = None
+
+    for observation in graph.observations:
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") == "hybrid_profile_topology_ledger":
+            items = observation.get("items")
+            if isinstance(items, list):
+                topology_items.extend(
+                    item for item in items if isinstance(item, dict)
+                )
+        elif observation.get("kind") == "identity_linker_v2":
+            mapping = observation.get("entity_to_feature")
+            if isinstance(mapping, dict):
+                typed = {
+                    str(entity_id): str(feature_id)
+                    for entity_id, feature_id in mapping.items()
+                    if isinstance(entity_id, str)
+                    and entity_id
+                    and isinstance(feature_id, str)
+                    and feature_id
+                }
+                if typed:
+                    entity_to_feature = typed
+
+    if not topology_items or entity_to_feature is None:
+        return None
+
+    complete: list[MetricProfileSpec] = []
+    for item in topology_items:
+        plane = str(item.get("plane") or "")
+        topology = str(item.get("topology") or "")
+        upright_side = str(item.get("upright_side") or "")
+        base_side = str(item.get("base_side") or "")
+        internal_u_entity_id = str(item.get("internal_u_entity_id") or "")
+        internal_v_entity_id = str(item.get("internal_v_entity_id") or "")
+        if (
+            plane not in {"XY", "XZ", "YZ"}
+            or topology != "L"
+            or upright_side not in {"min", "max"}
+            or base_side not in {"min", "max"}
+            or not internal_u_entity_id
+            or not internal_v_entity_id
+        ):
+            continue
+
+        u_feature = entity_to_feature.get(internal_u_entity_id)
+        v_feature = entity_to_feature.get(internal_v_entity_id)
+        if u_feature is None or v_feature is None:
+            continue
+
+        axis_u, axis_v = plane[0].lower(), plane[1].lower()
+        target_u = f"feature:{u_feature}.boundary.{axis_u}"
+        target_v = f"feature:{v_feature}.boundary.{axis_v}"
+        if target_u not in resolution.values or target_v not in resolution.values:
+            continue
+
+        overall_u, overall_v = _expected_profile_overall(graph, plane)
+        internal_u = float(resolution.values[target_u])
+        internal_v = float(resolution.values[target_v])
+        upright_width = (
+            internal_u
+            if upright_side == "min"
+            else overall_u - internal_u
+        )
+        base_height = (
+            internal_v
+            if base_side == "min"
+            else overall_v - internal_v
+        )
+        if upright_width <= 0 or base_height <= 0:
+            continue
+
+        sources: list[str] = []
+        sources.extend(resolution.traces.get(target_u, []))
+        sources.extend(resolution.traces.get(target_v, []))
+        for key in ("internal_u_ref", "internal_v_ref"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                sources.append(value)
+        outer_refs = item.get("outer_refs")
+        if isinstance(outer_refs, dict):
+            sources.extend(
+                value
+                for value in outer_refs.values()
+                if isinstance(value, str) and value
+            )
+        region_id = item.get("region_id")
+        if isinstance(region_id, str) and region_id:
+            sources.append(f"profile-topology:{region_id}")
+
+        try:
+            complete.append(
+                MetricProfileSpec(
+                    plane=plane,
+                    topology="L",
+                    overall_u=overall_u,
+                    overall_v=overall_v,
+                    upright_width=upright_width,
+                    base_height=base_height,
+                    upright_side=upright_side,
+                    base_side=base_side,
+                    source_ids=list(dict.fromkeys(sources)),
+                )
+            )
+        except ValueError:
+            continue
+
+    if len(complete) > 1:
+        raise DraftAssemblyError(
+            "multiple complete metric profile solutions are available"
+        )
+    return complete[0] if complete else None
+
+
 def _materialize_metric_profile(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -757,6 +877,8 @@ def build_semantic_draft(
         "dimension_closure": {"status": "closed"},
     }
 
+    if metric_profile is None:
+        metric_profile = _auto_metric_profile_spec(graph, resolution)
     if metric_profile is not None:
         _materialize_metric_profile(draft, graph, metric_profile)
 

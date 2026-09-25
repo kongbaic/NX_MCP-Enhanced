@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -325,6 +326,37 @@ def _mapped(
         raise ReaderObservationAssemblyError(f"unknown {label} key {key!r}") from exc
 
 
+def _capture_observations_with_entity_ids(
+    observations: ReaderObservations,
+    entity_ids: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Carry compact entity identity into topology-only observation ledgers."""
+
+    output = copy.deepcopy(observations.observations)
+    for observation in output:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != "hybrid_profile_topology_ledger"
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for prefix in ("internal_u", "internal_v"):
+                key = item.get(f"{prefix}_entity_key")
+                if not isinstance(key, str) or not key:
+                    continue
+                item[f"{prefix}_entity_id"] = _mapped(
+                    entity_ids,
+                    key,
+                    "profile topology entity",
+                )
+    return output
+
+
 def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
     """Compile compact visual observations into ReaderCapture without inference."""
 
@@ -365,7 +397,10 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
         "datum_alignments": [],
         "centerline_alignments": [],
         "required_targets": [],
-        "observations": observations.observations,
+        "observations": _capture_observations_with_entity_ids(
+            observations,
+            entity_ids,
+        ),
         "unresolved_evidence": [],
     }
 

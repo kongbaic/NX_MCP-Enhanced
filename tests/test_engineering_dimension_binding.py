@@ -792,7 +792,7 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
         ),
     }
     assert recoveries[5] == {
-        "field": "recess_diameter",
+        "field": "counterbore_diameter",
         "value": 11.0,
         "raw_token": "011",
         "basis": (
@@ -806,8 +806,8 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
     }
     assert values[("R2.C1", "diameter")] == 6.6
     assert values[("R2.C1", "through")] is True
-    assert values[("R2.C1", "recess_diameter")] == 11.0
-    assert values[("R2.C1", "recess_depth")] == 6.5
+    assert values[("R2.C1", "counterbore_diameter")] == 11.0
+    assert values[("R2.C1", "counterbore_depth")] == 6.5
     assert values[("R2.C1", "recessed_hole")] is True
 
     unresolved_fields = {
@@ -815,4 +815,4 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
         for item in partial.unresolved
         if item.entity_keys == ["R2.C1"]
     }
-    assert unresolved_fields == {"recessed_hole_subtype"}
+    assert unresolved_fields == set()

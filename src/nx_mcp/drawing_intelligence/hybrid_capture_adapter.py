@@ -1428,7 +1428,10 @@ def _recover_geometry_backed_leading_zero_hole_value(
         return parsed
 
     recovered_facts = dict(facts)
-    if recovered_facts.get("recessed_hole") is True:
+    if "counterbore_depth" in recovered_facts:
+        recovered_facts["counterbore_diameter"] = value
+        recovered_field = "counterbore_diameter"
+    elif recovered_facts.get("recessed_hole") is True:
         recovered_facts["recess_diameter"] = value
         recovered_field = "recess_diameter"
     else:
@@ -1454,6 +1457,165 @@ def _recover_geometry_backed_leading_zero_hole_value(
     }
 
 
+def _dimension_backed_through_projection_support(
+    binding: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Prove a projected cylindrical feature crosses its local material span.
+
+    Pixel geometry is used only for topology: a dashed diameter rail must sit
+    on one diameter witness and cross the unique pair of physical profile
+    boundaries that enclose material at that rail height.  No pixel distance
+    becomes an engineering coordinate or depth.
+    """
+
+    if binding.get("status") != "dimension_backed":
+        return None
+    region_id = str(binding.get("region_id") or "")
+    orientation = str(binding.get("orientation") or "")
+    witnesses = binding.get("witness_positions_px")
+    if (
+        not region_id
+        or orientation not in {"horizontal", "vertical"}
+        or not isinstance(witnesses, list)
+        or len(witnesses) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in witnesses
+        )
+    ):
+        return None
+
+    rail_orientation = (
+        "horizontal" if orientation == "vertical" else "vertical"
+    )
+    boundary_orientation = (
+        "vertical" if rail_orientation == "horizontal" else "horizontal"
+    )
+    region = next(
+        (
+            item
+            for item in report.get("regions", [])
+            if isinstance(item, dict)
+            and str(item.get("region_id") or "") == region_id
+        ),
+        None,
+    )
+    if not isinstance(region, dict):
+        return None
+
+    tolerance = _projection_alignment_tolerance(report, region_id)
+    supports: list[dict[str, Any]] = []
+    for witness_index, witness in enumerate(witnesses):
+        witness_value = float(witness)
+        patterns = [
+            item
+            for item in region.get("linear_pattern_candidates", [])
+            if isinstance(item, dict)
+            and str(item.get("orientation") or "") == rail_orientation
+            and isinstance(item.get("axis_px"), (int, float))
+            and abs(float(item["axis_px"]) - witness_value) <= tolerance
+            and int(item.get("segment_count") or 0) >= 3
+            and int(item.get("gap_count") or 0) >= 2
+            and float(item.get("dash_score") or 0.0) >= 0.55
+            and isinstance(item.get("span_px"), list)
+            and len(item["span_px"]) == 2
+        ]
+        if len(patterns) != 1:
+            continue
+        pattern = patterns[0]
+        rail_axis = float(pattern["axis_px"])
+        rail_start, rail_end = sorted(
+            float(value) for value in pattern["span_px"]
+        )
+
+        crossing_edges: list[dict[str, Any]] = []
+        for edge in profile_inventory:
+            if (
+                not isinstance(edge, dict)
+                or edge.get("kind") != "profile_edge_candidate"
+                or str(edge.get("region_id") or "") != region_id
+                or str(edge.get("source_orientation") or "")
+                != boundary_orientation
+                or not isinstance(edge.get("position_px"), (int, float))
+            ):
+                continue
+            span = edge.get("span_px")
+            if not (
+                isinstance(span, list)
+                and len(span) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in span
+                )
+            ):
+                continue
+            edge_start, edge_end = sorted(float(value) for value in span)
+            if edge_start - tolerance <= rail_axis <= edge_end + tolerance:
+                crossing_edges.append(edge)
+
+        crossing_edges.sort(key=lambda item: float(item["position_px"]))
+        if len(crossing_edges) != 2:
+            continue
+        low = float(crossing_edges[0]["position_px"])
+        high = float(crossing_edges[1]["position_px"])
+        if high - low <= tolerance:
+            continue
+        if not (
+            rail_start <= low + tolerance
+            and rail_end >= high - tolerance
+        ):
+            continue
+
+        supports.append(
+            {
+                "witness_index": witness_index,
+                "witness_position_px": witness_value,
+                "rail_axis_px": rail_axis,
+                "rail_span_px": [rail_start, rail_end],
+                "profile_boundary_refs": [
+                    str(crossing_edges[0].get("ref") or ""),
+                    str(crossing_edges[1].get("ref") or ""),
+                ],
+                "profile_boundary_positions_px": [low, high],
+                "dash_score": float(pattern.get("dash_score") or 0.0),
+                "segment_count": int(pattern.get("segment_count") or 0),
+                "gap_count": int(pattern.get("gap_count") or 0),
+            }
+        )
+
+    if not supports:
+        return None
+
+    boundary_pairs = {
+        tuple(item["profile_boundary_refs"])
+        for item in supports
+    }
+    if len(boundary_pairs) != 1:
+        return None
+
+    supports.sort(
+        key=lambda item: (
+            -float(item["dash_score"]),
+            -int(item["segment_count"]),
+            int(item["witness_index"]),
+        )
+    )
+    selected = supports[0]
+    return {
+        **selected,
+        "basis": (
+            "diameter_witness_dashed_projection_crosses_unique_local_"
+            "material_boundaries"
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+
 def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -1461,6 +1623,7 @@ def _engineering_callout_routing(
     *,
     hidden_pattern_owner_by_index: dict[tuple[str, int], str],
     existing_entity_keys: set[str],
+    profile_inventory: list[dict[str, Any]],
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -1732,6 +1895,39 @@ def _engineering_callout_routing(
             binding,
         )
 
+        through_projection_support = (
+            _dimension_backed_through_projection_support(
+                binding,
+                report=report,
+                profile_inventory=profile_inventory,
+            )
+            if (
+                binding.get("status") == "dimension_backed"
+                and isinstance(parsed.get("facts"), dict)
+                and isinstance(parsed["facts"].get("diameter"), (int, float))
+                and not any(
+                    key in parsed["facts"]
+                    for key in (
+                        "through",
+                        "depth",
+                        "thread_depth",
+                        "counterbore_depth",
+                        "recess_depth",
+                    )
+                )
+            )
+            else None
+        )
+        if through_projection_support is not None:
+            parsed = {
+                **parsed,
+                "facts": {
+                    **parsed["facts"],
+                    "through": True,
+                },
+                "geometry_backed_termination": through_projection_support,
+            }
+
         record = {
             "source_item_index": source_item_index,
             "bbox": item.get("bbox"),
@@ -1760,6 +1956,8 @@ def _engineering_callout_routing(
                 "count",
                 "recess_diameter",
                 "recess_depth",
+                "counterbore_diameter",
+                "counterbore_depth",
                 "recessed_hole",
             }
         }
@@ -2783,6 +2981,7 @@ def adapt_hybrid_ocr_report(
         view_lookup,
         hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
         existing_entity_keys={item.key for item in entities},
+        profile_inventory=profile_inventory,
     )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)

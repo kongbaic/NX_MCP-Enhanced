@@ -1810,3 +1810,103 @@ def test_thread_recess_centerline_alignment_fails_closed_with_two_circle_matches
     assert alignments == []
     assert ledger == []
 
+def test_dimension_backed_through_support_requires_dashed_rail_across_local_material():
+    support = hybrid_adapter._dimension_backed_through_projection_support(
+        {
+            "status": "dimension_backed",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "witness_positions_px": [100.0, 200.0],
+        },
+        report={
+            "regions": [
+                {
+                    "region_id": "R2",
+                    "bbox_px": [0, 0, 240, 300],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 200.0,
+                            "span_px": [50, 170],
+                            "segment_count": 5,
+                            "gap_count": 3,
+                            "dash_score": 0.68,
+                        }
+                    ],
+                }
+            ]
+        },
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.left",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 60.0,
+                "span_px": [40, 260],
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.right",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 160.0,
+                "span_px": [40, 260],
+            },
+        ],
+    )
+
+    assert support is not None
+    assert support["profile_boundary_refs"] == ["R2.left", "R2.right"]
+    assert support["engineering_coordinate_inferred_from_pixels"] is False
+    assert support["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_dimension_backed_through_support_rejects_blind_rail_before_far_boundary():
+    support = hybrid_adapter._dimension_backed_through_projection_support(
+        {
+            "status": "dimension_backed",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "witness_positions_px": [100.0, 200.0],
+        },
+        report={
+            "regions": [
+                {
+                    "region_id": "R2",
+                    "bbox_px": [0, 0, 240, 300],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 200.0,
+                            "span_px": [50, 120],
+                            "segment_count": 5,
+                            "gap_count": 3,
+                            "dash_score": 0.68,
+                        }
+                    ],
+                }
+            ]
+        },
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.left",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 60.0,
+                "span_px": [40, 260],
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.right",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 160.0,
+                "span_px": [40, 260],
+            },
+        ],
+    )
+
+    assert support is None
+

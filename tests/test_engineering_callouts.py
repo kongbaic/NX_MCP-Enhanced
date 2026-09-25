@@ -41,16 +41,15 @@ def test_leading_zero_through_hole_does_not_invent_diameter():
     assert "diameter" not in parsed["facts"]
 
 
-def test_recessed_hole_depth_does_not_invent_subtype_or_diameter():
+def test_recessed_hole_depth_establishes_counterbore_without_inventing_diameter():
     parsed = parse_engineering_callout("011沉孔深6.5")
 
     assert parsed is not None
     assert parsed["facts"] == {
-        "recess_depth": 6.5,
+        "counterbore_depth": 6.5,
         "recessed_hole": True,
     }
     assert parsed["ambiguities"] == [
-        "recessed_hole_subtype_not_explicit",
         "leading_zero_diameter_like_token_not_promoted",
     ]
     assert "diameter" not in parsed["facts"]
@@ -61,17 +60,17 @@ def test_plain_linear_value_is_not_an_engineering_callout():
 
 
 
-def test_recess_note_keeps_neutral_geometry_facts_and_subtype_ambiguity():
-    parsed = parse_engineering_callout("011沉孔深6.5")
+def test_plain_recess_note_without_depth_keeps_subtype_ambiguity():
+    parsed = parse_engineering_callout("011沉孔")
 
     assert parsed is not None
     assert parsed["facts"]["recessed_hole"] is True
-    assert parsed["facts"]["recess_depth"] == 6.5
+    assert "counterbore_depth" not in parsed["facts"]
     assert "recessed_hole_subtype_not_explicit" in parsed["ambiguities"]
 
 
 
-def test_bound_recess_recovers_diameter_but_keeps_subtype_unresolved():
+def test_bound_counterbore_recovers_canonical_counterbore_diameter():
     parsed = parse_engineering_callout("011沉孔深6.5")
     assert parsed is not None
 
@@ -83,9 +82,9 @@ def test_bound_recess_recovers_diameter_but_keeps_subtype_unresolved():
         },
     )
 
-    assert recovered["facts"]["recess_diameter"] == 11.0
-    assert recovered["facts"]["recess_depth"] == 6.5
+    assert recovered["facts"]["counterbore_diameter"] == 11.0
+    assert recovered["facts"]["counterbore_depth"] == 6.5
     assert recovered["facts"]["recessed_hole"] is True
     assert "leading_zero_diameter_like_token_not_promoted" not in recovered["ambiguities"]
-    assert "recessed_hole_subtype_not_explicit" in recovered["ambiguities"]
-    assert recovered["geometry_backed_ocr_recovery"]["field"] == "recess_diameter"
+    assert "recessed_hole_subtype_not_explicit" not in recovered["ambiguities"]
+    assert recovered["geometry_backed_ocr_recovery"]["field"] == "counterbore_diameter"

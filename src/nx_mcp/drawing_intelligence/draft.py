@@ -316,6 +316,22 @@ def _infer_feature_types(draft: dict[str, Any]) -> None:
             ]
 
         elif (
+            feature.get("counterbore_diameter") is not None
+            or feature.get("counterbore_depth") is not None
+        ):
+            feature_type = "counterbore_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in (
+                    "diameter",
+                    "counterbore_diameter",
+                    "counterbore_depth",
+                    "through",
+                )
+                if feature.get(field) is not None
+            ]
+
+        elif (
             feature.get("recessed_hole") is True
             or feature.get("recess_diameter") is not None
             or feature.get("recess_depth") is not None

@@ -26,9 +26,11 @@ def _number(raw: str) -> float:
 def parse_engineering_callout(text: str) -> dict[str, Any] | None:
     """Parse only engineering semantics explicitly present in OCR text.
 
-    This parser deliberately does not infer a diameter from a leading zero,
-    does not bind the callout to geometry, and does not choose a recessed-hole
-    subtype when the source text only says 沉孔.
+    This parser deliberately does not infer a diameter from a leading zero
+    and does not bind the callout to geometry.  A plain 沉孔 note remains
+    subtype-ambiguous; 沉孔 with an explicit linear depth is represented as a
+    cylindrical counterbore because countersink geometry requires angular
+    semantics rather than a cylindrical depth.
     """
 
     normalized = _normalize(text)
@@ -66,8 +68,14 @@ def parse_engineering_callout(text: str) -> dict[str, Any] | None:
         depth = _number(depth_match.group(1))
         if "thread_spec" in facts:
             facts["thread_depth"] = depth
-        elif "沉孔" in normalized:
-            facts["recess_depth"] = depth
+        elif (
+            "沉孔" in normalized
+            and not any(
+                token in normalized
+                for token in ("沉头", "埋头", "锥孔", "锥形")
+            )
+        ):
+            facts["counterbore_depth"] = depth
         else:
             facts["depth"] = depth
         tags.append("depth")
@@ -79,7 +87,10 @@ def parse_engineering_callout(text: str) -> dict[str, Any] | None:
     if "沉孔" in normalized:
         facts["recessed_hole"] = True
         tags.append("recessed_hole")
-        ambiguities.append("recessed_hole_subtype_not_explicit")
+        if "counterbore_depth" in facts:
+            tags.append("counterbore")
+        else:
+            ambiguities.append("recessed_hole_subtype_not_explicit")
 
     leading_zero_match = re.search(
         r"(?<![A-Z0-9Ø.])(0\d+(?:\.\d+)?)(?![A-Z0-9.])",

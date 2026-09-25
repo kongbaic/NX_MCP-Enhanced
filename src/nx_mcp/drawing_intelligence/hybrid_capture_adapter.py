@@ -1608,6 +1608,7 @@ def adapt_hybrid_ocr_report(
         candidates=working_candidates,
         region_views={item.region_id: item.view_kind for item in context.region_views},
         overall_dimensions=overall_dimensions,
+        profile_inventory=profile_inventory,
     )
     boundary_roles = _boundary_role_lookup(boundaries)
 

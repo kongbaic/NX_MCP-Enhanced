@@ -477,6 +477,76 @@ class DrawingGateATests(unittest.TestCase):
     def test_relation_fixture_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(relation_fixture()))
 
+    def test_slot_bottom_upper_tangent_is_valid_closed_writer(self) -> None:
+        data = relation_fixture()
+        data["features"].append(
+            {
+                "id": "F_SLOT",
+                "type": "slot",
+                "width": 2,
+                "width_axis": "X",
+                "through_axis": "Y",
+                "top_z": 60,
+                "bottom_z": 25,
+                "required_for_modeling": True,
+            }
+        )
+        data["source_ledger"].extend(
+            [
+                {
+                    "id": "S_SLOT_KIND",
+                    "semantic": "feature_kind",
+                    "value": "slot",
+                    "target": "feature:F_SLOT.type",
+                },
+                {
+                    "id": "S_SLOT_WIDTH",
+                    "semantic": "slot_width",
+                    "value": 2,
+                    "target": "feature:F_SLOT.width",
+                },
+                {
+                    "id": "S_SLOT_WIDTH_AXIS",
+                    "semantic": "axis",
+                    "value": "X",
+                    "target": "feature:F_SLOT.width_axis",
+                },
+                {
+                    "id": "S_SLOT_THROUGH_AXIS",
+                    "semantic": "axis",
+                    "value": "Y",
+                    "target": "feature:F_SLOT.through_axis",
+                },
+                {
+                    "id": "S_SLOT_TOP",
+                    "semantic": "position_dimension",
+                    "value": 60,
+                    "target": "feature:F_SLOT.top_z",
+                },
+                {
+                    "id": "S_SLOT_BOTTOM_TANGENT",
+                    "semantic": "upper_tangent",
+                    "center": "feature:F_REFERENCE.centerline.z",
+                    "diameter": "feature:F_REFERENCE.diameter",
+                    "tangent": "feature:F_SLOT.bottom_z",
+                    "links": [
+                        "feature:F_REFERENCE.centerline.z",
+                        "feature:F_REFERENCE.diameter",
+                        "feature:F_SLOT.bottom_z",
+                    ],
+                },
+            ]
+        )
+
+        errors = R.check_drawing_json(data)
+
+        self.assertEqual([], errors)
+        self.assertEqual(
+            ["relation"],
+            writer_kinds(data, "feature:F_SLOT.bottom_z"),
+        )
+        self.assertEqual("closed", data["dimension_closure"]["status"])
+
     def test_direct_center_writer_only_passes(self) -> None:
         self.assertEqual([], R.check_drawing_json(example()))
 

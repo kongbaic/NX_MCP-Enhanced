@@ -149,6 +149,7 @@ frozen plan 首次落盘前必须完成静态自检。B 阶段 build/check 失�
 - 唯一顶/底 Planar 面优先 face_type:Planar + centroid_z + expectation.count。
 - normal 与 area 只作辅助，不作为唯一顶/底面的首要硬筛选条件。
 - 连续多个圆角/倒角必须每次重新 nx_list_edges。
+- 连续切除若仅点/线精确相切（典型：圆孔 + 通顶槽/keyhole），禁止拆成两次独立 subtract；必须由工程尺寸解析求连接点，合并成单一闭合 cut profile 一次减料。禁止 epsilon/numeric nudge，禁止像素换算连接点。
 - 禁止只按 index 数字猜边/面。
 
 ## 7. 输出

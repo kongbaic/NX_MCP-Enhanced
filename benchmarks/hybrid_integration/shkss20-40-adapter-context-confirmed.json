@@ -38,5 +38,14 @@
         "benchmark:SHKSS20-40:manual-audit:overall-Z-66"
       ]
     }
+  ],
+  "confirmed_start_sides": [
+    {
+      "entity_key": "R1.HIDDEN_PAIR.horizontal.004.005",
+      "start_side": "min",
+      "evidence": [
+        "human-confirmation:SHKSS20-40:M6-start-side:min"
+      ]
+    }
   ]
 }

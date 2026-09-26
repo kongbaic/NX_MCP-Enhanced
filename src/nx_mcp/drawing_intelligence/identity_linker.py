@@ -567,7 +567,7 @@ def _open_slot_tangent_relations(
                 if source
             ]
 
-            relation = RelationEvidence(
+            tangent_relation = RelationEvidence(
                 id=f"R_OPEN_SLOT_UPPER_TANGENT_{index + 1:03d}",
                 kind="upper_tangent",
                 axis="Z",
@@ -584,7 +584,25 @@ def _open_slot_tangent_relations(
                     "pixel_geometry_used_for_topology_only": True,
                 },
             )
-            relations.append(relation)
+            center_alignment = RelationEvidence(
+                id=f"R_OPEN_SLOT_CENTER_X_{index + 1:03d}",
+                kind="alignment",
+                axis="X",
+                targets=[
+                    f"feature:{circle_feature}.centerline.x",
+                    f"feature:{slot_feature}.centerline.x",
+                ],
+                source_ids=source_ids,
+                required_for_modeling=True,
+                metadata={
+                    "basis": (
+                        "unique_open_slot_gap_midpoint_aligned_to_circle_center"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                },
+            )
+            relations.extend([tangent_relation, center_alignment])
             resolved_fields.add((slot_feature, "bottom_z"))
 
     return relations, resolved_fields

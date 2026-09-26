@@ -1029,13 +1029,19 @@ def test_open_slot_tangent_relation_closes_only_bottom_z():
         {"E1": "F_CIRCLE", "E2": "F_SLOT"},
     )
 
-    assert len(relations) == 1
-    assert relations[0].kind == "upper_tangent"
-    assert relations[0].targets == [
+    assert len(relations) == 2
+    tangent = next(item for item in relations if item.kind == "upper_tangent")
+    alignment = next(item for item in relations if item.kind == "alignment")
+    assert tangent.targets == [
         "feature:F_CIRCLE.centerline.z",
         "feature:F_SLOT.bottom_z",
     ]
-    assert relations[0].diameter_target == "feature:F_CIRCLE.diameter"
+    assert tangent.diameter_target == "feature:F_CIRCLE.diameter"
+    assert alignment.axis == "X"
+    assert alignment.targets == [
+        "feature:F_CIRCLE.centerline.x",
+        "feature:F_SLOT.centerline.x",
+    ]
     assert resolved == {("F_SLOT", "bottom_z")}
 
     unresolved = identity_linker._linked_reader_unresolved(

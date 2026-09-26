@@ -3680,6 +3680,9 @@ def _open_slot_observations(
             continue
 
         width_axis = _axis_for(view.view_kind, "horizontal")
+        through_axis = _VIEW_NORMAL_BY_KIND.get(view.view_kind)
+        if through_axis is None or through_axis == width_axis:
+            continue
         entity_key = f"{region_id}.OPEN_SLOT.{source_index}"
         evidence = list(
             dict.fromkeys(
@@ -3728,6 +3731,16 @@ def _open_slot_observations(
                 ),
                 ObservationValue(
                     entity_key=entity_key,
+                    field="through_axis",
+                    value=through_axis,
+                    semantic="axis",
+                    evidence=[
+                        *evidence,
+                        f"hybrid:view-normal:{view.view_kind}:{through_axis}",
+                    ],
+                ),
+                ObservationValue(
+                    entity_key=entity_key,
                     field="top_z",
                     value=float(z_fact.value),
                     semantic="position_dimension",
@@ -3735,34 +3748,20 @@ def _open_slot_observations(
                 ),
             ]
         )
-        unresolved.extend(
-            [
-                ObservationUnresolved(
-                    kind="feature_value",
-                    reason=(
-                        "Open-slot width/topology is uniquely owned, but the "
-                        "orthographic evidence does not yet prove whether the "
-                        "slot is through the hidden view-normal direction."
-                    ),
-                    entity_keys=[entity_key],
-                    field="through_axis",
-                    evidence=evidence,
-                    required_for_modeling=True,
+        unresolved.append(
+            ObservationUnresolved(
+                kind="feature_value",
+                reason=(
+                    "Slot walls terminate at the circular projection's upper "
+                    "edge in pixel topology, but lower_z must be closed later "
+                    "from engineering circle center/diameter relations rather "
+                    "than pixel-to-mm conversion."
                 ),
-                ObservationUnresolved(
-                    kind="feature_value",
-                    reason=(
-                        "Slot walls terminate at the circular projection's upper "
-                        "edge in pixel topology, but lower_z must be closed later "
-                        "from engineering circle center/diameter relations rather "
-                        "than pixel-to-mm conversion."
-                    ),
-                    entity_keys=[entity_key],
-                    field="bottom_z",
-                    evidence=evidence,
-                    required_for_modeling=True,
-                ),
-            ]
+                entity_keys=[entity_key],
+                field="bottom_z",
+                evidence=evidence,
+                required_for_modeling=True,
+            )
         )
         claimed_source_indices.add(source_index)
         ledger.append(
@@ -3773,6 +3772,10 @@ def _open_slot_observations(
                 "view_kind": view.view_kind,
                 "width": float(value),
                 "width_axis": width_axis,
+                "through_axis": through_axis,
+                "through_axis_basis": (
+                    "proved_gap_in_resolved_overall_silhouette_plus_view_normal"
+                ),
                 "top_z": float(z_fact.value),
                 "top_boundary_ref": match["top_boundary_ref"],
                 "top_boundary_position_px": round(

@@ -602,6 +602,7 @@ CANONICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "recess_diameter",
         "recess_depth",
         "recessed_hole",
+        "start_side",
         "type",
         "axis",
     }

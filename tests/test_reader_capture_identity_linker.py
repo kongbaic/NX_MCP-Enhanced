@@ -960,6 +960,30 @@ def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocke
     assert any("structured kind" in item for item in errors)
 
 
+def test_current_capture_contract_accepts_canonical_start_side_value():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="hidden_parallel")],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="start_side",
+                value="max",
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
 def _unresolved_capture(prefix: str, kind: str) -> ReaderCapture:
     entity_id = f"{prefix}_ENTITY"
     return ReaderCapture(

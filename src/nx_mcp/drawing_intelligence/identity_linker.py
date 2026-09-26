@@ -508,11 +508,96 @@ def _normalize_direct_values(
     )
 
 
+def _open_slot_tangent_relations(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> tuple[list[RelationEvidence], set[tuple[str, str]]]:
+    relations: list[RelationEvidence] = []
+    resolved_fields: set[tuple[str, str]] = set()
+
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != "hybrid_open_slot_ledger"
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            slot_entity_id = str(item.get("slot_entity_id") or "")
+            circle_entity_id = str(item.get("circle_entity_id") or "")
+            if (
+                slot_entity_id not in entity_to_feature
+                or circle_entity_id not in entity_to_feature
+            ):
+                continue
+
+            slot_feature = entity_to_feature[slot_entity_id]
+            circle_feature = entity_to_feature[circle_entity_id]
+            if slot_feature == circle_feature:
+                continue
+
+            basis = str(item.get("basis") or "")
+            if (
+                basis
+                != (
+                    "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                    "circle_center_alignment_and_upper_circle_termination"
+                )
+            ):
+                continue
+            if item.get("engineering_coordinate_inferred_from_pixels") is not False:
+                continue
+            if item.get("pixel_geometry_used_for_topology_only") is not True:
+                continue
+
+            source_item_index = item.get("source_item_index")
+            region_id = str(item.get("region_id") or "")
+            source_ids = [
+                source
+                for source in [
+                    f"hybrid:open-slot:{region_id}:{source_item_index}",
+                    str(item.get("top_boundary_ref") or ""),
+                    str(item.get("circle_entity") or ""),
+                ]
+                if source
+            ]
+
+            relation = RelationEvidence(
+                id=f"R_OPEN_SLOT_UPPER_TANGENT_{index + 1:03d}",
+                kind="upper_tangent",
+                axis="Z",
+                targets=[
+                    f"feature:{circle_feature}.centerline.z",
+                    f"feature:{slot_feature}.bottom_z",
+                ],
+                diameter_target=f"feature:{circle_feature}.diameter",
+                source_ids=source_ids,
+                required_for_modeling=True,
+                metadata={
+                    "basis": basis,
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                },
+            )
+            relations.append(relation)
+            resolved_fields.add((slot_feature, "bottom_z"))
+
+    return relations, resolved_fields
+
+
 def _linked_reader_unresolved(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
+    *,
+    relation_resolved_fields: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
+    resolved_fields = relation_resolved_fields or set()
 
     for item in capture.unresolved_evidence:
         feature_ids = sorted(
@@ -522,6 +607,13 @@ def _linked_reader_unresolved(
                 if entity_id in entity_to_feature
             }
         )
+        if (
+            item.field is not None
+            and len(feature_ids) == 1
+            and (feature_ids[0], item.field) in resolved_fields
+        ):
+            continue
+
         record: dict[str, Any] = {
             "id": item.id,
             "kind": item.kind,
@@ -992,6 +1084,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 )
             )
 
+    slot_tangent_relations, slot_relation_resolved_fields = (
+        _open_slot_tangent_relations(capture, entity_to_feature)
+    )
+    synthetic_relations.extend(slot_tangent_relations)
+
     required_targets = {
         item.target
         for item in direct_values
@@ -1038,7 +1135,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             },
         ],
         unresolved_evidence=[
-            *_linked_reader_unresolved(capture, entity_to_feature),
+            *_linked_reader_unresolved(
+                capture,
+                entity_to_feature,
+                relation_resolved_fields=slot_relation_resolved_fields,
+            ),
             *[
                 {
                     **item,

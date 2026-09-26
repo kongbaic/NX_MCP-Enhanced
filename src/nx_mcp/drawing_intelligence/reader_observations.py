@@ -334,26 +334,48 @@ def _capture_observations_with_entity_ids(
 
     output = copy.deepcopy(observations.observations)
     for observation in output:
-        if (
-            not isinstance(observation, dict)
-            or observation.get("kind") != "hybrid_profile_topology_ledger"
-        ):
+        if not isinstance(observation, dict):
             continue
-        items = observation.get("items")
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict):
+
+        if observation.get("kind") == "hybrid_profile_topology_ledger":
+            items = observation.get("items")
+            if not isinstance(items, list):
                 continue
-            for prefix in ("internal_u", "internal_v"):
-                key = item.get(f"{prefix}_entity_key")
-                if not isinstance(key, str) or not key:
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-                item[f"{prefix}_entity_id"] = _mapped(
-                    entity_ids,
-                    key,
-                    "profile topology entity",
-                )
+                for prefix in ("internal_u", "internal_v"):
+                    key = item.get(f"{prefix}_entity_key")
+                    if not isinstance(key, str) or not key:
+                        continue
+                    item[f"{prefix}_entity_id"] = _mapped(
+                        entity_ids,
+                        key,
+                        "profile topology entity",
+                    )
+            continue
+
+        if observation.get("kind") == "hybrid_open_slot_ledger":
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                slot_key = item.get("entity_key")
+                circle_key = item.get("circle_entity")
+                if isinstance(slot_key, str) and slot_key:
+                    item["slot_entity_id"] = _mapped(
+                        entity_ids,
+                        slot_key,
+                        "open-slot entity",
+                    )
+                if isinstance(circle_key, str) and circle_key:
+                    item["circle_entity_id"] = _mapped(
+                        entity_ids,
+                        circle_key,
+                        "open-slot circle entity",
+                    )
     return output
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import nx_mcp.drawing_intelligence.identity_linker as identity_linker
+
 import json
 import subprocess
 import sys
@@ -958,6 +960,90 @@ def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocke
 
     assert any("non-canonical field" in item for item in errors)
     assert any("structured kind" in item for item in errors)
+
+
+def test_open_slot_tangent_relation_closes_only_bottom_z():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[
+            CaptureEntity(id="E1", view_id="V1", shape="circle"),
+            CaptureEntity(id="E2", view_id="V1", shape="slot_edges"),
+        ],
+        values=[
+            CaptureValue(id="D1", entity_id="E1", field="diameter", value=20),
+            CaptureValue(id="K1", entity_id="E2", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E2", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E2", field="width_axis", value="X"),
+            CaptureValue(id="Z1", entity_id="E2", field="top_z", value=66),
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="feature_value",
+                reason="through unknown",
+                entity_ids=["E2"],
+                field="through_axis",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+            CaptureUnresolvedEvidence(
+                id="U2",
+                kind="feature_value",
+                reason="bottom from tangent",
+                entity_ids=["E2"],
+                field="bottom_z",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_open_slot_ledger",
+                "items": [
+                    {
+                        "slot_entity_id": "E2",
+                        "circle_entity_id": "E1",
+                        "region_id": "R1",
+                        "source_item_index": 2,
+                        "top_boundary_ref": "R1.TOP",
+                        "circle_entity": "R1.C1",
+                        "basis": (
+                            "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                            "circle_center_alignment_and_upper_circle_termination"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+            }
+        ],
+    )
+
+    relations, resolved = identity_linker._open_slot_tangent_relations(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+    )
+
+    assert len(relations) == 1
+    assert relations[0].kind == "upper_tangent"
+    assert relations[0].targets == [
+        "feature:F_CIRCLE.centerline.z",
+        "feature:F_SLOT.bottom_z",
+    ]
+    assert relations[0].diameter_target == "feature:F_CIRCLE.diameter"
+    assert resolved == {("F_SLOT", "bottom_z")}
+
+    unresolved = identity_linker._linked_reader_unresolved(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+        relation_resolved_fields=resolved,
+    )
+    assert [item["field"] for item in unresolved] == ["through_axis"]
 
 
 def test_current_capture_contract_accepts_canonical_slot_value_fields():

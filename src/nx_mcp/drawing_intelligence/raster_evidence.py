@@ -558,6 +558,10 @@ def _compact_fragments(
                     round(local_span_start, 5),
                     round(local_span_end, 5),
                 ],
+                "segments_px": [
+                    [int(start), int(end)]
+                    for start, end in segments
+                ],
                 "segment_count": len(segments),
                 "gap_count": len(group.get("positive_gaps_px", [])),
                 "dash_score": score,

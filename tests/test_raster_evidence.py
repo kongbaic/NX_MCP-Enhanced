@@ -80,9 +80,14 @@ def test_probe_adapter_stays_geometry_only():
     assert raw["probe_parameters"]["fragment_length_limits_px"] == [6, 51]
     assert raw["regions"][0]["bbox_px"] == [100, 50, 400, 300]
     assert raw["regions"][0]["circle_groups"][0]["center_px"] == [300, 200]
-    assert raw["regions"][0]["linear_pattern_candidates"][0]["kind"] == (
-        "dashed_or_centerline_candidate"
-    )
+    pattern = raw["regions"][0]["linear_pattern_candidates"][0]
+    assert pattern["kind"] == "dashed_or_centerline_candidate"
+    assert pattern["segments_px"] == [
+        [120, 140],
+        [155, 175],
+        [190, 210],
+        [225, 245],
+    ]
 
 
 def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):

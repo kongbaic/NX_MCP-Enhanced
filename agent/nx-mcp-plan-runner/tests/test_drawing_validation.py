@@ -1365,6 +1365,62 @@ class MetricThreadSurrogateTests(unittest.TestCase):
             _, errors = R.resolve_thread_drawing_geometries(thread_drawing(**changes))
             self.assertTrue(errors, changes)
 
+    def test_confirmed_side_derives_m6_range_from_overall_bounds(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "start_side": "min",
+                }
+            ],
+            "unresolved": [],
+        }
+
+        geometries, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual("X", geometries[0]["axis"])
+        self.assertEqual([[8.0, 58.0]], geometries[0]["transverse_centers"])
+        self.assertEqual(12.0, geometries[0]["depth"])
+        self.assertEqual([-20.0, -8.0], geometries[0]["axial_range"])
+        self.assertEqual(1, geometries[0]["count"])
+        self.assertEqual("min", geometries[0]["side"])
+
+    def test_missing_range_still_fails_closed_without_confirmed_side(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                }
+            ],
+            "unresolved": [],
+        }
+
+        _, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertTrue(any("no explicit axial range" in item for item in errors))
+
     def test_valid_drawing_geometry_is_preserved(self) -> None:
         geometries, errors = R.resolve_thread_drawing_geometries(thread_drawing())
         self.assertEqual([], errors)

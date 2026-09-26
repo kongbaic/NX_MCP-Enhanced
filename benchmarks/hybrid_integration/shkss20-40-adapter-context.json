@@ -19,23 +19,32 @@
   "overall_dimension_facts": [
     {
       "axis": "X",
-      "value": 40.0,
+      "value": 40,
       "evidence": [
         "benchmark:SHKSS20-40:manual-audit:overall-X-40"
       ]
     },
     {
       "axis": "Y",
-      "value": 32.0,
+      "value": 32,
       "evidence": [
         "benchmark:SHKSS20-40:manual-audit:overall-Y-32"
       ]
     },
     {
       "axis": "Z",
-      "value": 66.0,
+      "value": 66,
       "evidence": [
         "benchmark:SHKSS20-40:manual-audit:overall-Z-66"
+      ]
+    }
+  ],
+  "confirmed_start_sides": [
+    {
+      "entity_key": "R1.HIDDEN_PAIR.horizontal.004.005",
+      "start_side": "min",
+      "evidence": [
+        "human-confirmation:SHKSS20-40:M6-start-side:min"
       ]
     }
   ]

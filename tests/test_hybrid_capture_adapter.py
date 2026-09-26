@@ -163,6 +163,49 @@ def _context() -> HybridAdapterContext:
     )
 
 
+def test_confirmed_start_side_requires_known_entity_and_preserves_human_provenance():
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                }
+            ],
+            "confirmed_start_sides": [
+                {
+                    "entity_key": "R1.HIDDEN_PAIR.horizontal.004.005",
+                    "start_side": "min",
+                    "evidence": ["human-confirmation:test:min"],
+                }
+            ],
+        }
+    )
+
+    values, ledger = hybrid_adapter._confirmed_start_side_values(
+        context,
+        entity_keys={"R1.HIDDEN_PAIR.horizontal.004.005"},
+        existing_values=[],
+    )
+
+    assert len(values) == 1
+    assert values[0].field == "start_side"
+    assert values[0].value == "min"
+    assert values[0].semantic == "start_side"
+    assert values[0].evidence == ["human-confirmation:test:min"]
+    assert ledger[0]["basis"] == "explicit_human_confirmation"
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    with pytest.raises(HybridCaptureAdapterError, match="is absent"):
+        hybrid_adapter._confirmed_start_side_values(
+            context,
+            entity_keys=set(),
+            existing_values=[],
+        )
+
+
 def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 

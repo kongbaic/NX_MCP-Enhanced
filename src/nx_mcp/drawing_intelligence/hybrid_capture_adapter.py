@@ -46,6 +46,12 @@ class HybridRegionView(_StrictAdapterModel):
     evidence: list[str] = Field(min_length=1)
 
 
+class HybridConfirmedStartSide(_StrictAdapterModel):
+    entity_key: str = Field(min_length=1)
+    start_side: Literal["min", "max"]
+    evidence: list[str] = Field(min_length=1)
+
+
 class HybridAdapterContext(_StrictAdapterModel):
     schema_version: Literal["hybrid-adapter-context-v1"] = Field(
         default="hybrid-adapter-context-v1",
@@ -53,13 +59,66 @@ class HybridAdapterContext(_StrictAdapterModel):
     )
     region_views: list[HybridRegionView] = Field(min_length=1)
     overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
+    confirmed_start_sides: list[HybridConfirmedStartSide] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _unique_regions(self) -> HybridAdapterContext:
         region_ids = [item.region_id for item in self.region_views]
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("hybrid adapter region_ids must be unique")
+        confirmed_entities = [item.entity_key for item in self.confirmed_start_sides]
+        if len(confirmed_entities) != len(set(confirmed_entities)):
+            raise ValueError("confirmed_start_sides entity_key values must be unique")
         return self
+
+
+def _confirmed_start_side_values(
+    context: HybridAdapterContext,
+    *,
+    entity_keys: set[str],
+    existing_values: list[ObservationValue],
+) -> tuple[list[ObservationValue], list[dict[str, Any]]]:
+    existing = {
+        (item.entity_key, item.field): item.value
+        for item in existing_values
+    }
+    output: list[ObservationValue] = []
+    ledger: list[dict[str, Any]] = []
+
+    for item in context.confirmed_start_sides:
+        if item.entity_key not in entity_keys:
+            raise HybridCaptureAdapterError(
+                f"confirmed start_side entity {item.entity_key!r} is absent"
+            )
+        key = (item.entity_key, "start_side")
+        if key in existing:
+            if existing[key] != item.start_side:
+                raise HybridCaptureAdapterError(
+                    f"confirmed start_side conflicts for {item.entity_key!r}"
+                )
+            continue
+
+        evidence = list(dict.fromkeys(item.evidence))
+        output.append(
+            ObservationValue(
+                entity_key=item.entity_key,
+                field="start_side",
+                value=item.start_side,
+                semantic="start_side",
+                evidence=evidence,
+            )
+        )
+        ledger.append(
+            {
+                "entity_key": item.entity_key,
+                "field": "start_side",
+                "value": item.start_side,
+                "evidence": evidence,
+                "basis": "explicit_human_confirmation",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        )
+    return output, ledger
 
 
 def _axis_for(view_kind: ViewKind, orientation: str) -> Axis:
@@ -4375,6 +4434,16 @@ def adapt_hybrid_ocr_report(
             centerline_alignments=centerline_alignments,
         )
     )
+    confirmed_start_side_values, confirmed_start_side_ledger = (
+        _confirmed_start_side_values(
+            context,
+            entity_keys={item.key for item in entities},
+            existing_values=[
+                *callout_values,
+                *recess_start_side_values,
+            ],
+        )
+    )
     (
         slot_entities,
         slot_values,
@@ -4649,6 +4718,12 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_topology_only": True,
         },
         {
+            "kind": "human_confirmed_start_side_ledger",
+            "schema": "1.0",
+            "items": confirmed_start_side_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
             "kind": "hybrid_open_slot_ledger",
             "schema": "1.0",
             "items": slot_ledger,
@@ -4710,6 +4785,7 @@ def adapt_hybrid_ocr_report(
             *geometry_values,
             *callout_values,
             *recess_start_side_values,
+            *confirmed_start_side_values,
             *slot_values,
         ],
         dimensions=dimensions,

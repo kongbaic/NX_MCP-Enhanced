@@ -2150,7 +2150,12 @@ def _thread_subsuming_through_feature(
 
 
 def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
-    """Read placement/extent exactly as Gate A provided; never fill missing geometry."""
+    """Resolve thread surrogate geometry from explicit drawing facts only.
+
+    An absent axial range may be derived only when the drawing explicitly provides
+    start_side/side, a positive thread depth, and overall dimensions. This uses the
+    canonical engineering coordinate system; pixel geometry is never consulted.
+    """
     geometries: list[dict] = []
     errors: list[str] = []
     for index, record in enumerate(_thread_feature_records(drawing)):
@@ -2199,23 +2204,63 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if not centers or any(center is None for center in centers):
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid center")
             continue
-        depth = _num(_thread_feature_value(feature, "depth", "hole_depth"))
+        depth = _num(
+            _thread_feature_value(feature, "depth", "hole_depth", "thread_depth")
+        )
         if depth is None or depth <= 0:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid depth")
             continue
-        axial_range = _thread_feature_value(feature, "axis_range", "axial_range", "through_range", "range")
-        if not (isinstance(axial_range, (list, tuple)) and len(axial_range) == 2 and all(_num(value) is not None for value in axial_range)):
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no explicit axial range")
-            continue
-        axial_range = [float(_num(axial_range[0])), float(_num(axial_range[1]))]
+
+        axial_range = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if (
+            isinstance(axial_range, (list, tuple))
+            and len(axial_range) == 2
+            and all(_num(value) is not None for value in axial_range)
+        ):
+            axial_range = [
+                float(_num(axial_range[0])),
+                float(_num(axial_range[1])),
+            ]
+        else:
+            side_value = _thread_feature_value(feature, "start_side", "side")
+            side = str(side_value or "").lower()
+            bbox = _drawing_overall_bbox(drawing)
+            if side not in {"min", "max"} or bbox is None:
+                errors.append(
+                    f"thread_geometry_violation: feature {fid!r} has no explicit "
+                    "axial range and no derivable start_side/overall bounds"
+                )
+                continue
+            lx, ly, hz = bbox
+            lo, hi = {
+                "X": (-lx / 2.0, lx / 2.0),
+                "Y": (-ly / 2.0, ly / 2.0),
+                "Z": (0.0, hz),
+            }[axis]
+            start = lo if side == "min" else hi
+            end = start + float(depth) if side == "min" else start - float(depth)
+            if end < lo - 1e-9 or end > hi + 1e-9:
+                errors.append(
+                    f"thread_geometry_violation: feature {fid!r} depth exceeds "
+                    "overall bounds from its confirmed start_side"
+                )
+                continue
+            axial_range = [float(start), float(end)]
+
         if not _drawing_equal(abs(axial_range[1] - axial_range[0]), depth):
             errors.append(f"thread_geometry_violation: feature {fid!r} depth and axial range disagree")
             continue
+
         count_value = _num(_thread_feature_value(feature, "count"))
-        if count_value is None or count_value <= 0 or not float(count_value).is_integer():
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
-            continue
-        count = int(count_value)
+        if count_value is None:
+            count = len(centers)
+        else:
+            if count_value <= 0 or not float(count_value).is_integer():
+                errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
+                continue
+            count = int(count_value)
         if len(centers) != count:
             errors.append(f"thread_geometry_violation: feature {fid!r} center count does not equal count")
             continue
@@ -2228,8 +2273,9 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
             "axial_range": axial_range,
             "count": count,
         }
-        if "side" in feature:
-            geometry["side"] = copy.deepcopy(feature["side"])
+        side_value = _thread_feature_value(feature, "start_side", "side")
+        if str(side_value or "").lower() in {"min", "max"}:
+            geometry["side"] = str(side_value).lower()
         geometries.append(geometry)
     return geometries, errors
 

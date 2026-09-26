@@ -2050,6 +2050,73 @@ def resolve_metric_thread_parameters(spec: str | None) -> tuple[dict | None, str
     }, None
 
 
+def _thread_subsuming_through_feature(
+    drawing: dict,
+    thread_feature: dict,
+    surrogate_diameter: float,
+) -> dict | None:
+    """Return one unique coaxial through feature that fully covers the surrogate void.
+
+    This is geometry-only subsumption: the threaded drawing semantics remain intact,
+    but no redundant subtract operation is required when a larger/equal coaxial
+    through void already exists. Ambiguous or incomplete matches fail closed.
+    """
+
+    axis = str(_thread_feature_value(thread_feature, "axis") or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return None
+
+    thread_center_value = _thread_feature_value(
+        thread_feature, "center", "centerline"
+    )
+    position = thread_feature.get("position")
+    if thread_center_value is None and isinstance(position, dict):
+        thread_center_value = position.get("center")
+    thread_center = _axis_transverse_center(axis, thread_center_value)
+    if thread_center is None:
+        return None
+
+    matches: list[dict] = []
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict) or feature is thread_feature:
+            continue
+        if feature.get("id") == thread_feature.get("id"):
+            continue
+        feature_type = str(feature.get("type") or feature.get("kind") or "").lower()
+        if any(token in feature_type for token in ("thread", "tapped", "螺纹")):
+            continue
+        if feature.get("through") is not True:
+            continue
+        if str(feature.get("axis") or "").upper() != axis:
+            continue
+        count = _num(feature.get("count"))
+        if count is not None and (not float(count).is_integer() or int(count) != 1):
+            continue
+
+        diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        if diameter is None or diameter + 1e-9 < surrogate_diameter:
+            continue
+
+        center_value = feature.get("centerline")
+        candidate_position = feature.get("position")
+        if center_value is None and isinstance(candidate_position, dict):
+            center_value = candidate_position.get("center")
+        center = _axis_transverse_center(axis, center_value)
+        if center is None:
+            continue
+        if len(center) != len(thread_center) or any(
+            not _drawing_equal(a, b) for a, b in zip(center, thread_center)
+        ):
+            continue
+        matches.append(feature)
+
+    return matches[0] if len(matches) == 1 else None
+
+
 def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
     """Read placement/extent exactly as Gate A provided; never fill missing geometry."""
     geometries: list[dict] = []
@@ -2059,6 +2126,33 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
+        parameters, parameter_error = resolve_metric_thread_parameters(_thread_spec(feature))
+        if parameter_error is None and parameters is not None:
+            covering = _thread_subsuming_through_feature(
+                drawing,
+                feature,
+                float(parameters["surrogate_diameter"]),
+            )
+            if covering is not None:
+                center_value = _thread_feature_value(feature, "center", "centerline")
+                position = feature.get("position")
+                if center_value is None and isinstance(position, dict):
+                    center_value = position.get("center")
+                axis_value = str(_thread_feature_value(feature, "axis") or "").upper()
+                geometries.append(
+                    {
+                        "feature_id": fid,
+                        "owner_feature_id": record.get("owner_feature_id") or fid,
+                        "representation": "subsumed_by_coaxial_through_hole",
+                        "subsumed_by_feature_id": str(covering.get("id") or ""),
+                        "axis": axis_value,
+                        "transverse_centers": [
+                            _axis_transverse_center(axis_value, center_value)
+                        ],
+                        "count": 0,
+                    }
+                )
+                continue
         axis = str(_thread_feature_value(feature, "axis") or "").upper()
         if axis not in {"X", "Y", "Z"}:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid axis")
@@ -2179,6 +2273,14 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
             errors.append(f"thread feature {fid!r} has no validated drawing geometry")
             continue
         matches = [op for op in marked if op["thread_surrogate_use"].get("feature_id") == fid]
+        if expected.get("representation") == "subsumed_by_coaxial_through_hole":
+            if matches:
+                errors.append(
+                    f"thread surrogate for feature {fid!r} is redundant because "
+                    f"coaxial through feature {expected.get('subsumed_by_feature_id')!r} "
+                    "already covers its tap-drill geometry"
+                )
+            continue
         if len(matches) != expected.get("count"):
             errors.append(f"thread surrogate for feature {fid!r} operation count differs from drawing")
         actual_geometries = []

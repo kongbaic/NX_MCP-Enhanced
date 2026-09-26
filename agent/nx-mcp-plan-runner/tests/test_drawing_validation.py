@@ -1302,6 +1302,72 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         self.assertEqual([[2.0, 3.0]], geometries[0]["transverse_centers"])
         self.assertEqual([0.0, 12.0], geometries[0]["axial_range"])
 
+    def test_coaxial_larger_through_hole_subsumes_thread_surrogate(self) -> None:
+        drawing = {
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                },
+                {
+                    "id": "H1",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "diameter": 6.6,
+                    "counterbore_diameter": 11,
+                    "counterbore_depth": 6.5,
+                    "through": True,
+                },
+            ],
+            "unresolved": [],
+        }
+
+        geometries, geometry_errors = R.resolve_thread_drawing_geometries(drawing)
+        recipes, recipe_errors = R.resolve_thread_surrogates(drawing)
+
+        self.assertEqual([], geometry_errors)
+        self.assertEqual([], recipe_errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual(
+            "subsumed_by_coaxial_through_hole",
+            geometries[0]["representation"],
+        )
+        self.assertEqual("H1", geometries[0]["subsumed_by_feature_id"])
+        self.assertEqual(0, geometries[0]["count"])
+        self.assertEqual([], R.thread_surrogate_plan_errors({"operations": []}, recipes, geometries))
+
+    def test_thread_subsumption_fails_closed_without_matching_through_hole(self) -> None:
+        drawing = {
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                },
+                {
+                    "id": "H1",
+                    "type": "hole",
+                    "axis": "X",
+                    "centerline": {"y": 9, "z": 58},
+                    "diameter": 6.6,
+                    "through": True,
+                },
+            ],
+            "unresolved": [],
+        }
+
+        _, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertTrue(any("thread_geometry_violation" in item for item in errors))
+
     def test_surrogate_cannot_change_axis(self) -> None:
         drawing = thread_drawing(axis="X", position={"center": [3, 4]})
         geometries, _ = R.resolve_thread_drawing_geometries(drawing)

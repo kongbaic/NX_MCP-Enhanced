@@ -2076,6 +2076,19 @@ def _thread_subsuming_through_feature(
     if thread_center is None:
         return None
 
+    thread_range_value = _thread_feature_value(
+        thread_feature, "axis_range", "axial_range", "through_range", "range"
+    )
+    if not (
+        isinstance(thread_range_value, (list, tuple))
+        and len(thread_range_value) == 2
+        and all(_num(value) is not None for value in thread_range_value)
+    ):
+        return None
+    thread_range = sorted(
+        [float(_num(thread_range_value[0])), float(_num(thread_range_value[1]))]
+    )
+
     matches: list[dict] = []
     for feature in drawing.get("features") or []:
         if not isinstance(feature, dict) or feature is thread_feature:
@@ -2112,6 +2125,25 @@ def _thread_subsuming_through_feature(
             not _drawing_equal(a, b) for a, b in zip(center, thread_center)
         ):
             continue
+
+        candidate_range_value = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if not (
+            isinstance(candidate_range_value, (list, tuple))
+            and len(candidate_range_value) == 2
+            and all(_num(value) is not None for value in candidate_range_value)
+        ):
+            continue
+        candidate_range = sorted(
+            [float(_num(candidate_range_value[0])), float(_num(candidate_range_value[1]))]
+        )
+        if (
+            candidate_range[0] > thread_range[0] + 1e-9
+            or candidate_range[1] < thread_range[1] - 1e-9
+        ):
+            continue
+
         matches.append(feature)
 
     return matches[0] if len(matches) == 1 else None

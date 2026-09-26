@@ -1312,6 +1312,7 @@ class MetricThreadSurrogateTests(unittest.TestCase):
                     "thread_depth": 12,
                     "axis": "X",
                     "centerline": {"y": 8, "z": 58},
+                    "axial_range": [-12, 0],
                 },
                 {
                     "id": "H1",
@@ -1322,6 +1323,7 @@ class MetricThreadSurrogateTests(unittest.TestCase):
                     "counterbore_diameter": 11,
                     "counterbore_depth": 6.5,
                     "through": True,
+                    "axial_range": [-20, 20],
                 },
             ],
             "unresolved": [],
@@ -1341,7 +1343,7 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         self.assertEqual(0, geometries[0]["count"])
         self.assertEqual([], R.thread_surrogate_plan_errors({"operations": []}, recipes, geometries))
 
-    def test_thread_subsumption_fails_closed_without_matching_through_hole(self) -> None:
+    def test_thread_subsumption_fails_closed_without_explicit_axial_coverage(self) -> None:
         drawing = {
             "features": [
                 {
@@ -1356,7 +1358,7 @@ class MetricThreadSurrogateTests(unittest.TestCase):
                     "id": "H1",
                     "type": "hole",
                     "axis": "X",
-                    "centerline": {"y": 9, "z": 58},
+                    "centerline": {"y": 8, "z": 58},
                     "diameter": 6.6,
                     "through": True,
                 },

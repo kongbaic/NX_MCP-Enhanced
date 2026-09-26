@@ -123,7 +123,7 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
   - `axis=Y` → XZ sketch → 沿 Y subtract；
   - `axis=Z` → XY sketch / Z 轴孔工具。
 - **Metric thread surrogate** 只替代当前工具无法表达的真实螺纹牙型：通用解析 `metric designation → nominal diameter → pitch → tap-drill diameter = nominal - pitch`。裸 M 使用项目支持的 coarse-pitch metadata subset，显式 pitch 使用图纸值；无法解析则 fail closed。
-- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。若且仅若存在唯一同轴、同 transverse center、through=true 且孔径不小于 resolved tap-drill diameter 的非线程孔，Gate B 可将该 thread surrogate 标记为 `subsumed_by_coaxial_through_hole` 并要求 0 个额外切除 operation；drawing 中的 thread 语义不得删除或改写。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
+- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。若且仅若存在唯一同轴、同 transverse center、through=true 且孔径不小于 resolved tap-drill diameter 的非线程孔，并且 thread 与 covering feature 都提供明确 axial range、covering axial range 完整覆盖 thread axial range，Gate B 才可将该 thread surrogate 标记为 `subsumed_by_coaxial_through_hole` 并要求 0 个额外切除 operation；仅凭 `through=true` 不足以证明轴向材料区间覆盖；drawing 中的 thread 语义不得删除或改写。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
 - **slot/cut 的 through_axis 固定映射**：
   - `through_axis=X` → YZ sketch → 沿 X subtract；
   - `through_axis=Y` → XZ sketch → 沿 Y subtract；

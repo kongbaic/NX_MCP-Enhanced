@@ -1741,6 +1741,166 @@ def test_unique_thread_recess_centerline_alignment_uses_pixels_only_for_identity
     assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
 
 
+def test_transverse_recess_start_side_uses_unique_boundary_contact():
+    hidden = "R1.HIDDEN_PAIR.horizontal.001.002"
+    target = "R2.C1"
+    values, ledger = hybrid_adapter._transverse_recess_start_side_values(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 120, 100],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 50.5,
+                            "segments_px": [
+                                [20, 40],
+                                [92, 98],
+                                [102, 115],
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "anchors": [
+                    {
+                        "ref": "R1.LEFT",
+                        "role": "overall_min",
+                        "position_px": 0.0,
+                    },
+                    {
+                        "ref": "R1.RIGHT",
+                        "role": "overall_max",
+                        "position_px": 100.0,
+                    },
+                ],
+            }
+        ],
+        hidden_entity_records={
+            hidden: {
+                "entity_key": hidden,
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 50.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key=hidden,
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key=target,
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            ),
+        ],
+        centerline_alignments=[
+            hybrid_adapter.ObservationCenterlineAlignment(
+                entity_keys=[hidden, target],
+                feature_axis="X",
+                evidence=["centerline"],
+            )
+        ],
+    )
+
+    assert len(values) == 1
+    assert values[0].entity_key == target
+    assert values[0].field == "start_side"
+    assert values[0].value == "max"
+    assert values[0].semantic == "start_side"
+    assert ledger[0]["start_side"] == "max"
+    assert ledger[0]["boundary_role"] == "overall_max"
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_transverse_recess_start_side_fails_closed_when_both_boundaries_touch():
+    hidden = "R1.HIDDEN_PAIR.horizontal.001.002"
+    target = "R2.C1"
+    values, ledger = hybrid_adapter._transverse_recess_start_side_values(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 120, 100],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 50.0,
+                            "segments_px": [
+                                [-2, 4],
+                                [96, 104],
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "anchors": [
+                    {"ref": "R1.LEFT", "role": "overall_min", "position_px": 0.0},
+                    {"ref": "R1.RIGHT", "role": "overall_max", "position_px": 100.0},
+                ],
+            }
+        ],
+        hidden_entity_records={
+            hidden: {
+                "entity_key": hidden,
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 50.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key=target,
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            )
+        ],
+        centerline_alignments=[
+            hybrid_adapter.ObservationCenterlineAlignment(
+                entity_keys=[hidden, target],
+                feature_axis="X",
+                evidence=["centerline"],
+            )
+        ],
+    )
+
+    assert values == []
+    assert ledger == []
+
+
 def test_thread_recess_centerline_alignment_fails_closed_with_two_circle_matches():
     alignments, ledger = hybrid_adapter._unique_thread_recess_centerline_alignments(
         report={

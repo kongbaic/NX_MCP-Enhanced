@@ -3349,6 +3349,271 @@ def _unique_thread_recess_centerline_alignments(
     return alignments, ledger
 
 
+def _resolved_axis_boundary_positions(
+    boundaries: list[dict[str, Any]],
+    *,
+    region_id: str,
+    axis: Axis,
+) -> dict[str, tuple[float, str]] | None:
+    matches: list[dict[str, tuple[float, str]]] = []
+    for boundary in boundaries:
+        if not isinstance(boundary, dict) or boundary.get("status") != "resolved":
+            continue
+        if str(boundary.get("region_id") or "") != region_id:
+            continue
+        if str(boundary.get("axis") or "").upper() != axis:
+            continue
+
+        positions: dict[str, tuple[float, str]] = {}
+        valid = True
+        for anchor in boundary.get("anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            role = str(anchor.get("role") or "")
+            position = anchor.get("position_px")
+            ref = str(anchor.get("ref") or "")
+            if (
+                role not in {"overall_min", "overall_max"}
+                or not isinstance(position, (int, float))
+                or isinstance(position, bool)
+            ):
+                continue
+            previous = positions.get(role)
+            current = (float(position), ref)
+            if previous is not None and not math.isclose(
+                previous[0],
+                current[0],
+                abs_tol=1e-6,
+            ):
+                valid = False
+                break
+            positions[role] = current
+
+        if valid and set(positions) == {"overall_min", "overall_max"}:
+            matches.append(positions)
+
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _segment_distance_to_position(
+    segments: Any,
+    position: float,
+) -> float | None:
+    distances: list[float] = []
+    if not isinstance(segments, list):
+        return None
+    for segment in segments:
+        if not (
+            isinstance(segment, list)
+            and len(segment) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in segment
+            )
+        ):
+            continue
+        start, end = sorted(float(value) for value in segment)
+        if start <= position <= end:
+            return 0.0
+        distances.append(min(abs(position - start), abs(position - end)))
+    return min(distances) if distances else None
+
+
+def _transverse_recess_start_side_values(
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    hidden_entity_records: dict[str, dict[str, Any]],
+    callout_values: list[ObservationValue],
+    centerline_alignments: list[ObservationCenterlineAlignment],
+) -> tuple[list[ObservationValue], list[dict[str, Any]]]:
+    """Resolve transverse recess entry side from local fragment topology only.
+
+    The rule is intentionally narrow: an already-unique threaded/recessed
+    centerline alignment supplies the source projection centerline.  The
+    closest fragmented line on that centerline must uniquely contact exactly
+    one resolved overall boundary along the feature axis.  Pixels establish
+    only min/max topology; no pixel distance is converted to engineering units.
+    """
+
+    values_by_entity: dict[str, dict[str, Any]] = {}
+    for item in callout_values:
+        values_by_entity.setdefault(item.entity_key, {})[item.field] = item.value
+
+    regions = {
+        str(item.get("region_id") or ""): item
+        for item in report.get("regions", [])
+        if isinstance(item, dict) and item.get("region_id")
+    }
+
+    output: list[ObservationValue] = []
+    ledger: list[dict[str, Any]] = []
+    claimed_targets: set[str] = set()
+
+    for alignment in centerline_alignments:
+        feature_axis = alignment.feature_axis
+        if feature_axis not in {"X", "Y"}:
+            continue
+
+        hidden_entities = [
+            entity
+            for entity in alignment.entity_keys
+            if entity in hidden_entity_records
+        ]
+        target_entities = [
+            entity
+            for entity in alignment.entity_keys
+            if entity not in hidden_entity_records
+            and (
+                values_by_entity.get(entity, {}).get("recessed_hole") is True
+                or values_by_entity.get(entity, {}).get("counterbore_diameter") is not None
+                or values_by_entity.get(entity, {}).get("counterbore_depth") is not None
+            )
+        ]
+        if len(hidden_entities) != 1 or len(target_entities) != 1:
+            continue
+
+        hidden_entity = hidden_entities[0]
+        target_entity = target_entities[0]
+        if target_entity in claimed_targets:
+            continue
+        if values_by_entity.get(target_entity, {}).get("start_side") in {"min", "max"}:
+            continue
+
+        record = hidden_entity_records[hidden_entity]
+        source_region = hidden_entity.split(".", 1)[0]
+        source_view = view_lookup.get(source_region)
+        region = regions.get(source_region)
+        center_position = record.get("position_px")
+        if (
+            source_view is None
+            or region is None
+            or not isinstance(center_position, (int, float))
+            or isinstance(center_position, bool)
+        ):
+            continue
+
+        axis_pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (source_view.view_kind, feature_axis)
+        )
+        if axis_pixel_index is None:
+            continue
+        line_orientation = "horizontal" if axis_pixel_index == 0 else "vertical"
+        if str(record.get("pattern_orientation") or "") != line_orientation:
+            continue
+
+        boundary_positions = _resolved_axis_boundary_positions(
+            boundaries,
+            region_id=source_region,
+            axis=feature_axis,
+        )
+        if boundary_positions is None:
+            continue
+
+        center_tolerance = _projection_alignment_tolerance(report, source_region)
+        pattern_matches: list[tuple[float, int, dict[str, Any]]] = []
+        for pattern_index, pattern in enumerate(
+            region.get("linear_pattern_candidates", [])
+        ):
+            if not isinstance(pattern, dict):
+                continue
+            if str(pattern.get("orientation") or "") != line_orientation:
+                continue
+            pattern_axis = pattern.get("axis_px")
+            if (
+                not isinstance(pattern_axis, (int, float))
+                or isinstance(pattern_axis, bool)
+            ):
+                continue
+            if _segment_distance_to_position(
+                pattern.get("segments_px"),
+                boundary_positions["overall_min"][0],
+            ) is None:
+                continue
+            residual = abs(float(pattern_axis) - float(center_position))
+            if residual <= center_tolerance:
+                pattern_matches.append((residual, pattern_index, pattern))
+
+        pattern_matches.sort(key=lambda item: (item[0], item[1]))
+        if len(pattern_matches) != 1:
+            continue
+
+        residual, pattern_index, pattern = pattern_matches[0]
+        boundary_tolerance = center_tolerance
+        boundary_distances: dict[str, float] = {}
+        for role, (position, _) in boundary_positions.items():
+            distance = _segment_distance_to_position(
+                pattern.get("segments_px"),
+                position,
+            )
+            if distance is not None:
+                boundary_distances[role] = distance
+
+        touched = [
+            role
+            for role in ("overall_min", "overall_max")
+            if boundary_distances.get(role, float("inf")) <= boundary_tolerance
+        ]
+        if len(touched) != 1:
+            continue
+
+        touched_role = touched[0]
+        side = "min" if touched_role == "overall_min" else "max"
+        boundary_position, boundary_ref = boundary_positions[touched_role]
+        pattern_ref = f"{source_region}.linear_pattern.{pattern_index + 1:03d}"
+        evidence = list(
+            dict.fromkeys(
+                [
+                    *alignment.evidence,
+                    f"hybrid:recess-start-side:{target_entity}:{side}",
+                    f"hybrid:boundary:{boundary_ref or touched_role}",
+                    f"hybrid:fragment-pattern:{pattern_ref}",
+                ]
+            )
+        )
+
+        output.append(
+            ObservationValue(
+                entity_key=target_entity,
+                field="start_side",
+                value=side,
+                semantic="start_side",
+                evidence=evidence,
+            )
+        )
+        claimed_targets.add(target_entity)
+        ledger.append(
+            {
+                "entity_key": target_entity,
+                "source_hidden_entity": hidden_entity,
+                "feature_axis": feature_axis,
+                "source_region": source_region,
+                "source_view_kind": source_view.view_kind,
+                "start_side": side,
+                "centerline_position_px": round(float(center_position), 3),
+                "pattern_ref": pattern_ref,
+                "pattern_axis_px": round(float(pattern["axis_px"]), 3),
+                "centerline_residual_px": round(float(residual), 3),
+                "boundary_role": touched_role,
+                "boundary_ref": boundary_ref,
+                "boundary_position_px": round(boundary_position, 3),
+                "boundary_distance_px": round(boundary_distances[touched_role], 3),
+                "boundary_tolerance_px": round(boundary_tolerance, 3),
+                "basis": (
+                    "unique_thread_recess_centerline_plus_"
+                    "unique_fragment_contact_with_resolved_overall_boundary"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
+
+    return output, ledger
+
+
 def _unique_orthographic_associations(
     *,
     report: dict[str, Any],
@@ -3682,6 +3947,16 @@ def adapt_hybrid_ocr_report(
             entity_keys={item.key for item in entities},
         )
     )
+    recess_start_side_values, recess_start_side_ledger = (
+        _transverse_recess_start_side_values(
+            report=report,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            hidden_entity_records=hidden_entity_records,
+            callout_values=callout_values,
+            centerline_alignments=centerline_alignments,
+        )
+    )
 
     pattern_entity_by_ref: dict[str, str] = {}
     for record in callout_ledger:
@@ -3932,6 +4207,13 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_identity_only": True,
         },
         {
+            "kind": "hybrid_recess_start_side_ledger",
+            "schema": "1.0",
+            "items": recess_start_side_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
             "kind": "hybrid_circle_datum_alignment_ledger",
             "schema": "1.0",
             "items": circle_alignment_records,
@@ -3982,7 +4264,7 @@ def adapt_hybrid_ocr_report(
         views=views,
         entities=entities,
         associations=associations,
-        values=[*geometry_values, *callout_values],
+        values=[*geometry_values, *callout_values, *recess_start_side_values],
         dimensions=dimensions,
         datum_alignments=datum_alignments,
         centerline_alignments=centerline_alignments,

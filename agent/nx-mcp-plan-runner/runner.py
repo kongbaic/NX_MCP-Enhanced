@@ -2611,6 +2611,8 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
         return leaf in {"type", "kind"}
     if semantic == "side":
         return leaf in {"side", "start_side"}
+    if semantic == "start_side":
+        return leaf == "start_side"
     if semantic == "through":
         return leaf in {"through", "through_z"}
     if semantic == "pattern_dimension":

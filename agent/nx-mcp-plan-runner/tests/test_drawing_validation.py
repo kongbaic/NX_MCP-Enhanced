@@ -371,6 +371,26 @@ class DrawingGateATests(unittest.TestCase):
                 self.assertEqual(item["value"], R._drawing_path_get(data, item["target"]))
                 self.assertTrue(R._drawing_direct_semantic_ok(data, item))
 
+    def test_start_side_semantic_matches_start_side_target(self) -> None:
+        data = {
+            "features": [
+                {
+                    "id": "F_RECESS",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "start_side": "max",
+                }
+            ]
+        }
+        source_item = {
+            "id": "S_SIDE",
+            "semantic": "start_side",
+            "value": "max",
+            "target": "feature:F_RECESS.start_side",
+        }
+
+        self.assertTrue(R._drawing_direct_semantic_ok(data, source_item))
+
     def test_canonical_center_distance_uses_resolvable_center_paths(self) -> None:
         data = canonical_reader_fixture()
         relation = source(data, "S_CENTER_DISTANCE")

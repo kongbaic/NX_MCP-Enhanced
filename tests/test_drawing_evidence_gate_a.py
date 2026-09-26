@@ -178,13 +178,13 @@ def test_alignment_propagation_is_serialized_as_derived_with_relation_ref():
             *_overall_values(),
             DirectValueEvidence(id="A_KIND", target="feature:F_A.type", value="through_hole"),
             DirectValueEvidence(id="A_AXIS", target="feature:F_A.axis", value="Z"),
-            DirectValueEvidence(id="A_X", target=a, value=0),
-            DirectValueEvidence(id="A_Y", target="feature:F_A.centerline.y", value=0),
+            DirectValueEvidence(id="A_X", target=a, value=20),
+            DirectValueEvidence(id="A_Y", target="feature:F_A.centerline.y", value=16),
             DirectValueEvidence(id="A_D", target="feature:F_A.diameter", value=5),
             DirectValueEvidence(id="A_N", target="feature:F_A.count", value=1),
             DirectValueEvidence(id="B_KIND", target="feature:F_B.type", value="through_hole"),
             DirectValueEvidence(id="B_AXIS", target="feature:F_B.axis", value="Z"),
-            DirectValueEvidence(id="B_Y", target="feature:F_B.centerline.y", value=10),
+            DirectValueEvidence(id="B_Y", target="feature:F_B.centerline.y", value=16),
             DirectValueEvidence(id="B_D", target="feature:F_B.diameter", value=5),
             DirectValueEvidence(id="B_N", target="feature:F_B.count", value=1),
         ],
@@ -251,3 +251,134 @@ def test_unsigned_spacing_stays_incomplete_and_existing_gate_a_rejects_it():
     assert any(item.get("target") == b for item in draft["unresolved"])
     assert errors
     assert any("unresolved" in error or "dimension_closure" in error for error in errors)
+
+def test_inferred_feature_types_emit_gate_a_provenance_writers():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        direct_values=[
+            *_overall_values(),
+            DirectValueEvidence(
+                id="S_HOLE_AXIS",
+                target="feature:F_HOLE.axis",
+                value="Y",
+                source_ids=["ANN_HOLE_AXIS"],
+            ),
+            DirectValueEvidence(
+                id="S_HOLE_D",
+                target="feature:F_HOLE.diameter",
+                value=20,
+                source_ids=["ANN_HOLE_D"],
+            ),
+            DirectValueEvidence(
+                id="S_HOLE_Z",
+                target="feature:F_HOLE.centerline.z",
+                value=40,
+                source_ids=["ANN_HOLE_Z"],
+            ),
+            DirectValueEvidence(
+                id="S_THREAD_AXIS",
+                target="feature:F_THREAD.axis",
+                value="X",
+                source_ids=["ANN_THREAD_AXIS"],
+            ),
+            DirectValueEvidence(
+                id="S_THREAD_SPEC",
+                target="feature:F_THREAD.thread_spec",
+                value="M6",
+                source_ids=["ANN_THREAD_SPEC"],
+            ),
+            DirectValueEvidence(
+                id="S_THREAD_DEPTH",
+                target="feature:F_THREAD.thread_depth",
+                value=12,
+                source_ids=["ANN_THREAD_DEPTH"],
+            ),
+            DirectValueEvidence(
+                id="S_THREAD_Z",
+                target="feature:F_THREAD.centerline.z",
+                value=58,
+                source_ids=["ANN_THREAD_Z"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_AXIS",
+                target="feature:F_RECESS.axis",
+                value="X",
+                source_ids=["ANN_RECESS_AXIS"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_D",
+                target="feature:F_RECESS.diameter",
+                value=6.6,
+                source_ids=["ANN_RECESS_D"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_FLAG",
+                target="feature:F_RECESS.recessed_hole",
+                value=True,
+                source_ids=["ANN_RECESS_FLAG"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_D2",
+                target="feature:F_RECESS.recess_diameter",
+                value=11,
+                source_ids=["ANN_RECESS_D2"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_DEPTH",
+                target="feature:F_RECESS.recess_depth",
+                value=6.5,
+                source_ids=["ANN_RECESS_DEPTH"],
+            ),
+            DirectValueEvidence(
+                id="S_RECESS_Y",
+                target="feature:F_RECESS.centerline.y",
+                value=24,
+                source_ids=["ANN_RECESS_Y"],
+            ),
+        ],
+        relations=[
+            RelationEvidence(
+                id="S_BOUNDARY_Y",
+                kind="edge_offset",
+                axis="Y",
+                from_side="max",
+                value=24,
+                targets=["feature:F_BOUNDARY.boundary.y"],
+                source_ids=["ANN_BOUNDARY_Y"],
+            ),
+        ],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    inferred = {item["id"]: item["type"] for item in draft["features"]}
+    assert inferred == {
+        "F_BOUNDARY": "reference_boundary",
+        "F_HOLE": "hole",
+        "F_RECESS": "recessed_hole",
+        "F_THREAD": "threaded_hole",
+    }
+
+    type_sources = {
+        item.get("target"): item
+        for item in draft["source_ledger"]
+        if item.get("semantic") == "feature_kind"
+    }
+    assert set(type_sources) == {
+        "feature:F_BOUNDARY.type",
+        "feature:F_HOLE.type",
+        "feature:F_RECESS.type",
+        "feature:F_THREAD.type",
+    }
+    assert all(item.get("evidence") for item in type_sources.values())
+    assert all(item.get("inference_basis_targets") for item in type_sources.values())
+    assert all(item.get("inference_basis_sources") for item in type_sources.values())
+
+    errors = R.check_drawing_json(draft)
+    assert not any(
+        error.startswith("required geometry field lacks evidence: feature:")
+        and error.endswith(".type")
+        for error in errors
+    )
+

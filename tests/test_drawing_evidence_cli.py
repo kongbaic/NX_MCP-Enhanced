@@ -25,7 +25,7 @@ def _evidence(*, signed: bool) -> dict:
 
     return {
         "schema_version": "1.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": {
             "length_x": 40,
             "width_y": 32,
@@ -37,13 +37,13 @@ def _evidence(*, signed: bool) -> dict:
             {"id": "OZ", "target": "overall_dimensions.height_z", "value": 66},
             {"id": "AK", "target": "feature:F_A.type", "value": "through_hole"},
             {"id": "AA", "target": "feature:F_A.axis", "value": "Z"},
-            {"id": "AX", "target": "feature:F_A.centerline.x", "value": -10},
-            {"id": "AY", "target": "feature:F_A.centerline.y", "value": 0},
+            {"id": "AX", "target": "feature:F_A.centerline.x", "value": 10},
+            {"id": "AY", "target": "feature:F_A.centerline.y", "value": 16},
             {"id": "AD", "target": "feature:F_A.diameter", "value": 5},
             {"id": "AN", "target": "feature:F_A.count", "value": 1},
             {"id": "BK", "target": "feature:F_B.type", "value": "through_hole"},
             {"id": "BA", "target": "feature:F_B.axis", "value": "Z"},
-            {"id": "BY", "target": "feature:F_B.centerline.y", "value": 0},
+            {"id": "BY", "target": "feature:F_B.centerline.y", "value": 16},
             {"id": "BD", "target": "feature:F_B.diameter", "value": 5},
             {"id": "BN", "target": "feature:F_B.count", "value": 1},
         ],

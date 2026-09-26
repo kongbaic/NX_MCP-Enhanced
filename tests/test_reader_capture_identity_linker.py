@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import nx_mcp.drawing_intelligence.identity_linker as identity_linker
+
 import json
 import subprocess
 import sys
@@ -10,6 +12,7 @@ from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
+    CaptureCenterlineAlignment,
     CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
@@ -214,7 +217,7 @@ def test_identity_linker_quarantines_legacy_same_view_multi_entity_association()
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)
@@ -271,7 +274,7 @@ def test_identity_linker_output_passes_strict_evidence_schema():
     validated = type(result.evidence).model_validate(raw)
 
     assert validated.schema_version == "1.0"
-    assert validated.coordinate_system == "part_center_xy_bottom_z0"
+    assert validated.coordinate_system == "overall_min_xyz"
 
 
 def test_link_capture_cli_produces_strict_downstream_consumable_evidence(tmp_path: Path):
@@ -392,7 +395,7 @@ def test_reader_capture_normalizes_string_observations():
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -496,7 +499,7 @@ def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_p
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -860,7 +863,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -883,7 +886,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -908,7 +911,7 @@ def test_reader_capture_rejects_non_numeric_overall_scalar():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": "50",
@@ -957,6 +960,144 @@ def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocke
 
     assert any("non-canonical field" in item for item in errors)
     assert any("structured kind" in item for item in errors)
+
+
+def test_open_slot_tangent_relation_closes_only_bottom_z():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[
+            CaptureEntity(id="E1", view_id="V1", shape="circle"),
+            CaptureEntity(id="E2", view_id="V1", shape="slot_edges"),
+        ],
+        values=[
+            CaptureValue(id="D1", entity_id="E1", field="diameter", value=20),
+            CaptureValue(id="K1", entity_id="E2", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E2", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E2", field="width_axis", value="X"),
+            CaptureValue(id="Z1", entity_id="E2", field="top_z", value=66),
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="feature_value",
+                reason="through unknown",
+                entity_ids=["E2"],
+                field="through_axis",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+            CaptureUnresolvedEvidence(
+                id="U2",
+                kind="feature_value",
+                reason="bottom from tangent",
+                entity_ids=["E2"],
+                field="bottom_z",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_open_slot_ledger",
+                "items": [
+                    {
+                        "slot_entity_id": "E2",
+                        "circle_entity_id": "E1",
+                        "region_id": "R1",
+                        "source_item_index": 2,
+                        "top_boundary_ref": "R1.TOP",
+                        "circle_entity": "R1.C1",
+                        "basis": (
+                            "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                            "circle_center_alignment_and_upper_circle_termination"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+            }
+        ],
+    )
+
+    relations, resolved = identity_linker._open_slot_tangent_relations(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+    )
+
+    assert len(relations) == 2
+    tangent = next(item for item in relations if item.kind == "upper_tangent")
+    alignment = next(item for item in relations if item.kind == "alignment")
+    assert tangent.targets == [
+        "feature:F_CIRCLE.centerline.z",
+        "feature:F_SLOT.bottom_z",
+    ]
+    assert tangent.diameter_target == "feature:F_CIRCLE.diameter"
+    assert alignment.axis == "X"
+    assert alignment.targets == [
+        "feature:F_CIRCLE.centerline.x",
+        "feature:F_SLOT.centerline.x",
+    ]
+    assert resolved == {("F_SLOT", "bottom_z")}
+
+    unresolved = identity_linker._linked_reader_unresolved(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+        relation_resolved_fields=resolved,
+    )
+    assert [item["field"] for item in unresolved] == ["through_axis"]
+
+
+def test_current_capture_contract_accepts_canonical_slot_value_fields():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="slot_edges")],
+        values=[
+            CaptureValue(id="K1", entity_id="E1", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E1", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E1", field="width_axis", value="X"),
+            CaptureValue(id="A2", entity_id="E1", field="through_axis", value="Y"),
+            CaptureValue(id="Z1", entity_id="E1", field="top_z", value=20),
+            CaptureValue(id="Z2", entity_id="E1", field="bottom_z", value=10),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
+def test_current_capture_contract_accepts_canonical_start_side_value():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="hidden_parallel")],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="start_side",
+                value="max",
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
 
 
 def _unresolved_capture(prefix: str, kind: str) -> ReaderCapture:
@@ -1821,7 +1962,7 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)
@@ -2551,3 +2692,284 @@ def test_intermediate_surface_endpoint_cannot_carry_feature_candidates():
         "intermediate_surface endpoint 0 must not carry candidate_entity_ids" in item
         for item in errors
     )
+
+
+def test_identity_linker_required_targets_exclude_non_numeric_direct_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="other",
+                required_for_modeling=False,
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="THREAD_SPEC",
+                entity_id="E1",
+                field="thread_spec",
+                value="M6",
+            ),
+            CaptureValue(
+                id="THREAD_DEPTH",
+                entity_id="E1",
+                field="thread_depth",
+                value=12,
+            ),
+            CaptureValue(
+                id="FIT",
+                entity_id="E1",
+                field="fit",
+                value="H7",
+            ),
+            CaptureValue(
+                id="THROUGH",
+                entity_id="E1",
+                field="through",
+                value=True,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+    feature_id = result.entity_to_feature["E1"]
+
+    assert {
+        item.target: item.value
+        for item in result.evidence.direct_values
+    } == {
+        f"feature:{feature_id}.fit": "H7",
+        f"feature:{feature_id}.thread_depth": 12,
+        f"feature:{feature_id}.thread_spec": "M6",
+        f"feature:{feature_id}.through": True,
+    }
+    assert result.evidence.required_targets == [
+        f"feature:{feature_id}.thread_depth"
+    ]
+
+    compiled = compile_evidence_graph(result.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values == {
+        f"feature:{feature_id}.thread_depth": 12.0
+    }
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("id")
+        in {
+            f"target:feature:{feature_id}.thread_spec",
+            f"target:feature:{feature_id}.fit",
+            f"target:feature:{feature_id}.through",
+        }
+    ]
+
+
+def test_capture_accepts_circle_center_as_entity_center_basis():
+    endpoint = CaptureDimensionEndpoint(
+        role="entity_center",
+        entity_id="E1",
+        basis="circle_center",
+        source_ids=["OBS_CIRCLE_CENTER"],
+    )
+
+    assert endpoint.role == "entity_center"
+    assert endpoint.entity_id == "E1"
+    assert endpoint.basis == "circle_center"
+
+def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explicit_centers():
+    marker = "hybrid:symmetric-count2-overall-center"
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[CaptureView(id="VS", kind="side")],
+        entities=[
+            CaptureEntity(
+                id="E_PAIR",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+            )
+        ],
+        values=[
+            CaptureValue(id="V_AXIS", entity_id="E_PAIR", field="axis", value="Z"),
+            CaptureValue(id="V_COUNT", entity_id="E_PAIR", field="count", value=2),
+            CaptureValue(id="V_DIA", entity_id="E_PAIR", field="diameter", value=6.6),
+            CaptureValue(id="V_THROUGH", entity_id="E_PAIR", field="through", value=True),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_X24",
+                value=24,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                ],
+                source_ids=[marker],
+            ),
+            CaptureDimension(
+                id="D_Y24",
+                value=24,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    feature_id = linked.entity_to_feature["E_PAIR"]
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+
+    reader_x0 = f"feature:{feature_id}.explicit_centers.0.0"
+    reader_x1 = f"feature:{feature_id}.explicit_centers.1.0"
+    reader_y0 = f"feature:{feature_id}.explicit_centers.0.1"
+    reader_y1 = f"feature:{feature_id}.explicit_centers.1.1"
+
+    assert resolution.values[reader_x0] == 8.0
+    assert resolution.values[reader_x1] == 32.0
+    assert resolution.values[reader_y0] == 8.0
+    assert resolution.values[reader_y1] == 8.0
+    assert resolution.ok
+
+    feature = next(item for item in draft["features"] if item["id"] == feature_id)
+    assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
+    assert draft["dimension_closure"] == {"status": "closed"}
+
+def test_centerline_alignment_propagates_transverse_coordinates_without_merging_features():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["front"]),
+            CaptureView(id="VS", kind="side", source_ids=["side"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="THREAD",
+                view_id="VF",
+                shape="hidden_parallel",
+                source_ids=["thread"],
+            ),
+            CaptureEntity(
+                id="RECESS",
+                view_id="VS",
+                shape="concentric_circles",
+                source_ids=["recess"],
+            ),
+        ],
+        values=[
+            CaptureValue(
+                id="V1",
+                entity_id="THREAD",
+                field="axis",
+                value="X",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V2",
+                entity_id="THREAD",
+                field="thread_spec",
+                value="M6",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V3",
+                entity_id="RECESS",
+                field="recessed_hole",
+                value=True,
+                source_ids=["recess"],
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="DZ",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="THREAD",
+                        basis="centerline",
+                        source_ids=["dz-thread"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_min",
+                        source_ids=["dz-base"],
+                    ),
+                ],
+                source_ids=["dz"],
+            ),
+            CaptureDimension(
+                id="DY",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="RECESS",
+                        basis="circle_center",
+                        source_ids=["dy-recess"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["dy-edge"],
+                    ),
+                ],
+                source_ids=["dy"],
+            ),
+        ],
+        centerline_alignments=[
+            CaptureCenterlineAlignment(
+                id="CA001",
+                entity_ids=["THREAD", "RECESS"],
+                feature_axis="X",
+                source_ids=["coaxial"],
+            )
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    assert linked.entity_to_feature["THREAD"] != linked.entity_to_feature["RECESS"]
+
+    compiled = compile_evidence_graph(linked.evidence)
+    relation_ids = {item.id for item in compiled.relations}
+    assert {"CA001_Y", "CA001_Z"} <= relation_ids
+
+    resolution = resolve_evidence_graph(compiled)
+    thread_feature = linked.entity_to_feature["THREAD"]
+    recess_feature = linked.entity_to_feature["RECESS"]
+    assert resolution.values[f"feature:{recess_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.z"] == 18
+    assert resolution.values[f"feature:{recess_feature}.centerline.z"] == 18
+

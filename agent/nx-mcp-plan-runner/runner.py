@@ -2050,8 +2050,112 @@ def resolve_metric_thread_parameters(spec: str | None) -> tuple[dict | None, str
     }, None
 
 
+def _thread_subsuming_through_feature(
+    drawing: dict,
+    thread_feature: dict,
+    surrogate_diameter: float,
+) -> dict | None:
+    """Return one unique coaxial through feature that fully covers the surrogate void.
+
+    This is geometry-only subsumption: the threaded drawing semantics remain intact,
+    but no redundant subtract operation is required when a larger/equal coaxial
+    through void already exists. Ambiguous or incomplete matches fail closed.
+    """
+
+    axis = str(_thread_feature_value(thread_feature, "axis") or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return None
+
+    thread_center_value = _thread_feature_value(
+        thread_feature, "center", "centerline"
+    )
+    position = thread_feature.get("position")
+    if thread_center_value is None and isinstance(position, dict):
+        thread_center_value = position.get("center")
+    thread_center = _axis_transverse_center(axis, thread_center_value)
+    if thread_center is None:
+        return None
+
+    thread_range_value = _thread_feature_value(
+        thread_feature, "axis_range", "axial_range", "through_range", "range"
+    )
+    if not (
+        isinstance(thread_range_value, (list, tuple))
+        and len(thread_range_value) == 2
+        and all(_num(value) is not None for value in thread_range_value)
+    ):
+        return None
+    thread_range = sorted(
+        [float(_num(thread_range_value[0])), float(_num(thread_range_value[1]))]
+    )
+
+    matches: list[dict] = []
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict) or feature is thread_feature:
+            continue
+        if feature.get("id") == thread_feature.get("id"):
+            continue
+        feature_type = str(feature.get("type") or feature.get("kind") or "").lower()
+        if any(token in feature_type for token in ("thread", "tapped", "螺纹")):
+            continue
+        if feature.get("through") is not True:
+            continue
+        if str(feature.get("axis") or "").upper() != axis:
+            continue
+        count = _num(feature.get("count"))
+        if count is not None and (not float(count).is_integer() or int(count) != 1):
+            continue
+
+        diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        if diameter is None or diameter + 1e-9 < surrogate_diameter:
+            continue
+
+        center_value = feature.get("centerline")
+        candidate_position = feature.get("position")
+        if center_value is None and isinstance(candidate_position, dict):
+            center_value = candidate_position.get("center")
+        center = _axis_transverse_center(axis, center_value)
+        if center is None:
+            continue
+        if len(center) != len(thread_center) or any(
+            not _drawing_equal(a, b) for a, b in zip(center, thread_center)
+        ):
+            continue
+
+        candidate_range_value = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if not (
+            isinstance(candidate_range_value, (list, tuple))
+            and len(candidate_range_value) == 2
+            and all(_num(value) is not None for value in candidate_range_value)
+        ):
+            continue
+        candidate_range = sorted(
+            [float(_num(candidate_range_value[0])), float(_num(candidate_range_value[1]))]
+        )
+        if (
+            candidate_range[0] > thread_range[0] + 1e-9
+            or candidate_range[1] < thread_range[1] - 1e-9
+        ):
+            continue
+
+        matches.append(feature)
+
+    return matches[0] if len(matches) == 1 else None
+
+
 def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
-    """Read placement/extent exactly as Gate A provided; never fill missing geometry."""
+    """Resolve thread surrogate geometry from explicit drawing facts only.
+
+    An absent axial range may be derived only when the drawing explicitly provides
+    start_side/side, a positive thread depth, and overall dimensions. This uses the
+    canonical engineering coordinate system; pixel geometry is never consulted.
+    """
     geometries: list[dict] = []
     errors: list[str] = []
     for index, record in enumerate(_thread_feature_records(drawing)):
@@ -2059,6 +2163,33 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
+        parameters, parameter_error = resolve_metric_thread_parameters(_thread_spec(feature))
+        if parameter_error is None and parameters is not None:
+            covering = _thread_subsuming_through_feature(
+                drawing,
+                feature,
+                float(parameters["surrogate_diameter"]),
+            )
+            if covering is not None:
+                center_value = _thread_feature_value(feature, "center", "centerline")
+                position = feature.get("position")
+                if center_value is None and isinstance(position, dict):
+                    center_value = position.get("center")
+                axis_value = str(_thread_feature_value(feature, "axis") or "").upper()
+                geometries.append(
+                    {
+                        "feature_id": fid,
+                        "owner_feature_id": record.get("owner_feature_id") or fid,
+                        "representation": "subsumed_by_coaxial_through_hole",
+                        "subsumed_by_feature_id": str(covering.get("id") or ""),
+                        "axis": axis_value,
+                        "transverse_centers": [
+                            _axis_transverse_center(axis_value, center_value)
+                        ],
+                        "count": 0,
+                    }
+                )
+                continue
         axis = str(_thread_feature_value(feature, "axis") or "").upper()
         if axis not in {"X", "Y", "Z"}:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid axis")
@@ -2073,23 +2204,63 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if not centers or any(center is None for center in centers):
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid center")
             continue
-        depth = _num(_thread_feature_value(feature, "depth", "hole_depth"))
+        depth = _num(
+            _thread_feature_value(feature, "depth", "hole_depth", "thread_depth")
+        )
         if depth is None or depth <= 0:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid depth")
             continue
-        axial_range = _thread_feature_value(feature, "axis_range", "axial_range", "through_range", "range")
-        if not (isinstance(axial_range, (list, tuple)) and len(axial_range) == 2 and all(_num(value) is not None for value in axial_range)):
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no explicit axial range")
-            continue
-        axial_range = [float(_num(axial_range[0])), float(_num(axial_range[1]))]
+
+        axial_range = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if (
+            isinstance(axial_range, (list, tuple))
+            and len(axial_range) == 2
+            and all(_num(value) is not None for value in axial_range)
+        ):
+            axial_range = [
+                float(_num(axial_range[0])),
+                float(_num(axial_range[1])),
+            ]
+        else:
+            side_value = _thread_feature_value(feature, "start_side", "side")
+            side = str(side_value or "").lower()
+            bbox = _drawing_overall_bbox(drawing)
+            if side not in {"min", "max"} or bbox is None:
+                errors.append(
+                    f"thread_geometry_violation: feature {fid!r} has no explicit "
+                    "axial range and no derivable start_side/overall bounds"
+                )
+                continue
+            lx, ly, hz = bbox
+            lo, hi = {
+                "X": (-lx / 2.0, lx / 2.0),
+                "Y": (-ly / 2.0, ly / 2.0),
+                "Z": (0.0, hz),
+            }[axis]
+            start = lo if side == "min" else hi
+            end = start + float(depth) if side == "min" else start - float(depth)
+            if end < lo - 1e-9 or end > hi + 1e-9:
+                errors.append(
+                    f"thread_geometry_violation: feature {fid!r} depth exceeds "
+                    "overall bounds from its confirmed start_side"
+                )
+                continue
+            axial_range = [float(start), float(end)]
+
         if not _drawing_equal(abs(axial_range[1] - axial_range[0]), depth):
             errors.append(f"thread_geometry_violation: feature {fid!r} depth and axial range disagree")
             continue
+
         count_value = _num(_thread_feature_value(feature, "count"))
-        if count_value is None or count_value <= 0 or not float(count_value).is_integer():
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
-            continue
-        count = int(count_value)
+        if count_value is None:
+            count = len(centers)
+        else:
+            if count_value <= 0 or not float(count_value).is_integer():
+                errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
+                continue
+            count = int(count_value)
         if len(centers) != count:
             errors.append(f"thread_geometry_violation: feature {fid!r} center count does not equal count")
             continue
@@ -2102,8 +2273,9 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
             "axial_range": axial_range,
             "count": count,
         }
-        if "side" in feature:
-            geometry["side"] = copy.deepcopy(feature["side"])
+        side_value = _thread_feature_value(feature, "start_side", "side")
+        if str(side_value or "").lower() in {"min", "max"}:
+            geometry["side"] = str(side_value).lower()
         geometries.append(geometry)
     return geometries, errors
 
@@ -2160,7 +2332,15 @@ def _thread_operation_geometry(plan: dict, op: dict, expected_diameter: float) -
         return None, [f"step {step}: invalid thread subtract geometry"]
     direction = -1.0 if args["reverse"] else 1.0
     errors = [] if _drawing_equal(diameter, expected_diameter) else [f"step {step}: thread surrogate diameter differs from resolver"]
-    return {"axis": axis, "transverse_center": center, "depth": float(depth), "axial_range": [float(start), float(start + direction * depth)]}, errors
+    return {
+        "axis": axis,
+        "transverse_center": center,
+        "depth": float(depth),
+        "axial_range": [
+            float(direction * start),
+            float(direction * (start + depth)),
+        ],
+    }, errors
 
 
 def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: list[dict]) -> list[str]:
@@ -2179,6 +2359,14 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
             errors.append(f"thread feature {fid!r} has no validated drawing geometry")
             continue
         matches = [op for op in marked if op["thread_surrogate_use"].get("feature_id") == fid]
+        if expected.get("representation") == "subsumed_by_coaxial_through_hole":
+            if matches:
+                errors.append(
+                    f"thread surrogate for feature {fid!r} is redundant because "
+                    f"coaxial through feature {expected.get('subsumed_by_feature_id')!r} "
+                    "already covers its tap-drill geometry"
+                )
+            continue
         if len(matches) != expected.get("count"):
             errors.append(f"thread surrogate for feature {fid!r} operation count differs from drawing")
         actual_geometries = []
@@ -2514,6 +2702,42 @@ def _drawing_target_covered(target: str, covered: set[str]) -> bool:
     return any(target.startswith(f"{ancestor}.") for ancestor in covered)
 
 
+_SUBTRACTIVE_MODELING_FEATURE_TYPES = {
+    "hole",
+    "through_hole",
+    "threaded_hole",
+    "counterbore_hole",
+    "countersink_hole",
+    "slot",
+    "cut",
+    "slit",
+}
+
+
+def _drawing_modeling_body_errors(data: dict) -> list[str]:
+    """Reject Planner/Runner input that has no evidence-backed body geometry."""
+    profile = data.get("profile")
+    if isinstance(profile, dict) and _drawing_hard_paths(profile):
+        return []
+
+    required_features = [
+        item
+        for item in data.get("features", [])
+        if isinstance(item, dict) and item.get("required_for_modeling", True) is not False
+    ]
+    if any(
+        str(item.get("type") or "").lower()
+        not in _SUBTRACTIVE_MODELING_FEATURE_TYPES
+        for item in required_features
+    ):
+        return []
+
+    return [
+        "drawing lacks body-defining geometry: provide an evidence-backed profile "
+        "or an additive/base modeling feature before Planner/Runner"
+    ]
+
+
 def _drawing_equal(a: Any, b: Any, tol: float = 1e-9) -> bool:
     na, nb = _num(a), _num(b)
     if na is not None and nb is not None:
@@ -2575,6 +2799,8 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
         return leaf in {"type", "kind"}
     if semantic == "side":
         return leaf in {"side", "start_side"}
+    if semantic == "start_side":
+        return leaf == "start_side"
     if semantic == "through":
         return leaf in {"through", "through_z"}
     if semantic == "pattern_dimension":
@@ -3047,6 +3273,19 @@ def _drawing_check_feature_structure(errors: list[str], feature: dict) -> None:
         if _drawing_feature_coord(feature, coord) is None:
             errors.append(
                 f"feature {fid!r} axis {axis} requires center coordinate {coord}"
+            )
+
+    if feature_type in {"counterbore_hole", "countersink_hole"} and axis in {"X", "Y"}:
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} axis {axis} {feature_type} requires "
+                "start_side/side min|max"
             )
 
 
@@ -3799,7 +4038,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
     errs = check_plan(plan, executable=not args.frozen)
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         errs.extend(drawing_errors)
         if not drawing_errors:
             errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
@@ -3820,7 +4060,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
     geometries: list[dict] = []
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         frozen_errs.extend(drawing_errors)
     if frozen_errs:
         result = {

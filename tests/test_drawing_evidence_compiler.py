@@ -144,7 +144,7 @@ def test_conflicting_circular_views_do_not_choose_an_axis():
     )
 
 
-def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_minus_8():
+def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_local_8():
     target = "feature:F_MOUNT.centerline.y"
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
@@ -169,7 +169,7 @@ def test_max_edge_to_center_dimension_compiles_to_edge_offset_and_resolves_minus
 
     assert relation.kind == "edge_offset"
     assert relation.from_side == "max"
-    assert result.values[target] == -8
+    assert result.values[target] == 8
 
 
 def test_same_feature_centers_compile_to_center_spacing():
@@ -222,7 +222,8 @@ def test_different_feature_centers_compile_to_center_distance():
     assert compiled.relations[0].kind == "center_distance"
 
 
-def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
+def test_raw_evidence_compiles_resolves_and_transforms_at_planner_boundary():
+    x = "feature:F_MAIN.centerline.x"
     z = "feature:F_MAIN.centerline.z"
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
@@ -233,6 +234,14 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 feature_id="F_MAIN",
                 view_id="V_FRONT",
                 shape="circle",
+            )
+        ],
+        datum_alignments=[
+            DatumAlignmentEvidence(
+                id="A_MAIN_X_CENTER",
+                target=x,
+                axis="X",
+                source_ids=["CENTERLINE_X"],
             )
         ],
         dimensions=[
@@ -254,11 +263,6 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 value="through_hole",
             ),
             DirectValueEvidence(
-                id="S_MAIN_X",
-                target="feature:F_MAIN.centerline.x",
-                value=0,
-            ),
-            DirectValueEvidence(
                 id="S_MAIN_D",
                 target="feature:F_MAIN.diameter",
                 value=20,
@@ -269,16 +273,33 @@ def test_raw_evidence_compiles_resolves_and_passes_existing_gate_a():
                 value=1,
             ),
         ],
-        required_targets=[z],
+        required_targets=[x, z],
     )
 
     compiled = compile_evidence_graph(graph)
     result = resolve_evidence_graph(compiled)
-    draft = build_semantic_draft(compiled, result)
 
+    assert result.values[x] == 20
+    assert result.values[z] == 40
+
+    draft = build_semantic_draft(compiled, result)
     feature = draft["features"][0]
     assert feature["axis"] == "Y"
-    assert feature["centerline"] == {"x": 0, "z": 40}
+    assert feature["centerline"] == {"x": 0.0, "z": 40.0}
+
+    coordinate_system = draft["coordinate_system"]
+    assert coordinate_system["source_origin"] == "overall_min_xyz"
+    assert coordinate_system["reader_local_bounds"]["x"] == [0.0, 40]
+    assert coordinate_system["reader_to_planner_translation"]["x"] == -20
+
+    center_source = next(
+        item
+        for item in draft["source_ledger"]
+        if item["id"] == "A_MAIN_X_CENTER"
+    )
+    assert center_source["value"] == 0.0
+    assert center_source["reader_local_value"] == 20.0
+
     assert result.ok
     assert R.check_drawing_json(draft) == []
 
@@ -292,18 +313,19 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     - bottom datum -> main-bore center Z = 40
     - main-bore center -> clamp center Z spacing = 18 upward
     - overall max Y -> clamp center = 8
-    - overall max Y -> mounting-hole projected center = 24
+    - right-view internal step -> overall max Y = 24
     - mounting-hole X center-to-center spacing = 24
+
+    The right-view 24 dimension does not own the mounting-hole Y center.
 
     It does NOT, by those dimensions alone, anchor the pair's absolute X
     coordinates. The resolver must leave those X coordinates unresolved rather
-    than silently choosing +/-12.
+    than silently centering the pair around X=20.
     """
 
     main_z = "feature:F_MAIN_HOLE.centerline.z"
     clamp_z = "feature:F_CLAMP.centerline.z"
     clamp_y = "feature:F_CLAMP.centerline.y"
-    mount_y = "feature:F_MOUNT_PAIR.explicit_centers.0.1"
     mount_x0 = "feature:F_MOUNT_PAIR.explicit_centers.0.0"
     mount_x1 = "feature:F_MOUNT_PAIR.explicit_centers.1.0"
 
@@ -363,16 +385,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
                 source_ids=["REAL_SHKSS_8_FROM_RIGHT_EDGE"],
             ),
             DimensionObservation(
-                id="D_REAL_MOUNT_Y24",
-                value=24,
-                axis="Y",
-                endpoints=[
-                    DimensionEndpoint(role="overall_max"),
-                    DimensionEndpoint(role="feature_center", target=mount_y),
-                ],
-                source_ids=["REAL_SHKSS_24_FROM_RIGHT_EDGE"],
-            ),
-            DimensionObservation(
                 id="D_REAL_MOUNT_X24",
                 value=24,
                 axis="X",
@@ -388,7 +400,6 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
             main_z,
             clamp_z,
             clamp_y,
-            mount_y,
             mount_x0,
             mount_x1,
         ],
@@ -412,8 +423,7 @@ def test_real_shkss20_40_first_pass_resolves_only_evidence_backed_geometry():
     assert clamp_axis.value == "X"
     assert result.values[main_z] == 40
     assert result.values[clamp_z] == 58
-    assert result.values[clamp_y] == 8
-    assert result.values[mount_y] == -8
+    assert result.values[clamp_y] == 24
 
     assert mount_x0 not in result.values
     assert mount_x1 not in result.values
@@ -592,8 +602,8 @@ def test_real_shwts20_40_first_pass_resolves_supported_geometry_and_blocks_unanc
     assert axes["feature:F_MOUNT_PAIR.axis"] == "Z"
 
     assert result.values[main_z] == 40
-    assert result.values[mount_y0] == -1
-    assert result.values[mount_y1] == -1
+    assert result.values[mount_y0] == 15
+    assert result.values[mount_y1] == 15
 
     assert mount_x0 not in result.values
     assert mount_x1 not in result.values
@@ -767,15 +777,15 @@ def test_real_mounting_plate_first_pass_solves_edge_anchored_x_but_keeps_y_unres
         if item.target == "feature:F_SIDE_HOLES.axis"
     )
     assert axis == "Z"
-    assert result.values[left_x] == -50
-    assert result.values[right_x] == 50
+    assert result.values[left_x] == 10
+    assert result.values[right_x] == 110
 
-    assert result.values[left_y] == 0
-    assert result.values[right_y] == 0
+    assert result.values[left_y] == 40
+    assert result.values[right_y] == 40
     assert result.ok
 
 
-def test_overall_center_datum_alignment_compiles_xy_to_zero_and_z_to_half_height():
+def test_overall_center_datum_alignment_compiles_all_axes_to_half_extent():
     graph = EvidenceGraph(
         overall_dimensions=OverallDimensions(length_x=120, width_y=80, height_z=32),
         datum_alignments=[
@@ -803,8 +813,8 @@ def test_overall_center_datum_alignment_compiles_xy_to_zero_and_z_to_half_height
     compiled = compile_evidence_graph(graph)
     values = {item.target: item.value for item in compiled.direct_values}
 
-    assert values["feature:F_A.centerline.x"] == 0
-    assert values["feature:F_A.centerline.y"] == 0
+    assert values["feature:F_A.centerline.x"] == 60
+    assert values["feature:F_A.centerline.y"] == 40
     assert values["feature:F_A.centerline.z"] == 16
 
 
@@ -850,3 +860,116 @@ def test_matching_overall_dimension_observations_remain_available_to_downstream(
         "overall_dimensions.height_z",
     }
     assert compiled.unresolved_evidence == []
+
+
+
+def test_overall_dimension_fact_ledger_becomes_gate_a_source_provenance():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        observations=[
+            {
+                "kind": "overall_dimension_fact_ledger",
+                "facts": [
+                    {"axis": "X", "value": 40, "evidence": ["context:overall-x"]},
+                    {"axis": "Y", "value": 32, "evidence": ["context:overall-y"]},
+                    {"axis": "Z", "value": 66, "evidence": ["context:overall-z"]},
+                ],
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    targets = {
+        item.target: item
+        for item in compiled.direct_values
+        if item.target.startswith("overall_dimensions.")
+    }
+
+    assert targets["overall_dimensions.length_x"].source_ids == ["context:overall-x"]
+    assert targets["overall_dimensions.width_y"].source_ids == ["context:overall-y"]
+    assert targets["overall_dimensions.height_z"].source_ids == ["context:overall-z"]
+
+    draft = build_semantic_draft(compiled, resolve_evidence_graph(compiled))
+    source_targets = {
+        item["target"]: item
+        for item in draft["source_ledger"]
+        if item.get("semantic") == "overall_dimension"
+    }
+    assert source_targets["overall_dimensions.length_x"]["evidence"] == [
+        "context:overall-x"
+    ]
+    assert source_targets["overall_dimensions.width_y"]["evidence"] == [
+        "context:overall-y"
+    ]
+    assert source_targets["overall_dimensions.height_z"]["evidence"] == [
+        "context:overall-z"
+    ]
+
+
+def test_draft_infers_only_semantically_implied_feature_types():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        direct_values=[
+            DirectValueEvidence(
+                id="BOUNDARY",
+                target="feature:F_BOUNDARY.boundary.y",
+                value=8,
+            ),
+            DirectValueEvidence(
+                id="HOLE_AXIS",
+                target="feature:F_HOLE.axis",
+                value="Y",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="HOLE_D",
+                target="feature:F_HOLE.diameter",
+                value=20,
+            ),
+            DirectValueEvidence(
+                id="THREAD_AXIS",
+                target="feature:F_THREAD.axis",
+                value="X",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="THREAD_SPEC",
+                target="feature:F_THREAD.thread_spec",
+                value="M6",
+            ),
+            DirectValueEvidence(
+                id="RECESS_AXIS",
+                target="feature:F_RECESS.axis",
+                value="X",
+                semantic="axis",
+            ),
+            DirectValueEvidence(
+                id="RECESS_D",
+                target="feature:F_RECESS.diameter",
+                value=6.6,
+            ),
+            DirectValueEvidence(
+                id="RECESS_OUTER",
+                target="feature:F_RECESS.recess_diameter",
+                value=11,
+            ),
+            DirectValueEvidence(
+                id="RECESS_DEPTH",
+                target="feature:F_RECESS.recess_depth",
+                value=6.5,
+            ),
+            DirectValueEvidence(
+                id="RECESS_FLAG",
+                target="feature:F_RECESS.recessed_hole",
+                value=True,
+            ),
+        ],
+    )
+
+    draft = build_semantic_draft(graph, resolve_evidence_graph(graph))
+    features = {item["id"]: item for item in draft["features"]}
+
+    assert features["F_BOUNDARY"]["type"] == "reference_boundary"
+    assert features["F_HOLE"]["type"] == "hole"
+    assert features["F_THREAD"]["type"] == "threaded_hole"
+    assert features["F_RECESS"]["type"] == "recessed_hole"

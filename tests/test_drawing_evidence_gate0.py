@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _capture(**overrides):
     base = {
         "schema_version": "1.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": {
             "length_x": 40,
             "width_y": 32,
@@ -143,7 +143,6 @@ def test_gate0_quarantines_missing_or_wrong_endpoint_count(record):
         "intermediate_surface",
         "step_surface",
         "feature_boundary",
-        "profile_boundary",
         "profile_edge",
         "hidden_surface_top",
         "internal_surface",
@@ -642,7 +641,7 @@ def test_gate0_quarantines_reader_direct_that_conflicts_with_resolved_child_targ
     compiled = compile_evidence_graph(strict)
     resolution = resolve_evidence_graph(compiled)
     draft = build_semantic_draft(compiled, resolution)
-    assert draft["features"][0]["position"]["x"] == -10.0
+    assert draft["features"][0]["position"]["x"] == 10.0
 
 
 def test_gate0_allows_sibling_paths_without_quarantine():

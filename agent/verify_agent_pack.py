@@ -23,6 +23,7 @@ REQUIRED = [
     "references/runner-contract.md",
     "references/certified-tool-contract.json",
     "references/pipeline-contract.md",
+    "references/reader-bounded-query-contract.md",
     "references/chinese-output.md",
     "examples/example-output.json",
     "examples/modeling-plan-example.json",
@@ -209,22 +210,35 @@ def main() -> None:
             fail(f"SKILL Mode A Fast Path regression: missing {token}")
 
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+    reader_runtime = (SKILL / "references" / "reader-runtime-contract.md").read_text(
+        encoding="utf-8"
+    )
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     for token in (
         "当前上传工程图",
-        "唯一几何输入",
-        "Reader 只能一次写出 `semantic-draft.json`",
-        "Reader 不得直接创建、覆盖或手写 `drawing.json`",
-        "process exit code = 0",
-        "`written=true`",
-        "`output_exists=true`",
-        "单独调用 `validate-drawing` 绕过 canonicalizer",
+        "唯一权威几何输入",
+        "runtime-local raster 路径",
+        "prepare-reader-input <current-raster-path> <workspace_root>",
+        "reader-input.json",
+        "不得直接读取 raw-evidence.json / reader-visual-aid.json",
+        "不得创建额外 crop",
+        "reader-observations.json",
+        "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+        "禁止第二版 observations",
+        "reader-capture.json",
+        "check-capture <reader-capture.json>",
+        "link-capture <reader-capture.json> <drawing-evidence.json>",
+        "resolve <drawing-evidence.json> <semantic-draft.json>",
+        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
+        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
+        "禁止第二轮用户确认",
+        "canonicalize-drawing <semantic-draft.json 或 semantic-draft-confirmed.json> <drawing.json>",
         "从零生成新的 frozen plan",
         "不得跳过 Planner",
         "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 frozen/executable plan",
-        "禁止扫描工作区寻找“可复用”的历史 plan",
+        "禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture",
+        "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:
             fail(f"Mode B current-request isolation regression: missing {token}")
@@ -233,11 +247,11 @@ def main() -> None:
         "只能读取",
         "runtime configuration missing",
         "禁止自动寻找其它 runtime-config",
-        "禁止 fallback 到 `python` / `python3` / `py`",
-        "`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同",
-        "`nx_mcp_src` 只能取自当前 runtime-config",
+        "禁止 fallback 到 python / python3 / py",
+        "workspace_root 与 NX_MCP_WORKSPACE 规范化后必须相同",
+        "nx_mcp_src 只能取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json` / `drawing.json` / frozen plan / executable plan / report / PRT / STEP",
+        "当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / reader-observations.json / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
     ):
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")
@@ -253,34 +267,162 @@ def main() -> None:
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "当前上传工程图 → 当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
-        "Reader只从当前上传工程图生成一次`semantic-draft.json`",
-        "只有process exit code = 0、`written=true`、`output_exists=true`同时成立才PASS",
-        "Reader存在blocking unresolved",
-        "draft只有白名单内安全schema/path差异",
-        "draft存在真实semantic/ownership错误",
-        "不能直接 build/run 或进入 Runner",
-        "不得扫描工作区判断是否存在“可用计划”",
+        "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
+        "reader-observations.json",
+        "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+        "immutable compiled first-pass visual evidence artifact",
+        "Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json",
+        "check-capture <reader-capture.json>",
+        "link-capture <reader-capture.json> <drawing-evidence.json>",
+        "resolve <drawing-evidence.json> <semantic-draft.json>",
+        "A4.1 Human Confirmation Gate（最多一次）",
+        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
+        "eligible_for_user_confirmation = true",
+        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
+        "resolve <drawing-evidence-confirmed.json> <semantic-draft-confirmed.json>",
+        "禁止第二轮用户确认",
+        "canonicalize-drawing <semantic-draft.json> <drawing.json>",
         "build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json",
     ):
         if token not in pipeline_contract:
-            fail(f"Mode B stale-workspace contract regression: missing {token}")
+            fail(f"Mode B evidence pipeline regression: missing {token}")
     for token in (
         "一次且仅一次 runtime discovery",
         "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
         "只能读取这一份",
         "runtime configuration missing",
         "规范化后必须相同",
-        "禁止 fallback 到 `python`、`python3`、`py`",
-        "`nx_mcp_src` 必须原样取自当前 runtime-config",
+        "禁止 fallback 到 python、python3、py",
+        "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+    reader_prep_contracts = {
+        "SKILL.md": (
+            "唯一权威几何输入",
+            "prepare-reader-input <current-raster-path> <workspace_root>",
+            "reader-input.json",
+            "reader-contact-sheet.png",
+            "禁止顺序打开全部单张 crop",
+            "对应的那一张现成 crop",
+            "不得直接读取 raw-evidence.json / reader-visual-aid.json",
+            "不得创建额外 crop",
+            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture",
+        ),
+        "pipeline-contract.md": (
+            "### A0.5. Deterministic Reader input preparation",
+            "prepare-reader-input <current-raster-path> <workspace_root>",
+            "reader-input.json",
+            "reader-contact-sheet.png",
+            "reader-crops\\overview.png",
+            "有明确 current raster path 时",
+            "禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本",
+            "Reader 默认只读取当前原图、当前 `reader-input.json` 与当前 `reader-contact-sheet.png`",
+            "禁止顺序打开全部单张 crop",
+            "Reader 禁止创建额外 crop、重新预处理图片、扫描历史文件或重新组织一套 visual search pipeline",
+            "旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用",
+        ),
+        "reader-runtime-contract.md": (
+            "### Deterministic Reader input bundle",
+            "sole authoritative geometry source",
+            "exactly one current `reader-input.json`",
+            "exactly one current `reader-contact-sheet.png`",
+            "Do not open all individual crops sequentially",
+            "corresponding already-listed crop",
+            "do not read `raw-evidence.json` or `reader-visual-aid.json` directly",
+            "do not scan the workspace, chat history, repository, or user directories",
+            "do not create additional crops, PowerShell image scripts, PIL/.NET image helpers",
+            "`overflow` bucket",
+            "never match a dimension by numeric/pixel-scale coincidence",
+            "never create or merge a physical feature",
+        ),
+    }
+    reader_prep_texts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "reader-runtime-contract.md": reader_runtime,
+    }
+    for name, tokens in reader_prep_contracts.items():
+        for token in tokens:
+            if token not in reader_prep_texts[name]:
+                fail(f"Reader preparation contract regression in {name}: missing {token}")
+
+    drawing_cli_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
+    ).read_text(encoding="utf-8")
+    if "prepare-reader-input" not in drawing_cli_source:
+        fail("Reader preparation CLI regression: missing prepare-reader-input")
+    if "assemble-reader-capture" not in drawing_cli_source:
+        fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
+    if "build-reader-semantic-queries" not in drawing_cli_source:
+        fail("bounded Reader query CLI regression: missing build-reader-semantic-queries")
+    if "merge-reader-semantic-answers" not in drawing_cli_source:
+        fail("bounded Reader merge CLI regression: missing merge-reader-semantic-answers")
+
+    reader_observation_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_observations.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'class ReaderObservations',
+        'def assemble_reader_capture',
+        'ReaderCapture.model_validate(payload)',
+        'validate_reader_capture_contract(capture)',
+        '"required_targets": []',
+    ):
+        if token not in reader_observation_source:
+            fail(f"Reader observation assembler regression: missing {token}")
+
+    bounded_query_contract = (
+        SKILL / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "build-reader-semantic-queries",
+        "reader-semantic-answers-v1",
+        "merge-reader-semantic-answers",
+        "reader-partial-observations.json",
+        "Hard stop at 3 minutes",
+        "do not perform cross-view identity",
+    ):
+        if token not in bounded_query_contract:
+            fail(f"bounded Reader contract regression: missing {token}")
+
+    reader_prep_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        '"schema": "reader-input-v1"',
+        '"contact_sheet_path": str(contact_sheet_path)',
+        '"may_read_contact_sheet": True',
+        '"prefer_contact_sheet": True',
+        '"scan_workspace": False',
+        '"scan_history": False',
+        '"create_additional_crops": False',
+        '"numeric_pixel_scale_matching": False',
+        '"visual_aid_decides_endpoint_ownership": False',
+        '"agent_output_schema": "reader-observations-v1"',
+        '"agent_writes_reader_capture_directly": False',
+        '"assembler_decides_engineering_semantics": False',
+    ):
+        if token not in reader_prep_source:
+            fail(f"Reader preparation implementation regression: missing {token}")
+
+    for legacy in (
+        "extract-raster-evidence <current-raster-path>",
+        "build-reader-visual-aid <workspace_root>\\raw-evidence.json",
+    ):
+        if legacy in top or legacy in pipeline_contract or legacy in reader_runtime:
+            fail(f"legacy multi-step Reader preparation remains in runtime contract: {legacy}")
+
+    for token in ("import cv2, numpy", 'pip install -e "$RepoRoot[drawing]"'):
+        if token not in install_agent:
+            fail(f"Reader raster dependency install regression: missing {token}")
+
     for token in ("所有 `Doubao.exe` 进程", "安装器不会自动终止 Doubao 进程"):
         if token not in readme:
             fail(f"Agent Pack deployment restart note missing: {token}")
@@ -309,29 +451,38 @@ def main() -> None:
     ):
         fail("Mode B pre-interpretation simulation permits a stale artifact")
 
-    mode_b_canonicalizer_tokens = {
+    mode_b_evidence_tokens = {
         "SKILL.md": (
-            "immutable first-pass semantic artifact",
-            "禁止 retry、第二版 draft、Edit/Rewrite draft",
-            "`drawing.json` 不存在",
+            "Reader 只允许一次写出本轮 reader-observations.json",
+            "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+            "该程序只允许做确定性 ID/source/schema 组装",
+            "禁止第二版 observations",
+            "check-capture PASS 后立即执行 link-capture",
+            "再执行 deterministic resolve，生成 semantic-draft.json",
+            "最多 3 个可确认的 dimension endpoint",
             "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
         ),
         "pipeline-contract.md": (
-            "immutable first-pass semantic artifact",
-            "semantic token/schema retry",
-            "手写drawing",
-            "单独`validate-drawing`绕过canonicalizer",
-            "其它结果`BLOCKED / STOP`",
+            "### A1. Reader semantic observations + deterministic Capture assembly",
+            "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
+            "创建 Agent 没有声明的 association",
+            "把 unresolved endpoint 绑定到某个 entity",
+            "deterministic identity linker + Gate 0 生成 drawing-evidence.json",
+            "semantic-draft.json 由固定程序生成",
+            "该阶段只允许解决**尺寸端点 ownership**",
+            "最多一次",
+            "禁止第二轮用户确认",
+            "其它结果立即 BLOCKED / STOP",
         ),
     }
-    mode_b_canonicalizer_texts = {
+    mode_b_evidence_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
     }
-    for name, tokens in mode_b_canonicalizer_tokens.items():
+    for name, tokens in mode_b_evidence_tokens.items():
         for token in tokens:
-            if token not in mode_b_canonicalizer_texts[name]:
-                fail(f"Mode B canonicalizer workflow regression in {name}: missing {token}")
+            if token not in mode_b_evidence_texts[name]:
+                fail(f"Mode B evidence workflow regression in {name}: missing {token}")
 
     for forbidden in (
         "直接覆盖写入当前 `drawing.json`",
@@ -427,21 +578,29 @@ def main() -> None:
     if "<stepN ...>" not in text_fast or "禁止写裸语义名" not in text_fast:
         fail("text-mode selection consumer placeholder rule missing")
 
-    if "纯计划表达错误" not in pipeline_contract or "result_bindings" not in pipeline_contract:
-        fail("pipeline contract does not allow safe one-shot repair of binding-only plan errors")
+    for token in (
+        "frozen/executable 边界污染等纯计划表达错误",
+        "不改变尺寸、特征、选择几何或建模顺序",
+        "不改变已冻结设计几何语义的确定性 plan-level / selection-level 技术修复",
+        "生成 repair plan v1，只修改已确认的计划级问题",
+    ):
+        if token not in pipeline_contract:
+            fail(f"pipeline safe one-shot plan repair regression: missing {token}")
 
     for token in (
         "禁止数值 nudge / epsilon 修复",
-        "drawing、derived、frozen plan",
-        "Z=50 → Z=49",
+        "需要猜尺寸、改尺寸、改孔位、改特征数量",
+        "若精确相切/共面导致 NX kernel Boolean 失败",
         "geometry-preserving",
+        "无法确定修复是否改变最终几何",
     ):
         if token not in pipeline_contract:
             fail(f"pipeline numeric-nudge repair regression: missing {token}")
     for token in (
         "禁止 geometry / numeric nudge",
-        "Z=50 → Z=49",
-        "精确相切/共面",
+        "只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题",
+        "禁止：重新看图、修改 reader-capture/drawing-evidence、猜尺寸、改图纸、改变主体结构",
+        "修复后必须重新 build/check",
     ):
         if token not in top:
             fail(f"top-level numeric-nudge repair regression: missing {token}")
@@ -449,31 +608,22 @@ def main() -> None:
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
     drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
     for token in (
-        "唯一 semantic decision chain",
-        "Annotation / same-feature projection association",
-        "Physical endpoint ownership",
-        "Direct coordinate / evidence-backed relation lock",
-        "Eligible derived",
-        "Required HARD feature inventory",
-        "Semantic draft assembly",
-        "First-write semantic check",
-        "association 本身不建立不同 feature 之间的数值关系",
-        "不得在全局坐标转换时重分类",
-        "distinct-feature relation必须有证据",
-        "dimension-bearing number 必须通过 `source`",
-        "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
-        "无法唯一表达的必需feature写blocking",
-        "pattern/symmetry/spacing不得删除该ownership",
-        "逐项核对该 identity 的全部正交视图记录",
-        "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
-        "不得作为裸 numeric operand 或 mental arithmetic 输入",
-        "start face 只能在 axis 锁定后解释",
-        "coordinate 正确不能替代该 ownership",
-        "这些 centers 不要求位于同一个 feature object",
-        "每个 dimension-bearing annotation 在 numeric use 前已有 identity",
+        "二维工程图 Reader Capture v2",
+        "view-local evidence capture",
+        "对跨视图候选只记录结构化 association visual basis",
+        "由 deterministic linker 决定是否 merge",
+        "对 entity_center endpoint 记录 centerline / center_mark / explicit_midline basis",
+        "structured unresolved_evidence",
+        "新 capture 的 required_targets 固定写空数组",
+        "创建任何最终 physical feature ID",
+        "根据 linker / Gate 0 / Resolver / Gate A 错误第二次看图修答案",
+        "同一个 entity 只能属于一个 association claim",
+        "一个 association claim 在同一个 view 中最多只能包含一个 entity",
+        "如果 endpoint 不能唯一归属",
+        "linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking",
     ):
         if token not in drawing_reader:
-            fail(f"consolidated Reader decision contract regression: missing {token}")
+            fail(f"ReaderCapture decision contract regression: missing {token}")
     for token in (
         "只提供视觉识别与制图符号词典",
         "本文件不得建立第二套 inference policy",
@@ -576,40 +726,22 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "Semantic draft contract",
-        "现有drawing结构",
-        "稳定 feature、annotation、source、relation 与 unresolved identity",
-        "measured quantity与physical endpoint ownership",
-        "dimension-bearing数值只能通过已识别的source",
-        "Reader必须按draft中真实字段发出可解析路径",
-        "feature:<id>.centerline.<axis>",
-        "feature:<id>.explicit_centers.<index>.<coordinate-index>",
-        "不得把歧义path交给canonicalizer猜测",
-        "canonicalizer只修representation",
-        "`edge_offset` 不得作为 derived expression",
-        "known opposite endpoint target",
-        "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-        "First-write semantic check",
-        "HARD inventory无静默遗漏",
-        "不得生成第二版draft",
-        "`X=[-length_x/2,+length_x/2]`",
-        "局部 profile/body/step boundary 不得套 overall bbox",
-        "用 `alignment` 保存共享中心坐标",
-        "只描述 drawing semantic，不规定具有非零 width 的实体 cut realization",
-        "其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand",
-        "direct witness 优先于所有 arithmetic",
-        "view→projection geometry→annotation endpoints",
-        "不得在同一draft中混入 `0..extent` X/Y frame",
-        "只写 `connected_to / notes / reason / evidence` 不构成 relation coverage",
-        "`upper_tangent` 或 `lower_tangent`",
-        "`center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`",
-        "`edge_offset`使用`value + axis + from + targets`",
-        "看见孔位所在的面也不能代替 orthographic axis evidence",
-        "blocking unresolved不得同时带猜测的concrete value",
+        "ReaderCapture.model_validate(payload)",
+        "不第二次看图修复",
+        "生产 schema 校验通过后，才允许执行唯一一次文件写入",
+        "每个 view-local entity 是否只属于一个 view",
+        "associated / unresolved / single_view 是否和 association / unresolved evidence 自洽",
+        "每个 modeling-critical dimension endpoint 是否有自己的非空 source_ids",
+        "dimension endpoint 是否由真实标注 geometry 支持",
+        "不确定 endpoint 是否使用 role=\"unresolved\" + unresolved_kind +",
+        "required_targets 是否为 []",
+        "modeling-critical 缺失语义是否进入 structured unresolved_evidence",
+        "blocking unresolved 是否使用明确 kind",
+        "没有 final feature ID",
         "Closure is validation only",
     ):
         if token not in drawing_reader and token != "Closure is validation only":
-            fail(f"consolidated Reader canonical contract regression: missing {token}")
+            fail(f"ReaderCapture first-pass contract regression: missing {token}")
         if token == "Closure is validation only" and token not in drawing_rules:
             fail(f"quick closure boundary regression: missing {token}")
 

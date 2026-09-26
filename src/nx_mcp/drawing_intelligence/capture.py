@@ -45,6 +45,7 @@ AssociationEvidenceKind = Literal[
     "shared_center_mark",
     "leader_correspondence",
     "matching_specification",
+    "unique_orthographic_counterpart",
     "explicit_section_correspondence",
 ]
 
@@ -56,6 +57,7 @@ def _association_basis_sufficient(basis: list[AssociationEvidenceKind]) -> bool:
     identity_support = {
         "matching_specification",
         "leader_correspondence",
+        "unique_orthographic_counterpart",
     }
     return "projection_alignment" in kinds and bool(kinds & identity_support)
 
@@ -99,12 +101,15 @@ CaptureEndpointRole = Literal[
     "overall_min",
     "overall_max",
     "entity_center",
+    "profile_boundary",
     "unresolved",
 ]
 DimensionEndpointEvidenceKind = Literal[
     "centerline",
     "center_mark",
     "explicit_midline",
+    "circle_center",
+    "profile_edge",
 ]
 CaptureEndpointUnresolvedKind = Literal[
     "intermediate_surface",
@@ -130,17 +135,21 @@ class CaptureDimensionEndpoint(_StrictCaptureModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "CaptureDimensionEndpoint":
-        if self.role == "entity_center":
+        if self.role in {"entity_center", "profile_boundary"}:
             if not self.entity_id:
-                raise ValueError("entity_center endpoint requires entity_id")
+                raise ValueError(f"{self.role} endpoint requires entity_id")
             if self.candidate_entity_ids:
                 raise ValueError(
-                    "entity_center endpoint must not carry candidate_entity_ids"
+                    f"{self.role} endpoint must not carry candidate_entity_ids"
                 )
             if self.unresolved_kind is not None:
                 raise ValueError(
-                    "entity_center endpoint must not carry unresolved_kind"
+                    f"{self.role} endpoint must not carry unresolved_kind"
                 )
+            if self.role == "profile_boundary" and self.basis != "profile_edge":
+                raise ValueError("profile_boundary endpoint requires profile_edge basis")
+            if self.role == "entity_center" and self.basis == "profile_edge":
+                raise ValueError("entity_center endpoint must not use profile_edge basis")
         elif self.role in {"overall_min", "overall_max"}:
             if self.entity_id is not None:
                 raise ValueError(f"{self.role} endpoint must not carry entity_id")
@@ -196,6 +205,21 @@ class CaptureDatumAlignment(_StrictCaptureModel):
     datum: Literal["overall_center"] = "overall_center"
     source_ids: list[str] = Field(default_factory=list)
     required_for_modeling: bool = True
+
+
+class CaptureCenterlineAlignment(_StrictCaptureModel):
+    id: str = Field(min_length=1)
+    entity_ids: list[str] = Field(min_length=2)
+    feature_axis: Axis
+    source_ids: list[str] = Field(default_factory=list)
+    required_for_modeling: bool = True
+
+    @field_validator("entity_ids")
+    @classmethod
+    def _unique_entity_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("centerline alignment entity_ids must be unique")
+        return value
 
 
 class CaptureRequiredTarget(_StrictCaptureModel):
@@ -262,7 +286,7 @@ class ReaderCapture(_StrictCaptureModel):
     """Reader Capture v2: visual observations before physical feature identity."""
 
     schema_version: Literal["2.0"] = "2.0"
-    coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
+    coordinate_system: Literal["overall_min_xyz"] = "overall_min_xyz"
     overall_dimensions: OverallDimensions
     views: list[CaptureView] = Field(default_factory=list)
     entities: list[CaptureEntity] = Field(default_factory=list)
@@ -270,6 +294,7 @@ class ReaderCapture(_StrictCaptureModel):
     values: list[CaptureValue] = Field(default_factory=list)
     dimensions: list[CaptureDimension] = Field(default_factory=list)
     datum_alignments: list[CaptureDatumAlignment] = Field(default_factory=list)
+    centerline_alignments: list[CaptureCenterlineAlignment] = Field(default_factory=list)
     required_targets: list[CaptureRequiredTarget] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_evidence: list[CaptureUnresolvedEvidence] = Field(default_factory=list)
@@ -426,6 +451,14 @@ class ReaderCapture(_StrictCaptureModel):
                     f"{alignment.entity_id!r}"
                 )
 
+        for alignment in self.centerline_alignments:
+            missing = [item for item in alignment.entity_ids if item not in entity_set]
+            if missing:
+                raise ValueError(
+                    f"centerline alignment {alignment.id!r} references unknown "
+                    f"entities {missing}"
+                )
+
         for target in self.required_targets:
             if target.entity_id not in entity_set:
                 raise ValueError(
@@ -448,6 +481,7 @@ class ReaderCapture(_StrictCaptureModel):
             + [item.id for item in self.values]
             + [item.id for item in self.dimensions]
             + [item.id for item in self.datum_alignments]
+            + [item.id for item in self.centerline_alignments]
             + [item.id for item in self.unresolved_evidence]
         )
         if len(ids) != len(set(ids)):
@@ -487,6 +521,9 @@ CYLINDRICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "through",
         "counterbore_diameter",
         "counterbore_depth",
+        "recess_diameter",
+        "recess_depth",
+        "recessed_hole",
     }
 )
 
@@ -560,9 +597,18 @@ CANONICAL_CAPTURE_VALUE_FIELDS = frozenset(
         "count",
         "through",
         "width",
+        "width_axis",
+        "through_axis",
+        "top_z",
+        "bottom_z",
         "counterbore_diameter",
         "counterbore_depth",
+        "recess_diameter",
+        "recess_depth",
+        "recessed_hole",
+        "start_side",
         "type",
+        "axis",
     }
 )
 
@@ -754,7 +800,7 @@ def validate_reader_capture_contract(capture: ReaderCapture) -> list[str]:
             if endpoint.role == "entity_center" and endpoint.basis is None:
                 errors.append(
                     f"dimension {dimension.id!r} entity_center endpoint "
-                    "requires centerline/center_mark/explicit_midline basis"
+                    "requires centerline/center_mark/explicit_midline basis, or circle_center basis"
                 )
 
     entity_fields: dict[str, set[str]] = {}

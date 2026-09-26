@@ -1,0 +1,2817 @@
+from __future__ import annotations
+
+import pytest
+
+import nx_mcp.drawing_intelligence.hybrid_capture_adapter as hybrid_adapter
+
+from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+    HybridAdapterContext,
+    HybridCaptureAdapterError,
+    adapt_hybrid_ocr_report,
+)
+
+
+def _report() -> dict:
+    return {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [
+                {
+                    "candidate_id": "DG17",
+                    "source_item_index": 9,
+                    "token": "6",
+                    "local_tokens": ["66"],
+                }
+            ],
+            "secondary_assignment_observations": [
+                {
+                    "candidate_id": "DG13",
+                    "source_item_index": 21,
+                    "token": "32",
+                    "selected_proposal_token": "24",
+                }
+            ],
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 0,
+                    "token": "16",
+                }
+            ],
+            "local_only_linear_observations": [
+                {
+                    "candidate_id": "DG17",
+                    "token": "66",
+                }
+            ],
+        },
+        "candidates": [
+            {
+                "candidate_id": "DG12",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": "24",
+                "global_assignments": [
+                    {
+                        "token": "24",
+                        "bbox": [
+                            [140.0, 80.0],
+                            [160.0, 80.0],
+                            [160.0, 100.0],
+                            [140.0, 100.0],
+                        ],
+                    }
+                ],
+                "witness_positions_px": [100.0, 200.0],
+                "witness_anchor_evidence": [
+                    {
+                        "witness_index": 0,
+                        "axis": "x",
+                        "nearest_anchors": [
+                            {
+                                "kind": "circle_center_axis",
+                                "ref": "R1.CG001.center_x",
+                                "distance_px": 0.0,
+                                "distance_local_norm": 0.0,
+                            }
+                        ],
+                    },
+                    {
+                        "witness_index": 1,
+                        "axis": "x",
+                        "nearest_anchors": [
+                            {
+                                "kind": "profile_edge_candidate",
+                                "ref": "R1.structural.vertical.001",
+                                "position_px": 200.0,
+                                "candidate_only": True,
+                                "ownership_claimed": False,
+                                "distance_px": 0.0,
+                                "distance_local_norm": 0.0,
+                            }
+                        ],
+                    },
+                ],
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 100.0,
+                        "source_lines": [
+                            {
+                                "orientation": "vertical",
+                                "axis_px": 100.0,
+                                "span_px": [20, 180],
+                                "span_length_px": 160,
+                                "crosses_dimension_axis": True,
+                            }
+                        ],
+                    },
+                    {
+                        "witness_index": 1,
+                        "position_px": 200.0,
+                        "source_lines": [
+                            {
+                                "orientation": "vertical",
+                                "axis_px": 200.0,
+                                "span_px": [20, 180],
+                                "span_length_px": 160,
+                                "crosses_dimension_axis": True,
+                            }
+                        ],
+                    },
+                ],
+            },
+            {
+                "candidate_id": "DG17",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "accepted_token": None,
+            },
+            {
+                "candidate_id": "DG25",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "accepted_token": "40±0.02",
+            },
+            {
+                "candidate_id": "DG13",
+                "region_id": "R2",
+                "orientation": "horizontal",
+                "accepted_token": "24",
+            },
+        ],
+    }
+
+
+def _context() -> HybridAdapterContext:
+    return HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+        }
+    )
+
+
+def test_confirmed_start_side_requires_known_entity_and_preserves_human_provenance():
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                }
+            ],
+            "confirmed_start_sides": [
+                {
+                    "entity_key": "R1.HIDDEN_PAIR.horizontal.004.005",
+                    "start_side": "min",
+                    "evidence": ["human-confirmation:test:min"],
+                }
+            ],
+        }
+    )
+
+    values, ledger = hybrid_adapter._confirmed_start_side_values(
+        context,
+        entity_keys={"R1.HIDDEN_PAIR.horizontal.004.005"},
+        existing_values=[],
+    )
+
+    assert len(values) == 1
+    assert values[0].field == "start_side"
+    assert values[0].value == "min"
+    assert values[0].semantic == "start_side"
+    assert values[0].evidence == ["human-confirmation:test:min"]
+    assert ledger[0]["basis"] == "explicit_human_confirmation"
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    with pytest.raises(HybridCaptureAdapterError, match="is absent"):
+        hybrid_adapter._confirmed_start_side_values(
+            context,
+            entity_keys=set(),
+            existing_values=[],
+        )
+
+
+def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
+    partial = adapt_hybrid_ocr_report(_report(), _context())
+
+    by_key = {item.key: item for item in partial.dimensions}
+    assert by_key["R1.DG12"].value == 24
+    assert by_key["R1.DG12"].axis == "X"
+    assert "R1.DG17" not in by_key
+    assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
+    assert by_key["R2.DG13"].axis == "Y"
+
+    anchor_ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_dimension_anchor_ledger"
+    )
+    dg12 = next(item for item in anchor_ledger["items"] if item["candidate_id"] == "DG12")
+    assert dg12["witness_anchor_evidence"][0]["nearest_anchors"][0]["kind"] == "circle_center_axis"
+    assert dg12["witness_line_evidence"][0]["source_lines"][0]["span_length_px"] == 160
+    assert anchor_ledger["schema"] == "1.1"
+    endpoint_candidates = dg12["endpoint_candidate_evidence"]
+    assert endpoint_candidates["status"] == "bracketed"
+    assert endpoint_candidates["selected_witness_indices"] == [0, 1]
+    assert endpoint_candidates["all_endpoint_candidates_unique"] is True
+    assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
+
+
+def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
+    partial = adapt_hybrid_ocr_report(_report(), _context())
+
+    tolerance = [item for item in partial.unresolved if item.field == "dimension_tolerance"]
+    assert len(tolerance) == 1
+    assert tolerance[0].dimension_key == "R1.DG25"
+    assert tolerance[0].required_for_modeling is False
+
+
+def test_adapter_preserves_coverage_evidence_without_overblocking_bookkeeping():
+    partial = adapt_hybrid_ocr_report(_report(), _context())
+
+    fields = [item.field for item in partial.unresolved]
+    assert "dimension_value_candidate" in fields
+    assert "secondary_linear_assignment" in fields
+    assert "unassigned_linear_text" in fields
+    assert "local_only_linear_text" in fields
+
+    blocking = [item for item in partial.unresolved if item.required_for_modeling]
+    assert [(item.kind, item.field) for item in blocking] == [
+        ("unsupported_representation", "dimension_value_candidate")
+    ]
+
+    advisory_fields = {item.field for item in partial.unresolved if not item.required_for_modeling}
+    assert {
+        "secondary_linear_assignment",
+        "unassigned_linear_text",
+        "local_only_linear_text",
+    } <= advisory_fields
+    assert partial.observations[0]["kind"] == "hybrid_ocr_coverage_ledger"
+
+
+def test_adapter_rejects_silent_drop_report():
+    report = _report()
+    report["coverage"]["observed_silent_drop_count"] = 1
+
+    with pytest.raises(HybridCaptureAdapterError, match="silent evidence drops"):
+        adapt_hybrid_ocr_report(report, _context())
+
+
+def test_adapter_rejects_missing_region_view_context():
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(HybridCaptureAdapterError, match="missing view context"):
+        adapt_hybrid_ocr_report(_report(), context)
+
+
+def test_adapter_rejects_old_hybrid_report_schema():
+    report = _report()
+    report["schema"] = "dg-hybrid-ocr-bakeoff-v1"
+
+    with pytest.raises(HybridCaptureAdapterError, match="requires"):
+        adapt_hybrid_ocr_report(report, _context())
+
+
+def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessing_owner():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [500, 0, 300, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [650, 200],
+                    "rings": [{"radius_px": 20}, {"radius_px": 35}],
+                }
+            ],
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+            "confidence": 0.99,
+        },
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[650, 250], [720, 250], [720, 290], [650, 290]],
+            "confidence": 0.99,
+        },
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.key, item.shape) for item in partial.entities] == [
+        ("R1.C1", "circle"),
+        ("R2.C1", "concentric_circles"),
+        ("R1.CALLOUT.1", "other"),
+        ("R2.CALLOUT.7", "other"),
+    ]
+    assert partial.entities[0].required_for_modeling is False
+    assert partial.entities[1].required_for_modeling is False
+    assert partial.entities[2].required_for_modeling is False
+    assert partial.entities[3].required_for_modeling is False
+
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["facts"] == {
+        "thread_spec": "M6",
+        "thread_depth": 12.0,
+    }
+    assert ledger["items"][0]["region_candidates"] == ["R1"]
+    assert ledger["items"][1]["facts"] == {
+        "diameter": 20.0,
+        "fit": "H7",
+    }
+    assert ledger["items"][1]["region_candidates"] == ["R2"]
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.1", "thread_depth", 12.0),
+        ("R1.CALLOUT.1", "thread_spec", "M6"),
+        ("R2.CALLOUT.7", "diameter", 20.0),
+        ("R2.CALLOUT.7", "fit", "H7"),
+    ]
+    callout_unresolved = [
+        item
+        for item in partial.unresolved
+        if item.kind == "feature_inventory"
+        and item.field == "engineering_callout_geometry_binding"
+        and item.entity_keys
+    ]
+    assert len(callout_unresolved) == 2
+    assert all(item.required_for_modeling for item in callout_unresolved)
+
+
+def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[95, 45], [228, 228]],
+            "candidate_only": True,
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[20, 20], [100, 20], [100, 50], [20, 50]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.C1", "diameter", 20.0),
+        ("R1.C1", "fit", "H7"),
+    ]
+    assert not [
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
+    ]
+
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "bound"
+    assert ledger["items"][0]["binding"]["entity_key"] == "R1.C1"
+
+
+def test_adapter_transports_nearby_callout_without_claiming_geometry_binding():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 200],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 7,
+            "text": "∅20 H7",
+            "bbox": [[140, 120], [220, 120], [220, 150], [140, 150]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.7", "diameter", 20.0),
+        ("R1.CALLOUT.7", "fit", "H7"),
+    ]
+    unresolved = [
+        item
+        for item in partial.unresolved
+        if item.kind == "feature_inventory"
+        and item.entity_keys == ["R1.CALLOUT.7"]
+        and item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(unresolved) == 1
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "callout_backed"
+
+
+def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresolved():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 300],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [220, 220],
+                    "rings": [{"radius_px": 40}],
+                }
+            ],
+        }
+    ]
+    report["annotation_line_candidates"] = [
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[96, 96], [125, 125]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[130, 130], [155, 155]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+        {
+            "kind": "oblique_line_candidate",
+            "endpoints_px": [[160, 160], [192, 192]],
+            "angle_deg": 45.0,
+            "candidate_only": True,
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 5,
+            "text": "011沉孔深6.5",
+            "bbox": [[20, 20], [100, 20], [100, 100], [20, 100]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    values = {
+        item.field: item.value
+        for item in partial.values
+        if item.entity_key == "R1.C1"
+    }
+    assert values["recess_diameter"] == 11.0
+    assert values["recess_depth"] == 6.5
+    assert values["recessed_hole"] is True
+
+    fields = {
+        item.field
+        for item in partial.unresolved
+        if item.kind == "feature_value" and item.entity_keys == ["R1.C1"]
+    }
+    assert fields == {"recessed_hole_subtype"}
+
+
+def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [],
+        }
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    callout_entities = [item for item in partial.entities if ".CALLOUT." in item.key]
+    assert len(callout_entities) == 1
+    entity = callout_entities[0]
+    assert entity.key == "R1.CALLOUT.1"
+    assert entity.view_key == "view.R1"
+    assert entity.shape == "other"
+    assert entity.cross_view_disposition is None
+    assert entity.required_for_modeling is False
+
+    assert [(item.entity_key, item.field, item.value) for item in partial.values] == [
+        ("R1.CALLOUT.1", "thread_depth", 12.0),
+        ("R1.CALLOUT.1", "thread_spec", "M6"),
+    ]
+
+    ownership = [
+        item
+        for item in partial.unresolved
+        if item.kind == "feature_inventory"
+        and item.entity_keys == ["R1.CALLOUT.1"]
+        and item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(ownership) == 1
+
+    ledger = next(
+        item for item in partial.observations if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert ledger["items"][0]["binding"]["status"] == "callout_backed"
+    assert ledger["items"][0]["binding"]["basis"] == "unique_region_callout_fact_transport"
+
+
+def test_adapter_does_not_transport_unbound_callout_without_unique_view_region():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 100, 100],
+            "circle_groups": [],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [200, 0, 100, 100],
+            "circle_groups": [],
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 1,
+            "text": "M6深12",
+            "bbox": [[120, 20], [180, 20], [180, 50], [120, 50]],
+            "confidence": 0.99,
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    assert not [item for item in partial.entities if ".CALLOUT." in item.key]
+    assert partial.values == []
+    unresolved = [
+        item for item in partial.unresolved if item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0].kind == "feature_inventory"
+
+
+def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidate():
+    report = _report()
+    report["candidates"].append(
+        {
+            "candidate_id": "DG10",
+            "region_id": "R1",
+            "orientation": "horizontal",
+            "accepted_token": None,
+        }
+    )
+    report["coverage"]["local_only_linear_observations"].append(
+        {
+            "candidate_id": "DG10",
+            "token": "24",
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.field == "local_only_linear_text"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0].evidence == [
+        "hybrid:DG10:whole",
+        "hybrid:DG10:wide",
+    ]
+
+
+def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 400],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [100, 100],
+                    "rings": [{"radius_px": 20}],
+                }
+            ],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [500, 0, 300, 400],
+            "circle_groups": [],
+        },
+    ]
+    report["candidates"][0]["witness_anchor_evidence"][0]["nearest_anchors"][0]["ref"] = (
+        "R1.C1.center_x"
+    )
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    dimension = next(item for item in partial.dimensions if item.key == "R1.DG12")
+    assert dimension.endpoints[0].role == "entity_center"
+    assert dimension.endpoints[0].entity_key == "R1.C1"
+    assert dimension.endpoints[0].basis == "circle_center"
+    assert dimension.endpoints[1].role == "unresolved"
+    assert dimension.endpoints[1].unresolved_kind == "intermediate_surface"
+    assert dimension.unresolved_reason is not None
+
+
+def test_adapter_never_emits_pixel_derived_metric_ledgers():
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
+
+    forbidden = {
+        "hybrid_view_metric_calibration_ledger",
+        "hybrid_metric_profile_edge_ledger",
+        "hybrid_metric_profile_segment_ledger",
+        "hybrid_metric_circle_primitive_ledger",
+    }
+    assert forbidden.isdisjoint(
+        {
+            item.get("kind")
+            for item in partial.observations
+            if isinstance(item, dict)
+        }
+    )
+
+
+def test_adapter_preserves_ocr_conflict_without_pixel_metric_fallback():
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
+
+    assert "R1.DG17" not in {item.key for item in partial.dimensions}
+    blockers = [
+        item
+        for item in partial.unresolved
+        if item.required_for_modeling and item.field == "dimension_value_candidate"
+    ]
+    assert len(blockers) == 1
+    assert not any(
+        str(item.get("kind", "")).startswith("hybrid_metric_")
+        or item.get("kind") == "hybrid_view_metric_calibration_ledger"
+        for item in partial.observations
+        if isinstance(item, dict)
+    )
+
+
+def test_adapter_does_not_turn_circle_or_profile_pixels_into_engineering_coordinates():
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 400, 300],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [200, 150],
+                    "rings": [{"radius_px": 30}],
+                }
+            ],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [400, 0, 300, 300],
+            "circle_groups": [],
+        },
+    ]
+
+    partial = adapt_hybrid_ocr_report(
+        report,
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
+
+    serialized = partial.model_dump(mode="json")
+    text = repr(serialized)
+    for forbidden_key in (
+        "mm_per_px",
+        "coordinate_mm",
+        "center_mm",
+        "point_mm",
+        "fixed_coordinate_mm",
+    ):
+        assert forbidden_key not in text
+
+
+def test_full_profile_inventory_remains_visual_evidence_not_metric_truth():
+    report = _report()
+    report["structural_profile_inventory"] = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.UNREFERENCED",
+            "position_px": 200.0,
+            "source_orientation": "vertical",
+            "span_px": [40, 260],
+        }
+    ]
+
+    partial = adapt_hybrid_ocr_report(
+        report,
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40, "evidence": ["overall:X"]},
+                    {"axis": "Z", "value": 66, "evidence": ["overall:Z"]},
+                ],
+            }
+        ),
+    )
+
+    assert not any(
+        item.get("kind")
+        in {
+            "hybrid_view_metric_calibration_ledger",
+            "hybrid_metric_profile_edge_ledger",
+            "hybrid_metric_profile_segment_ledger",
+            "hybrid_metric_circle_primitive_ledger",
+        }
+        for item in partial.observations
+        if isinstance(item, dict)
+    )
+
+
+
+
+def test_pattern_backed_m6_reuses_existing_hidden_pair_entity(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 1,
+                    "text": "M6深12",
+                    "bbox": [[100, 100], [180, 100], [180, 130], [100, 130]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 400, 400],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        lambda *args, **kwargs: {
+            "status": "bound",
+            "entity_key": "R1.LINEAR_PATTERN.004",
+            "region_id": "R1",
+            "pattern_index": 3,
+            "orientation": "horizontal",
+            "axis": "X",
+        },
+    )
+
+    ledger, entities, values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={
+            ("R1", 3): "R1.HIDDEN_PAIR.horizontal.004.005"
+        },
+        existing_entity_keys={"R1.HIDDEN_PAIR.horizontal.004.005"},
+    )
+
+    assert entities == []
+    assert unresolved == []
+    assert {
+        (item.entity_key, item.field, item.value)
+        for item in values
+    } == {
+        ("R1.HIDDEN_PAIR.horizontal.004.005", "thread_depth", 12.0),
+        ("R1.HIDDEN_PAIR.horizontal.004.005", "thread_spec", "M6"),
+    }
+    assert ledger[0]["binding"]["entity_key"] == "R1.HIDDEN_PAIR.horizontal.004.005"
+    assert ledger[0]["binding"]["hidden_pair_owner_reused"] is True
+
+def test_overall_ocr_conflict_becomes_advisory_only_with_independent_closed_overall(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_view_axis_boundaries",
+        lambda **kwargs: [
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "view_kind": "front",
+                "axis": "Z",
+                "candidate_id": "DG17",
+                "overall_dimension_value": 66.0,
+                "anchors": [
+                    {"role": "overall_max"},
+                    {"role": "overall_min"},
+                ],
+                "basis": "conflict_preserved_overall_dimension_endpoint_identity",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+    )
+
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {
+                        "axis": "Z",
+                        "value": 66,
+                        "evidence": ["independent:overall-Z-66"],
+                    },
+                ],
+            }
+        ),
+    )
+
+    conflict = next(
+        item
+        for item in partial.unresolved
+        if item.field == "dimension_value_candidate"
+    )
+    assert conflict.required_for_modeling is False
+    assert conflict.basis == []
+    assert "preserved as advisory evidence" in conflict.reason
+
+
+def test_overall_ocr_conflict_stays_blocking_when_overall_fact_reuses_same_candidate(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_view_axis_boundaries",
+        lambda **kwargs: [
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "view_kind": "front",
+                "axis": "Z",
+                "candidate_id": "DG17",
+                "overall_dimension_value": 66.0,
+                "anchors": [
+                    {"role": "overall_max"},
+                    {"role": "overall_min"},
+                ],
+                "basis": "conflict_preserved_overall_dimension_endpoint_identity",
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+    )
+
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(
+            {
+                "schema": "hybrid-adapter-context-v1",
+                "region_views": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "evidence": ["structural:R1"],
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "side",
+                        "evidence": ["structural:R2"],
+                    },
+                ],
+                "overall_dimension_facts": [
+                    {
+                        "axis": "Z",
+                        "value": 66,
+                        "evidence": ["hybrid:DG17:wide"],
+                    },
+                ],
+            }
+        ),
+    )
+
+    conflict = next(
+        item
+        for item in partial.unresolved
+        if item.field == "dimension_value_candidate"
+    )
+    assert conflict.required_for_modeling is True
+
+def test_local_only_duplicate_witness_topology_is_advisory():
+    shared_left = {
+        "orientation": "vertical",
+        "axis_px": 100.0,
+        "span_px": [20, 180],
+    }
+    shared_right = {
+        "orientation": "vertical",
+        "axis_px": 200.0,
+        "span_px": [20, 180],
+    }
+    accepted = {
+        "candidate_id": "DG_ACCEPTED",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "witness_line_evidence": [
+            {"witness_index": 0, "source_lines": [shared_left]},
+            {"witness_index": 1, "source_lines": [shared_right]},
+        ],
+    }
+    local_only = {
+        "candidate_id": "DG_LOCAL",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": None,
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 50.0,
+                        "span_px": [10, 190],
+                    }
+                ],
+            },
+            {"witness_index": 1, "source_lines": [shared_left]},
+            {"witness_index": 2, "source_lines": [shared_right]},
+        ],
+    }
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_LOCAL", "token": "24"}
+            ],
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG_ACCEPTED": accepted,
+            "DG_LOCAL": local_only,
+        },
+        view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    item = next(entry for entry in unresolved if entry.field == "local_only_linear_text")
+    assert item.required_for_modeling is False
+    assert "advisory duplicate coverage" in item.reason
+
+
+def test_equal_local_only_value_without_shared_witness_topology_stays_blocking():
+    accepted = {
+        "candidate_id": "DG_ACCEPTED",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 200.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+        ],
+    }
+    local_only = {
+        "candidate_id": "DG_LOCAL",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": None,
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 300.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 400.0,
+                        "span_px": [20, 180],
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_LOCAL", "token": "24"}
+            ],
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG_ACCEPTED": accepted,
+            "DG_LOCAL": local_only,
+        },
+        view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    item = next(entry for entry in unresolved if entry.field == "local_only_linear_text")
+    assert item.required_for_modeling is True
+
+def test_off_region_callout_can_bind_one_unique_linear_pattern(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 11,
+                    "text": "2-06.6通孔",
+                    "bbox": [[120, 40], [180, 40], [180, 70], [120, 70]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+            {
+                "region_id": "R2",
+                "bbox_px": [200, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        ),
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+
+    def fake_pattern_binding(*args, **kwargs):
+        region = args[2]
+        if region["region_id"] == "R2":
+            return {
+                "status": "bound",
+                "entity_key": "R2.LINEAR_PATTERN.003",
+                "region_id": "R2",
+                "pattern_index": 2,
+                "orientation": "horizontal",
+                "axis": "Y",
+            }
+        return {"status": "unresolved"}
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        fake_pattern_binding,
+    )
+
+    ledger, entities, values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={},
+        existing_entity_keys=set(),
+    )
+
+    assert ledger[0]["region_candidates"] == []
+    assert ledger[0]["binding"]["status"] == "pattern_backed"
+    assert ledger[0]["binding"]["region_id"] == "R2"
+    assert not any(
+        item.field == "engineering_callout_geometry_binding"
+        and item.required_for_modeling
+        for item in unresolved
+    )
+    assert {
+        (item.field, item.value)
+        for item in values
+        if item.entity_key == "R2.LINEAR_PATTERN.003"
+    } >= {
+        ("count", 2),
+        ("through", True),
+        ("diameter", 6.6),
+    }
+
+
+def test_off_region_callout_with_multiple_pattern_targets_stays_unresolved(monkeypatch):
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 11,
+                    "text": "2-06.6通孔",
+                    "bbox": [[120, 40], [180, 40], [180, 70], [120, 70]],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+            {
+                "region_id": "R2",
+                "bbox_px": [200, 0, 100, 100],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+        ],
+        "annotation_line_candidates": [],
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        ),
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        lambda *args, **kwargs: {"status": "unresolved"},
+    )
+
+    def fake_pattern_binding(*args, **kwargs):
+        region = args[2]
+        region_id = region["region_id"]
+        return {
+            "status": "bound",
+            "entity_key": f"{region_id}.LINEAR_PATTERN.003",
+            "region_id": region_id,
+            "pattern_index": 2,
+            "orientation": "horizontal",
+            "axis": "X" if region_id == "R1" else "Y",
+        }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        fake_pattern_binding,
+    )
+
+    ledger, _entities, _values, unresolved = hybrid_adapter._engineering_callout_routing(
+        report,
+        [],
+        view_lookup,
+        hidden_pattern_owner_by_index={},
+        existing_entity_keys=set(),
+    )
+
+    assert ledger[0]["binding"]["status"] == "unresolved"
+    assert (
+        ledger[0]["binding"]["reason"]
+        == "multiple_callout_linear_pattern_regions_without_unique_target"
+    )
+    blockers = [
+        item
+        for item in unresolved
+        if item.required_for_modeling
+        and item.field == "engineering_callout_geometry_binding"
+    ]
+    assert len(blockers) == 1
+
+def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
+    candidate = {
+        "candidate_id": "DG_CENTER",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[40, 20], [60, 20], [60, 40], [40, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "linear_pattern_axis",
+                        "ref": "R2.linear_pattern.005",
+                        "position_px": 10.5,
+                    },
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.002",
+                        "position_px": 10.4,
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.004",
+                        "position_px": 90.0,
+                    }
+                ],
+            },
+        ],
+    }
+
+    endpoints, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        candidate,
+        entity_keys={"R2.LINEAR_PATTERN.005", "R2.PROFILE_BOUNDARY.OUTER"},
+        boundary_roles={"R2.structural.vertical.004": "overall_max"},
+        profile_entity_by_ref={
+            "R2.structural.vertical.002": "R2.PROFILE_BOUNDARY.INNER",
+            "R2.structural.vertical.004": "R2.PROFILE_BOUNDARY.OUTER",
+        },
+        pattern_entity_by_ref={
+            "R2.linear_pattern.005": "R2.LINEAR_PATTERN.005",
+        },
+        evidence=["test:DG_CENTER"],
+    )
+
+    assert reason is None
+    assert endpoints[0].role == "entity_center"
+    assert endpoints[0].entity_key == "R2.LINEAR_PATTERN.005"
+    assert endpoints[0].basis == "centerline"
+    assert endpoints[1].role == "overall_max"
+
+def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():
+    candidate = {
+        "candidate_id": "DG_PAIR",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[45, 20], [55, 20], [55, 40], [45, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "position_px": 10.0, "nearest_anchors": []},
+            {"witness_index": 1, "position_px": 90.0, "nearest_anchors": []},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 10.0, "span_px": [50, 100]}
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 90.0, "span_px": [50, 100]}
+                ],
+            },
+        ],
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "X",
+            "overall_dimension_value": 40.0,
+            "anchors": [
+                {"role": "overall_min", "position_px": 0.0},
+                {"role": "overall_max", "position_px": 100.0},
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+        }
+    ]
+    callout_ledger = [
+        {
+            "binding": {
+                "status": "pattern_backed",
+                "entity_key": "R2.PAIR",
+                "axis": "Z",
+                "pattern_span_px": [50, 100],
+            },
+            "facts": {"count": 2, "diameter": 6.6, "through": True},
+        }
+    ]
+
+    result = hybrid_adapter._symmetric_count_two_pattern_owner(
+        candidate,
+        region_view=hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        axis="X",
+        boundaries=boundaries,
+        callout_ledger=callout_ledger,
+        entity_keys={"R2.PAIR"},
+    )
+
+    assert result is not None
+    assert result["entity_key"] == "R2.PAIR"
+    assert result["engineering_coordinate_inferred_from_pixels"] is False
+    assert result["pixel_geometry_used_for_identity_only"] is True
+    assert result["spacing_dimension_value"] == 24.0
+    assert result["projection_support"]["overlap_ratios"] == [1.0, 1.0]
+
+
+def test_symmetric_count_two_pattern_owner_rejects_visually_off_center_pair():
+    candidate = {
+        "candidate_id": "DG_PAIR",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[45, 20], [55, 20], [55, 40], [45, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 70.0],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "position_px": 10.0, "nearest_anchors": []},
+            {"witness_index": 1, "position_px": 70.0, "nearest_anchors": []},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 10.0, "span_px": [50, 100]}
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 70.0,
+                "source_lines": [
+                    {"orientation": "vertical", "axis_px": 70.0, "span_px": [50, 100]}
+                ],
+            },
+        ],
+    }
+
+    result = hybrid_adapter._symmetric_count_two_pattern_owner(
+        candidate,
+        region_view=hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        axis="X",
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "overall_dimension_value": 40.0,
+                "anchors": [
+                    {"role": "overall_min", "position_px": 0.0},
+                    {"role": "overall_max", "position_px": 100.0},
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+        callout_ledger=[
+            {
+                "binding": {
+                    "status": "pattern_backed",
+                    "entity_key": "R2.PAIR",
+                    "axis": "Z",
+                },
+                "facts": {"count": 2},
+            }
+        ],
+        entity_keys={"R2.PAIR"},
+    )
+
+    assert result is None
+
+def test_symmetric_count_two_pattern_owner_rejects_disjoint_projection_span():
+    candidate = {
+        "candidate_id": "DG_PAIR",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[45, 20], [55, 20], [55, 40], [45, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "position_px": 10.0, "nearest_anchors": []},
+            {"witness_index": 1, "position_px": 90.0, "nearest_anchors": []},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 10.0,
+                        "span_px": [50, 100],
+                        "crosses_dimension_axis": False,
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 90.0,
+                        "span_px": [50, 100],
+                        "crosses_dimension_axis": False,
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = hybrid_adapter._symmetric_count_two_pattern_owner(
+        candidate,
+        region_view=hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        ),
+        axis="X",
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "overall_dimension_value": 40.0,
+                "anchors": [
+                    {"role": "overall_min", "position_px": 0.0},
+                    {"role": "overall_max", "position_px": 100.0},
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+            }
+        ],
+        callout_ledger=[
+            {
+                "binding": {
+                    "status": "pattern_backed",
+                    "entity_key": "R2.UNRELATED_PAIR",
+                    "axis": "Z",
+                    "pattern_span_px": [180, 240],
+                },
+                "facts": {"count": 2, "diameter": 6.6, "through": True},
+            }
+        ],
+        entity_keys={"R2.UNRELATED_PAIR"},
+    )
+
+    assert result is None
+
+def test_unique_thread_recess_centerline_alignment_uses_pixels_only_for_identity():
+    alignments, ledger = hybrid_adapter._unique_thread_recess_centerline_alignments(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 200, 300],
+                    "circle_groups": [],
+                },
+                {
+                    "region_id": "R2",
+                    "bbox_px": [200, 0, 200, 300],
+                    "circle_groups": [
+                        {
+                            "circle_group_id": "C1",
+                            "center_px": [300.0, 101.0],
+                            "rings": [{"radius_px": 20}],
+                        }
+                    ],
+                },
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            ),
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["R2"],
+            ),
+        },
+        hidden_entity_records={
+            "R1.HIDDEN_PAIR.horizontal.001.002": {
+                "entity_key": "R1.HIDDEN_PAIR.horizontal.001.002",
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 100.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.HIDDEN_PAIR.horizontal.001.002",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C1",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            ),
+        ],
+        entity_keys={
+            "R1.HIDDEN_PAIR.horizontal.001.002",
+            "R2.C1",
+        },
+    )
+
+    assert len(alignments) == 1
+    assert alignments[0].entity_keys == [
+        "R1.HIDDEN_PAIR.horizontal.001.002",
+        "R2.C1",
+    ]
+    assert alignments[0].feature_axis == "X"
+    assert ledger[0]["projection_residual_px"] == 1.0
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_transverse_recess_start_side_uses_unique_boundary_contact():
+    hidden = "R1.HIDDEN_PAIR.horizontal.001.002"
+    target = "R2.C1"
+    values, ledger = hybrid_adapter._transverse_recess_start_side_values(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 120, 100],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 50.5,
+                            "segments_px": [
+                                [20, 40],
+                                [92, 98],
+                                [102, 115],
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "anchors": [
+                    {
+                        "ref": "R1.LEFT",
+                        "role": "overall_min",
+                        "position_px": 0.0,
+                    },
+                    {
+                        "ref": "R1.RIGHT",
+                        "role": "overall_max",
+                        "position_px": 100.0,
+                    },
+                ],
+            }
+        ],
+        hidden_entity_records={
+            hidden: {
+                "entity_key": hidden,
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 50.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key=hidden,
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key=target,
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            ),
+        ],
+        centerline_alignments=[
+            hybrid_adapter.ObservationCenterlineAlignment(
+                entity_keys=[hidden, target],
+                feature_axis="X",
+                evidence=["centerline"],
+            )
+        ],
+    )
+
+    assert len(values) == 1
+    assert values[0].entity_key == target
+    assert values[0].field == "start_side"
+    assert values[0].value == "max"
+    assert values[0].semantic == "start_side"
+    assert ledger[0]["start_side"] == "max"
+    assert ledger[0]["boundary_role"] == "overall_max"
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_transverse_recess_start_side_fails_closed_when_both_boundaries_touch():
+    hidden = "R1.HIDDEN_PAIR.horizontal.001.002"
+    target = "R2.C1"
+    values, ledger = hybrid_adapter._transverse_recess_start_side_values(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 120, 100],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 50.0,
+                            "segments_px": [
+                                [-2, 4],
+                                [96, 104],
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "X",
+                "anchors": [
+                    {"ref": "R1.LEFT", "role": "overall_min", "position_px": 0.0},
+                    {"ref": "R1.RIGHT", "role": "overall_max", "position_px": 100.0},
+                ],
+            }
+        ],
+        hidden_entity_records={
+            hidden: {
+                "entity_key": hidden,
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 50.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key=target,
+                field="recessed_hole",
+                value=True,
+                evidence=["recess"],
+            )
+        ],
+        centerline_alignments=[
+            hybrid_adapter.ObservationCenterlineAlignment(
+                entity_keys=[hidden, target],
+                feature_axis="X",
+                evidence=["centerline"],
+            )
+        ],
+    )
+
+    assert values == []
+    assert ledger == []
+
+
+def test_thread_recess_centerline_alignment_fails_closed_with_two_circle_matches():
+    alignments, ledger = hybrid_adapter._unique_thread_recess_centerline_alignments(
+        report={
+            "regions": [
+                {
+                    "region_id": "R1",
+                    "bbox_px": [0, 0, 200, 300],
+                    "circle_groups": [],
+                },
+                {
+                    "region_id": "R2",
+                    "bbox_px": [200, 0, 200, 300],
+                    "circle_groups": [
+                        {"circle_group_id": "C1", "center_px": [300.0, 100.0]},
+                        {"circle_group_id": "C2", "center_px": [340.0, 101.0]},
+                    ],
+                },
+            ]
+        },
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["R1"],
+            ),
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["R2"],
+            ),
+        },
+        hidden_entity_records={
+            "R1.HIDDEN_PAIR.horizontal.001.002": {
+                "entity_key": "R1.HIDDEN_PAIR.horizontal.001.002",
+                "feature_axis": "X",
+                "pattern_orientation": "horizontal",
+                "position_px": 100.0,
+            }
+        },
+        callout_values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.HIDDEN_PAIR.horizontal.001.002",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C1",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess-1"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R2.C2",
+                field="recessed_hole",
+                value=True,
+                evidence=["recess-2"],
+            ),
+        ],
+        entity_keys={
+            "R1.HIDDEN_PAIR.horizontal.001.002",
+            "R2.C1",
+            "R2.C2",
+        },
+    )
+
+    assert alignments == []
+    assert ledger == []
+
+def test_dimension_backed_through_support_requires_dashed_rail_across_local_material():
+    support = hybrid_adapter._dimension_backed_through_projection_support(
+        {
+            "status": "dimension_backed",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "witness_positions_px": [100.0, 200.0],
+        },
+        report={
+            "regions": [
+                {
+                    "region_id": "R2",
+                    "bbox_px": [0, 0, 240, 300],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 200.0,
+                            "span_px": [50, 170],
+                            "segment_count": 5,
+                            "gap_count": 3,
+                            "dash_score": 0.68,
+                        }
+                    ],
+                }
+            ]
+        },
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.left",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 60.0,
+                "span_px": [40, 260],
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.right",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 160.0,
+                "span_px": [40, 260],
+            },
+        ],
+    )
+
+    assert support is not None
+    assert support["profile_boundary_refs"] == ["R2.left", "R2.right"]
+    assert support["engineering_coordinate_inferred_from_pixels"] is False
+    assert support["pixel_geometry_used_for_topology_only"] is True
+
+
+
+def test_dimension_backed_through_support_allows_one_pixel_endpoint_quantization():
+    support = hybrid_adapter._dimension_backed_through_projection_support(
+        {
+            "status": "dimension_backed",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "witness_positions_px": [100.0, 200.0],
+        },
+        report={
+            "regions": [
+                {
+                    "region_id": "R2",
+                    "bbox_px": [0, 0, 240, 300],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 200.0,
+                            "span_px": [64.0, 170.0],
+                            "segment_count": 5,
+                            "gap_count": 3,
+                            "dash_score": 0.68,
+                        }
+                    ],
+                }
+            ]
+        },
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.left",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 60.0,
+                "span_px": [40, 260],
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.right",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 160.0,
+                "span_px": [40, 260],
+            },
+        ],
+    )
+
+    assert support is not None
+    assert support["profile_boundary_refs"] == ["R2.left", "R2.right"]
+    assert support["engineering_coordinate_inferred_from_pixels"] is False
+    assert support["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_dimension_backed_through_support_rejects_blind_rail_before_far_boundary():
+    support = hybrid_adapter._dimension_backed_through_projection_support(
+        {
+            "status": "dimension_backed",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "witness_positions_px": [100.0, 200.0],
+        },
+        report={
+            "regions": [
+                {
+                    "region_id": "R2",
+                    "bbox_px": [0, 0, 240, 300],
+                    "linear_pattern_candidates": [
+                        {
+                            "orientation": "horizontal",
+                            "axis_px": 200.0,
+                            "span_px": [50, 120],
+                            "segment_count": 5,
+                            "gap_count": 3,
+                            "dash_score": 0.68,
+                        }
+                    ],
+                }
+            ]
+        },
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.left",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 60.0,
+                "span_px": [40, 260],
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R2.right",
+                "region_id": "R2",
+                "source_orientation": "vertical",
+                "position_px": 160.0,
+                "span_px": [40, 260],
+            },
+        ],
+    )
+
+    assert support is None
+
+
+
+def test_unassigned_profile_offset_recovery_uses_unique_subspan_without_pixel_metric():
+    candidate = {
+        "candidate_id": "DG_PROFILE",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "axis_px": 100.0,
+        "line_span_px": [10, 90],
+        "witness_positions_px": [10.0, 50.0, 90.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.001",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [],
+            },
+            {
+                "witness_index": 2,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.002",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 7,
+                    "token": "16",
+                    "bbox": [[42, 55], [58, 55], [58, 75], [42, 75]],
+                }
+            ]
+        }
+    }
+    view_lookup = {
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="side",
+            evidence=["test:R2"],
+        )
+    }
+
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup=view_lookup,
+        boundary_roles={"R2.structural.vertical.002": "overall_max"},
+        profile_entity_by_ref={
+            "R2.structural.vertical.001": "R2.PROFILE.LEFT",
+            "R2.structural.vertical.002": "R2.PROFILE.RIGHT",
+        },
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0].value == 16
+    assert recovered[0].axis == "Y"
+    assert {endpoint.role for endpoint in recovered[0].endpoints} == {
+        "profile_boundary",
+        "overall_max",
+    }
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_unassigned_profile_offset_recovery_rejects_internal_to_internal_span():
+    candidate = {
+        "candidate_id": "DG_SLOT",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "axis_px": 100.0,
+        "line_span_px": [40, 60],
+        "witness_positions_px": [40.0, 60.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.structural.vertical.001",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.structural.vertical.002",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 2,
+                    "token": "2",
+                    "bbox": [[45, 60], [55, 60], [55, 80], [45, 80]],
+                }
+            ]
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup=view_lookup,
+        boundary_roles={},
+        profile_entity_by_ref={
+            "R1.structural.vertical.001": "R1.PROFILE.LEFT",
+            "R1.structural.vertical.002": "R1.PROFILE.RIGHT",
+        },
+    )
+
+    assert recovered == []
+    assert ledger == []
+
+
+def _open_slot_fixture(extra_tokens=None):
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 2,
+                    "token": "2",
+                    "bbox": [[108, 8], [124, 8], [124, 24], [108, 24]],
+                },
+                *(extra_tokens or []),
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 200, 200],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [100, 100],
+                        "rings": [{"radius_px": 30}],
+                    }
+                ],
+            }
+        ],
+    }
+    candidates = [
+        {
+            "candidate_id": "DG_TOP",
+            "region_id": "R1",
+            "witness_line_evidence": [
+                {
+                    "witness_index": 0,
+                    "source_lines": [
+                        {"orientation": "horizontal", "axis_px": 40, "span_px": [10, 94]},
+                        {"orientation": "horizontal", "axis_px": 40, "span_px": [106, 190]},
+                        {"orientation": "vertical", "axis_px": 94, "span_px": [45, 70]},
+                        {"orientation": "vertical", "axis_px": 106, "span_px": [40, 70]},
+                    ],
+                }
+            ],
+        }
+    ]
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "Z",
+            "anchors": [
+                {"role": "overall_max", "position_px": 40, "ref": "R1.TOP"},
+                {"role": "overall_min", "position_px": 180, "ref": "R1.BOTTOM"},
+            ],
+        }
+    ]
+    facts = [
+        hybrid_adapter.PartialOverallDimensionFact(
+            axis="Z",
+            value=66,
+            evidence=["test:overall-z"],
+        )
+    ]
+    return report, candidates, view_lookup, boundaries, facts
+
+
+def test_open_slot_materializes_stable_core_without_pixel_metric():
+    report, candidates, view_lookup, boundaries, facts = _open_slot_fixture()
+
+    entities, values, unresolved, ledger, claimed = (
+        hybrid_adapter._open_slot_observations(
+            report=report,
+            candidates=candidates,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=facts,
+        )
+    )
+
+    assert len(entities) == 1
+    assert entities[0].shape == "slot_edges"
+    by_field = {item.field: item.value for item in values}
+    assert by_field["type"] == "slot"
+    assert by_field["width"] == 2
+    assert by_field["width_axis"] == "X"
+    assert by_field["through_axis"] == "Y"
+    assert by_field["top_z"] == 66
+    assert {item.field for item in unresolved} == {"bottom_z"}
+    assert claimed == {2}
+    assert ledger[0]["through_axis"] == "Y"
+    assert (
+        ledger[0]["through_axis_basis"]
+        == "proved_gap_in_resolved_overall_silhouette_plus_view_normal"
+    )
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
+    assert ledger[0]["slot_edge_positions_px"] == [94.0, 106.0]
+
+
+def test_open_slot_fails_closed_when_two_tokens_compete():
+    report, candidates, view_lookup, boundaries, facts = _open_slot_fixture(
+        extra_tokens=[
+            {
+                "source_item_index": 3,
+                "token": "3",
+                "bbox": [[90, 10], [104, 10], [104, 24], [90, 24]],
+            }
+        ]
+    )
+
+    entities, values, unresolved, ledger, claimed = (
+        hybrid_adapter._open_slot_observations(
+            report=report,
+            candidates=candidates,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=facts,
+        )
+    )
+
+    assert entities == []
+    assert values == []
+    assert unresolved == []
+    assert ledger == []
+    assert claimed == set()
+
+
+def test_metric_profile_topology_hint_finds_unique_l_cycle_without_pixel_metric():
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MIN",
+            "source_orientation": "vertical",
+            "position_px": 0.0,
+            "span_px": [0.0, 8.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MAX",
+            "source_orientation": "vertical",
+            "position_px": 32.0,
+            "span_px": [0.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MIN",
+            "source_orientation": "horizontal",
+            "position_px": 0.0,
+            "span_px": [0.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MAX",
+            "source_orientation": "horizontal",
+            "position_px": 66.0,
+            "span_px": [16.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL",
+            "source_orientation": "vertical",
+            "position_px": 16.0,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_INTERNAL",
+            "source_orientation": "horizontal",
+            "position_px": 8.0,
+            "span_px": [0.0, 16.0],
+        },
+    ]
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Y",
+            "anchors": [
+                {"ref": "U_MIN", "role": "overall_min"},
+                {"ref": "U_MAX", "role": "overall_max"},
+            ],
+        },
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Z",
+            "anchors": [
+                {"ref": "V_MIN", "role": "overall_min"},
+                {"ref": "V_MAX", "role": "overall_max"},
+            ],
+        },
+    ]
+    hints = hybrid_adapter._metric_profile_topology_hints(
+        report={"regions": [{"region_id": "R2", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundaries=boundaries,
+        profile_entity_by_ref={
+            "U_INTERNAL": "R2.PROFILE.U_INTERNAL",
+            "V_INTERNAL": "R2.PROFILE.V_INTERNAL",
+        },
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["plane"] == "YZ"
+    assert hint["topology"] == "L"
+    assert hint["upright_side"] == "max"
+    assert hint["base_side"] == "min"
+    assert hint["internal_u_entity_key"] == "R2.PROFILE.U_INTERNAL"
+    assert hint["internal_v_entity_key"] == "R2.PROFILE.V_INTERNAL"
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_metric_profile_topology_hint_rejects_non_unique_internal_cycles():
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MIN",
+            "source_orientation": "vertical",
+            "position_px": 0.0,
+            "span_px": [0.0, 8.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MAX",
+            "source_orientation": "vertical",
+            "position_px": 32.0,
+            "span_px": [0.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MIN",
+            "source_orientation": "horizontal",
+            "position_px": 0.0,
+            "span_px": [0.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MAX",
+            "source_orientation": "horizontal",
+            "position_px": 66.0,
+            "span_px": [16.0, 32.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL_A",
+            "source_orientation": "vertical",
+            "position_px": 16.0,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL_B",
+            "source_orientation": "vertical",
+            "position_px": 16.2,
+            "span_px": [8.0, 66.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_INTERNAL",
+            "source_orientation": "horizontal",
+            "position_px": 8.0,
+            "span_px": [0.0, 16.2],
+        },
+    ]
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Y",
+            "anchors": [
+                {"ref": "U_MIN", "role": "overall_min"},
+                {"ref": "U_MAX", "role": "overall_max"},
+            ],
+        },
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Z",
+            "anchors": [
+                {"ref": "V_MIN", "role": "overall_min"},
+                {"ref": "V_MAX", "role": "overall_max"},
+            ],
+        },
+    ]
+    hints = hybrid_adapter._metric_profile_topology_hints(
+        report={"regions": [{"region_id": "R2", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundaries=boundaries,
+        profile_entity_by_ref={
+            "U_INTERNAL_A": "R2.PROFILE.U_INTERNAL_A",
+            "U_INTERNAL_B": "R2.PROFILE.U_INTERNAL_B",
+            "V_INTERNAL": "R2.PROFILE.V_INTERNAL",
+        },
+    )
+
+    assert hints == []
+
+
+def test_unassigned_profile_offset_recovery_rejects_far_text():
+    candidate = {
+        "candidate_id": "DG_PROFILE",
+        "region_id": "R2",
+        "orientation": "vertical",
+        "axis_px": 100.0,
+        "line_span_px": [0, 100],
+        "witness_positions_px": [10.0, 80.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.horizontal.001",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.horizontal.002",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "regions": [{"region_id": "R2", "bbox_px": [0, 0, 250, 560]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 15,
+                    "token": "63",
+                    "bbox": [[280, 40], [330, 40], [330, 80], [280, 80]],
+                }
+            ]
+        },
+    }
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundary_roles={"R2.structural.horizontal.002": "overall_min"},
+        profile_entity_by_ref={
+            "R2.structural.horizontal.001": "R2.PROFILE.INTERNAL",
+            "R2.structural.horizontal.002": "R2.PROFILE.BOTTOM",
+        },
+    )
+
+    assert recovered == []
+    assert ledger == []
+
+
+def test_metric_profile_topology_hint_accepts_fragmented_outer_edge_when_span_topology_is_unique():
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MIN",
+            "source_orientation": "vertical",
+            "position_px": 620.667,
+            "span_px": [482.0, 667.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_DISTRACTOR",
+            "source_orientation": "vertical",
+            "position_px": 653.4,
+            "span_px": [485.0, 580.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_INTERNAL",
+            "source_orientation": "vertical",
+            "position_px": 702.515,
+            "span_px": [110.0, 484.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "U_MAX",
+            "source_orientation": "vertical",
+            "position_px": 785.8,
+            "span_px": [110.0, 667.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MAX",
+            "source_orientation": "horizontal",
+            "position_px": 160.0,
+            "span_px": [737.0, 795.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_DISTRACTOR",
+            "source_orientation": "horizontal",
+            "position_px": 375.0,
+            "span_px": [791.0, 864.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_INTERNAL",
+            "source_orientation": "horizontal",
+            "position_px": 481.606,
+            "span_px": [621.0, 700.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R2",
+            "ref": "V_MIN",
+            "source_orientation": "horizontal",
+            "position_px": 551.486,
+            "span_px": [619.0, 787.0],
+        },
+    ]
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Y",
+            "anchors": [
+                {"ref": "U_MIN", "role": "overall_min"},
+                {"ref": "U_MAX", "role": "overall_max"},
+            ],
+        },
+        {
+            "status": "resolved",
+            "region_id": "R2",
+            "axis": "Z",
+            "anchors": [
+                {"ref": "V_MIN", "role": "overall_min"},
+                {"ref": "V_MAX", "role": "overall_max"},
+            ],
+        },
+    ]
+    hints = hybrid_adapter._metric_profile_topology_hints(
+        report={"regions": [{"region_id": "R2", "bbox_px": [0, 0, 250, 560]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        },
+        boundaries=boundaries,
+        profile_entity_by_ref={
+            "U_DISTRACTOR": "R2.PROFILE.U_DISTRACTOR",
+            "U_INTERNAL": "R2.PROFILE.U_INTERNAL",
+            "V_DISTRACTOR": "R2.PROFILE.V_DISTRACTOR",
+            "V_INTERNAL": "R2.PROFILE.V_INTERNAL",
+        },
+    )
+
+    assert len(hints) == 1
+    assert hints[0]["upright_side"] == "max"
+    assert hints[0]["base_side"] == "min"
+    assert hints[0]["internal_u_ref"] == "U_INTERNAL"
+    assert hints[0]["internal_v_ref"] == "V_INTERNAL"
+    assert hints[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert hints[0]["pixel_geometry_used_for_topology_only"] is True

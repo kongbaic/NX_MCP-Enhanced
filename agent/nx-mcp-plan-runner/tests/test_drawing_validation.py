@@ -146,6 +146,31 @@ class DrawingGateATests(unittest.TestCase):
     def test_canonical_reader_fixture_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(canonical_reader_fixture()))
 
+    def test_modeling_body_gate_accepts_evidence_backed_profile(self) -> None:
+        self.assertEqual([], R._drawing_modeling_body_errors(canonical_reader_fixture()))
+
+    def test_modeling_body_gate_rejects_subtractive_only_drawing(self) -> None:
+        data = canonical_reader_fixture()
+        data.pop("profile", None)
+        data["source_ledger"] = [
+            item
+            for item in data["source_ledger"]
+            if not str(item.get("target") or "").startswith("profile.")
+            and not any(
+                str(target).startswith("profile.")
+                for target in item.get("targets") or []
+            )
+        ]
+        data["derived"] = [
+            item
+            for item in data["derived"]
+            if not str(item.get("target") or "").startswith("profile.")
+        ]
+        errors = R._drawing_modeling_body_errors(data)
+        self.assertEqual(1, len(errors))
+        self.assertIn("lacks body-defining geometry", errors[0])
+
+
     def test_canonical_reader_fixture_covers_required_field_contracts(self) -> None:
         data = canonical_reader_fixture()
         targets = {
@@ -346,6 +371,26 @@ class DrawingGateATests(unittest.TestCase):
                 self.assertEqual(item["value"], R._drawing_path_get(data, item["target"]))
                 self.assertTrue(R._drawing_direct_semantic_ok(data, item))
 
+    def test_start_side_semantic_matches_start_side_target(self) -> None:
+        data = {
+            "features": [
+                {
+                    "id": "F_RECESS",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "start_side": "max",
+                }
+            ]
+        }
+        source_item = {
+            "id": "S_SIDE",
+            "semantic": "start_side",
+            "value": "max",
+            "target": "feature:F_RECESS.start_side",
+        }
+
+        self.assertTrue(R._drawing_direct_semantic_ok(data, source_item))
+
     def test_canonical_center_distance_uses_resolvable_center_paths(self) -> None:
         data = canonical_reader_fixture()
         relation = source(data, "S_CENTER_DISTANCE")
@@ -432,6 +477,76 @@ class DrawingGateATests(unittest.TestCase):
     def test_relation_fixture_passes_machine_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(relation_fixture()))
 
+    def test_slot_bottom_upper_tangent_is_valid_closed_writer(self) -> None:
+        data = relation_fixture()
+        data["features"].append(
+            {
+                "id": "F_SLOT",
+                "type": "slot",
+                "width": 2,
+                "width_axis": "X",
+                "through_axis": "Y",
+                "top_z": 60,
+                "bottom_z": 25,
+                "required_for_modeling": True,
+            }
+        )
+        data["source_ledger"].extend(
+            [
+                {
+                    "id": "S_SLOT_KIND",
+                    "semantic": "feature_kind",
+                    "value": "slot",
+                    "target": "feature:F_SLOT.type",
+                },
+                {
+                    "id": "S_SLOT_WIDTH",
+                    "semantic": "slot_width",
+                    "value": 2,
+                    "target": "feature:F_SLOT.width",
+                },
+                {
+                    "id": "S_SLOT_WIDTH_AXIS",
+                    "semantic": "axis",
+                    "value": "X",
+                    "target": "feature:F_SLOT.width_axis",
+                },
+                {
+                    "id": "S_SLOT_THROUGH_AXIS",
+                    "semantic": "axis",
+                    "value": "Y",
+                    "target": "feature:F_SLOT.through_axis",
+                },
+                {
+                    "id": "S_SLOT_TOP",
+                    "semantic": "position_dimension",
+                    "value": 60,
+                    "target": "feature:F_SLOT.top_z",
+                },
+                {
+                    "id": "S_SLOT_BOTTOM_TANGENT",
+                    "semantic": "upper_tangent",
+                    "center": "feature:F_REFERENCE.centerline.z",
+                    "diameter": "feature:F_REFERENCE.diameter",
+                    "tangent": "feature:F_SLOT.bottom_z",
+                    "links": [
+                        "feature:F_REFERENCE.centerline.z",
+                        "feature:F_REFERENCE.diameter",
+                        "feature:F_SLOT.bottom_z",
+                    ],
+                },
+            ]
+        )
+
+        errors = R.check_drawing_json(data)
+
+        self.assertEqual([], errors)
+        self.assertEqual(
+            ["relation"],
+            writer_kinds(data, "feature:F_SLOT.bottom_z"),
+        )
+        self.assertEqual("closed", data["dimension_closure"]["status"])
+
     def test_direct_center_writer_only_passes(self) -> None:
         self.assertEqual([], R.check_drawing_json(example()))
 
@@ -517,6 +632,35 @@ class DrawingGateATests(unittest.TestCase):
             self.assertEqual([], errors, axis)
             R._drawing_check_feature_structure(errors := [], {"id": axis, "type": "threaded_hole", "axis": axis, "centerline": missing[axis]})
             self.assertTrue(errors, axis)
+
+    def test_transverse_recessed_holes_require_start_side(self) -> None:
+        centers = {
+            "X": {"y": 8, "z": 58},
+            "Y": {"x": 0, "z": 40},
+        }
+        for feature_type in ("counterbore_hole", "countersink_hole"):
+            for axis in ("X", "Y"):
+                base = {
+                    "id": f"{feature_type}-{axis}",
+                    "type": feature_type,
+                    "axis": axis,
+                    "centerline": centers[axis],
+                }
+                R._drawing_check_feature_structure(errors := [], base)
+                self.assertTrue(
+                    any("requires start_side/side min|max" in error for error in errors),
+                    (feature_type, axis, errors),
+                )
+                for field in ("start_side", "side"):
+                    for value in ("min", "max"):
+                        feature = dict(base)
+                        feature[field] = value
+                        R._drawing_check_feature_structure(errors := [], feature)
+                        self.assertEqual(
+                            [],
+                            errors,
+                            (feature_type, axis, field, value),
+                        )
 
     def test_explicit_centers_are_tracked_per_coordinate(self) -> None:
         paths = R._drawing_hard_paths({"explicit_centers": [[-3, 4], [3, 4]]})
@@ -1221,12 +1365,185 @@ class MetricThreadSurrogateTests(unittest.TestCase):
             _, errors = R.resolve_thread_drawing_geometries(thread_drawing(**changes))
             self.assertTrue(errors, changes)
 
+    def test_confirmed_side_derives_m6_range_from_overall_bounds(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "start_side": "min",
+                }
+            ],
+            "unresolved": [],
+        }
+
+        geometries, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual("X", geometries[0]["axis"])
+        self.assertEqual([[8.0, 58.0]], geometries[0]["transverse_centers"])
+        self.assertEqual(12.0, geometries[0]["depth"])
+        self.assertEqual([-20.0, -8.0], geometries[0]["axial_range"])
+        self.assertEqual(1, geometries[0]["count"])
+        self.assertEqual("min", geometries[0]["side"])
+
+    def test_missing_range_still_fails_closed_without_confirmed_side(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                }
+            ],
+            "unresolved": [],
+        }
+
+        _, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertTrue(any("no explicit axial range" in item for item in errors))
+
     def test_valid_drawing_geometry_is_preserved(self) -> None:
         geometries, errors = R.resolve_thread_drawing_geometries(thread_drawing())
         self.assertEqual([], errors)
         self.assertEqual("Z", geometries[0]["axis"])
         self.assertEqual([[2.0, 3.0]], geometries[0]["transverse_centers"])
         self.assertEqual([0.0, 12.0], geometries[0]["axial_range"])
+
+    def test_coaxial_larger_through_hole_subsumes_thread_surrogate(self) -> None:
+        drawing = {
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "axial_range": [-12, 0],
+                },
+                {
+                    "id": "H1",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "diameter": 6.6,
+                    "counterbore_diameter": 11,
+                    "counterbore_depth": 6.5,
+                    "through": True,
+                    "axial_range": [-20, 20],
+                },
+            ],
+            "unresolved": [],
+        }
+
+        geometries, geometry_errors = R.resolve_thread_drawing_geometries(drawing)
+        recipes, recipe_errors = R.resolve_thread_surrogates(drawing)
+
+        self.assertEqual([], geometry_errors)
+        self.assertEqual([], recipe_errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual(
+            "subsumed_by_coaxial_through_hole",
+            geometries[0]["representation"],
+        )
+        self.assertEqual("H1", geometries[0]["subsumed_by_feature_id"])
+        self.assertEqual(0, geometries[0]["count"])
+        self.assertEqual([], R.thread_surrogate_plan_errors({"operations": []}, recipes, geometries))
+
+    def test_thread_subsumption_fails_closed_without_explicit_axial_coverage(self) -> None:
+        drawing = {
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                },
+                {
+                    "id": "H1",
+                    "type": "hole",
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "diameter": 6.6,
+                    "through": True,
+                },
+            ],
+            "unresolved": [],
+        }
+
+        _, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertTrue(any("thread_geometry_violation" in item for item in errors))
+
+    def test_reverse_thread_subtract_uses_loader_signed_offset_semantics(self) -> None:
+        plan = {
+            "operations": [
+                {
+                    "step": 1,
+                    "tool": "nx_create_sketch",
+                    "tool_args": {"plane": "YZ"},
+                },
+                {
+                    "step": 2,
+                    "tool": "nx_sketch_circle",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "center": {"x": 8, "y": 58},
+                        "diameter": 5,
+                    },
+                },
+                {
+                    "step": 3,
+                    "tool": "nx_finish_sketch",
+                    "tool_args": {"sketch_id": "sketch_thread"},
+                },
+                {
+                    "step": 4,
+                    "tool": "nx_extrude",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "distance": 12,
+                        "start_offset": -20,
+                        "reverse": True,
+                        "operation": "subtract",
+                        "target_body_id": "body_main",
+                    },
+                },
+            ]
+        }
+
+        actual, errors = R._thread_operation_geometry(
+            plan,
+            plan["operations"][-1],
+            5.0,
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual("X", actual["axis"])
+        self.assertEqual([8.0, 58.0], actual["transverse_center"])
+        self.assertEqual(12.0, actual["depth"])
+        self.assertEqual([20.0, 8.0], actual["axial_range"])
 
     def test_surrogate_cannot_change_axis(self) -> None:
         drawing = thread_drawing(axis="X", position={"center": [3, 4]})

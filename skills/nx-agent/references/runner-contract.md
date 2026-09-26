@@ -101,7 +101,7 @@ SpecifyPoint** 创建非 XY 草图；仅设置 `PlaneReference` 会发生 XZ/YZ 
 - `plane="XY"`：局部 `{x,y}`→全局 `{X,Y}`，`reverse=false` 挤出 +Z；
 - `plane="XZ"`：局部 `{x,y}`→全局 `{X,Z}`，`reverse=false` 挤出 +Y；
 - `plane="YZ"`：局部 `{x,y}`→全局 `{Y,Z}`，`reverse=false` 挤出 +X；
-- `reverse=true` 反向；`start_offset` 沿同一挤出轴解释。
+- `reverse=true` 会先把 Loader 的挤出方向翻成负全局主轴；`start_offset` 与 `start_offset+distance` 随该方向一起取符号。也就是 reverse=false 时全局轴区间为 `[start_offset, start_offset+distance]`，reverse=true 时为 `[-start_offset, -(start_offset+distance)]`。例如 YZ 草图要从全局 `X=20` 向 `X=1` 减料，必须写 `reverse=true, start_offset=-20, distance=19`；禁止写 `start_offset=20`。
 - `nx_revolve.axis_start/axis_end` 同样使用所属 sketch 的局部二维坐标。
 - Z 轴专用 hole 系列不随 sketch 平面旋转；非 Z 轴孔使用 principal-plane
   circle sketch + `nx_extrude(operation="subtract")`。

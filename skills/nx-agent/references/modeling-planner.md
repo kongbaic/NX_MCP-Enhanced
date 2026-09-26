@@ -88,6 +88,27 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
 7. 拆分实体建模只允许用于**真实分离且面积接触**的特征（凸台坐落于板面、
    耳板与主体面接触等），且 Unite 前确认接触面积 > 0。
 
+### 3.1 连续切除相切规则（Subtract Tangency / Zero-Wall Rule，强制）
+
+当两个或多个减料特征在同一实体上形成一个连续开口/孔槽组合时，Planner 在拆成
+多次 `Subtract` 之前必须检查它们的切除体之间是否只有**单点相切、单线相切或
+零面积接触**。
+
+1. 若相邻切除体只有点/线相切，**禁止依赖两次独立 Boolean Subtract**。NX 可能
+   在第二次减料时报“工具和目标未形成完全相交或者其接触状况将导致区域零壁厚”。
+2. 若工程图语义明确表示一个连续切除轮廓（例如圆孔与通顶开槽组成 keyhole、
+   圆弧槽与直槽连续相接），必须把它们合并成**一个连续闭合 cut profile**，
+   再执行一次 subtract。
+3. 合并轮廓的连接点必须由 canonical engineering dimensions / datum /
+   symmetry / tangent relation **解析求解**。例如圆 `(x-cx)^2+(z-cz)^2=r^2`
+   与槽壁 `x=x_slot` 的连接 Z 必须由该方程求解；禁止从像素换算。
+4. **禁止 geometry/numeric nudge**：不得通过 `±0.001`、人为扩大孔径、加深槽、
+   增加重叠量等方式绕过 NX 零壁厚错误；这会改变工程图几何。
+5. drawing 中原始 feature 语义不得删除或改写。Planner 仅允许在建模表达层把多个
+   已确认、连续相接的 cut feature 合成为一个 executable profile；Gate A 的尺寸、
+   centerline、axis、depth/range 与 ownership 仍保持原值。
+6. 若无法仅由工程尺寸唯一求得连接几何，则 fail-closed，报告缺口；不得猜连接点。
+
 推荐总体顺序（具体任务可调整，但必须优先减少拓扑反复变化）：
 
 ```
@@ -123,7 +144,7 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
   - `axis=Y` → XZ sketch → 沿 Y subtract；
   - `axis=Z` → XY sketch / Z 轴孔工具。
 - **Metric thread surrogate** 只替代当前工具无法表达的真实螺纹牙型：通用解析 `metric designation → nominal diameter → pitch → tap-drill diameter = nominal - pitch`。裸 M 使用项目支持的 coarse-pitch metadata subset，显式 pitch 使用图纸值；无法解析则 fail closed。
-- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
+- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。thread 的 axial range 优先使用 drawing 显式值；若缺失，仅当 drawing 已显式确认 `start_side/side=min|max`、存在正 depth（含 `thread_depth`）且 overall dimensions 完整时，Gate B 才可按 canonical engineering bbox 确定性派生范围，禁止使用像素换算。若且仅若存在唯一同轴、同 transverse center、through=true 且孔径不小于 resolved tap-drill diameter 的非线程孔，并且 thread 与 covering feature 都提供明确 axial range、covering axial range 完整覆盖 thread axial range，Gate B 才可将该 thread surrogate 标记为 `subsumed_by_coaxial_through_hole` 并要求 0 个额外切除 operation；仅凭 `through=true` 不足以证明轴向材料区间覆盖；drawing 中的 thread 语义不得删除或改写。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
 - **slot/cut 的 through_axis 固定映射**：
   - `through_axis=X` → YZ sketch → 沿 X subtract；
   - `through_axis=Y` → XZ sketch → 沿 Y subtract；

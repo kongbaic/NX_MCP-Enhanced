@@ -36,6 +36,14 @@ if (-not $PythonExe) {
 if (-not (Test-Path (Join-Path $skillSource "SKILL.md"))) { throw "仓库缺少统一 Skill: $skillSource\SKILL.md" }
 if (-not (Test-Path (Join-Path $runnerSource "runner.py"))) { throw "仓库缺少 Runner: $runnerSource\runner.py" }
 
+# Mode B 轻量栅格证据层：仅在缺失时安装 drawing extra。
+& $PythonExe -c "import cv2, numpy" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[Reader] 安装轻量栅格依赖: numpy + opencv-python-headless"
+    & $PythonExe -m pip install -e "$RepoRoot[drawing]"
+    if ($LASTEXITCODE -ne 0) { throw "安装 drawing extra 失败" }
+}
+
 $verifyScript = Join-Path $RepoRoot "agent\verify_agent_pack.py"
 if (-not (Test-Path $verifyScript)) { throw "缺少 Agent Pack 校验脚本: $verifyScript" }
 & $PythonExe $verifyScript

@@ -26,11 +26,12 @@ EndpointRole = Literal[
     "overall_min",
     "overall_max",
     "feature_center",
+    "profile_boundary",
 ]
 
 
 class OverallDimensions(BaseModel):
-    """Global extents in the fixed part_center_xy_bottom_z0 frame."""
+    """Global extents in the fixed overall_min_xyz frame."""
 
     length_x: float = Field(gt=0)
     width_y: float = Field(gt=0)
@@ -117,8 +118,8 @@ class DimensionEndpoint(BaseModel):
 
     @model_validator(mode="after")
     def _validate_endpoint(self) -> "DimensionEndpoint":
-        if self.role == "feature_center" and not self.target:
-            raise ValueError("feature_center endpoint requires target")
+        if self.role in {"feature_center", "profile_boundary"} and not self.target:
+            raise ValueError(f"{self.role} endpoint requires target")
         if self.role in {"overall_min", "overall_max"} and self.target is not None:
             raise ValueError(f"{self.role} endpoint must not carry target")
         return self
@@ -192,7 +193,7 @@ class EvidenceGraph(BaseModel):
     """Machine-readable output of the visual evidence extraction stage."""
 
     schema_version: Literal["1.0"] = "1.0"
-    coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
+    coordinate_system: Literal["overall_min_xyz"] = "overall_min_xyz"
     overall_dimensions: OverallDimensions
     views: list[ViewEvidence] = Field(default_factory=list)
     projections: list[ProjectionEvidence] = Field(default_factory=list)

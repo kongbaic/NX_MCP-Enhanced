@@ -14,6 +14,7 @@ from .evidence import (
     DirectValueEvidence,
     EvidenceGraph,
     ProjectionEvidence,
+    RelationEvidence,
     ViewEvidence,
 )
 
@@ -78,6 +79,23 @@ def _canonical_field(
     return field
 
 
+_SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
+
+_TRANSVERSE_CENTER_INDEX: dict[str, dict[str, int]] = {
+    "X": {"Y": 0, "Z": 1},
+    "Y": {"X": 0, "Z": 1},
+    "Z": {"X": 0, "Y": 1},
+}
+
+
+def _direct_target_value(
+    direct_values: list[DirectValueEvidence],
+    target: str,
+) -> Any:
+    matches = [item.value for item in direct_values if item.target == target]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     referenced: set[str] = set()
 
@@ -96,6 +114,9 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     for item in capture.datum_alignments:
         referenced.add(item.entity_id)
 
+    for item in capture.centerline_alignments:
+        referenced.update(item.entity_ids)
+
     for item in capture.required_targets:
         referenced.add(item.entity_id)
 
@@ -103,6 +124,10 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
         referenced.update(item.entity_ids)
 
     return referenced
+
+
+def _resolver_numeric_value(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float))
 
 
 def _canonical_projection_shape(
@@ -199,6 +224,7 @@ def _association_basis_sufficient(basis: list[str]) -> bool:
     supporting = {
         "matching_specification",
         "leader_correspondence",
+        "unique_orthographic_counterpart",
     }
     return (
         "projection_alignment" in kinds
@@ -482,11 +508,114 @@ def _normalize_direct_values(
     )
 
 
+def _open_slot_tangent_relations(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> tuple[list[RelationEvidence], set[tuple[str, str]]]:
+    relations: list[RelationEvidence] = []
+    resolved_fields: set[tuple[str, str]] = set()
+
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != "hybrid_open_slot_ledger"
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            slot_entity_id = str(item.get("slot_entity_id") or "")
+            circle_entity_id = str(item.get("circle_entity_id") or "")
+            if (
+                slot_entity_id not in entity_to_feature
+                or circle_entity_id not in entity_to_feature
+            ):
+                continue
+
+            slot_feature = entity_to_feature[slot_entity_id]
+            circle_feature = entity_to_feature[circle_entity_id]
+            if slot_feature == circle_feature:
+                continue
+
+            basis = str(item.get("basis") or "")
+            if (
+                basis
+                != (
+                    "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                    "circle_center_alignment_and_upper_circle_termination"
+                )
+            ):
+                continue
+            if item.get("engineering_coordinate_inferred_from_pixels") is not False:
+                continue
+            if item.get("pixel_geometry_used_for_topology_only") is not True:
+                continue
+
+            source_item_index = item.get("source_item_index")
+            region_id = str(item.get("region_id") or "")
+            source_ids = [
+                source
+                for source in [
+                    f"hybrid:open-slot:{region_id}:{source_item_index}",
+                    str(item.get("top_boundary_ref") or ""),
+                    str(item.get("circle_entity") or ""),
+                ]
+                if source
+            ]
+
+            tangent_relation = RelationEvidence(
+                id=f"R_OPEN_SLOT_UPPER_TANGENT_{index + 1:03d}",
+                kind="upper_tangent",
+                axis="Z",
+                targets=[
+                    f"feature:{circle_feature}.centerline.z",
+                    f"feature:{slot_feature}.bottom_z",
+                ],
+                diameter_target=f"feature:{circle_feature}.diameter",
+                source_ids=source_ids,
+                required_for_modeling=True,
+                metadata={
+                    "basis": basis,
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                },
+            )
+            center_alignment = RelationEvidence(
+                id=f"R_OPEN_SLOT_CENTER_X_{index + 1:03d}",
+                kind="alignment",
+                axis="X",
+                targets=[
+                    f"feature:{circle_feature}.centerline.x",
+                    f"feature:{slot_feature}.centerline.x",
+                ],
+                source_ids=source_ids,
+                required_for_modeling=True,
+                metadata={
+                    "basis": (
+                        "unique_open_slot_gap_midpoint_aligned_to_circle_center"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                },
+            )
+            relations.extend([tangent_relation, center_alignment])
+            resolved_fields.add((slot_feature, "bottom_z"))
+
+    return relations, resolved_fields
+
+
 def _linked_reader_unresolved(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
+    *,
+    relation_resolved_fields: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
+    resolved_fields = relation_resolved_fields or set()
 
     for item in capture.unresolved_evidence:
         feature_ids = sorted(
@@ -496,6 +625,13 @@ def _linked_reader_unresolved(
                 if entity_id in entity_to_feature
             }
         )
+        if (
+            item.field is not None
+            and len(feature_ids) == 1
+            and (feature_ids[0], item.field) in resolved_fields
+        ):
+            continue
+
         record: dict[str, Any] = {
             "id": item.id,
             "kind": item.kind,
@@ -635,6 +771,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     unresolved.extend(direct_unresolved)
 
     dimensions: list[DimensionObservation] = []
+    synthetic_relations: list[RelationEvidence] = []
     for item in capture.dimensions:
         if any(endpoint.role == "unresolved" for endpoint in item.endpoints):
             related_entity_ids = sorted(
@@ -662,6 +799,42 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 for endpoint in item.endpoints
                 for source_id in endpoint.source_ids
             ]
+            axis_leaf = item.axis.lower()
+            endpoint_specs: list[dict[str, Any]] = []
+            for endpoint_index, endpoint in enumerate(item.endpoints):
+                downstream_role = (
+                    "feature_center"
+                    if endpoint.role == "entity_center"
+                    else endpoint.role
+                )
+                spec: dict[str, Any] = {
+                    "index": endpoint_index,
+                    "role": downstream_role,
+                    "unresolved_kind": endpoint.unresolved_kind,
+                    "source_ids": endpoint.source_ids,
+                }
+                if endpoint.role in {"entity_center", "profile_boundary"} and endpoint.entity_id:
+                    feature_id = entity_to_feature.get(endpoint.entity_id)
+                    if feature_id:
+                        suffix = (
+                            f"centerline.{axis_leaf}"
+                            if endpoint.role == "entity_center"
+                            else f"boundary.{axis_leaf}"
+                        )
+                        spec["target"] = f"feature:{feature_id}.{suffix}"
+                if endpoint.role == "unresolved":
+                    spec["candidate_targets"] = sorted(
+                        {
+                            (
+                                f"feature:{entity_to_feature[entity_id]}"
+                                f".centerline.{axis_leaf}"
+                            )
+                            for entity_id in endpoint.candidate_entity_ids
+                            if entity_id in entity_to_feature
+                        }
+                    )
+                endpoint_specs.append(spec)
+
             unresolved.append(
                 {
                     "id": f"U_DIM_{item.id}",
@@ -673,7 +846,9 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     "capture_dimension_id": item.id,
                     "dimension_value": item.value,
                     "axis": item.axis,
+                    "dimension_direction": item.direction,
                     "endpoint_unresolved_kinds": unresolved_kinds,
+                    "endpoint_specs": endpoint_specs,
                     "source_ids": list(
                         dict.fromkeys([*item.source_ids, *endpoint_source_ids])
                     ),
@@ -684,19 +859,34 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         endpoints: list[DimensionEndpoint] = []
         local_endpoint_entities: list[str] = []
         for endpoint in item.endpoints:
-            if endpoint.role in {"overall_min", "overall_max"}:
-                endpoints.append(DimensionEndpoint(role=endpoint.role))
-            else:
-                assert endpoint.role == "entity_center"
-                assert endpoint.entity_id is not None
-                local_endpoint_entities.append(endpoint.entity_id)
-                axis_leaf = item.axis.lower()
+            if endpoint.role == "overall_min":
+                endpoints.append(DimensionEndpoint(role="overall_min"))
+                continue
+            if endpoint.role == "overall_max":
+                endpoints.append(DimensionEndpoint(role="overall_max"))
+                continue
+
+            assert endpoint.role in {"entity_center", "profile_boundary"}
+            assert endpoint.entity_id is not None
+            local_endpoint_entities.append(endpoint.entity_id)
+            axis_leaf = item.axis.lower()
+            if endpoint.role == "entity_center":
                 endpoints.append(
                     DimensionEndpoint(
                         role="feature_center",
                         target=(
                             f"feature:{entity_to_feature[endpoint.entity_id]}"
                             f".centerline.{axis_leaf}"
+                        ),
+                    )
+                )
+            else:
+                endpoints.append(
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target=(
+                            f"feature:{entity_to_feature[endpoint.entity_id]}"
+                            f".boundary.{axis_leaf}"
                         ),
                     )
                 )
@@ -710,23 +900,144 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             len(feature_center_targets) == 2
             and feature_center_targets[0] == feature_center_targets[1]
         ):
-            unresolved.append(
-                {
-                    "id": f"U_DIM_COLLAPSE_{item.id}",
-                    "kind": "dimension_endpoint",
-                    "reason": (
-                        "dimension endpoints collapse to the same physical "
-                        "center target after identity linking"
-                    ),
-                    "required_for_modeling": item.required_for_modeling,
-                    "entity_ids": sorted(set(local_endpoint_entities)),
-                    "capture_dimension_id": item.id,
-                    "dimension_value": item.value,
-                    "axis": item.axis,
-                    "source_ids": item.source_ids,
-                }
+            endpoint_source_ids = [
+                source_id
+                for endpoint in item.endpoints
+                for source_id in endpoint.source_ids
+            ]
+            all_source_ids = list(
+                dict.fromkeys([*item.source_ids, *endpoint_source_ids])
             )
-            continue
+            feature_ids = {
+                entity_to_feature[entity_id]
+                for entity_id in local_endpoint_entities
+                if entity_id in entity_to_feature
+            }
+            feature_id = next(iter(feature_ids)) if len(feature_ids) == 1 else None
+            count_value = (
+                _direct_target_value(
+                    direct_values,
+                    f"feature:{feature_id}.count",
+                )
+                if feature_id is not None
+                else None
+            )
+            feature_axis = str(
+                _direct_target_value(
+                    direct_values,
+                    f"feature:{feature_id}.axis",
+                )
+                if feature_id is not None
+                else ""
+            ).upper()
+            center_indexes = _TRANSVERSE_CENTER_INDEX.get(feature_axis, {})
+            coordinate_index = center_indexes.get(item.axis)
+            marker_present = _SYMMETRIC_COUNT_TWO_MARKER in all_source_ids
+            count_is_two = (
+                not isinstance(count_value, bool)
+                and isinstance(count_value, (int, float))
+                and float(count_value) == 2.0
+            )
+            overall_extent = {
+                "X": capture.overall_dimensions.length_x,
+                "Y": capture.overall_dimensions.width_y,
+                "Z": capture.overall_dimensions.height_z,
+            }[item.axis]
+            can_expand_symmetric_pair = (
+                marker_present
+                and feature_id is not None
+                and count_is_two
+                and coordinate_index is not None
+                and item.direction in {-1, 1}
+                and item.value <= overall_extent + 1e-9
+            )
+
+            if can_expand_symmetric_pair:
+                assert feature_id is not None
+                assert coordinate_index is not None
+                member_targets = [
+                    (
+                        f"feature:{feature_id}.explicit_centers."
+                        f"{member_index}.{coordinate_index}"
+                    )
+                    for member_index in range(2)
+                ]
+                endpoints = [
+                    DimensionEndpoint(
+                        role="feature_center",
+                        target=member_targets[0],
+                    ),
+                    DimensionEndpoint(
+                        role="feature_center",
+                        target=member_targets[1],
+                    ),
+                ]
+
+                offset = max(0.0, (overall_extent - item.value) / 2.0)
+                synthetic_relations.append(
+                    RelationEvidence(
+                        id=f"R_SYMMETRIC_ANCHOR_{item.id}",
+                        kind="edge_offset",
+                        axis=item.axis,
+                        value=offset,
+                        from_side=(
+                            "min"
+                            if item.direction == 1
+                            else "max"
+                        ),
+                        targets=[member_targets[0]],
+                        source_ids=all_source_ids,
+                        required_for_modeling=item.required_for_modeling,
+                        metadata={
+                            "basis": "overall_center_symmetry_plus_spacing",
+                            "overall_extent": overall_extent,
+                        },
+                    )
+                )
+
+                other_axes = [
+                    axis_name
+                    for axis_name in center_indexes
+                    if axis_name != item.axis
+                ]
+                if len(other_axes) == 1:
+                    other_axis = other_axes[0]
+                    other_index = center_indexes[other_axis]
+                    synthetic_relations.append(
+                        RelationEvidence(
+                            id=f"R_SYMMETRIC_ROW_{item.id}",
+                            kind="alignment",
+                            axis=other_axis,
+                            targets=[
+                                f"feature:{feature_id}.centerline.{other_axis.lower()}",
+                                f"feature:{feature_id}.explicit_centers.0.{other_index}",
+                                f"feature:{feature_id}.explicit_centers.1.{other_index}",
+                            ],
+                            source_ids=all_source_ids,
+                            required_for_modeling=item.required_for_modeling,
+                            metadata={
+                                "basis": "collapsed_projection_shared_transverse_center",
+                            },
+                        )
+                    )
+            else:
+                unresolved.append(
+                    {
+                        "id": f"U_DIM_COLLAPSE_{item.id}",
+                        "kind": "dimension_endpoint",
+                        "reason": (
+                            "dimension endpoints collapse to the same physical "
+                            "center target after identity linking"
+                        ),
+                        "required_for_modeling": item.required_for_modeling,
+                        "entity_ids": sorted(set(local_endpoint_entities)),
+                        "capture_dimension_id": item.id,
+                        "dimension_value": item.value,
+                        "axis": item.axis,
+                        "source_ids": item.source_ids,
+                    }
+                )
+                continue
 
         endpoint_source_ids = [
             source_id
@@ -762,19 +1073,57 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         for item in capture.datum_alignments
     ]
 
+    for item in capture.centerline_alignments:
+        feature_ids = [
+            entity_to_feature[entity_id]
+            for entity_id in item.entity_ids
+            if entity_id in entity_to_feature
+        ]
+        if len(feature_ids) != len(item.entity_ids) or len(set(feature_ids)) < 2:
+            continue
+        for axis in ("X", "Y", "Z"):
+            if axis == item.feature_axis:
+                continue
+            synthetic_relations.append(
+                RelationEvidence(
+                    id=f"{item.id}_{axis}",
+                    kind="alignment",
+                    axis=axis,
+                    targets=[
+                        f"feature:{feature_id}.centerline.{axis.lower()}"
+                        for feature_id in feature_ids
+                    ],
+                    source_ids=item.source_ids,
+                    required_for_modeling=item.required_for_modeling,
+                    metadata={
+                        "basis": "coaxial_centerline_alignment",
+                        "feature_axis": item.feature_axis,
+                    },
+                )
+            )
+
+    slot_tangent_relations, slot_relation_resolved_fields = (
+        _open_slot_tangent_relations(capture, entity_to_feature)
+    )
+    synthetic_relations.extend(slot_tangent_relations)
+
     required_targets = {
         item.target
         for item in direct_values
+        if _resolver_numeric_value(item.value)
     }
     for item in dimensions:
         if not item.required_for_modeling:
             continue
         for endpoint in item.endpoints:
-            if endpoint.role == "feature_center" and endpoint.target:
+            if endpoint.role in {"feature_center", "profile_boundary"} and endpoint.target:
                 required_targets.add(endpoint.target)
     for item in datum_alignments:
         if item.required_for_modeling:
             required_targets.add(item.target)
+    for relation in synthetic_relations:
+        if relation.required_for_modeling:
+            required_targets.update(relation.targets)
     required_targets = sorted(required_targets)
 
     evidence = EvidenceGraph(
@@ -786,7 +1135,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         dimensions=dimensions,
         datum_alignments=datum_alignments,
         direct_values=direct_values,
-        relations=[],
+        relations=synthetic_relations,
         required_targets=required_targets,
         observations=[
             *capture.observations,
@@ -804,7 +1153,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             },
         ],
         unresolved_evidence=[
-            *_linked_reader_unresolved(capture, entity_to_feature),
+            *_linked_reader_unresolved(
+                capture,
+                entity_to_feature,
+                relation_resolved_fields=slot_relation_resolved_fields,
+            ),
             *[
                 {
                     **item,

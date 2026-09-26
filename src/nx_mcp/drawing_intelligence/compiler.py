@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, Literal
 
 from .evidence import (
     DatumAlignmentEvidence,
@@ -91,6 +91,67 @@ def _append_relation(
     relations.append(relation)
 
 
+def _compile_overall_dimension_facts(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    expected = {
+        "X": ("overall_dimensions.length_x", graph.overall_dimensions.length_x),
+        "Y": ("overall_dimensions.width_y", graph.overall_dimensions.width_y),
+        "Z": ("overall_dimensions.height_z", graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") != "overall_dimension_fact_ledger":
+            continue
+        facts = observation.get("facts")
+        if not isinstance(facts, list):
+            continue
+
+        for fact_index, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                continue
+            axis = str(fact.get("axis") or "").upper()
+            if axis not in expected:
+                continue
+            value = fact.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            target, expected_value = expected[axis]
+            source_ids = [
+                item
+                for item in fact.get("evidence", [])
+                if isinstance(item, str) and item
+            ]
+            if abs(float(value) - float(expected_value)) > 1e-9:
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_FACT_{axis}_{observation_index}_{fact_index}",
+                    reason=(
+                        f"overall dimension fact for axis {axis} disagrees with "
+                        f"canonical overall_dimensions: {value!r} vs {expected_value!r}"
+                    ),
+                    target=target,
+                    evidence=source_ids,
+                )
+                continue
+
+            _append_direct(
+                direct,
+                unresolved,
+                DirectValueEvidence(
+                    id=f"ODF_{axis}_{observation_index}_{fact_index}",
+                    target=target,
+                    value=float(value),
+                    semantic="overall_dimension",
+                    source_ids=source_ids,
+                ),
+            )
+
+
 def _compile_axis_evidence(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -172,9 +233,9 @@ def _target_axis(target: str) -> str | None:
 
 
 def _overall_center_value(graph: EvidenceGraph, axis: str) -> float:
-    if axis in {"X", "Y"}:
-        return 0.0
-    return graph.overall_dimensions.height_z / 2.0
+    """Return the center in Reader-local 0..overall engineering coordinates."""
+
+    return _overall_value(graph, axis) / 2.0
 
 
 def _compile_datum_alignments(
@@ -261,15 +322,15 @@ def _compile_edge_offset(
         ),
         None,
     )
-    center = next(
+    measured = next(
         (
             endpoint
             for endpoint in observation.endpoints
-            if endpoint.role == "feature_center"
+            if endpoint.role in {"feature_center", "profile_boundary"}
         ),
         None,
     )
-    if boundary is None or center is None or not center.target:
+    if boundary is None or measured is None or not measured.target:
         return False
     _append_relation(
         relations,
@@ -279,7 +340,7 @@ def _compile_edge_offset(
             axis=observation.axis,
             value=observation.value,
             from_side="min" if boundary.role == "overall_min" else "max",
-            targets=[center.target],
+            targets=[measured.target],
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),
@@ -294,11 +355,16 @@ def _compile_center_distance(
     if not all(endpoint.role == "feature_center" for endpoint in observation.endpoints):
         return False
     targets = [endpoint.target for endpoint in observation.endpoints]
-    if not all(isinstance(target, str) and target for target in targets):
+    typed_targets = [
+        target
+        for target in targets
+        if isinstance(target, str) and target
+    ]
+    if len(typed_targets) != 2:
         return False
-    first_feature = _feature_id(targets[0])
-    second_feature = _feature_id(targets[1])
-    kind = (
+    first_feature = _feature_id(typed_targets[0])
+    second_feature = _feature_id(typed_targets[1])
+    kind: Literal["center_spacing", "center_distance"] = (
         "center_spacing"
         if first_feature is not None and first_feature == second_feature
         else "center_distance"
@@ -311,7 +377,7 @@ def _compile_center_distance(
             axis=observation.axis,
             value=observation.value,
             direction=observation.direction,
-            targets=[targets[0], targets[1]],
+            targets=typed_targets,
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),
@@ -353,6 +419,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     relations = [item.model_copy(deep=True) for item in graph.relations]
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
+    _compile_overall_dimension_facts(graph, direct, unresolved)
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)

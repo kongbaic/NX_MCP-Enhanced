@@ -8,13 +8,47 @@ references and are not normal runtime input.
 ## 1. Mission
 
 Read the current engineering drawing once as a continuous first-pass session
-and produce exactly one immutable `ReaderCapture` payload.
+and produce exactly one immutable `reader-observations-v1` payload.
 
-Reader stops at Capture. Do not run check-capture, link-capture, Resolver,
-Gate A, Planner, Runner or NX.
+The semantic Reader stops after `reader-observations.json`. The pipeline then
+runs deterministic `assemble-reader-capture` once to produce ReaderCapture v2.
+Do not run check-capture, link-capture, Resolver, Gate A, Planner, Runner or NX
+until that deterministic assembly succeeds.
 
 Do not read historical artifacts, tests, fixtures, expected answers, benchmark
 operator documents, previous Agent results, or downstream outputs.
+
+### Deterministic Reader input bundle
+
+The current engineering drawing remains the sole authoritative geometry source.
+
+When the pipeline successfully generated the current `reader-input.json` from the
+explicit runtime-local path of the current uploaded raster drawing, Reader normally reads:
+
+- the current source drawing;
+- exactly one current `reader-input.json`;
+- exactly one current `reader-contact-sheet.png`.
+
+Do not open all individual crops sequentially. Only when one specific contact-sheet
+panel is unreadable may Reader open the corresponding already-listed crop from the
+manifest, then return to the same first-pass.
+
+Hard boundaries:
+
+- do not read `raw-evidence.json` or `reader-visual-aid.json` directly;
+- do not read historical or pre-existing Reader input/contact-sheet/crop files;
+- do not scan the workspace, chat history, repository, or user directories;
+- do not create additional crops, PowerShell image scripts, PIL/.NET image helpers, or
+  alternate image preprocessing during Reader interpretation;
+- use only bounded candidate buckets; an `overflow` bucket has no candidate list and
+  must be handled from the authoritative source drawing itself;
+- candidate buckets may narrow visual search by region, line orientation and normalized
+  position band only;
+- witness anchors may indicate nearby region edges, circle-center axes or detected
+  linear-pattern axes only;
+- never match a dimension by numeric/pixel-scale coincidence;
+- never create or merge a physical feature, assign a numeric label, or decide endpoint
+  ownership solely from deterministic Reader input.
 
 ## 2. Runtime discipline
 
@@ -26,23 +60,25 @@ Use one continuous interpretation pass:
 4. resolve each dimension endpoint from visible witness geometry;
 5. perform cross-view census once;
 6. record explicit datum alignment and blocking ambiguity;
-7. assemble payload;
-8. run `ReaderCapture.model_validate(payload)` once;
-9. if valid, write the target capture once and stop;
-10. if invalid, do not repair or create a second payload in the same run.
+7. assemble one compact `reader-observations-v1` payload using temporary local keys;
+8. write `reader-observations.json` exactly once;
+9. run deterministic `assemble-reader-capture` exactly once;
+10. if assembly fails, stop without a second interpretation or second observations file;
+11. if assembly succeeds, freeze the resulting `reader-capture.json`.
 
-Targeted zoom/recheck of a local region is allowed when needed. Do not restart
-the drawing interpretation, reread the whole drawing merely to satisfy
-bookkeeping, or perform an open-ended self-audit loop.
+Inspect the source drawing and the contact sheet directly. Do not open every listed
+crop as a checklist. Open at most the specific existing crop needed for an unreadable
+contact-sheet panel. Do not create new crops or preprocessing scripts, restart
+interpretation, reread the whole drawing merely to satisfy bookkeeping, or perform an
+open-ended self-audit loop.
 
-## 3. Capture shape
+## 3. Observation shape
 
 Top level:
 
 ~~~json
 {
-  "schema_version": "2.0",
-  "coordinate_system": "part_center_xy_bottom_z0",
+  "schema": "reader-observations-v1",
   "overall_dimensions": {
     "length_x": 0,
     "width_y": 0,
@@ -54,11 +90,18 @@ Top level:
   "values": [],
   "dimensions": [],
   "datum_alignments": [],
-  "required_targets": [],
-  "observations": [],
-  "unresolved_evidence": []
+  "unresolved": []
 }
 ~~~
+
+Use short temporary keys such as `front`, `side`, `front_main_bore`,
+`dim_center_height`. The deterministic assembler maps those keys to formal
+Capture IDs. Do not create formal V/E/A/D/U IDs yourself.
+
+Every semantic item carries a non-empty `evidence` list using concise current-run
+visual labels such as `overview`, `R1`, or `R1.vertical.right`. The assembler
+copies those labels to ReaderCapture `source_ids`; do not build `source_ids`
+yourself.
 
 Allowed view kinds: `front | side | top`.
 
@@ -74,11 +117,12 @@ counterbore_diameter, counterbore_depth, type`.
 
 For threaded entities use `thread_depth`, not generic `depth`.
 
-`required_targets` is always `[]` in new Capture output.
+`required_targets=[]`, `schema_version`, `coordinate_system`, formal IDs and
+ReaderCapture bookkeeping are assembler responsibilities, not Agent output.
 
 ## 4. Source evidence
 
-For multi-view production capture, non-empty `source_ids` are required for:
+For multi-view production observations, non-empty `evidence` labels are required for:
 
 - every view;
 - every modeling-critical entity;
@@ -89,9 +133,9 @@ For multi-view production capture, non-empty `source_ids` are required for:
 - every modeling-critical datum alignment;
 - every blocking unresolved record.
 
-Source IDs are local evidence labels for this run only. Keep them concise and
-stable within the payload. Do not create a second evidence-analysis pass just
-to beautify or rename them.
+Evidence labels are local visual references for this run only. Keep them concise and
+stable. Do not create a second evidence-analysis pass merely to beautify or rename them.
+The deterministic assembler converts them to ReaderCapture `source_ids`.
 
 ## 5. Cross-view identity
 
@@ -138,7 +182,7 @@ Endpoint roles:
 - `entity_center`
 - `unresolved`
 
-`entity_center` requires an `entity_id` and basis
+`entity_center` requires an `entity_key` and basis
 `centerline | center_mark | explicit_midline`.
 
 Use `entity_center` only when the actual arrow/witness/extension geometry
@@ -150,9 +194,9 @@ An unresolved endpoint must set one:
 - `ambiguous_owner`
 - `unsupported_reference`
 
-`ambiguous_owner` requires supported `candidate_entity_ids`.
+`ambiguous_owner` requires supported `candidate_entity_keys`.
 `intermediate_surface` and `unsupported_reference` keep
-`candidate_entity_ids=[]`.
+`candidate_entity_keys=[]`.
 
 The enclosing dimension must contain `unresolved_reason`.
 
@@ -202,13 +246,17 @@ must be an association, not unresolved.
 
 ## 9. Freeze
 
-Before writing, execute production:
+Write `reader-observations.json` exactly once, then execute:
 
-~~~python
-ReaderCapture.model_validate(payload)
+~~~text
+python_exe -m nx_mcp.drawing_intelligence assemble-reader-capture <reader-observations.json> <reader-capture.json>
 ~~~
 
-If validation fails: stop without writing and without a second interpretation.
+The assembler performs production `ReaderObservations.model_validate`,
+`ReaderCapture.model_validate`, and `validate_reader_capture_contract`.
 
-If validation succeeds: write the validated payload exactly once to the
-requested path, then freeze and stop.
+If assembly fails: stop without rewriting observations and without a second
+interpretation.
+
+If assembly succeeds: freeze the generated `reader-capture.json` and continue to
+the existing check-capture stage.

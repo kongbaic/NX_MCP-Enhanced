@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from .evidence import DirectValueEvidence, EvidenceGraph, RelationEvidence
+from .metric_profile_solver import MetricProfileSpec, solve_metric_profile
 from .resolver import ResolutionResult
 
 
@@ -20,6 +21,118 @@ def _equal(left: Any, right: Any) -> bool:
         if isinstance(right, (int, float)) and not isinstance(right, bool):
             return abs(float(left) - float(right)) <= 1e-9
     return left == right
+
+
+def _planner_axis_shift(graph: EvidenceGraph, axis: str) -> float:
+    if axis == "X":
+        return graph.overall_dimensions.length_x / 2.0
+    if axis == "Y":
+        return graph.overall_dimensions.width_y / 2.0
+    return 0.0
+
+
+def _scalar_coordinate_axis(target: str) -> str | None:
+    lower = target.lower()
+
+    match = re.search(r"\.(?:centerline|boundary)\.(x|y|z)$", lower)
+    if match:
+        return match.group(1).upper()
+
+    match = re.search(r"\.position\.center\.(x|y|z)$", lower)
+    if match:
+        return match.group(1).upper()
+
+    match = re.search(r"\.explicit_centers\.\d+\.(0|1|2)$", lower)
+    if match:
+        return {"0": "X", "1": "Y", "2": "Z"}[match.group(1)]
+
+    leaf = lower.split(".")[-1]
+    leaf_axis = {
+        "centerline_x": "X",
+        "centerline_y": "Y",
+        "centerline_z": "Z",
+        "hole_x": "X",
+        "hole_y": "Y",
+        "hole_z": "Z",
+        "top_z": "Z",
+        "bottom_z": "Z",
+        "start_z": "Z",
+        "end_z": "Z",
+        "x1": "X",
+        "x2": "X",
+        "y1": "Y",
+        "y2": "Y",
+        "z1": "Z",
+        "z2": "Z",
+    }
+    return leaf_axis.get(leaf)
+
+
+def _transform_center_value(
+    graph: EvidenceGraph,
+    value: Any,
+) -> Any:
+    if isinstance(value, dict):
+        output = copy.deepcopy(value)
+        for key, axis in (("x", "X"), ("y", "Y"), ("z", "Z")):
+            raw = output.get(key)
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                output[key] = float(raw) - _planner_axis_shift(graph, axis)
+        return output
+
+    if isinstance(value, list):
+        output: list[Any] = copy.deepcopy(value)
+        for index, axis in enumerate(("X", "Y", "Z")):
+            if index >= len(output):
+                break
+            raw = output[index]
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                output[index] = float(raw) - _planner_axis_shift(graph, axis)
+        return output
+
+    return copy.deepcopy(value)
+
+
+def _planner_value_for_target(
+    graph: EvidenceGraph,
+    target: str,
+    value: Any,
+) -> Any:
+    """Convert Reader-local 0..overall coordinates to Planner centered XY."""
+
+    axis = _scalar_coordinate_axis(target)
+    if axis is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) - _planner_axis_shift(graph, axis)
+
+    lower = target.lower()
+    if lower.endswith(".centerline") or lower.endswith(".position.center"):
+        return _transform_center_value(graph, value)
+
+    if lower.endswith(".explicit_centers") and isinstance(value, list):
+        return [_transform_center_value(graph, item) for item in value]
+
+    for suffix, axis_name in (
+        (".centers_x", "X"),
+        (".centers_y", "Y"),
+        (".centers_z", "Z"),
+    ):
+        if lower.endswith(suffix) and isinstance(value, list):
+            shift = _planner_axis_shift(graph, axis_name)
+            return [
+                float(item) - shift
+                if isinstance(item, (int, float)) and not isinstance(item, bool)
+                else copy.deepcopy(item)
+                for item in value
+            ]
+
+    if lower.endswith(".x_range") and isinstance(value, list):
+        shift = _planner_axis_shift(graph, "X")
+        return [float(item) - shift for item in value]
+    if lower.endswith(".y_range") and isinstance(value, list):
+        shift = _planner_axis_shift(graph, "Y")
+        return [float(item) - shift for item in value]
+
+    return copy.deepcopy(value)
 
 
 def _feature(root: dict[str, Any], feature_id: str) -> dict[str, Any]:
@@ -123,6 +236,133 @@ def _get_target(root: dict[str, Any], target: str) -> Any:
     return current
 
 
+def _source_writes_target(source: dict[str, Any], target: str) -> bool:
+    if source.get("target") == target:
+        return True
+    targets = source.get("targets")
+    return isinstance(targets, list) and target in targets
+
+
+def _append_inferred_feature_type_source(
+    draft: dict[str, Any],
+    *,
+    feature_id: str,
+    feature_type: str,
+    basis_targets: list[str],
+) -> None:
+    """Record provenance for a type inferred from already-proven semantics."""
+
+    supporting_source_ids: list[str] = []
+    supporting_evidence: list[str] = []
+    for source in draft.get("source_ledger", []):
+        if not isinstance(source, dict):
+            continue
+        if not any(_source_writes_target(source, target) for target in basis_targets):
+            continue
+        source_id = source.get("id")
+        if isinstance(source_id, str) and source_id:
+            supporting_source_ids.append(source_id)
+        evidence = source.get("evidence")
+        if isinstance(evidence, list):
+            supporting_evidence.extend(
+                item for item in evidence if isinstance(item, str) and item
+            )
+
+    evidence = list(dict.fromkeys([*supporting_evidence, *supporting_source_ids]))
+    draft["source_ledger"].append(
+        {
+            "id": f"TYPE_{_stable_fragment(feature_id)}",
+            "semantic": "feature_kind",
+            "value": feature_type,
+            "target": f"feature:{feature_id}.type",
+            "evidence": evidence,
+            "inference_basis_targets": list(basis_targets),
+            "inference_basis_sources": list(dict.fromkeys(supporting_source_ids)),
+        }
+    )
+
+
+def _infer_feature_types(draft: dict[str, Any]) -> None:
+    """Assign only feature types implied by already-materialized semantics."""
+
+    for feature in draft.get("features", []):
+        if not isinstance(feature, dict) or feature.get("type"):
+            continue
+
+        feature_id = str(feature.get("id") or "")
+        if not feature_id:
+            continue
+
+        feature_type: str | None = None
+        basis_targets: list[str] = []
+        keys = set(feature)
+
+        if "boundary" in keys and keys <= {"id", "boundary"}:
+            boundary = feature.get("boundary")
+            if isinstance(boundary, dict):
+                basis_targets = [
+                    f"feature:{feature_id}.boundary.{axis}"
+                    for axis in ("x", "y", "z")
+                    if boundary.get(axis) is not None
+                ]
+            if basis_targets:
+                feature_type = "reference_boundary"
+
+        elif feature.get("thread_spec") is not None or feature.get("thread_depth") is not None:
+            feature_type = "threaded_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in ("thread_spec", "thread_depth")
+                if feature.get(field) is not None
+            ]
+
+        elif (
+            feature.get("counterbore_diameter") is not None
+            or feature.get("counterbore_depth") is not None
+        ):
+            feature_type = "counterbore_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in (
+                    "diameter",
+                    "counterbore_diameter",
+                    "counterbore_depth",
+                    "through",
+                )
+                if feature.get(field) is not None
+            ]
+
+        elif (
+            feature.get("recessed_hole") is True
+            or feature.get("recess_diameter") is not None
+            or feature.get("recess_depth") is not None
+        ):
+            feature_type = "recessed_hole"
+            basis_targets = [
+                f"feature:{feature_id}.{field}"
+                for field in ("recessed_hole", "recess_diameter", "recess_depth")
+                if feature.get(field) is not None
+            ]
+
+        elif feature.get("diameter") is not None and feature.get("axis") in {"X", "Y", "Z"}:
+            feature_type = "hole"
+            basis_targets = [
+                f"feature:{feature_id}.diameter",
+                f"feature:{feature_id}.axis",
+            ]
+
+        if feature_type is None:
+            continue
+
+        feature["type"] = feature_type
+        _append_inferred_feature_type_source(
+            draft,
+            feature_id=feature_id,
+            feature_type=feature_type,
+            basis_targets=basis_targets,
+        )
+
+
 def _feature_type(root: dict[str, Any], target: str) -> str:
     if not target.startswith("feature:"):
         return ""
@@ -211,13 +451,20 @@ def _semantic_for_target(root: dict[str, Any], fact: DirectValueEvidence) -> str
     raise DraftAssemblyError(f"cannot infer Gate A semantic for target {target!r}")
 
 
-def _direct_source(root: dict[str, Any], fact: DirectValueEvidence) -> dict[str, Any]:
+def _direct_source(
+    root: dict[str, Any],
+    graph: EvidenceGraph,
+    fact: DirectValueEvidence,
+) -> dict[str, Any]:
+    planner_value = _planner_value_for_target(graph, fact.target, fact.value)
     source = {
         "id": fact.id,
         "semantic": _semantic_for_target(root, fact),
-        "value": copy.deepcopy(fact.value),
+        "value": planner_value,
         "target": fact.target,
     }
+    if planner_value != fact.value:
+        source["reader_local_value"] = copy.deepcopy(fact.value)
     if fact.source_ids:
         source["evidence"] = list(fact.source_ids)
     return source
@@ -364,8 +611,281 @@ def _unresolved_entries(
     return entries
 
 
+def _expected_profile_overall(
+    graph: EvidenceGraph,
+    plane: str,
+) -> tuple[float, float]:
+    return {
+        "XY": (
+            float(graph.overall_dimensions.length_x),
+            float(graph.overall_dimensions.width_y),
+        ),
+        "XZ": (
+            float(graph.overall_dimensions.length_x),
+            float(graph.overall_dimensions.height_z),
+        ),
+        "YZ": (
+            float(graph.overall_dimensions.width_y),
+            float(graph.overall_dimensions.height_z),
+        ),
+    }[plane]
+
+
+def _auto_metric_profile_spec(
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+) -> MetricProfileSpec | None:
+    topology_items: list[dict[str, Any]] = []
+    entity_to_feature: dict[str, str] | None = None
+
+    for observation in graph.observations:
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") == "hybrid_profile_topology_ledger":
+            items = observation.get("items")
+            if isinstance(items, list):
+                topology_items.extend(
+                    item for item in items if isinstance(item, dict)
+                )
+        elif observation.get("kind") == "identity_linker_v2":
+            mapping = observation.get("entity_to_feature")
+            if isinstance(mapping, dict):
+                typed = {
+                    str(entity_id): str(feature_id)
+                    for entity_id, feature_id in mapping.items()
+                    if isinstance(entity_id, str)
+                    and entity_id
+                    and isinstance(feature_id, str)
+                    and feature_id
+                }
+                if typed:
+                    entity_to_feature = typed
+
+    if not topology_items or entity_to_feature is None:
+        return None
+
+    def resolved_boundary_coordinate(
+        *,
+        axis: str,
+        entity_id: str,
+    ) -> tuple[float, list[str]] | None:
+        feature_id = entity_to_feature.get(entity_id)
+        if feature_id is not None:
+            direct_target = f"feature:{feature_id}.boundary.{axis}"
+            if direct_target in resolution.values:
+                return (
+                    float(resolution.values[direct_target]),
+                    list(resolution.traces.get(direct_target, [])),
+                )
+
+        # Orthographic views may materialize the same engineering boundary in
+        # only one view. Reuse it only when the resolved profile-boundary
+        # coordinate on this engineering axis is numerically unique.
+        candidates: list[tuple[float, str]] = []
+        for relation in graph.relations:
+            if relation.kind != "edge_offset" or relation.axis != axis.upper():
+                continue
+            if len(relation.targets) != 1:
+                continue
+            target = relation.targets[0]
+            if (
+                not target.startswith("feature:")
+                or not target.endswith(f".boundary.{axis}")
+                or target not in resolution.values
+            ):
+                continue
+            if not any(
+                "unassigned-profile-offset-recovery" in source_id
+                for source_id in relation.source_ids
+            ):
+                continue
+            candidates.append((float(resolution.values[target]), target))
+
+        if not candidates:
+            return None
+
+        unique_values: list[float] = []
+        for value, _ in candidates:
+            if not any(abs(value - existing) <= 1e-9 for existing in unique_values):
+                unique_values.append(value)
+        if len(unique_values) != 1:
+            return None
+
+        value = unique_values[0]
+        traces: list[str] = []
+        for candidate_value, target in candidates:
+            if abs(candidate_value - value) <= 1e-9:
+                traces.extend(resolution.traces.get(target, []))
+        return value, list(dict.fromkeys(traces))
+
+    complete: list[MetricProfileSpec] = []
+    for item in topology_items:
+        plane = str(item.get("plane") or "")
+        topology = str(item.get("topology") or "")
+        upright_side = str(item.get("upright_side") or "")
+        base_side = str(item.get("base_side") or "")
+        internal_u_entity_id = str(item.get("internal_u_entity_id") or "")
+        internal_v_entity_id = str(item.get("internal_v_entity_id") or "")
+        if (
+            plane not in {"XY", "XZ", "YZ"}
+            or topology != "L"
+            or upright_side not in {"min", "max"}
+            or base_side not in {"min", "max"}
+            or not internal_u_entity_id
+            or not internal_v_entity_id
+        ):
+            continue
+
+        axis_u, axis_v = plane[0].lower(), plane[1].lower()
+        resolved_u = resolved_boundary_coordinate(
+            axis=axis_u,
+            entity_id=internal_u_entity_id,
+        )
+        resolved_v = resolved_boundary_coordinate(
+            axis=axis_v,
+            entity_id=internal_v_entity_id,
+        )
+        if resolved_u is None or resolved_v is None:
+            continue
+
+        internal_u, sources_u = resolved_u
+        internal_v, sources_v = resolved_v
+        overall_u, overall_v = _expected_profile_overall(graph, plane)
+        upright_width = (
+            internal_u
+            if upright_side == "min"
+            else overall_u - internal_u
+        )
+        base_height = (
+            internal_v
+            if base_side == "min"
+            else overall_v - internal_v
+        )
+        if upright_width <= 0 or base_height <= 0:
+            continue
+
+        sources: list[str] = []
+        sources.extend(sources_u)
+        sources.extend(sources_v)
+        for key in ("internal_u_ref", "internal_v_ref"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                sources.append(value)
+        outer_refs = item.get("outer_refs")
+        if isinstance(outer_refs, dict):
+            sources.extend(
+                value
+                for value in outer_refs.values()
+                if isinstance(value, str) and value
+            )
+        region_id = item.get("region_id")
+        if isinstance(region_id, str) and region_id:
+            sources.append(f"profile-topology:{region_id}")
+
+        try:
+            complete.append(
+                MetricProfileSpec(
+                    plane=plane,
+                    topology="L",
+                    overall_u=overall_u,
+                    overall_v=overall_v,
+                    upright_width=upright_width,
+                    base_height=base_height,
+                    upright_side=upright_side,
+                    base_side=base_side,
+                    source_ids=list(dict.fromkeys(sources)),
+                )
+            )
+        except ValueError:
+            continue
+
+    if len(complete) > 1:
+        raise DraftAssemblyError(
+            "multiple complete metric profile solutions are available"
+        )
+    return complete[0] if complete else None
+
+
+
+def _materialize_metric_profile(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+    spec: MetricProfileSpec,
+) -> None:
+    expected_u, expected_v = _expected_profile_overall(graph, spec.plane)
+    if abs(float(spec.overall_u) - expected_u) > 1e-9:
+        raise DraftAssemblyError(
+            "metric profile overall_u disagrees with canonical overall dimensions"
+        )
+    if abs(float(spec.overall_v) - expected_v) > 1e-9:
+        raise DraftAssemblyError(
+            "metric profile overall_v disagrees with canonical overall dimensions"
+        )
+
+    planner_spec = spec.model_copy(
+        update={"coordinate_mode": "centered_u_bottom_v"}
+    )
+    solution = solve_metric_profile(planner_spec)
+    if solution.engineering_coordinate_inferred_from_pixels:
+        raise DraftAssemblyError(
+            "metric profile solver must not infer engineering coordinates from pixels"
+        )
+
+    existing = draft.get("profile")
+    solved_profile = {
+        "plane": solution.plane,
+        "topology": solution.topology,
+        "segments": copy.deepcopy(solution.segments),
+    }
+    if existing not in (None, {}) and not _equal(existing, solved_profile):
+        raise DraftAssemblyError(
+            "metric profile solution conflicts with existing canonical profile"
+        )
+    draft["profile"] = solved_profile
+
+    evidence = list(dict.fromkeys(spec.source_ids))
+    draft["source_ledger"].extend(
+        [
+            {
+                "id": "METRIC_PROFILE_PLANE",
+                "semantic": "profile_dimension",
+                "value": solution.plane,
+                "target": "profile.plane",
+                "evidence": evidence,
+                "solver": "metric_profile_solver",
+            },
+            {
+                "id": "METRIC_PROFILE_TOPOLOGY",
+                "semantic": "profile_dimension",
+                "value": solution.topology,
+                "target": "profile.topology",
+                "evidence": evidence,
+                "solver": "metric_profile_solver",
+            },
+        ]
+    )
+    for segment_index, segment in enumerate(solution.segments):
+        for field, value in segment.items():
+            target = f"profile.segments.{segment_index}.{field}"
+            draft["source_ledger"].append(
+                {
+                    "id": (
+                        "METRIC_PROFILE_"
+                        f"{segment_index}_{field.upper()}"
+                    ),
+                    "semantic": "profile_dimension",
+                    "value": copy.deepcopy(value),
+                    "target": target,
+                    "evidence": evidence,
+                    "solver": "metric_profile_solver",
+                }
+            )
+
+
 def build_semantic_draft(
-    graph: EvidenceGraph, resolution: ResolutionResult | None = None
+    graph: EvidenceGraph,
+    resolution: ResolutionResult | None = None,
+    metric_profile: MetricProfileSpec | None = None,
 ) -> dict[str, Any]:
     """Serialize resolved evidence into the existing semantic-draft contract.
 
@@ -387,6 +907,17 @@ def build_semantic_draft(
         },
         "coordinate_system": {
             "origin": "part_center_xy_bottom_z0",
+            "source_origin": "overall_min_xyz",
+            "reader_local_bounds": {
+                "x": [0.0, graph.overall_dimensions.length_x],
+                "y": [0.0, graph.overall_dimensions.width_y],
+                "z": [0.0, graph.overall_dimensions.height_z],
+            },
+            "reader_to_planner_translation": {
+                "x": -graph.overall_dimensions.length_x / 2.0,
+                "y": -graph.overall_dimensions.width_y / 2.0,
+                "z": 0.0,
+            },
             "x_positive": "right",
             "y_positive": "declared side-view positive",
             "z_positive": "up",
@@ -402,17 +933,26 @@ def build_semantic_draft(
         "dimension_closure": {"status": "closed"},
     }
 
+    if metric_profile is None:
+        metric_profile = _auto_metric_profile_spec(graph, resolution)
+    if metric_profile is not None:
+        _materialize_metric_profile(draft, graph, metric_profile)
+
     # Materialize all direct observations first so feature type is available
     # before semantic inference (for example slot width -> slot_width).
     for fact in sorted(graph.direct_values, key=lambda item: (item.target, item.id)):
-        _set_target(draft, fact.target, fact.value)
+        _set_target(
+            draft,
+            fact.target,
+            _planner_value_for_target(graph, fact.target, fact.value),
+        )
 
     direct_targets: set[str] = set()
     for fact in sorted(graph.direct_values, key=lambda item: item.id):
         if fact.target in direct_targets:
             raise DraftAssemblyError(f"multiple direct evidence writers for {fact.target!r}")
         direct_targets.add(fact.target)
-        draft["source_ledger"].append(_direct_source(draft, fact))
+        draft["source_ledger"].append(_direct_source(draft, graph, fact))
 
     relations_by_id = {relation.id: relation for relation in graph.relations}
     for relation in sorted(graph.relations, key=lambda item: item.id):
@@ -421,10 +961,11 @@ def build_semantic_draft(
     # Materialize deterministic numeric results only when they were not already
     # written by a direct observation.
     for target, value in sorted(resolution.values.items()):
+        planner_value = _planner_value_for_target(graph, target, value)
         current = _get_target(draft, target)
         if current is _MISSING or current is None:
-            _set_target(draft, target, value)
-        elif not _equal(current, value):
+            _set_target(draft, target, planner_value)
+        elif not _equal(current, planner_value):
             # Keep the direct value. The Resolver conflict and/or Gate A relation
             # check will reject the inconsistent evidence instead of overwriting it.
             continue
@@ -437,7 +978,17 @@ def build_semantic_draft(
             raise DraftAssemblyError(
                 f"derivation for {target!r} references unknown relation {relation_id!r}"
             )
-        entry = _derived_entry(target, resolution.values[target], derivation)
+        entry = _derived_entry(
+            target,
+            _planner_value_for_target(
+                graph,
+                target,
+                resolution.values[target],
+            ),
+            derivation,
+        )
+        if entry is not None and entry.get("value") != resolution.values[target]:
+            entry["reader_local_value"] = resolution.values[target]
         if entry is not None:
             draft["derived"].append(entry)
 
@@ -451,5 +1002,6 @@ def build_semantic_draft(
     ):
         draft["dimension_closure"]["status"] = "incomplete"
 
+    _infer_feature_types(draft)
     draft["features"].sort(key=lambda item: str(item.get("id") or ""))
     return draft

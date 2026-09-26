@@ -1496,6 +1496,55 @@ class MetricThreadSurrogateTests(unittest.TestCase):
 
         self.assertTrue(any("thread_geometry_violation" in item for item in errors))
 
+    def test_reverse_thread_subtract_uses_loader_signed_offset_semantics(self) -> None:
+        plan = {
+            "operations": [
+                {
+                    "step": 1,
+                    "tool": "nx_create_sketch",
+                    "tool_args": {"plane": "YZ"},
+                },
+                {
+                    "step": 2,
+                    "tool": "nx_sketch_circle",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "center": {"x": 8, "y": 58},
+                        "diameter": 5,
+                    },
+                },
+                {
+                    "step": 3,
+                    "tool": "nx_finish_sketch",
+                    "tool_args": {"sketch_id": "sketch_thread"},
+                },
+                {
+                    "step": 4,
+                    "tool": "nx_extrude",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "distance": 12,
+                        "start_offset": -20,
+                        "reverse": True,
+                        "operation": "subtract",
+                        "target_body_id": "body_main",
+                    },
+                },
+            ]
+        }
+
+        actual, errors = R._thread_operation_geometry(
+            plan,
+            plan["operations"][-1],
+            5.0,
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual("X", actual["axis"])
+        self.assertEqual([8.0, 58.0], actual["transverse_center"])
+        self.assertEqual(12.0, actual["depth"])
+        self.assertEqual([20.0, 8.0], actual["axial_range"])
+
     def test_surrogate_cannot_change_axis(self) -> None:
         drawing = thread_drawing(axis="X", position={"center": [3, 4]})
         geometries, _ = R.resolve_thread_drawing_geometries(drawing)

@@ -2332,7 +2332,15 @@ def _thread_operation_geometry(plan: dict, op: dict, expected_diameter: float) -
         return None, [f"step {step}: invalid thread subtract geometry"]
     direction = -1.0 if args["reverse"] else 1.0
     errors = [] if _drawing_equal(diameter, expected_diameter) else [f"step {step}: thread surrogate diameter differs from resolver"]
-    return {"axis": axis, "transverse_center": center, "depth": float(depth), "axial_range": [float(start), float(start + direction * depth)]}, errors
+    return {
+        "axis": axis,
+        "transverse_center": center,
+        "depth": float(depth),
+        "axial_range": [
+            float(direction * start),
+            float(direction * (start + depth)),
+        ],
+    }, errors
 
 
 def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: list[dict]) -> list[str]:

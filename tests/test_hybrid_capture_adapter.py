@@ -1828,11 +1828,6 @@ def test_transverse_recess_start_side_uses_unique_boundary_contact():
     assert values[0].semantic == "start_side"
     assert ledger[0]["start_side"] == "max"
     assert ledger[0]["boundary_role"] == "overall_max"
-    assert ledger[0]["through_axis"] == "Y"
-    assert (
-        ledger[0]["through_axis_basis"]
-        == "proved_gap_in_resolved_overall_silhouette_plus_view_normal"
-    )
     assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
     assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
 
@@ -2363,6 +2358,11 @@ def test_open_slot_materializes_stable_core_without_pixel_metric():
     assert by_field["top_z"] == 66
     assert {item.field for item in unresolved} == {"bottom_z"}
     assert claimed == {2}
+    assert ledger[0]["through_axis"] == "Y"
+    assert (
+        ledger[0]["through_axis_basis"]
+        == "proved_gap_in_resolved_overall_silhouette_plus_view_normal"
+    )
     assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
     assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
     assert ledger[0]["slot_edge_positions_px"] == [94.0, 106.0]

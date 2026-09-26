@@ -64,6 +64,37 @@ def _ledger(
     )
 
 
+def _blocking_records(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        copy.deepcopy(item)
+        for item in items
+        if item.get("required_for_modeling", True)
+    ]
+
+
+def _blocking_summary(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": item.get("kind"),
+            "field": item.get("field"),
+            "dimension_key": item.get("dimension_key"),
+            "entity_keys": list(item.get("entity_keys") or []),
+            "feature_ids": list(item.get("feature_ids") or []),
+            "reason": item.get("reason"),
+        }
+        for item in items
+        if item.get("required_for_modeling", True)
+    ]
+
+
+def _set_final_blocking_status(
+    result: dict[str, Any],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    result["blocking_unresolved"] = _blocking_records(unresolved)
+    result["blocking_summary"] = _blocking_summary(unresolved)
+
+
 def replay_hybrid_constraint_bridge(
     *,
     raw_evidence: dict[str, Any],
@@ -123,6 +154,10 @@ def replay_hybrid_constraint_bridge(
     observations = [
         item for item in partial.observations if isinstance(item, dict)
     ]
+    reader_unresolved = [
+        item.model_dump(mode="json") for item in partial.unresolved
+    ]
+    reader_blocking_unresolved = _blocking_records(reader_unresolved)
 
     result: dict[str, Any] = {
         "schema": "hybrid-constraint-bridge-replay-v1",
@@ -144,9 +179,9 @@ def replay_hybrid_constraint_bridge(
         "datum_alignments": [
             item.model_dump(mode="json") for item in partial.datum_alignments
         ],
-        "unresolved": [
-            item.model_dump(mode="json") for item in partial.unresolved
-        ],
+        "unresolved": reader_unresolved,
+        "reader_blocking_unresolved": reader_blocking_unresolved,
+        "reader_blocking_summary": _blocking_summary(reader_unresolved),
         "ledgers": {
             kind: _ledger(observations, kind)
             for kind in (
@@ -160,22 +195,8 @@ def replay_hybrid_constraint_bridge(
                 "hybrid_metric_circle_primitive_ledger",
             )
         },
-        "blocking_unresolved": [
-            item.model_dump(mode="json")
-            for item in partial.unresolved
-            if item.required_for_modeling
-        ],
-        "blocking_summary": [
-            {
-                "kind": item.kind,
-                "field": item.field,
-                "dimension_key": item.dimension_key,
-                "entity_keys": list(item.entity_keys),
-                "reason": item.reason,
-            }
-            for item in partial.unresolved
-            if item.required_for_modeling
-        ],
+        "blocking_unresolved": copy.deepcopy(reader_blocking_unresolved),
+        "blocking_summary": _blocking_summary(reader_unresolved),
         "pipeline": {
             "finalized": False,
             "capture_assembled": False,
@@ -203,7 +224,14 @@ def replay_hybrid_constraint_bridge(
         result["capture"] = capture.model_dump(mode="json")
         result["entity_to_feature"] = dict(sorted(linked.entity_to_feature.items()))
         result["compiled"] = compiled.model_dump(mode="json")
-        result["resolution"] = resolution.to_dict()
+        resolution_payload = resolution.to_dict()
+        result["resolution"] = resolution_payload
+        final_unresolved = [
+            item
+            for item in resolution_payload.get("unresolved", [])
+            if isinstance(item, dict)
+        ]
+        _set_final_blocking_status(result, final_unresolved)
 
         draft = build_semantic_draft(compiled, resolution)
         result["pipeline"]["drafted"] = True

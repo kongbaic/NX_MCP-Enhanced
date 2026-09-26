@@ -2264,6 +2264,132 @@ def test_unassigned_profile_offset_recovery_rejects_internal_to_internal_span():
     assert ledger == []
 
 
+def _open_slot_fixture(extra_tokens=None):
+    report = {
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 2,
+                    "token": "2",
+                    "bbox": [[108, 8], [124, 8], [124, 24], [108, 24]],
+                },
+                *(extra_tokens or []),
+            ]
+        },
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 200, 200],
+                "circle_groups": [
+                    {
+                        "circle_group_id": "C1",
+                        "center_px": [100, 100],
+                        "rings": [{"radius_px": 30}],
+                    }
+                ],
+            }
+        ],
+    }
+    candidates = [
+        {
+            "candidate_id": "DG_TOP",
+            "region_id": "R1",
+            "witness_line_evidence": [
+                {
+                    "witness_index": 0,
+                    "source_lines": [
+                        {"orientation": "horizontal", "axis_px": 40, "span_px": [10, 94]},
+                        {"orientation": "horizontal", "axis_px": 40, "span_px": [106, 190]},
+                        {"orientation": "vertical", "axis_px": 94, "span_px": [45, 70]},
+                        {"orientation": "vertical", "axis_px": 106, "span_px": [40, 70]},
+                    ],
+                }
+            ],
+        }
+    ]
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "Z",
+            "anchors": [
+                {"role": "overall_max", "position_px": 40, "ref": "R1.TOP"},
+                {"role": "overall_min", "position_px": 180, "ref": "R1.BOTTOM"},
+            ],
+        }
+    ]
+    facts = [
+        hybrid_adapter.PartialOverallDimensionFact(
+            axis="Z",
+            value=66,
+            evidence=["test:overall-z"],
+        )
+    ]
+    return report, candidates, view_lookup, boundaries, facts
+
+
+def test_open_slot_materializes_stable_core_without_pixel_metric():
+    report, candidates, view_lookup, boundaries, facts = _open_slot_fixture()
+
+    entities, values, unresolved, ledger, claimed = (
+        hybrid_adapter._open_slot_observations(
+            report=report,
+            candidates=candidates,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=facts,
+        )
+    )
+
+    assert len(entities) == 1
+    assert entities[0].shape == "slot_edges"
+    by_field = {item.field: item.value for item in values}
+    assert by_field["type"] == "slot"
+    assert by_field["width"] == 2
+    assert by_field["width_axis"] == "X"
+    assert by_field["top_z"] == 66
+    assert {item.field for item in unresolved} == {"through_axis", "bottom_z"}
+    assert claimed == {2}
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
+    assert ledger[0]["slot_edge_positions_px"] == [94.0, 106.0]
+
+
+def test_open_slot_fails_closed_when_two_tokens_compete():
+    report, candidates, view_lookup, boundaries, facts = _open_slot_fixture(
+        extra_tokens=[
+            {
+                "source_item_index": 3,
+                "token": "3",
+                "bbox": [[90, 10], [104, 10], [104, 24], [90, 24]],
+            }
+        ]
+    )
+
+    entities, values, unresolved, ledger, claimed = (
+        hybrid_adapter._open_slot_observations(
+            report=report,
+            candidates=candidates,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=facts,
+        )
+    )
+
+    assert entities == []
+    assert values == []
+    assert unresolved == []
+    assert ledger == []
+    assert claimed == set()
+
+
 def test_metric_profile_topology_hint_finds_unique_l_cycle_without_pixel_metric():
     inventory = [
         {

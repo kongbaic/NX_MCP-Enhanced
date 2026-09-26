@@ -960,6 +960,30 @@ def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocke
     assert any("structured kind" in item for item in errors)
 
 
+def test_current_capture_contract_accepts_canonical_slot_value_fields():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="slot_edges")],
+        values=[
+            CaptureValue(id="K1", entity_id="E1", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E1", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E1", field="width_axis", value="X"),
+            CaptureValue(id="A2", entity_id="E1", field="through_axis", value="Y"),
+            CaptureValue(id="Z1", entity_id="E1", field="top_z", value=20),
+            CaptureValue(id="Z2", entity_id="E1", field="bottom_z", value=10),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
 def test_current_capture_contract_accepts_canonical_start_side_value():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(

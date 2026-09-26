@@ -302,6 +302,7 @@ def _coverage_unresolved(
     *,
     boundaries: list[dict[str, Any]],
     overall_dimension_facts: list[PartialOverallDimensionFact],
+    excluded_source_item_indices: set[Any] | None = None,
 ) -> list[ObservationUnresolved]:
     coverage = report.get("coverage")
     if not isinstance(coverage, dict):
@@ -310,6 +311,7 @@ def _coverage_unresolved(
         raise HybridCaptureAdapterError("Hybrid OCR report has observed silent evidence drops")
 
     unresolved: list[ObservationUnresolved] = []
+    excluded_source_indices = excluded_source_item_indices or set()
     conflicting_candidate_ids = {
         str(item.get("candidate_id") or "")
         for item in coverage.get("conflicting_linear_observations", [])
@@ -388,6 +390,8 @@ def _coverage_unresolved(
 
     for item in coverage.get("unassigned_linear_observations", []):
         if not isinstance(item, dict):
+            continue
+        if item.get("source_item_index") in excluded_source_indices:
             continue
         unresolved.append(
             ObservationUnresolved(
@@ -3397,6 +3401,417 @@ def _resolved_axis_boundary_positions(
     return matches[0]
 
 
+def _open_slot_observations(
+    *,
+    report: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    overall_dimension_facts: list[PartialOverallDimensionFact],
+) -> tuple[
+    list[ObservationEntity],
+    list[ObservationValue],
+    list[ObservationUnresolved],
+    list[dict[str, Any]],
+    set[Any],
+]:
+    """Materialize only uniquely owned top-open slot geometry.
+
+    Engineering width comes from OCR. Pixel geometry is used only to prove one
+    open-top notch: a gap in the resolved overall-Z-max contour, two descending
+    slot walls, midpoint alignment to one circular projection, and termination
+    at that circle's upper projected edge. No pixel distance is converted to mm.
+
+    Through-axis and lower-Z engineering semantics remain unresolved here.
+    """
+
+    coverage = report.get("coverage", {})
+    raw_unassigned = (
+        coverage.get("unassigned_linear_observations", [])
+        if isinstance(coverage, dict)
+        else []
+    )
+    unassigned = [
+        item
+        for item in raw_unassigned
+        if isinstance(item, dict)
+        and _token_numeric_value(item.get("token")) is not None
+        and _bbox_center(item.get("bbox")) is not None
+    ]
+    if not unassigned:
+        return [], [], [], [], set()
+
+    z_facts = [
+        fact
+        for fact in overall_dimension_facts
+        if fact.axis == "Z" and fact.evidence
+    ]
+    if len(z_facts) != 1:
+        return [], [], [], [], set()
+    z_fact = z_facts[0]
+
+    def source_lines(
+        region_id: str,
+        orientation: str,
+    ) -> list[tuple[float, float, float]]:
+        seen: set[tuple[float, float, float]] = set()
+        output: list[tuple[float, float, float]] = []
+        for candidate in candidates:
+            if (
+                not isinstance(candidate, dict)
+                or str(candidate.get("region_id") or "") != region_id
+            ):
+                continue
+            for witness in candidate.get("witness_line_evidence", []):
+                if not isinstance(witness, dict):
+                    continue
+                for line in witness.get("source_lines", []):
+                    if not isinstance(line, dict):
+                        continue
+                    if str(line.get("orientation") or "") != orientation:
+                        continue
+                    axis_px = line.get("axis_px")
+                    span_px = line.get("span_px")
+                    if not (
+                        isinstance(axis_px, (int, float))
+                        and not isinstance(axis_px, bool)
+                        and isinstance(span_px, list)
+                        and len(span_px) == 2
+                        and all(
+                            isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            for value in span_px
+                        )
+                    ):
+                        continue
+                    start, end = sorted(float(value) for value in span_px)
+                    record = (
+                        round(float(axis_px), 3),
+                        round(start, 3),
+                        round(end, 3),
+                    )
+                    if record in seen:
+                        continue
+                    seen.add(record)
+                    output.append(record)
+        return output
+
+    entities: list[ObservationEntity] = []
+    values: list[ObservationValue] = []
+    unresolved: list[ObservationUnresolved] = []
+    ledger: list[dict[str, Any]] = []
+    claimed_source_indices: set[Any] = set()
+
+    for region in report.get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        view = view_lookup.get(region_id)
+        if view is None or view.view_kind not in {"front", "side"}:
+            continue
+        if _axis_for(view.view_kind, "vertical") != "Z":
+            continue
+
+        bbox = region.get("bbox_px")
+        if not (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in bbox
+            )
+        ):
+            continue
+        rx, ry, rw, rh = (float(value) for value in bbox)
+        tolerance = max(3.0, min(rw, rh) * 0.01)
+
+        boundary_positions = _resolved_axis_boundary_positions(
+            boundaries,
+            region_id=region_id,
+            axis="Z",
+        )
+        if boundary_positions is None:
+            continue
+        top_y, top_ref = boundary_positions["overall_max"]
+
+        horizontal_lines = [
+            line
+            for line in source_lines(region_id, "horizontal")
+            if abs(line[0] - top_y) <= tolerance
+        ]
+        spans = sorted((line[1], line[2]) for line in horizontal_lines)
+        merged: list[list[float]] = []
+        for start, end in spans:
+            if not merged or start > merged[-1][1] + tolerance:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+        if len(merged) < 2:
+            continue
+
+        vertical_lines = source_lines(region_id, "vertical")
+        region_matches: list[dict[str, Any]] = []
+
+        groups = region.get("circle_groups", [])
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("circle_group_id") or "")
+            center = group.get("center_px")
+            rings = group.get("rings")
+            if not (
+                group_id
+                and isinstance(center, list)
+                and len(center) >= 2
+                and all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in center[:2]
+                )
+                and isinstance(rings, list)
+                and len(rings) == 1
+                and isinstance(rings[0], dict)
+                and isinstance(rings[0].get("radius_px"), (int, float))
+                and not isinstance(rings[0].get("radius_px"), bool)
+            ):
+                continue
+
+            center_x = float(center[0])
+            center_y = float(center[1])
+            radius = float(rings[0]["radius_px"])
+            if radius <= 0:
+                continue
+            circle_top_y = center_y - radius
+            if circle_top_y <= top_y + tolerance:
+                continue
+
+            gaps = []
+            for left_span, right_span in zip(merged, merged[1:]):
+                left_edge = float(left_span[1])
+                right_edge = float(right_span[0])
+                if right_edge <= left_edge:
+                    continue
+                gap_width = right_edge - left_edge
+                midpoint = (left_edge + right_edge) / 2.0
+                if not (left_edge - tolerance <= center_x <= right_edge + tolerance):
+                    continue
+                if abs(midpoint - center_x) > max(tolerance, gap_width * 0.35):
+                    continue
+                gaps.append((left_edge, right_edge, gap_width, midpoint))
+            if len(gaps) != 1:
+                continue
+
+            left_edge, right_edge, gap_width, midpoint = gaps[0]
+            interval_length = circle_top_y - top_y
+            if interval_length <= 0:
+                continue
+
+            def wall_support(edge_x: float) -> list[tuple[float, float, float]]:
+                matches: list[tuple[float, float, float]] = []
+                end_tolerance = max(tolerance * 1.5, radius * 0.12)
+                for axis_px, start, end in vertical_lines:
+                    if abs(axis_px - edge_x) > tolerance:
+                        continue
+                    overlap = max(
+                        0.0,
+                        min(end, circle_top_y) - max(start, top_y),
+                    )
+                    if overlap / interval_length < 0.45:
+                        continue
+                    if abs(end - circle_top_y) > end_tolerance:
+                        continue
+                    matches.append((axis_px, start, end))
+                return matches
+
+            left_walls = wall_support(left_edge)
+            right_walls = wall_support(right_edge)
+            if not left_walls or not right_walls:
+                continue
+
+            token_candidates = []
+            for item in unassigned:
+                source_index = item.get("source_item_index")
+                if source_index in claimed_source_indices:
+                    continue
+                center_px = _bbox_center(item.get("bbox"))
+                value = _token_numeric_value(item.get("token"))
+                if center_px is None or value is None or value <= 0:
+                    continue
+                cx, cy = center_px
+                if not (
+                    rx - rw * 0.05 <= cx <= rx + rw * 1.05
+                    and ry - rh * 0.25 <= cy <= top_y + rh * 0.05
+                    and abs(cx - midpoint) <= rw * 0.20
+                ):
+                    continue
+                token_candidates.append(item)
+            if len(token_candidates) != 1:
+                continue
+
+            token_item = token_candidates[0]
+            region_matches.append(
+                {
+                    "group_id": group_id,
+                    "circle_entity": f"{region_id}.{group_id}",
+                    "circle_center_px": [center_x, center_y],
+                    "circle_radius_px": radius,
+                    "circle_top_y_px": circle_top_y,
+                    "top_boundary_position_px": top_y,
+                    "top_boundary_ref": top_ref,
+                    "left_edge_px": left_edge,
+                    "right_edge_px": right_edge,
+                    "gap_width_px": gap_width,
+                    "gap_midpoint_px": midpoint,
+                    "left_walls": left_walls,
+                    "right_walls": right_walls,
+                    "token_item": token_item,
+                }
+            )
+
+        if len(region_matches) != 1:
+            continue
+
+        match = region_matches[0]
+        token_item = match["token_item"]
+        source_index = token_item.get("source_item_index")
+        value = _token_numeric_value(token_item.get("token"))
+        if value is None or value <= 0:
+            continue
+
+        width_axis = _axis_for(view.view_kind, "horizontal")
+        entity_key = f"{region_id}.OPEN_SLOT.{source_index}"
+        evidence = list(
+            dict.fromkeys(
+                [
+                    f"hybrid:whole:{source_index}",
+                    f"hybrid:open-slot:{region_id}:{source_index}",
+                    f"hybrid:boundary:{match['top_boundary_ref'] or 'overall_max_z'}",
+                    f"hybrid:geometry:{match['circle_entity']}",
+                    *z_fact.evidence,
+                ]
+            )
+        )
+
+        entities.append(
+            ObservationEntity(
+                key=entity_key,
+                view_key=f"view.{region_id}",
+                shape="slot_edges",
+                cross_view_disposition="single_view",
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        values.extend(
+            [
+                ObservationValue(
+                    entity_key=entity_key,
+                    field="type",
+                    value="slot",
+                    semantic="feature_kind",
+                    evidence=evidence,
+                ),
+                ObservationValue(
+                    entity_key=entity_key,
+                    field="width",
+                    value=float(value),
+                    semantic="slot_width",
+                    evidence=evidence,
+                ),
+                ObservationValue(
+                    entity_key=entity_key,
+                    field="width_axis",
+                    value=width_axis,
+                    semantic="axis",
+                    evidence=evidence,
+                ),
+                ObservationValue(
+                    entity_key=entity_key,
+                    field="top_z",
+                    value=float(z_fact.value),
+                    semantic="position_dimension",
+                    evidence=evidence,
+                ),
+            ]
+        )
+        unresolved.extend(
+            [
+                ObservationUnresolved(
+                    kind="feature_value",
+                    reason=(
+                        "Open-slot width/topology is uniquely owned, but the "
+                        "orthographic evidence does not yet prove whether the "
+                        "slot is through the hidden view-normal direction."
+                    ),
+                    entity_keys=[entity_key],
+                    field="through_axis",
+                    evidence=evidence,
+                    required_for_modeling=True,
+                ),
+                ObservationUnresolved(
+                    kind="feature_value",
+                    reason=(
+                        "Slot walls terminate at the circular projection's upper "
+                        "edge in pixel topology, but lower_z must be closed later "
+                        "from engineering circle center/diameter relations rather "
+                        "than pixel-to-mm conversion."
+                    ),
+                    entity_keys=[entity_key],
+                    field="bottom_z",
+                    evidence=evidence,
+                    required_for_modeling=True,
+                ),
+            ]
+        )
+        claimed_source_indices.add(source_index)
+        ledger.append(
+            {
+                "entity_key": entity_key,
+                "source_item_index": source_index,
+                "region_id": region_id,
+                "view_kind": view.view_kind,
+                "width": float(value),
+                "width_axis": width_axis,
+                "top_z": float(z_fact.value),
+                "top_boundary_ref": match["top_boundary_ref"],
+                "top_boundary_position_px": round(
+                    float(match["top_boundary_position_px"]), 3
+                ),
+                "circle_entity": match["circle_entity"],
+                "circle_center_px": [
+                    round(float(item), 3)
+                    for item in match["circle_center_px"]
+                ],
+                "circle_radius_px": round(float(match["circle_radius_px"]), 3),
+                "circle_top_y_px": round(float(match["circle_top_y_px"]), 3),
+                "slot_edge_positions_px": [
+                    round(float(match["left_edge_px"]), 3),
+                    round(float(match["right_edge_px"]), 3),
+                ],
+                "slot_gap_midpoint_px": round(
+                    float(match["gap_midpoint_px"]), 3
+                ),
+                "left_wall_support": [
+                    [round(float(v), 3) for v in item]
+                    for item in match["left_walls"]
+                ],
+                "right_wall_support": [
+                    [round(float(v), 3) for v in item]
+                    for item in match["right_walls"]
+                ],
+                "basis": (
+                    "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                    "circle_center_alignment_and_upper_circle_termination"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
+
+    return entities, values, unresolved, ledger, claimed_source_indices
+
+
 def _segment_distance_to_position(
     segments: Any,
     position: float,
@@ -3957,6 +4372,21 @@ def adapt_hybrid_ocr_report(
             centerline_alignments=centerline_alignments,
         )
     )
+    (
+        slot_entities,
+        slot_values,
+        slot_unresolved,
+        slot_ledger,
+        slot_claimed_source_indices,
+    ) = _open_slot_observations(
+        report=report,
+        candidates=dimension_candidates,
+        view_lookup=view_lookup,
+        boundaries=boundaries,
+        overall_dimension_facts=context.overall_dimension_facts,
+    )
+    entities.extend(slot_entities)
+    unresolved.extend(slot_unresolved)
 
     pattern_entity_by_ref: dict[str, str] = {}
     for record in callout_ledger:
@@ -4133,7 +4563,8 @@ def adapt_hybrid_ocr_report(
                 item.get("half_source_item_index")
                 for item in symmetric_chain_ledger
                 if isinstance(item, dict)
-            },
+            }
+            | slot_claimed_source_indices,
         )
     )
     dimensions.extend(recovered_profile_dimensions)
@@ -4145,6 +4576,7 @@ def adapt_hybrid_ocr_report(
             view_lookup,
             boundaries=boundaries,
             overall_dimension_facts=context.overall_dimension_facts,
+            excluded_source_item_indices=slot_claimed_source_indices,
         )
     )
 
@@ -4214,6 +4646,13 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_topology_only": True,
         },
         {
+            "kind": "hybrid_open_slot_ledger",
+            "schema": "1.0",
+            "items": slot_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
             "kind": "hybrid_circle_datum_alignment_ledger",
             "schema": "1.0",
             "items": circle_alignment_records,
@@ -4264,7 +4703,12 @@ def adapt_hybrid_ocr_report(
         views=views,
         entities=entities,
         associations=associations,
-        values=[*geometry_values, *callout_values, *recess_start_side_values],
+        values=[
+            *geometry_values,
+            *callout_values,
+            *recess_start_side_values,
+            *slot_values,
+        ],
         dimensions=dimensions,
         datum_alignments=datum_alignments,
         centerline_alignments=centerline_alignments,

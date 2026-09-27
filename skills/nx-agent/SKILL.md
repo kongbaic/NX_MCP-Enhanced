@@ -35,10 +35,11 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 6. Hybrid Frontend resume 返回 exit code=0、phase=mode_b_gate_a_pass 时，唯一允许向后传递的是其 `mode_b` 子报告/state 指向的本轮 canonical drawing artifact。若 exit code=4、phase=mode_b_awaiting_confirmation，只允许读取其 `mode_b` 子报告指向的 confirmation-request 并向用户展示现有 1..3 个 option；用户选择后只允许执行一次 `python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>`。其它 exit code / phase 一律 BLOCKED / STOP；禁止第二轮确认。
 7. 若当前请求没有明确 runtime-local raster 路径或输入不是 raster，才允许使用 reader-runtime-contract.md 的 fallback semantic Reader：当前图纸一次连续 first-pass → immutable reader-observations.json → `python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>`。该 fallback 不得扫描寻找 raster，也不得调用 Hybrid Frontend 猜路径。
 8. Hybrid Frontend 或 Mode B coordinator 接管后，正常运行禁止为了处理错误读取实现源码、schema、tool signatures，禁止重写 observations/partial observations，禁止换 fresh prefix 重试，禁止绕过 state machine 手工串联 `assemble-reader-capture` / `link-capture` / `resolve` / Gate A。首次 terminal/blocked 即报告并 STOP；前端失败不属于 Controlled Self-Healing。只有用户明确要求开发排障时才允许源码审计。
-9. Gate A PASS 后根据 state 指向的本轮 canonical drawing.json 从零生成新的 frozen plan；Planner 只读取该 drawing.json，不得读取中间 reader-capture、drawing-evidence 或 semantic-draft。
-10. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
-11. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、mode-b-state、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
-12. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
+9. Gate A PASS 后进入建模规划时，必须读取 `references/modeling-planner.md`、`references/runner-contract.md`、`references/certified-tool-contract.json`、`references/nx-mcp-rules.md`、`references/topology-safety.md`；Planner 只读取 state 指向的本轮 canonical drawing.json，不得读取中间 reader-capture、drawing-evidence 或 semantic-draft。写 frozen plan **之前**必须先调用已安装 Runner：`runner.py plan-contracts <current-drawing.json>`。只有 exit code=0、`ok=true`、`errors=[]` 才允许继续；任何 capability / adapter / materialization 缺口立即 BLOCKED / STOP。
+10. Planner 必须直接消费 `plan-contracts` 返回的 selected implementation、geometries 与 `operation_contracts`；其中 `fixed_args` 是 deterministic Adapter 已从工程真值解析出的 NX 参数，禁止重算、改写、反推或用像素替换。Planner 只允许补 `requires` 指定的 symbol wiring、安排合法步骤顺序与非工程真值执行编排，然后从零写本轮新的 frozen plan。
+11. Mode B 固定执行：`runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`，随后 `runner.py check <current-executable> --drawing <current-drawing>`。任一失败立即 B 阶段失败 / STOP，不得改 frozen plan 后自动重跑；两者 PASS 后才允许调用 Runner 执行当前 executable。
+12. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、mode-b-state、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
+13. 总控规则见 references/pipeline-contract.md；用户输出规范见 references/chinese-output.md。
 
 两条链路：
 
@@ -59,7 +60,11 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
    → deterministic Mode B coordinator]
 → [无 raster path：fallback semantic Reader → reader-observations.json → deterministic Mode B coordinator]
 → Gate A canonical drawing.json
-→ 建模规划
+→ plan-contracts（Capability Resolver + deterministic Adapter operation_contracts）
+→ Planner（只补 requires wiring + step 顺序）
+→ frozen plan
+→ build --drawing
+→ check --drawing
 → Plan Runner
 → Siemens NX
 → PRT + STEP

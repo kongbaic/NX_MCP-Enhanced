@@ -343,9 +343,13 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
    → deterministic Mode B coordinator]
 → [若无 raster path：fallback semantic Reader → reader-observations.json → deterministic Mode B coordinator]
 → Gate A canonical drawing.json
+→ runner plan-contracts <current-drawing.json>
+→ Planner 直接消费 selected implementation + geometries + operation_contracts
+   ├─ fixed_args：deterministic Adapter 所有，禁止 Planner 重算/改写
+   └─ requires：Planner 只补 symbol wiring + 合法 step 顺序
 → 根据当前 drawing.json 新生成 frozen plan
-→ runner build --drawing <current-drawing>
-→ runner check
+→ runner build <current-frozen> <current-executable> --drawing <current-drawing>
+→ runner check <current-executable> --drawing <current-drawing>
 → 当前 executable plan
 ~~~
 
@@ -356,12 +360,15 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 - raster 路径必须由本轮 Hybrid Adapter + Reader Observation Finalizer 重新生成一次性 reader-observations.json；fallback 路径才由 Reader 直接生成；旧 observations 均不得复用。
 - observations 写出后必须由本轮 fresh coordinator state 独占生成 reader-capture、drawing-evidence、semantic-draft、confirmation artifacts 与 canonical drawing；Agent 不得手动重建或覆盖这些中间 artifact。
 - coordinator Gate A PASS 后必须重新运行 Planner，只从 state 指向的本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
+- 写 frozen plan 前必须执行 `runner.py plan-contracts <current-drawing.json>`；只有 exit code=0、ok=true、errors=[] 才能继续。无 capability / adapter / operation materialization 时 fail closed，禁止 Planner 自己补算法或绕过。
+- Planner 必须消费 plan-contracts 返回的 selected implementation、geometries、recipes 与 operation_contracts；`fixed_args` 不得重算、改写或反推，Planner 只补 `requires` 的 symbol wiring 和合法 step 顺序。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。
 - Planner 不得读取 drawing-evidence.json 或 semantic-draft.json；Planner 只读取本轮 Gate A PASS 的 drawing.json。
-- Mode B build 固定绑定本轮 drawing：runner.py build <current-frozen> <current-executable> --drawing <current-drawing>。
+- Mode B build 固定绑定本轮 drawing：`runner.py build <current-frozen> <current-executable> --drawing <current-drawing>`。
+- Mode B executable check 同样必须绑定本轮 drawing：`runner.py check <current-executable> --drawing <current-drawing>`；禁止退化成不带 `--drawing` 的 standalone check 作为 Gate B 依据。
 - 只有本轮 observations → coordinator state machine → Gate A 成功后产生的 canonical drawing 才能向 Planner 传递；不引入跨任务身份或 registry。
 
-runner build/check 任一失败即 B 失败。B 阶段失败不进入自修复，禁止修改 frozen plan 后自动重跑。
+plan-contracts / build / check 任一失败即 B 失败。B 阶段失败不进入自修复，禁止修改 frozen plan 后自动重跑。
 
 ## 5. 阶段 C：Plan Runner
 

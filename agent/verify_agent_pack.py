@@ -240,8 +240,13 @@ def main() -> None:
         "fallback semantic Reader",
         "mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>",
         "禁止第二轮确认",
-        "从零生成新的 frozen plan",
-        "--drawing <current-drawing>",
+        "runner.py plan-contracts <current-drawing.json>",
+        "operation_contracts",
+        "fixed_args",
+        "requires",
+        "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "runner.py check <current-executable> --drawing <current-drawing>",
+        "从零写本轮新的 frozen plan",
         "mode-b-state",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
@@ -267,7 +272,12 @@ def main() -> None:
         "exit code = 0",
         "`written=true`",
         "`output_exists=true`",
-        "--drawing <current-drawing>",
+        "`plan-contracts <current-drawing.json>`",
+        "operation_contracts",
+        "`fixed_args` 不得由 Planner 重算、改写或反推",
+        "`requires`",
+        "runner build --drawing <current-drawing.json>",
+        "runner check --drawing <current-drawing.json>",
     ):
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
@@ -287,7 +297,12 @@ def main() -> None:
         "resolve <drawing-evidence-confirmed.json> <semantic-draft-confirmed.json>",
         "禁止第二轮用户确认",
         "canonicalize-drawing <semantic-draft.json> <drawing.json>",
-        "build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "runner plan-contracts <current-drawing.json>",
+        "selected implementation + geometries + operation_contracts",
+        "fixed_args",
+        "requires",
+        "runner build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "runner check <current-executable> --drawing <current-drawing>",
         "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json",
     ):
         if token not in pipeline_contract:
@@ -389,6 +404,17 @@ def main() -> None:
     ):
         if token not in coordinator_source:
             fail(f"Mode B coordinator implementation regression: missing {token}")
+
+    runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
+    for token in (
+        "def _cmd_plan_contracts(",
+        'add_parser("plan-contracts"',
+        "operation_contracts",
+        "dispatch_planner_adapter(",
+        "capability_plan_errors(",
+    ):
+        if token not in runner_source:
+            fail(f"Mode B plan-contract implementation regression: missing {token}")
 
     drawing_cli_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"

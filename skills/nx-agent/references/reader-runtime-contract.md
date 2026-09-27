@@ -246,17 +246,37 @@ must be an association, not unresolved.
 
 ## 9. Freeze
 
-Write `reader-observations.json` exactly once, then execute:
+Write `reader-observations.json` exactly once. Normal production Mode B must
+immediately hand control to the deterministic coordinator:
 
 ~~~text
-python_exe -m nx_mcp.drawing_intelligence assemble-reader-capture <reader-observations.json> <reader-capture.json>
+python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>
 ~~~
 
-The assembler performs production `ReaderObservations.model_validate`,
-`ReaderCapture.model_validate`, and `validate_reader_capture_contract`.
+The artifact prefix must be a fresh direct child prefix of the current
+`NX_MCP_WORKSPACE`. The coordinator owns the production sequence after visual
+interpretation: ReaderObservations validation → ReaderCapture assembly and
+contract check → identity linker / Gate 0 → Resolver → bounded Human
+Confirmation when eligible → second resolve at most once → canonicalizer /
+Gate A.
 
-If assembly fails: stop without rewriting observations and without a second
-interpretation.
+The coordinator writes a persistent `*-mode-b-state.json` before assembly.
+Therefore a failed first submission is terminal for that prefix: do not rewrite
+observations, do not perform a second interpretation, and do not retry by
+manually invoking downstream CLI stages.
 
-If assembly succeeds: freeze the generated `reader-capture.json` and continue to
-the existing check-capture stage.
+If the coordinator returns `phase=awaiting_confirmation`, present only the
+generated confirmation request. After the user selects existing option IDs,
+write `user-confirmations.json` and resume exactly once:
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>
+~~~
+
+Only `exit code=0` with `phase=gate_a_pass` may continue to Planner. Any other
+terminal or blocked result stops the production run.
+
+Standalone `assemble-reader-capture`, `check-capture`, `link-capture`,
+`resolve`, confirmation, and Gate A commands remain available only for
+development, audit, or explicitly requested single-stage troubleshooting; they
+must not be chained manually during normal Mode B.

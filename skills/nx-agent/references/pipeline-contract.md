@@ -12,11 +12,10 @@
 - 自动修复必须从干净状态完整重跑，禁止从失败步骤续跑。
 
 工程图模式额外遵守 Evidence-first 原则：
-- Reader 只生成 view-local reader-capture.json；
-- deterministic identity linker + Gate 0 生成 drawing-evidence.json；
-- deterministic compiler / resolver 负责几何关系与坐标求解；
-- semantic-draft.json 由固定程序生成；
-- canonicalizer / Gate A 只验证与规范化；
+- Agent 的视觉职责在一次性 `reader-observations.json` 写出时结束；
+- 正常生产运行从 observations 到 Gate A 必须由 deterministic Mode B coordinator 独占编排；
+- coordinator 内部完成 ReaderCapture assembly/contract、identity linker + Gate 0、compiler / resolver、最多一次 bounded Human Confirmation resume、semantic draft 与 canonicalizer / Gate A；
+- Agent 不得在正常 Mode B 中手动串联这些内部阶段，也不得因内部失败读取实现源码后修 JSON 重试；
 - Backend v1 在 Gate A PASS 后保持冻结。
 
 ## 2. Runtime Config（强制）
@@ -41,7 +40,26 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 
 ## 3. 阶段 A：工程图 Evidence → Gate A
 
-读取 drawing-reader.md、reader-capture-contract.md 与 nx-drawing-rules.md。
+正常生产 Reader 只读取 `reader-runtime-contract.md` 与 `nx-drawing-rules.md`。完整 `drawing-reader.md` / `reader-capture-contract.md` 仅供开发、审计或单步排障。
+
+### 3.0 正常 Mode B 唯一生产入口
+
+Reader 一次性写出 `reader-observations.json` 后，必须立即执行：
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>
+~~~
+
+正常 Mode B 中，A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述 coordinator 的内部阶段与开发审计语义，**不得由 Agent 逐条手动执行**。独立 CLI 只能用于用户明确要求的开发、审计或单步排障。
+
+coordinator 返回：
+- `exit code=0, phase=gate_a_pass`：阶段 A PASS，state 中的 canonical drawing 是唯一允许交给 Planner 的语义 artifact；
+- `exit code=4, phase=awaiting_confirmation`：只展示 coordinator 生成的 1..3 个结构化 confirmation questions，用户选择现有 option_id 后写出 `user-confirmations.json`，并且只允许执行一次 `mode_b_coordinator resume <state> <answers>`；
+- 其它 exit code / phase：BLOCKED / STOP。
+
+resume 内部完成 apply-confirmations → second resolve → Gate A。只有 `exit code=0, phase=gate_a_pass` 才继续；禁止第二轮 confirmation、禁止重写 observations、禁止重新看图、禁止手动调用内部 CLI 绕过 state machine。
+
+以下 A1–A5 保留为 coordinator 内部阶段定义与调试参考。
 
 ### A0.5. Deterministic Reader input preparation
 
@@ -293,15 +311,11 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 ~~~text
 当前上传工程图
 → [若有明确 raster path：prepare-reader-input → reader-input.json + reader-contact-sheet.png]
-→ reader-observations.json
-→ deterministic assemble-reader-capture → reader-capture.json
-→ check-capture
-→ deterministic identity link / Gate 0
-→ drawing-evidence.json
-→ deterministic resolve
-→ semantic-draft.json
-→ canonicalize-drawing / Gate A
-→ 当前 drawing.json
+→ 一次性 reader-observations.json
+→ deterministic Mode B coordinator
+   ├─ PASS → Gate A canonical drawing.json
+   ├─ awaiting_confirmation → 一次 user-confirmations → coordinator resume → Gate A
+   └─ blocked / terminal_failed → STOP
 → 根据当前 drawing.json 新生成 frozen plan
 → runner build --drawing <current-drawing>
 → runner check
@@ -312,14 +326,13 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 - 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
 - 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用；只有本轮从当前明确 raster path 成功运行 prepare-reader-input 生成的 reader-input.json 与其中列出的 crops 才能作为 Reader 的非权威 geometry-only 辅助。
-- Reader 必须从当前图纸重新生成 reader-observations.json，并由 deterministic assembler 重新生成 reader-capture.json；旧 observations/capture 均不得复用。
-- link-capture 必须只读取本轮 reader-capture.json 并生成本轮 drawing-evidence.json；旧 evidence 不得复用。
-- resolve 必须只读取本轮 drawing-evidence.json；不得读取历史 semantic draft、drawing 或 plan。
-- canonicalize-drawing 成功后必须重新运行 Planner，只从本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
+- Reader 必须从当前图纸重新生成一次性 reader-observations.json；旧 observations 不得复用。
+- observations 写出后必须由本轮 fresh coordinator state 独占生成 reader-capture、drawing-evidence、semantic-draft、confirmation artifacts 与 canonical drawing；Agent 不得手动重建或覆盖这些中间 artifact。
+- coordinator Gate A PASS 后必须重新运行 Planner，只从 state 指向的本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。
 - Planner 不得读取 drawing-evidence.json 或 semantic-draft.json；Planner 只读取本轮 Gate A PASS 的 drawing.json。
 - Mode B build 固定绑定本轮 drawing：runner.py build <current-frozen> <current-executable> --drawing <current-drawing>。
-- 只有本轮 observations → assemble-reader-capture → capture → link-capture → evidence → resolve → Gate A 成功后产生的 artifact 才能沿本轮流程向后传递；不引入跨任务身份或 registry。
+- 只有本轮 observations → coordinator state machine → Gate A 成功后产生的 canonical drawing 才能向 Planner 传递；不引入跨任务身份或 registry。
 
 runner build/check 任一失败即 B 失败。B 阶段失败不进入自修复，禁止修改 frozen plan 后自动重跑。
 

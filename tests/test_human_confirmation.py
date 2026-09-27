@@ -82,6 +82,38 @@ def _graph() -> EvidenceGraph:
     )
 
 
+def _start_side_graph() -> EvidenceGraph:
+    return EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[ViewEvidence(id="V1", kind="front", source_ids=["OBS_V1"])],
+        projections=[
+            ProjectionEvidence(
+                id="P_THREAD",
+                feature_id="F_THREAD",
+                view_id="V1",
+                shape="hidden_parallel",
+                source_ids=["OBS_THREAD"],
+            )
+        ],
+        unresolved_evidence=[
+            {
+                "id": "U_THREAD_SIDE",
+                "kind": "start_side",
+                "reason": "transverse thread entry side is unresolved",
+                "required_for_modeling": True,
+                "feature_ids": ["F_THREAD"],
+                "field": "start_side",
+                "axis": "X",
+                "source_ids": ["OBS_THREAD"],
+            }
+        ],
+    )
+
+
 def test_identity_linker_preserves_unresolved_endpoint_candidates():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(
@@ -165,6 +197,63 @@ def test_confirmation_request_is_bounded_to_known_features_and_boundaries():
         "feature:F1.centerline.y"
     ]
     assert feature_options[0]["evidence_candidate"] is True
+
+
+def test_start_side_confirmation_request_is_bounded_to_min_max():
+    request = build_confirmation_request(_start_side_graph())
+
+    assert request["question_count"] == 1
+    assert request["eligible_for_user_confirmation"] is True
+    question = request["questions"][0]
+    assert question["kind"] == "start_side"
+    assert question["feature_id"] == "F_THREAD"
+    assert question["axis"] == "X"
+    assert {
+        (item["role"], item.get("value"))
+        for item in question["options"]
+    } == {
+        ("start_side", "min"),
+        ("start_side", "max"),
+        ("keep_unresolved", None),
+    }
+
+
+def test_apply_start_side_confirmation_adds_direct_semantic_value():
+    graph = _start_side_graph()
+    request = build_confirmation_request(graph)
+    question = request["questions"][0]
+    option = next(
+        item
+        for item in question["options"]
+        if item.get("value") == "min"
+    )
+
+    confirmed = apply_confirmation_answers(
+        graph,
+        {
+            "schema_version": "1.0",
+            "answers": [
+                {
+                    "confirmation_id": question["confirmation_id"],
+                    "selected_option_ids": [option["option_id"]],
+                }
+            ],
+        },
+    )
+
+    assert confirmed.unresolved_evidence == []
+    direct = next(
+        item
+        for item in confirmed.direct_values
+        if item.target == "feature:F_THREAD.start_side"
+    )
+    assert direct.value == "min"
+    assert direct.semantic == "start_side"
+    assert any(
+        source.startswith("human-confirmation:")
+        for source in direct.source_ids
+    )
+    assert resolve_evidence_graph(compile_evidence_graph(confirmed)).ok is True
 
 
 def test_apply_confirmation_closes_edge_offset_through_existing_resolver():

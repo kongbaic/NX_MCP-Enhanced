@@ -121,6 +121,64 @@ def _confirmed_start_side_values(
     return output, ledger
 
 
+def _missing_transverse_thread_start_side_unresolved(
+    *,
+    values: list[ObservationValue],
+) -> list[ObservationUnresolved]:
+    by_entity: dict[str, dict[str, ObservationValue]] = {}
+    for item in values:
+        by_entity.setdefault(item.entity_key, {})[item.field] = item
+
+    output: list[ObservationUnresolved] = []
+    for entity_key, fields in sorted(by_entity.items()):
+        axis_item = fields.get("axis")
+        spec_item = fields.get("thread_spec")
+        depth_item = fields.get("thread_depth")
+        side_item = fields.get("start_side")
+
+        axis = str(axis_item.value).upper() if axis_item is not None else ""
+        depth = depth_item.value if depth_item is not None else None
+        if (
+            axis not in {"X", "Y"}
+            or spec_item is None
+            or not isinstance(spec_item.value, str)
+            or not spec_item.value.strip()
+            or not isinstance(depth, (int, float))
+            or isinstance(depth, bool)
+            or float(depth) <= 0
+            or (
+                side_item is not None
+                and side_item.value in {"min", "max"}
+            )
+        ):
+            continue
+
+        evidence = list(
+            dict.fromkeys(
+                source
+                for item in (axis_item, spec_item, depth_item)
+                if item is not None
+                for source in item.evidence
+            )
+        )
+        output.append(
+            ObservationUnresolved(
+                kind="start_side",
+                reason=(
+                    "Transverse threaded feature has explicit thread depth but no "
+                    "confirmed machining entry side; start_side is required to derive "
+                    "its canonical axial range without pixel-to-mm conversion."
+                ),
+                entity_keys=[entity_key],
+                field="start_side",
+                axis=axis,
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+    return output
+
+
 def _axis_for(view_kind: ViewKind, orientation: str) -> Axis:
     mapping: dict[tuple[str, str], Axis] = {
         ("front", "horizontal"): "X",
@@ -4441,6 +4499,16 @@ def adapt_hybrid_ocr_report(
             existing_values=[
                 *callout_values,
                 *recess_start_side_values,
+            ],
+        )
+    )
+    unresolved.extend(
+        _missing_transverse_thread_start_side_unresolved(
+            values=[
+                *geometry_values,
+                *callout_values,
+                *recess_start_side_values,
+                *confirmed_start_side_values,
             ],
         )
     )

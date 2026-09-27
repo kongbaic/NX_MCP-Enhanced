@@ -206,6 +206,74 @@ def test_confirmed_start_side_requires_known_entity_and_preserves_human_provenan
         )
 
 
+def test_missing_transverse_thread_start_side_is_blocking_unresolved():
+    unresolved = hybrid_adapter._missing_transverse_thread_start_side_unresolved(
+        values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="axis",
+                value="X",
+                semantic="axis",
+                evidence=["axis"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="thread_depth",
+                value=12.0,
+                evidence=["depth"],
+            ),
+        ]
+    )
+
+    assert len(unresolved) == 1
+    assert unresolved[0].kind == "start_side"
+    assert unresolved[0].entity_keys == ["R1.THREAD"]
+    assert unresolved[0].field == "start_side"
+    assert unresolved[0].axis == "X"
+    assert unresolved[0].required_for_modeling is True
+
+
+def test_confirmed_transverse_thread_start_side_suppresses_unresolved():
+    unresolved = hybrid_adapter._missing_transverse_thread_start_side_unresolved(
+        values=[
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="axis",
+                value="X",
+                semantic="axis",
+                evidence=["axis"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="thread_spec",
+                value="M6",
+                evidence=["thread"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="thread_depth",
+                value=12.0,
+                evidence=["depth"],
+            ),
+            hybrid_adapter.ObservationValue(
+                entity_key="R1.THREAD",
+                field="start_side",
+                value="min",
+                semantic="start_side",
+                evidence=["human-confirmation"],
+            ),
+        ]
+    )
+
+    assert unresolved == []
+
+
 def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 

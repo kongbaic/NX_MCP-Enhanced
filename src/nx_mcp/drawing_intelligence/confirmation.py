@@ -5,7 +5,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from .evidence import DimensionEndpoint, DimensionObservation, EvidenceGraph
+from .evidence import (
+    DimensionEndpoint,
+    DimensionObservation,
+    DirectValueEvidence,
+    EvidenceGraph,
+)
 
 _MAX_CONFIRMATION_QUESTIONS = 3
 
@@ -116,6 +121,28 @@ def _unresolved_options(
     return options
 
 
+def _start_side_options() -> list[dict[str, Any]]:
+    return [
+        {
+            "option_id": "START_SIDE_MIN",
+            "role": "start_side",
+            "value": "min",
+            "label_zh": "从整体最小边界侧进入",
+        },
+        {
+            "option_id": "START_SIDE_MAX",
+            "role": "start_side",
+            "value": "max",
+            "label_zh": "从整体最大边界侧进入",
+        },
+        {
+            "option_id": "START_SIDE_KEEP_UNRESOLVED",
+            "role": "keep_unresolved",
+            "label_zh": "无法确认，保持未解决",
+        },
+    ]
+
+
 def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
     """Build bounded user questions from dimension endpoint unresolved evidence."""
 
@@ -124,6 +151,40 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
         graph.unresolved_evidence,
         key=lambda entry: str(entry.get("id") or ""),
     ):
+        if item.get("kind") == "start_side":
+            feature_ids = [
+                value
+                for value in item.get("feature_ids", [])
+                if isinstance(value, str) and value
+            ]
+            axis = item.get("axis")
+            if (
+                len(feature_ids) == 1
+                and item.get("field") == "start_side"
+                and axis in {"X", "Y", "Z"}
+            ):
+                feature_id = feature_ids[0]
+                questions.append(
+                    {
+                        "confirmation_id": f"CONF_{item['id']}",
+                        "unresolved_id": item["id"],
+                        "kind": "start_side",
+                        "feature_id": feature_id,
+                        "field": "start_side",
+                        "axis": axis,
+                        "prompt_zh": (
+                            f"特征 {feature_id} 的 {axis} 轴加工起始侧需要确认"
+                        ),
+                        "options": _start_side_options(),
+                        "source_ids": [
+                            source
+                            for source in item.get("source_ids", [])
+                            if isinstance(source, str) and source
+                        ],
+                    }
+                )
+            continue
+
         if item.get("kind") != "dimension_endpoint":
             continue
         endpoint_specs = item.get("endpoint_specs")
@@ -268,11 +329,33 @@ def _selected_by_endpoint(
     return selected
 
 
+def _selected_single_option(
+    question: dict[str, Any],
+    answer: ConfirmationAnswer,
+) -> dict[str, Any]:
+    options = {
+        str(item["option_id"]): item
+        for item in question.get("options", [])
+        if isinstance(item, dict) and item.get("option_id") is not None
+    }
+    if len(answer.selected_option_ids) != 1:
+        raise ConfirmationError(
+            f"{answer.confirmation_id}: exactly one option must be selected"
+        )
+    option_id = answer.selected_option_ids[0]
+    try:
+        return options[option_id]
+    except KeyError as exc:
+        raise ConfirmationError(
+            f"{answer.confirmation_id}: option {option_id!r} is not allowed"
+        ) from exc
+
+
 def apply_confirmation_answers(
     graph: EvidenceGraph,
     answers: ConfirmationAnswers | dict[str, Any],
 ) -> EvidenceGraph:
-    """Apply only validated endpoint ownership choices to a copy of EvidenceGraph."""
+    """Apply validated bounded human choices to a copy of EvidenceGraph."""
 
     if not isinstance(answers, ConfirmationAnswers):
         answers = ConfirmationAnswers.model_validate(answers)
@@ -297,6 +380,7 @@ def apply_confirmation_answers(
         raise ConfirmationError(f"unknown confirmation ids: {unknown}")
 
     dimensions = [item.model_copy(deep=True) for item in graph.dimensions]
+    direct_values = [item.model_copy(deep=True) for item in graph.direct_values]
     unresolved = copy.deepcopy(graph.unresolved_evidence)
     required_targets = set(graph.required_targets)
     observations = copy.deepcopy(graph.observations)
@@ -310,6 +394,61 @@ def apply_confirmation_answers(
 
     for confirmation_id, answer in answer_map.items():
         question = questions[confirmation_id]
+        unresolved_id = str(question["unresolved_id"])
+        source = unresolved_by_id.get(unresolved_id)
+        if source is None:
+            raise ConfirmationError(
+                f"{confirmation_id}: source unresolved record is missing"
+            )
+
+        if question.get("kind") == "start_side":
+            option = _selected_single_option(question, answer)
+            if option.get("role") == "keep_unresolved":
+                continue
+            side = option.get("value")
+            if side not in {"min", "max"}:
+                raise ConfirmationError(
+                    f"{confirmation_id}: invalid start_side option"
+                )
+            feature_id = str(question.get("feature_id") or "")
+            if not feature_id:
+                raise ConfirmationError(
+                    f"{confirmation_id}: start_side feature_id is missing"
+                )
+            target = f"feature:{feature_id}.start_side"
+            if any(item.target == target for item in direct_values):
+                raise ConfirmationError(
+                    f"{confirmation_id}: {target!r} already has direct evidence"
+                )
+            direct_values.append(
+                DirectValueEvidence(
+                    id=f"HC_{unresolved_id}_START_SIDE",
+                    target=target,
+                    value=side,
+                    semantic="start_side",
+                    source_ids=list(
+                        dict.fromkeys(
+                            [
+                                *[
+                                    item
+                                    for item in source.get("source_ids", [])
+                                    if isinstance(item, str) and item
+                                ],
+                                f"human-confirmation:{confirmation_id}:{side}",
+                            ]
+                        )
+                    ),
+                )
+            )
+            unresolved = [
+                item
+                for item in unresolved
+                if str(item.get("id")) != unresolved_id
+            ]
+            unresolved_by_id.pop(unresolved_id, None)
+            applied.append(confirmation_id)
+            continue
+
         selected = _selected_by_endpoint(question, answer)
 
         if any(
@@ -317,13 +456,6 @@ def apply_confirmation_answers(
             for option in selected.values()
         ):
             continue
-
-        unresolved_id = str(question["unresolved_id"])
-        source = unresolved_by_id.get(unresolved_id)
-        if source is None:
-            raise ConfirmationError(
-                f"{confirmation_id}: source unresolved record is missing"
-            )
 
         endpoints: list[DimensionEndpoint] = []
         for endpoint in question["endpoints"]:
@@ -397,6 +529,7 @@ def apply_confirmation_answers(
         deep=True,
         update={
             "dimensions": dimensions,
+            "direct_values": direct_values,
             "unresolved_evidence": unresolved,
             "required_targets": sorted(required_targets),
             "observations": observations,

@@ -306,6 +306,7 @@ def main() -> None:
     for token in (
         "part-entry tool=`nx_create_part`",
         "不是 blocker",
+        "Runner history",
         "不调用 `nx_close_part`",
         "`nx_status`",
         "真实 Work Part",
@@ -318,6 +319,7 @@ def main() -> None:
 
     for token in (
         "unrelated_part_preserved_for_create",
+        "Runner history",
         "`nx_create_part`",
         "`nx_status`",
         "active/Work Part",
@@ -724,6 +726,12 @@ def main() -> None:
     plan_tests = (RUNNER / "tests" / "test_plan_resolution.py").read_text(encoding="utf-8")
     if "test_transport_ping_error_passthrough" not in plan_tests:
         fail("Runner Loader ping diagnostic test missing")
+    for token in (
+        "test_preflight_runner_history_part_preserved_for_create_new",
+        "test_run_preflight_create_new_does_not_close_unrelated_part",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner create-new preservation regression test missing: {token}")
 
     for token in (
         "frozen plan must not contain executable field",

@@ -1030,12 +1030,14 @@ def preflight_decision(active_path: str, planned_path: str, mode: str,
 
     Runner may auto-close ONLY:
       A. the part whose path exactly matches the plan's target part, and
-      B. parts the Runner itself created (recorded in its own history).
-    For a fresh nx_create_part task only, an unrelated user part may remain
-    open and is never closed; nx_create_part must switch the real NX Work Part
-    to planned_path and the executor verifies that immediately after creation.
-    Other unrelated active parts -> blocked. A dirty planned part is closed
-    only for an explicitly authorized controlled-repair attempt in benchmark mode.
+      B. parts the Runner itself created (recorded in its own history),
+         except when the current task is a fresh nx_create_part.
+    For a fresh nx_create_part task, any unrelated active part -- including a
+    part recorded in Runner history -- remains open and is never closed;
+    nx_create_part must switch the real NX Work Part to planned_path and the
+    executor verifies that immediately after creation. Other unrelated active
+    parts -> blocked. A dirty planned part is closed only for an explicitly
+    authorized controlled-repair attempt in benchmark mode.
     """
     if not active_path:
         return ("allow", {"active_part": None, "state": "no_active_part"})
@@ -1051,14 +1053,14 @@ def preflight_decision(active_path: str, planned_path: str, mode: str,
             "reason": "planned_part_dirty",
             "active_part": active_path, "planned_part": planned_path,
             "mode": mode, "overwrite_allowed": overwrite_allowed})
-    if active_n in {_norm_path(p) for p in (runner_parts or ())}:
-        return ("allow", {"active_part": active_path, "state": "runner_test_part"})
     if part_entry_tool == "nx_create_part" and planned_n:
         return ("allow", {
             "active_part": active_path,
             "planned_part": planned_path,
             "state": "unrelated_part_preserved_for_create",
         })
+    if active_n in {_norm_path(p) for p in (runner_parts or ())}:
+        return ("allow", {"active_part": active_path, "state": "runner_test_part"})
     return ("blocked", {
         "reason": "unrelated_part_open",
         "active_part": active_path, "planned_part": planned_path})

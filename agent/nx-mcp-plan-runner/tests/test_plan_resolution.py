@@ -643,6 +643,21 @@ def test_preflight_unrelated_part_preserved_for_create_new():
     assert payload["state"] == "unrelated_part_preserved_for_create"
 
 
+def test_preflight_runner_history_part_preserved_for_create_new():
+    old_part = r"C:\work\previous_runner_part.prt"
+    dec, payload = R.preflight_decision(
+        active_path=old_part,
+        planned_path=r"C:\work\new_task.prt",
+        mode="normal",
+        overwrite_allowed=False,
+        dirty=False,
+        runner_parts=(old_part,),
+        part_entry_tool="nx_create_part",
+    )
+    assert dec == "allow"
+    assert payload["state"] == "unrelated_part_preserved_for_create"
+
+
 def test_preflight_unrelated_part_open_existing_edit_blocked():
     dec, payload = R.preflight_decision(
         active_path=r"C:\work\user_own.prt",
@@ -662,10 +677,10 @@ def test_run_preflight_create_new_does_not_close_unrelated_part():
 
     class History:
         def most_recent(self, path):
-            return None
+            return {"save_ok": True}
 
         def paths(self):
-            return ()
+            return (r"C:\work\user_own.prt",)
 
     class Transport:
         def __init__(self):

@@ -995,6 +995,25 @@ def test_native_z_hole_capability_dispatch_round_trip():
             "count": 1,
         }
     ]
+    assert payload["operation_contracts"] == [
+        {
+            "feature_id": "H1",
+            "role": "hole",
+            "axis": "Z",
+            "operations": [
+                {
+                    "tool": "nx_hole",
+                    "fixed_args": {
+                        "center": {"x": 0.0, "y": 0.0},
+                        "diameter": 6.0,
+                        "depth": 10.0,
+                        "start_offset": 0.0,
+                    },
+                    "requires": ["body_id"],
+                }
+            ],
+        }
+    ]
 
     plan = {
         "operations": [
@@ -1047,6 +1066,12 @@ def test_principal_axis_hole_capability_dispatch_round_trip():
     assert errors == []
     assert payload is not None
     assert payload["geometries"][0]["axial_range"] == [-10.0, 10.0]
+    assert payload["operation_contracts"][0]["operations"][-1]["fixed_args"] == {
+        "distance": 20.0,
+        "start_offset": -10.0,
+        "reverse": False,
+        "operation": "subtract",
+    }
 
     plan = {
         "operations": [
@@ -1128,6 +1153,76 @@ def test_native_z_counterbore_capability_dispatch_round_trip():
 
     assert R.dispatch_gate_b_validator(capability, plan, payload) == []
 
+
+
+def test_thread_adapter_materializes_split_entry_operation_contract():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 32,
+            "height_z": 66,
+        },
+        "profile": _rect_profile("YZ", -16, 16, 0, 66),
+        "features": [
+            {
+                "id": "S1",
+                "type": "slot",
+                "width": 2,
+                "width_axis": "X",
+                "through_axis": "Y",
+                "centerline": {"x": 0},
+                "bottom_z": 50,
+                "top_z": 66,
+            },
+            {
+                "id": "T1",
+                "type": "threaded_hole",
+                "thread_spec": "M6",
+                "thread_depth": 12,
+                "axis": "X",
+                "centerline": {"y": 8, "z": 58},
+                "material_side": "min",
+                "entry_endpoint": "max",
+            },
+        ],
+    }
+    capability = R.resolve_modeling_capabilities(
+        "threaded_hole",
+        "X",
+    )[0][0]
+
+    payload, errors = R.dispatch_planner_adapter(
+        capability,
+        drawing,
+    )
+
+    assert errors == []
+    assert payload is not None
+    assert payload["geometries"][0]["axial_range"] == [-1.0, -13.0]
+
+    contract = payload["operation_contracts"][0]
+    assert contract["feature_id"] == "T1"
+    assert contract["role"] == "thread_surrogate"
+    assert contract["axis"] == "X"
+    assert contract["operations"][0]["fixed_args"] == {"plane": "YZ"}
+    assert contract["operations"][1]["fixed_args"] == {
+        "center": {"x": 8.0, "y": 58.0},
+        "diameter": 5.0,
+    }
+    assert contract["operations"][-1]["fixed_args"] == {
+        "distance": 12.0,
+        "start_offset": 1.0,
+        "reverse": True,
+        "operation": "subtract",
+    }
+    assert contract["operations"][-1]["operation_fields"] == {
+        "thread_surrogate_use": {
+            "feature_id": "T1",
+            "owner_feature_id": "T1",
+            "material_side": "min",
+            "entry_endpoint": "max",
+        }
+    }
 
 
 def test_unified_capability_dispatch_selects_native_z_hole():

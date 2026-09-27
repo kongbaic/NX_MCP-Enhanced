@@ -4215,6 +4215,427 @@ def _adapter_payload(
     return payload, []
 
 
+def _operation_contract_axial_range(
+    value: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[list[float] | None, list[str]]:
+    if not (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(_num(item) is not None for item in value)
+    ):
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has no explicit two-value axial range"
+        ]
+    start = float(_num(value[0]))
+    end = float(_num(value[1]))
+    if abs(end - start) <= 1e-9:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has zero axial distance"
+        ]
+    return [start, end], []
+
+
+def _native_z_range_args(
+    axial_range: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[dict | None, list[str]]:
+    normalized, errors = _operation_contract_axial_range(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or normalized is None:
+        return None, errors
+    start, end = normalized
+    if end <= start:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} requires a descending Z range that the native tool cannot represent"
+        ]
+    return {
+        "start_offset": start,
+        "depth": end - start,
+    }, []
+
+
+def _principal_axis_range_args(
+    axial_range: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[dict | None, list[str]]:
+    normalized, errors = _operation_contract_axial_range(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or normalized is None:
+        return None, errors
+    start, end = normalized
+    reverse = end < start
+    return {
+        "distance": abs(end - start),
+        "start_offset": -start if reverse else start,
+        "reverse": reverse,
+    }, []
+
+
+def _principal_axis_circle_operation_contract(
+    *,
+    feature_id: str,
+    role: str,
+    axis: str,
+    center: Any,
+    diameter: Any,
+    axial_range: Any,
+    operation_fields: dict | None = None,
+) -> tuple[dict | None, list[str]]:
+    plane = {"X": "YZ", "Y": "XZ"}.get(axis)
+    transverse = _axis_transverse_center(axis, center)
+    diameter_value = _num(diameter)
+    if plane is None or transverse is None or diameter_value is None or diameter_value <= 0:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has invalid principal-axis circle geometry"
+        ]
+    range_args, errors = _principal_axis_range_args(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or range_args is None:
+        return None, errors
+
+    final_operation: dict[str, Any] = {
+        "tool": "nx_extrude",
+        "fixed_args": {
+            **range_args,
+            "operation": "subtract",
+        },
+        "requires": ["sketch_id", "target_body_id"],
+    }
+    if operation_fields:
+        final_operation["operation_fields"] = dict(operation_fields)
+
+    return {
+        "feature_id": feature_id,
+        "role": role,
+        "axis": axis,
+        "operations": [
+            {
+                "tool": "nx_create_sketch",
+                "fixed_args": {"plane": plane},
+            },
+            {
+                "tool": "nx_sketch_circle",
+                "fixed_args": {
+                    "center": {
+                        "x": transverse[0],
+                        "y": transverse[1],
+                    },
+                    "diameter": float(diameter_value),
+                },
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            final_operation,
+        ],
+    }, []
+
+
+def _thread_surrogate_operation_fields(geometry: dict) -> dict:
+    use: dict[str, Any] = {
+        "feature_id": geometry.get("feature_id"),
+        "owner_feature_id": geometry.get("owner_feature_id"),
+    }
+    if (
+        geometry.get("material_side") is not None
+        or geometry.get("entry_endpoint") is not None
+    ):
+        use["material_side"] = geometry.get("material_side")
+        use["entry_endpoint"] = geometry.get("entry_endpoint")
+    elif geometry.get("side") is not None:
+        use["side"] = geometry.get("side")
+    return {"thread_surrogate_use": use}
+
+
+def materialize_capability_operation_contracts(
+    capability: dict,
+    payload: dict,
+) -> tuple[list[dict], list[str]]:
+    """Materialize geometry-critical operation recipes; Planner owns only wiring/order."""
+    adapter_name = str(capability.get("planner_adapter") or "")
+    geometries = [
+        item for item in payload.get("geometries") or [] if isinstance(item, dict)
+    ]
+    recipes = {
+        str(item.get("feature_id") or ""): item
+        for item in payload.get("recipes") or []
+        if isinstance(item, dict)
+    }
+    contracts: list[dict] = []
+    errors: list[str] = []
+
+    for geometry in geometries:
+        feature_id = str(geometry.get("feature_id") or "?")
+        axis = str(geometry.get("axis") or "").upper()
+
+        if adapter_name == "native_z_hole":
+            for center in geometry.get("transverse_centers") or []:
+                transverse = _axis_transverse_center("Z", center)
+                diameter = _num(geometry.get("diameter"))
+                range_args, range_errors = _native_z_range_args(
+                    geometry.get("axial_range"),
+                    feature_id=feature_id,
+                    role="hole",
+                )
+                if (
+                    transverse is None
+                    or diameter is None
+                    or diameter <= 0
+                    or range_errors
+                    or range_args is None
+                ):
+                    errors.extend(range_errors)
+                    if not range_errors:
+                        errors.append(
+                            f"capability_materialization_violation: hole "
+                            f"{feature_id!r} has invalid native-Z geometry"
+                        )
+                    continue
+                contracts.append(
+                    {
+                        "feature_id": feature_id,
+                        "role": "hole",
+                        "axis": "Z",
+                        "operations": [
+                            {
+                                "tool": "nx_hole",
+                                "fixed_args": {
+                                    "center": {
+                                        "x": transverse[0],
+                                        "y": transverse[1],
+                                    },
+                                    "diameter": float(diameter),
+                                    "depth": range_args["depth"],
+                                    "start_offset": range_args["start_offset"],
+                                },
+                                "requires": ["body_id"],
+                            }
+                        ],
+                    }
+                )
+            continue
+
+        if adapter_name == "principal_axis_circular_subtract":
+            for center in geometry.get("transverse_centers") or []:
+                contract, contract_errors = _principal_axis_circle_operation_contract(
+                    feature_id=feature_id,
+                    role="hole",
+                    axis=axis,
+                    center=center,
+                    diameter=geometry.get("diameter"),
+                    axial_range=geometry.get("axial_range"),
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+            continue
+
+        if adapter_name == "native_z_counterbore":
+            center = geometry.get("transverse_center")
+            transverse = _axis_transverse_center("Z", center)
+            through_diameter = _num(geometry.get("through_diameter"))
+            counterbore_diameter = _num(geometry.get("counterbore_diameter"))
+            through_args, through_errors = _native_z_range_args(
+                geometry.get("through_axial_range"),
+                feature_id=feature_id,
+                role="counterbore through",
+            )
+            recess_args, recess_errors = _native_z_range_args(
+                geometry.get("counterbore_axial_range"),
+                feature_id=feature_id,
+                role="counterbore recess",
+            )
+            errors.extend(through_errors)
+            errors.extend(recess_errors)
+            if (
+                transverse is None
+                or through_diameter is None
+                or through_diameter <= 0
+                or counterbore_diameter is None
+                or counterbore_diameter <= through_diameter
+                or through_args is None
+                or recess_args is None
+            ):
+                if not through_errors and not recess_errors:
+                    errors.append(
+                        f"capability_materialization_violation: counterbore "
+                        f"{feature_id!r} has invalid native-Z geometry"
+                    )
+                continue
+            if not _drawing_equal(
+                through_args["start_offset"],
+                recess_args["start_offset"],
+            ):
+                errors.append(
+                    f"capability_materialization_violation: counterbore "
+                    f"{feature_id!r} native-Z ranges have different entry offsets"
+                )
+                continue
+            contracts.append(
+                {
+                    "feature_id": feature_id,
+                    "role": "counterbore",
+                    "axis": "Z",
+                    "operations": [
+                        {
+                            "tool": "nx_counterbore_hole",
+                            "fixed_args": {
+                                "center": {
+                                    "x": transverse[0],
+                                    "y": transverse[1],
+                                },
+                                "hole_diameter": float(through_diameter),
+                                "hole_depth": through_args["depth"],
+                                "counterbore_diameter": float(counterbore_diameter),
+                                "counterbore_depth": recess_args["depth"],
+                                "start_offset": through_args["start_offset"],
+                            },
+                            "requires": ["body_id"],
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if adapter_name == "principal_axis_counterbore":
+            for role, diameter_key, range_key in (
+                ("through", "through_diameter", "through_axial_range"),
+                (
+                    "counterbore",
+                    "counterbore_diameter",
+                    "counterbore_axial_range",
+                ),
+            ):
+                contract, contract_errors = _principal_axis_circle_operation_contract(
+                    feature_id=feature_id,
+                    role=role,
+                    axis=axis,
+                    center=geometry.get("transverse_center"),
+                    diameter=geometry.get(diameter_key),
+                    axial_range=geometry.get(range_key),
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+            continue
+
+        if adapter_name == "metric_thread_surrogate":
+            if geometry.get("representation") == "subsumed_by_coaxial_through_hole":
+                contracts.append(
+                    {
+                        "feature_id": feature_id,
+                        "role": "thread_surrogate",
+                        "axis": axis,
+                        "representation": "subsumed_by_coaxial_through_hole",
+                        "subsumed_by_feature_id": geometry.get(
+                            "subsumed_by_feature_id"
+                        ),
+                        "operations": [],
+                    }
+                )
+                continue
+
+            recipe = recipes.get(feature_id)
+            surrogate_diameter = (
+                _num(recipe.get("surrogate_diameter")) if recipe is not None else None
+            )
+            if surrogate_diameter is None or surrogate_diameter <= 0:
+                errors.append(
+                    f"capability_materialization_violation: thread "
+                    f"{feature_id!r} has no surrogate diameter"
+                )
+                continue
+            operation_fields = _thread_surrogate_operation_fields(geometry)
+            for center in geometry.get("transverse_centers") or []:
+                if axis == "Z":
+                    transverse = _axis_transverse_center("Z", center)
+                    range_args, range_errors = _native_z_range_args(
+                        geometry.get("axial_range"),
+                        feature_id=feature_id,
+                        role="thread surrogate",
+                    )
+                    errors.extend(range_errors)
+                    if (
+                        transverse is None
+                        or range_args is None
+                    ):
+                        if not range_errors:
+                            errors.append(
+                                f"capability_materialization_violation: thread "
+                                f"{feature_id!r} has invalid native-Z center"
+                            )
+                        continue
+                    contracts.append(
+                        {
+                            "feature_id": feature_id,
+                            "role": "thread_surrogate",
+                            "axis": "Z",
+                            "operations": [
+                                {
+                                    "tool": "nx_hole",
+                                    "fixed_args": {
+                                        "center": {
+                                            "x": transverse[0],
+                                            "y": transverse[1],
+                                        },
+                                        "diameter": float(surrogate_diameter),
+                                        "depth": range_args["depth"],
+                                        "start_offset": range_args["start_offset"],
+                                    },
+                                    "requires": ["body_id"],
+                                    "operation_fields": operation_fields,
+                                }
+                            ],
+                        }
+                    )
+                else:
+                    contract, contract_errors = (
+                        _principal_axis_circle_operation_contract(
+                            feature_id=feature_id,
+                            role="thread_surrogate",
+                            axis=axis,
+                            center=center,
+                            diameter=surrogate_diameter,
+                            axial_range=geometry.get("axial_range"),
+                            operation_fields=operation_fields,
+                        )
+                    )
+                    errors.extend(contract_errors)
+                    if contract is not None:
+                        contracts.append(contract)
+            continue
+
+        errors.append(
+            f"capability_materialization_violation: planner_adapter "
+            f"{adapter_name!r} has no operation materializer"
+        )
+
+    return contracts, errors
+
+
 def _planner_adapter_native_z_hole(
     drawing: dict,
     capability: dict,
@@ -4389,7 +4810,21 @@ def dispatch_planner_adapter(
     adapter, _, errors = resolve_capability_handlers(capability)
     if errors or adapter is None:
         return None, errors
-    return adapter(drawing, capability)
+
+    payload, adapter_errors = adapter(drawing, capability)
+    if adapter_errors or payload is None:
+        return payload, adapter_errors
+
+    operation_contracts, materialization_errors = (
+        materialize_capability_operation_contracts(
+            capability,
+            payload,
+        )
+    )
+    if materialization_errors:
+        return None, materialization_errors
+    payload["operation_contracts"] = operation_contracts
+    return payload, []
 
 
 def dispatch_gate_b_validator(

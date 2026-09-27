@@ -1607,7 +1607,12 @@ def _plan_path_is_absolute(path: str) -> bool:
     return os.path.isabs(path) or bool(PureWindowsPath(path).anchor)
 
 
-def check_plan(plan: dict, executable: bool = True) -> list[str]:
+def check_plan(
+    plan: dict,
+    executable: bool = True,
+    *,
+    validate_embedded_thread_contract: bool = True,
+) -> list[str]:
     errors: list[str] = []
     ops = plan.get("operations") or []
     if not ops:
@@ -1730,12 +1735,20 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
             groups = [k for k in crit2 if not _is_info_key(k)] if kind2 == "groups" else []
             bound_selections[op["selection_binding"]] = {"kind": kind2, "groups": groups}
 
-    if plan.get("thread_surrogates") is not None or plan.get("thread_drawing_geometries") is not None:
-        errors.extend(thread_surrogate_plan_errors(
-            plan,
-            plan.get("thread_surrogates") or [],
-            plan.get("thread_drawing_geometries") or [],
-        ))
+    if (
+        validate_embedded_thread_contract
+        and (
+            plan.get("thread_surrogates") is not None
+            or plan.get("thread_drawing_geometries") is not None
+        )
+    ):
+        errors.extend(
+            thread_surrogate_plan_errors(
+                plan,
+                plan.get("thread_surrogates") or [],
+                plan.get("thread_drawing_geometries") or [],
+            )
+        )
     return errors
 
 
@@ -4561,19 +4574,6 @@ def _thread_metadata_from_dispatches(
     return dedupe(recipes), dedupe(geometries)
 
 
-def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:
-    original = _load_drawing(path)
-    drawing, normalization_errors, _ = normalize_drawing_schema(original)
-    errors = list(normalization_errors)
-    if not errors:
-        errors.extend(check_drawing_json(drawing))
-    geometries, geometry_errors = resolve_thread_drawing_geometries(drawing)
-    recipes, recipe_errors = resolve_thread_surrogates(drawing)
-    errors.extend(geometry_errors)
-    errors.extend(recipe_errors)
-    return drawing, recipes, geometries, errors
-
-
 # --------------------------------------------------------------------------
 # Gate A drawing JSON validator — deterministic, part-agnostic, no NX
 # --------------------------------------------------------------------------
@@ -6264,8 +6264,12 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_check(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("B3_CHECK", args.plan)
     plan = _load_plan(args.plan)
-    errs = check_plan(plan, executable=not args.frozen)
     drawing_path = getattr(args, "drawing", None)
+    errs = check_plan(
+        plan,
+        executable=not args.frozen,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
     if drawing_path:
         _drawing, dispatches, drawing_errors = _drawing_modeling_context(
             drawing_path
@@ -6285,11 +6289,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_build(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("B3_BUILD", args.plan)
     plan = _load_plan(args.plan)
-    frozen_errs = check_plan(plan, executable=False)
+    drawing_path = getattr(args, "drawing", None)
+    frozen_errs = check_plan(
+        plan,
+        executable=False,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
     recipes: list[dict] = []
     geometries: list[dict] = []
     dispatches: list[dict] = []
-    drawing_path = getattr(args, "drawing", None)
     if drawing_path:
         _drawing, dispatches, drawing_errors = _drawing_modeling_context(
             drawing_path
@@ -6313,7 +6321,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
     if drawing_path:
         exe["thread_surrogates"] = recipes
         exe["thread_drawing_geometries"] = geometries
-    errs = check_plan(exe, executable=True)
+    errs = check_plan(
+        exe,
+        executable=True,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
     if drawing_path and not frozen_errs:
         errs.extend(capability_plan_errors(exe, dispatches))
     if not errs:

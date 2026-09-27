@@ -443,6 +443,49 @@ def test_frozen_check_rejects_executable_only_fields():
     assert any("retry" in e for e in errs)
 
 
+def test_check_plan_can_defer_embedded_thread_contract_to_drawing_gate():
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_status",
+                "tool_args": {},
+                "topology_changes": False,
+            }
+        ],
+        "thread_surrogates": [
+            {
+                "feature_id": "T1",
+                "surrogate_diameter": 5.0,
+            }
+        ],
+        "thread_drawing_geometries": [
+            {
+                "feature_id": "T1",
+                "owner_feature_id": "T1",
+                "axis": "Z",
+                "transverse_centers": [[0.0, 0.0]],
+                "depth": 10.0,
+                "axial_range": [0.0, 10.0],
+                "count": 1,
+            }
+        ],
+    }
+
+    embedded_errors = R.check_plan(plan, executable=False)
+    delegated_errors = R.check_plan(
+        plan,
+        executable=False,
+        validate_embedded_thread_contract=False,
+    )
+
+    assert any(
+        "operation count differs from drawing" in item
+        for item in embedded_errors
+    )
+    assert delegated_errors == []
+
+
 def test_plan_check_rejects_absolute_workspace_paths():
     plan = {
         "mode": "FAST",

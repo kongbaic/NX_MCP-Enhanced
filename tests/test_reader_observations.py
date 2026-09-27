@@ -240,6 +240,7 @@ def test_assemble_reader_capture_cli_e2e(tmp_path: Path):
     assert capture["schema_version"] == "2.0"
     assert capture["required_targets"] == []
 
+
 def test_pattern_symmetry_maps_entity_key_to_capture_entity_id():
     payload = _base_observations()
     payload["pattern_symmetries"] = [

@@ -8,6 +8,7 @@ from typing import Any
 
 from .capture import AssociationClaim, ReaderCapture
 from .evidence import (
+    Axis,
     DatumAlignmentEvidence,
     DimensionEndpoint,
     DimensionObservation,
@@ -82,13 +83,13 @@ def _canonical_field(
 _SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
 _STRUCTURED_SYMMETRIC_COUNT_TWO_KIND = "symmetric_count_two_overall_center"
 
-_TRANSVERSE_CENTER_INDEX: dict[str, dict[str, int]] = {
+_TRANSVERSE_CENTER_INDEX: dict[Axis, dict[Axis, int]] = {
     "X": {"Y": 0, "Z": 1},
     "Y": {"X": 0, "Z": 1},
     "Z": {"X": 0, "Y": 1},
 }
 
-_VIEW_NORMAL_AXIS = {
+_VIEW_NORMAL_AXIS: dict[str, Axis] = {
     "front": "Y",
     "side": "X",
     "top": "Z",
@@ -99,12 +100,12 @@ _CIRCULAR_PROJECTION_SHAPES = {"circle", "concentric_circles"}
 def _component_axis_from_projections(
     capture: ReaderCapture,
     entity_ids: list[str],
-) -> tuple[str | None, list[str]]:
+) -> tuple[Axis | None, list[str]]:
     """Infer a principal cylindrical axis from orthographic projection classes."""
 
     entities = {item.id: item for item in capture.entities}
     views = {item.id: item for item in capture.views}
-    candidates = {"X", "Y", "Z"}
+    candidates: set[Axis] = {"X", "Y", "Z"}
     evidence: list[str] = []
     constrained = False
 
@@ -115,12 +116,10 @@ def _component_axis_from_projections(
         view = views.get(entity.view_id)
         if view is None:
             continue
-        normal = _VIEW_NORMAL_AXIS.get(view.kind)
-        if normal is None:
-            continue
+        normal = _VIEW_NORMAL_AXIS[view.kind]
 
         if entity.shape in _CIRCULAR_PROJECTION_SHAPES:
-            allowed = {normal}
+            allowed: set[Axis] = {normal}
         elif entity.shape == "hidden_parallel":
             allowed = {"X", "Y", "Z"} - {normal}
         else:
@@ -160,9 +159,7 @@ def _structured_symmetric_count_two_sources(
             source_ids.append(observation_id)
         raw_sources = observation.get("source_ids")
         if isinstance(raw_sources, list):
-            source_ids.extend(
-                item for item in raw_sources if isinstance(item, str) and item
-            )
+            source_ids.extend(item for item in raw_sources if isinstance(item, str) and item)
     return list(dict.fromkeys(source_ids))
 
 
@@ -1114,7 +1111,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     )
                 )
 
-                other_axes = [
+                other_axes: list[Axis] = [
                     axis_name
                     for axis_name in center_indexes
                     if axis_name != item.axis

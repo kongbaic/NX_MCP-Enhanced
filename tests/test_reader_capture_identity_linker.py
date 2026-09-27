@@ -2780,6 +2780,7 @@ def test_capture_accepts_circle_center_as_entity_center_basis():
     assert endpoint.entity_id == "E1"
     assert endpoint.basis == "circle_center"
 
+
 def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_marker():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(

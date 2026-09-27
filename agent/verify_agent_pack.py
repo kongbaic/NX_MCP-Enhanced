@@ -408,7 +408,8 @@ def main() -> None:
     runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
     for token in (
         "def _cmd_plan_contracts(",
-        'add_parser("plan-contracts"',
+        '"plan-contracts"',
+        "pcontracts.set_defaults(func=_cmd_plan_contracts)",
         "operation_contracts",
         "dispatch_planner_adapter(",
         "capability_plan_errors(",

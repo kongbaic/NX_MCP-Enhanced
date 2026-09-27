@@ -379,7 +379,7 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 → 直接消费返回的 selected implementation + geometries + operation_contracts + planner_contract；
   每个 contract operation：
   `tool` 原样；
-  `fixed_args` 完整 key set + value 原样复制到 tool_args（含 false / 0 / 空对象）；
+  `fixed_args` 完整 key set 与 value 原样复制到 tool_args（含 false / 0 / 空对象）；
   `operation_fields` 若存在则逐 key 原样展开到 frozen operation 顶层，禁止放入 tool_args；
   Planner 只补 `requires` 指定的 symbol wiring 与步骤顺序
 → Mode A 若没有 canonical drawing，才按 Feature Contract 调用：

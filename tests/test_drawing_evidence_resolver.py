@@ -280,3 +280,117 @@ def test_resolution_is_deterministic_for_identical_input():
     second = resolve_evidence_graph(graph).to_dict()
 
     assert first == second
+
+def test_center_distance_with_two_known_wrong_endpoints_reports_conflict():
+    a = "feature:F_A.centerline.x"
+    b = "feature:F_B.centerline.x"
+    graph = _graph(
+        facts=[
+            CoordinateFact(target=a, axis="X", value=0, source_ids=["ANN_A_X0"]),
+            CoordinateFact(target=b, axis="X", value=10, source_ids=["ANN_B_X10"]),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_DISTANCE",
+                kind="center_distance",
+                axis="X",
+                value=12,
+                targets=[a, b],
+                source_ids=["ANN_CENTER_DISTANCE_12"],
+            )
+        ],
+        required_targets=[a, b],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert not result.ok
+    assert result.conflicts
+    assert result.conflicts[0]["relation"] == "R_DISTANCE"
+    assert result.conflicts[0]["expected_distance"] == 12
+    assert result.conflicts[0]["actual_distance"] == 10
+
+
+def test_upper_tangent_conflicting_direct_target_reports_conflict():
+    center = "feature:F_CIRCLE.centerline.z"
+    diameter = "feature:F_CIRCLE.diameter"
+    tangent = "feature:F_SLOT.bottom_z"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        direct_values=[
+            DirectValueEvidence(
+                id="S_CENTER",
+                target=center,
+                value=40,
+                semantic="center_position",
+                source_ids=["ANN_CENTER_40"],
+            ),
+            DirectValueEvidence(
+                id="S_DIAMETER",
+                target=diameter,
+                value=20,
+                semantic="diameter",
+                source_ids=["ANN_DIAMETER_20"],
+            ),
+            DirectValueEvidence(
+                id="S_BAD_TANGENT",
+                target=tangent,
+                value=49,
+                semantic="position_dimension",
+                source_ids=["BAD_DIRECT_TANGENT"],
+            ),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_TANGENT",
+                kind="upper_tangent",
+                axis="Z",
+                targets=[center, tangent],
+                diameter_target=diameter,
+                source_ids=["ANN_TANGENT"],
+            )
+        ],
+        required_targets=[center, diameter, tangent],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert not result.ok
+    assert result.values[tangent] == 49
+    assert result.conflicts
+    assert result.conflicts[0]["target"] == tangent
+    assert result.conflicts[0]["candidate"] == 50
+
+
+def test_alignment_with_two_different_known_values_reports_conflict():
+    a = "feature:F_A.centerline.x"
+    b = "feature:F_B.centerline.x"
+    graph = _graph(
+        facts=[
+            CoordinateFact(target=a, axis="X", value=0, source_ids=["ANN_A_X0"]),
+            CoordinateFact(target=b, axis="X", value=1, source_ids=["ANN_B_X1"]),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_ALIGNMENT",
+                kind="alignment",
+                axis="X",
+                targets=[a, b],
+                source_ids=["SHARED_CENTERLINE"],
+            )
+        ],
+        required_targets=[a, b],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert not result.ok
+    assert result.conflicts
+    assert result.conflicts[0]["target"] == b
+    assert result.conflicts[0]["existing"] == 1
+    assert result.conflicts[0]["candidate"] == 0
+

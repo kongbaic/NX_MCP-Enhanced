@@ -415,15 +415,15 @@ def apply_confirmation_answers(
                 raise ConfirmationError(
                     f"{confirmation_id}: start_side feature_id is missing"
                 )
-            target = f"feature:{feature_id}.start_side"
-            if any(item.target == target for item in direct_values):
+            start_side_target = f"feature:{feature_id}.start_side"
+            if any(item.target == start_side_target for item in direct_values):
                 raise ConfirmationError(
-                    f"{confirmation_id}: {target!r} already has direct evidence"
+                    f"{confirmation_id}: {start_side_target!r} already has direct evidence"
                 )
             direct_values.append(
                 DirectValueEvidence(
                     id=f"HC_{unresolved_id}_START_SIDE",
-                    target=target,
+                    target=start_side_target,
                     value=side,
                     semantic="start_side",
                     source_ids=list(

@@ -136,10 +136,10 @@ def _missing_transverse_thread_start_side_unresolved(
         depth_item = fields.get("thread_depth")
         side_item = fields.get("start_side")
 
-        axis = str(axis_item.value).upper() if axis_item is not None else ""
+        axis_text = str(axis_item.value).upper() if axis_item is not None else ""
         depth = depth_item.value if depth_item is not None else None
         if (
-            axis not in {"X", "Y"}
+            axis_text not in {"X", "Y"}
             or spec_item is None
             or not isinstance(spec_item.value, str)
             or not spec_item.value.strip()
@@ -153,6 +153,7 @@ def _missing_transverse_thread_start_side_unresolved(
         ):
             continue
 
+        axis: Axis = "X" if axis_text == "X" else "Y"
         evidence = list(
             dict.fromkeys(
                 source

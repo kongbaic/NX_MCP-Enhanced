@@ -586,7 +586,9 @@ def main() -> None:
     for token in (
         "frozen plan must not contain executable field",
         "frozen plan must not contain executable reference",
-        "frozen_errs = check_plan(plan, executable=False)",
+        "frozen_errs = check_plan(",
+        "executable=False",
+        "validate_embedded_thread_contract=not bool(drawing_path)",
     ):
         if token not in runner_source:
             fail(f"Runner frozen/executable boundary regression: missing {token}")

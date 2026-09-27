@@ -711,6 +711,102 @@ def test_repair_request_first_attempt_rejects_report():
     assert any("only valid" in e for e in errs)
 
 
+def test_default_modeling_capability_registry_is_valid():
+    registry = R.load_modeling_capability_registry()
+    assert R.capability_registry_errors(registry) == []
+
+
+def test_capability_resolution_is_feature_axis_scoped():
+    candidates, errors = R.resolve_modeling_capabilities(
+        "counterbore_hole",
+        "X",
+    )
+    assert errors == []
+    assert [item["implementation_id"] for item in candidates] == [
+        "principal-axis-counterbore-v1"
+    ]
+
+
+def test_capability_resolution_can_require_exact_only():
+    candidates, errors = R.resolve_modeling_capabilities(
+        "threaded_hole",
+        "X",
+        allow_surrogate=False,
+    )
+    assert candidates == []
+    assert any("no modeling capability" in item for item in errors)
+
+
+def test_future_native_tool_can_preempt_surrogate_without_changing_feature_contract():
+    registry = {
+        "schema_version": 1,
+        "registry_kind": "static_modeling_capabilities",
+        "implementations": [
+            {
+                "implementation_id": "thread-surrogate",
+                "feature_kind": "threaded_hole",
+                "exactness": "surrogate",
+                "supported_axes": ["X"],
+                "required_tools": ["nx_extrude"],
+                "planner_adapter": "metric_thread_surrogate",
+                "gate_b_validator": "thread_surrogate",
+                "priority": 100,
+            },
+            {
+                "implementation_id": "native-thread",
+                "feature_kind": "threaded_hole",
+                "exactness": "exact",
+                "supported_axes": ["X"],
+                "required_tools": ["nx_thread"],
+                "planner_adapter": "native_thread",
+                "gate_b_validator": "native_thread_geometry",
+                "priority": 10,
+            },
+        ],
+    }
+
+    candidates, errors = R.resolve_modeling_capabilities(
+        "threaded_hole",
+        "X",
+        registry=registry,
+        available_tools={*R.CERTIFIED_TOOLS, "nx_thread"},
+    )
+
+    assert errors == []
+    assert [item["implementation_id"] for item in candidates] == [
+        "native-thread",
+        "thread-surrogate",
+    ]
+
+
+def test_capability_registry_fails_closed_when_required_tool_is_unavailable():
+    registry = {
+        "schema_version": 1,
+        "registry_kind": "static_modeling_capabilities",
+        "implementations": [
+            {
+                "implementation_id": "native-thread",
+                "feature_kind": "threaded_hole",
+                "exactness": "exact",
+                "supported_axes": ["X"],
+                "required_tools": ["nx_thread"],
+                "planner_adapter": "native_thread",
+                "gate_b_validator": "native_thread_geometry",
+                "priority": 10,
+            }
+        ],
+    }
+
+    candidates, errors = R.resolve_modeling_capabilities(
+        "threaded_hole",
+        "X",
+        registry=registry,
+    )
+
+    assert candidates == []
+    assert any("unavailable certified tools" in item for item in errors)
+
+
 def test_repair_request_second_attempt_requires_benchmark_overwrite():
     prev = {
         "status": "failed",

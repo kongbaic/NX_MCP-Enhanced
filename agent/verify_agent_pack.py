@@ -67,6 +67,17 @@ def main() -> None:
     sys.path.insert(0, str(RUNNER))
     import runner  # type: ignore  # noqa: E402
 
+    capability_path = RUNNER / "modeling_capabilities.json"
+    if not capability_path.is_file():
+        fail("missing Runner modeling_capabilities.json")
+    capabilities = json.loads(capability_path.read_text(encoding="utf-8"))
+    capability_errors = runner.capability_registry_errors(capabilities)
+    if capability_errors:
+        fail(
+            "invalid Runner modeling capability registry: "
+            + "; ".join(capability_errors)
+        )
+
     contract = json.loads((SKILL / "references" / "certified-tool-contract.json").read_text(encoding="utf-8"))
     tools = set(contract["tools"])
     if tools != set(runner.CERTIFIED_TOOLS):

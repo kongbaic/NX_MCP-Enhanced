@@ -92,6 +92,206 @@ LIST_PARAMS = {"edge_indices", "tool_body_ids"}
 RAW_PIPE_TOOLS = {"nx_edge_blend", "nx_chamfer"}
 
 RUNTIME_CONFIG_FILENAME = "runtime-config.json"
+CAPABILITY_REGISTRY_FILENAME = "modeling_capabilities.json"
+
+
+def _default_capability_registry_path() -> str:
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        CAPABILITY_REGISTRY_FILENAME,
+    )
+
+
+def capability_registry_errors(
+    data: dict[str, Any],
+    *,
+    available_tools: set[str] | None = None,
+) -> list[str]:
+    """Validate the static feature-to-implementation capability seam."""
+    errors: list[str] = []
+    if data.get("schema_version") != 1:
+        errors.append("capability registry schema_version must be 1")
+    if data.get("registry_kind") != "static_modeling_capabilities":
+        errors.append(
+            "capability registry kind must be static_modeling_capabilities"
+        )
+    implementations = data.get("implementations")
+    if not isinstance(implementations, list):
+        return [*errors, "capability registry implementations must be a list"]
+
+    tools = set(CERTIFIED_TOOLS if available_tools is None else available_tools)
+    seen: set[str] = set()
+    for index, item in enumerate(implementations):
+        label = f"capability implementations[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be an object")
+            continue
+
+        implementation_id = item.get("implementation_id")
+        if not isinstance(implementation_id, str) or not implementation_id:
+            errors.append(f"{label} requires implementation_id")
+        elif implementation_id in seen:
+            errors.append(f"duplicate capability implementation_id {implementation_id!r}")
+        else:
+            seen.add(implementation_id)
+
+        if not isinstance(item.get("feature_kind"), str) or not item["feature_kind"]:
+            errors.append(f"{label} requires feature_kind")
+        if item.get("exactness") not in {"exact", "surrogate"}:
+            errors.append(f"{label} exactness must be exact|surrogate")
+
+        axes = item.get("supported_axes")
+        if (
+            not isinstance(axes, list)
+            or not axes
+            or any(axis not in {"X", "Y", "Z"} for axis in axes)
+            or len(set(axes)) != len(axes)
+        ):
+            errors.append(f"{label} supported_axes must be unique X/Y/Z values")
+
+        required_tools = item.get("required_tools")
+        if (
+            not isinstance(required_tools, list)
+            or not required_tools
+            or any(not isinstance(tool, str) or not tool for tool in required_tools)
+        ):
+            errors.append(f"{label} required_tools must be a non-empty string list")
+        else:
+            missing = sorted(set(required_tools) - tools)
+            if missing:
+                errors.append(
+                    f"{label} requires unavailable certified tools: "
+                    + ", ".join(missing)
+                )
+
+        for field in ("planner_adapter", "gate_b_validator"):
+            if not isinstance(item.get(field), str) or not item[field]:
+                errors.append(f"{label} requires {field}")
+
+        priority = item.get("priority")
+        if not isinstance(priority, int) or isinstance(priority, bool) or priority < 0:
+            errors.append(f"{label} priority must be a non-negative integer")
+
+    return errors
+
+
+def load_modeling_capability_registry(path: str | None = None) -> dict[str, Any]:
+    """Load the installer-copied static capability registry beside runner.py."""
+    registry_path = path or _default_capability_registry_path()
+    try:
+        with open(registry_path, encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PlanError(
+            f"cannot load modeling capability registry {registry_path!r}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise PlanError("modeling capability registry root must be an object")
+    return data
+
+
+def resolve_modeling_capabilities(
+    feature_kind: str,
+    axis: str,
+    *,
+    allow_surrogate: bool = True,
+    registry: dict[str, Any] | None = None,
+    available_tools: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return deterministic implementation candidates for one Feature Contract."""
+    axis = str(axis or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return [], [f"unsupported feature axis {axis!r}"]
+
+    data = registry if registry is not None else load_modeling_capability_registry()
+    errors = capability_registry_errors(data, available_tools=available_tools)
+    if errors:
+        return [], errors
+
+    candidates = [
+        dict(item)
+        for item in data.get("implementations", [])
+        if isinstance(item, dict)
+        and item.get("feature_kind") == feature_kind
+        and axis in item.get("supported_axes", [])
+        and (allow_surrogate or item.get("exactness") == "exact")
+    ]
+    candidates.sort(
+        key=lambda item: (
+            0 if item.get("exactness") == "exact" else 1,
+            int(item.get("priority", 0)),
+            str(item.get("implementation_id") or ""),
+        )
+    )
+    if not candidates:
+        return [], [
+            f"no modeling capability for feature_kind={feature_kind!r}, "
+            f"axis={axis!r}, allow_surrogate={allow_surrogate}"
+        ]
+    return candidates, []
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> int:
+    try:
+        registry = load_modeling_capability_registry(
+            getattr(args, "registry", None)
+        )
+    except PlanError as exc:
+        result = {
+            "registry": getattr(args, "registry", None)
+            or _default_capability_registry_path(),
+            "capabilities": [],
+            "errors": [str(exc)],
+            "ok": False,
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    feature_kind = getattr(args, "feature_kind", None)
+    axis = getattr(args, "axis", None)
+    exact_only = bool(getattr(args, "exact_only", False))
+    if feature_kind is None and axis is None:
+        errors = capability_registry_errors(registry)
+        candidates = (
+            []
+            if errors
+            else sorted(
+                (
+                    dict(item)
+                    for item in registry.get("implementations", [])
+                    if isinstance(item, dict)
+                ),
+                key=lambda item: (
+                    str(item.get("feature_kind") or ""),
+                    0 if item.get("exactness") == "exact" else 1,
+                    int(item.get("priority", 0)),
+                    str(item.get("implementation_id") or ""),
+                ),
+            )
+        )
+    elif feature_kind is None or axis is None:
+        candidates = []
+        errors = ["--feature-kind and --axis must be supplied together"]
+    else:
+        candidates, errors = resolve_modeling_capabilities(
+            feature_kind,
+            axis,
+            allow_surrogate=not exact_only,
+            registry=registry,
+        )
+
+    result = {
+        "schema_version": registry.get("schema_version"),
+        "registry_kind": registry.get("registry_kind"),
+        "feature_kind": feature_kind,
+        "axis": axis,
+        "exact_only": exact_only,
+        "capabilities": candidates,
+        "errors": errors,
+        "ok": not errors,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
 
 
 def load_runtime_config(path: str | None = None) -> dict:
@@ -4429,6 +4629,16 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--drawing", default=None,
                     help="optional Mode B drawing for thread surrogate validation")
     pb.set_defaults(func=_cmd_build)
+
+    pcap = sub.add_parser(
+        "capabilities",
+        help="query static Feature Contract implementation capabilities (no NX)",
+    )
+    pcap.add_argument("--feature-kind", default=None)
+    pcap.add_argument("--axis", choices=("X", "Y", "Z"), default=None)
+    pcap.add_argument("--exact-only", action="store_true")
+    pcap.add_argument("--registry", default=None)
+    pcap.set_defaults(func=_cmd_capabilities)
 
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")
     pd.add_argument("drawing")

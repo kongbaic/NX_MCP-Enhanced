@@ -371,6 +371,9 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 读取本轮 canonical drawing.json（Mode B）或已确认结构化意图（Mode A）
 → 检查 unresolved / dimension closure
 → 读取本地冻结契约（runner-contract.md + certified-tool-contract.json）
+→ 对需要实现选择的 Feature Contract 调用已安装 Runner：
+  `capabilities --feature-kind <kind> --axis <X|Y|Z>`
+→ 只从返回的 implementation 中选择；无能力则 fail closed
 → 生成 FAST plan（含版本号）
 → 发布前静态自检 selection_criteria
 → frozen plan 落盘
@@ -380,6 +383,19 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 ```
 
 **禁止**在正常路径中插入源码研究步骤。
+
+Capability 边界：
+- canonical drawing / Feature Contract 保存工程真值，不得写入具体 NX 工具实现。
+- `modeling_capabilities.json` 是静态 implementation 接入缝隙，不是 active registry，
+  不记录 task、hash、运行状态或 repair lineage。
+- 新增 Thread / Helix / Sweep / Loft 或其它真实 NX 工具时，应新增 capability
+  implementation + Planner adapter + Gate B validator；不得要求 Reader/Resolver
+  重写同一 Feature Contract。
+- exact implementation 与 surrogate 同时存在时，Capability Resolver 优先 exact；
+  required certified tool 缺失、axis 不支持或没有 validator 时必须 fail closed。
+- Gate B 校验的是 implementation 最终工程几何是否等于 Feature Contract，不得把
+  某个具体工具名本身当成几何真值。
+
 
 ## 13. 输出格式（默认 FAST，强制）
 

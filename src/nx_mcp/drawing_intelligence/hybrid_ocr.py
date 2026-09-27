@@ -413,9 +413,9 @@ def run_hybrid_ocr(
 ) -> dict[str, Any]:
     reader_input_path = Path(reader_input).resolve()
     output_path = Path(output).resolve()
-    reader_input = load_json(reader_input_path)
-    visual_aid_path = Path(str(reader_input["reader_visual_aid_path"])).resolve()
-    source_path = Path(str(reader_input["source_raster_path"])).resolve()
+    reader_input_payload = load_json(reader_input_path)
+    visual_aid_path = Path(str(reader_input_payload["reader_visual_aid_path"])).resolve()
+    source_path = Path(str(reader_input_payload["source_raster_path"])).resolve()
     visual_aid = load_json(visual_aid_path)
 
     cv2 = importlib.import_module("cv2")

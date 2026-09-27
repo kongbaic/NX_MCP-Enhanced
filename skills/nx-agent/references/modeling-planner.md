@@ -376,9 +376,10 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 → 读取本地冻结契约（runner-contract.md + certified-tool-contract.json）
 → Mode B 调用已安装 Runner：
   `plan-contracts <current-drawing.json>`
-→ 直接消费返回的 selected implementation + geometries + operation_contracts；
-  `fixed_args` 不得由 Planner 重算、改写或反推，Planner 只补 `requires`
-  指定的 symbol wiring 与步骤顺序
+→ 直接消费返回的 selected implementation + geometries + operation_contracts + planner_contract；
+  `fixed_args` 必须把完整 key set 与 value 原样复制到对应 tool_args，
+  包括显式 false / 0 / 空对象；不得省略“默认值”、重算、改写或反推。
+  Planner 只补 `requires` 指定的 symbol wiring 与步骤顺序
 → Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
   `capabilities --feature-kind <kind> --axis <X|Y|Z>`
 → 无 capability / adapter / operation materialization 时 fail closed
@@ -406,7 +407,9 @@ Capability 边界：
 - Mode B 的 Planner Adapter 必须通过 `plan-contracts` 暴露
   `operation_contracts`：工程真值到 NX 几何关键参数（如 axis/range →
   plane/reverse/start_offset/distance）的转换归 deterministic Adapter 所有。
-  Planner 不得自行重新解释这些参数；只允许按 `requires` 补 symbol binding、
+  Planner 不得自行重新解释这些参数；每个 operation 必须保留 fixed_args 的
+  **完整字段集合和完整值**，包括 `reverse:false`、数值 `0` 和空对象，禁止依赖
+  certified tool/NX 的默认参数而省略字段。只允许按 `requires` 补 symbol binding、
   安排合法 step 顺序以及非工程真值的执行编排。
 
 

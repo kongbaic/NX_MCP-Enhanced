@@ -1671,6 +1671,12 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
     assert exit_code == 0
     assert result["ok"] is True
     assert result["errors"] == []
+    assert result["planner_contract"] == {
+        "fixed_args_policy": "copy_exact_key_set_and_values",
+        "preserve_explicit_false_zero_and_empty_objects": True,
+        "requires_policy": "fill_only_declared_symbolic_wiring",
+        "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
+    }
     assert result["contracts"][0]["implementation_id"] == (
         "principal-axis-thread-v1"
     )

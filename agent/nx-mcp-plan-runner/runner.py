@@ -7152,6 +7152,12 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
 
     result = {
         "drawing": drawing_path,
+        "planner_contract": {
+            "fixed_args_policy": "copy_exact_key_set_and_values",
+            "preserve_explicit_false_zero_and_empty_objects": True,
+            "requires_policy": "fill_only_declared_symbolic_wiring",
+            "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
+        },
         "contracts": contracts if not errors else [],
         "errors": errors,
         "ok": not errors,

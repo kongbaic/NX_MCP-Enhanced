@@ -250,8 +250,12 @@ def main() -> None:
         "禁止第二轮确认",
         "runner.py plan-contracts <current-drawing.json>",
         "operation_contracts",
-        "fixed_args",
+        "planner_contract",
+        "完整 key set + 完整 value",
+        "显式 `false`",
         "requires",
+        "禁止第二次 build/check",
+        "B 阶段不属于 Controlled Self-Healing",
         "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
         "runner.py check <current-executable> --drawing <current-drawing>",
         "从零写本轮新的 frozen plan",
@@ -281,8 +285,9 @@ def main() -> None:
         "`written=true`",
         "`output_exists=true`",
         "`plan-contracts <current-drawing.json>`",
-        "operation_contracts",
-        "`fixed_args` 不得由 Planner 重算、改写或反推",
+        "operation_contracts + planner_contract",
+        "完整 key set 与 value 原样复制",
+        "`reverse:false`",
         "`requires`",
         "runner build --drawing <current-drawing.json>",
         "runner check --drawing <current-drawing.json>",
@@ -353,6 +358,15 @@ def main() -> None:
         ):
             if token not in contract_text:
                 fail(f"Stage C normal Runner entry regression in {name}: missing {token}")
+
+    for token in (
+        "fixed_args 的完整 key set",
+        "false",
+        "数值 `0`",
+        "requires",
+    ):
+        if token not in runner_contract:
+            fail(f"Mode B exact fixed_args copy regression: missing {token}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
@@ -444,6 +458,8 @@ def main() -> None:
         '"plan-contracts"',
         "pcontracts.set_defaults(func=_cmd_plan_contracts)",
         "operation_contracts",
+        '"fixed_args_policy": "copy_exact_key_set_and_values"',
+        '"stage_b_failure_policy": "stop_no_retry_no_source_inspection"',
         "dispatch_planner_adapter(",
         "capability_plan_errors(",
     ):

@@ -15,7 +15,12 @@ from pydantic import ValidationError
 
 from .capture import validate_reader_capture_contract
 from .compiler import EvidenceCompileError, compile_evidence_graph
-from .confirmation import ConfirmationError, build_confirmation_request
+from .confirmation import (
+    ConfirmationAnswers,
+    ConfirmationError,
+    apply_confirmation_answers,
+    build_confirmation_request,
+)
 from .draft import DraftAssemblyError, build_semantic_draft
 from .evidence import EvidenceGraph
 from .gate0 import Gate0Error, write_strict_evidence
@@ -78,6 +83,8 @@ def _artifact_paths(prefix: Path) -> dict[str, Path]:
         "evidence": Path(base + "-drawing-evidence.json"),
         "draft": Path(base + "-semantic-draft.json"),
         "confirmation_request": Path(base + "-confirmation-request.json"),
+        "confirmed_evidence": Path(base + "-drawing-evidence-confirmed.json"),
+        "confirmed_draft": Path(base + "-semantic-draft-confirmed.json"),
         "drawing": Path(base + "-drawing.json"),
     }
 
@@ -575,27 +582,301 @@ def run_mode_b_coordinator(
     return 0, _public_report(state, state_path)
 
 
+def resume_mode_b_coordinator(
+    state_file: str | os.PathLike[str],
+    answers: str | os.PathLike[str],
+) -> tuple[int, dict[str, Any]]:
+    try:
+        runtime = _load_runtime()
+    except Exception as exc:
+        return 2, {
+            "schema": STATE_SCHEMA,
+            "status": "blocked",
+            "phase": "runtime_check",
+            "terminal": True,
+            "errors": [f"{type(exc).__name__}: {exc}"],
+        }
+
+    workspace: Path = runtime["workspace"]
+    try:
+        state_path = _require_workspace_file(
+            Path(state_file),
+            workspace,
+            "Mode B state",
+        )
+        answers_path = _require_workspace_file(
+            Path(answers),
+            workspace,
+            "user confirmations",
+        )
+        if state_path.parent != workspace or answers_path.parent != workspace:
+            raise ModeBCoordinatorError(
+                "state and user confirmations must be directly inside NX_MCP_WORKSPACE"
+            )
+        if not state_path.is_file():
+            raise ModeBCoordinatorError(f"Mode B state missing: {state_path}")
+        if not answers_path.is_file():
+            raise ModeBCoordinatorError(
+                f"user confirmations missing: {answers_path}"
+            )
+
+        state = _load_json(state_path)
+        if state.get("schema") != STATE_SCHEMA:
+            raise ModeBCoordinatorError(
+                f"unsupported Mode B state schema: {state.get('schema')!r}"
+            )
+        if (
+            state.get("phase") != "awaiting_confirmation"
+            or state.get("terminal") is True
+        ):
+            return 3, {
+                "schema": STATE_SCHEMA,
+                "status": "blocked",
+                "phase": state.get("phase"),
+                "terminal": state.get("terminal"),
+                "reason": "invalid_resume_phase",
+                "state": str(state_path),
+                "errors": [
+                    "Mode B confirmation resume is allowed only once from "
+                    "awaiting_confirmation"
+                ],
+            }
+
+        artifact_values = state.get("artifacts")
+        if not isinstance(artifact_values, dict):
+            raise ModeBCoordinatorError("Mode B state artifacts must be an object")
+
+        required_names = (
+            "evidence",
+            "confirmed_evidence",
+            "confirmed_draft",
+            "drawing",
+        )
+        artifacts: dict[str, Path] = {}
+        for name in required_names:
+            raw_path = artifact_values.get(name)
+            if not isinstance(raw_path, str) or not raw_path:
+                raise ModeBCoordinatorError(
+                    f"Mode B state missing artifact path: {name}"
+                )
+            path = _require_workspace_file(
+                Path(raw_path),
+                workspace,
+                f"Mode B artifact {name}",
+            )
+            if path.parent != workspace:
+                raise ModeBCoordinatorError(
+                    f"Mode B artifact must be directly inside workspace: {path}"
+                )
+            artifacts[name] = path
+
+        if not artifacts["evidence"].is_file():
+            raise ModeBCoordinatorError(
+                f"original drawing evidence missing: {artifacts['evidence']}"
+            )
+        stale = [
+            str(artifacts[name])
+            for name in ("confirmed_evidence", "confirmed_draft", "drawing")
+            if artifacts[name].exists()
+        ]
+        if stale:
+            return 3, {
+                "schema": STATE_SCHEMA,
+                "status": "blocked",
+                "phase": state.get("phase"),
+                "terminal": state.get("terminal"),
+                "reason": "stale_resume_outputs",
+                "state": str(state_path),
+                "errors": stale,
+            }
+    except Exception as exc:
+        return 2, {
+            "schema": STATE_SCHEMA,
+            "status": "blocked",
+            "phase": "resume_check",
+            "terminal": True,
+            "errors": [f"{type(exc).__name__}: {exc}"],
+        }
+
+    previous_elapsed = state.get("total_elapsed_seconds", 0.0)
+    try:
+        previous_elapsed = float(previous_elapsed)
+    except (TypeError, ValueError):
+        previous_elapsed = 0.0
+    state["_started_monotonic"] = time.monotonic() - max(
+        0.0,
+        previous_elapsed,
+    )
+    state["user_confirmations"] = str(answers_path)
+    _set_phase(
+        state,
+        state_path,
+        "confirmation_submitted",
+        status="running",
+        terminal=False,
+    )
+
+    stage = "apply_confirmations"
+    stage_started = time.monotonic()
+    try:
+        graph = EvidenceGraph.model_validate(
+            _load_json(artifacts["evidence"])
+        )
+        answer_model = ConfirmationAnswers.model_validate(
+            _load_json(answers_path)
+        )
+        before_request = build_confirmation_request(graph)
+        confirmed = apply_confirmation_answers(graph, answer_model)
+        after_request = build_confirmation_request(confirmed)
+        _atomic_write_json(
+            artifacts["confirmed_evidence"],
+            confirmed.model_dump(mode="json"),
+        )
+        state["summary"].update(
+            {
+                "confirmation_answer_count": len(answer_model.answers),
+                "confirmation_questions_before": before_request.get(
+                    "question_count", 0
+                ),
+                "confirmation_questions_after": after_request.get(
+                    "question_count", 0
+                ),
+            }
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+        ValidationError,
+        ConfirmationError,
+        ModeBCoordinatorError,
+    ) as exc:
+        return _fail(state, state_path, stage, exc, stage_started)
+    _record_stage(state, state_path, stage, stage_started)
+
+    stage = "second_resolve"
+    stage_started = time.monotonic()
+    try:
+        compiled = compile_evidence_graph(confirmed)
+        resolution = resolve_evidence_graph(compiled)
+        draft = build_semantic_draft(compiled, resolution)
+        _atomic_write_json(artifacts["confirmed_draft"], draft)
+    except (
+        OSError,
+        ValueError,
+        ValidationError,
+        EvidenceCompileError,
+        DraftAssemblyError,
+    ) as exc:
+        return _fail(state, state_path, stage, exc, stage_started)
+
+    blocking_unresolved = sum(
+        1
+        for item in resolution.unresolved
+        if item.get("required_for_modeling", True)
+    )
+    conflicts = len(resolution.conflicts)
+    state["summary"].update(
+        {
+            "second_resolve_blocking_unresolved": blocking_unresolved,
+            "second_resolve_conflicts": conflicts,
+            "second_resolve_dimension_closure": draft.get(
+                "dimension_closure", {}
+            ).get("status"),
+        }
+    )
+    _record_stage(state, state_path, stage, stage_started)
+
+    if not resolution.ok:
+        state.setdefault("errors", []).append(
+            {
+                "stage": "second_resolve",
+                "message": "second_resolve_not_closed",
+            }
+        )
+        _set_phase(
+            state,
+            state_path,
+            "terminal_failed",
+            status="failed",
+            terminal=True,
+        )
+        return 1, _public_report(state, state_path)
+
+    _set_phase(
+        state,
+        state_path,
+        "second_resolve_pass",
+        status="running",
+        terminal=False,
+    )
+
+    stage = "gate_a"
+    stage_started = time.monotonic()
+    try:
+        gate_result = _run_gate_a(
+            artifacts["confirmed_draft"],
+            artifacts["drawing"],
+            runtime,
+        )
+        state["summary"]["gate_a_ok"] = gate_result.get("ok") is True
+    except Exception as exc:
+        return _fail(state, state_path, stage, exc, stage_started)
+    _record_stage(state, state_path, stage, stage_started)
+    _set_phase(
+        state,
+        state_path,
+        "gate_a_pass",
+        status="success",
+        terminal=True,
+    )
+    return 0, _public_report(state, state_path)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m nx_mcp.drawing_intelligence.mode_b_coordinator",
-        description=(
-            "Deterministic one-pass Mode B coordinator from immutable "
-            "reader-observations through Gate A"
-        ),
-    )
-    parser.add_argument("observations")
-    parser.add_argument(
-        "artifact_prefix",
-        help=(
-            "workspace-local prefix; coordinator creates state/capture/evidence/"
-            "draft/confirmation/drawing artifacts from this prefix"
-        ),
-    )
-    args = parser.parse_args(argv)
-    code, report = run_mode_b_coordinator(
-        args.observations,
-        args.artifact_prefix,
-    )
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+
+    if effective_argv and effective_argv[0] == "resume":
+        parser = argparse.ArgumentParser(
+            prog=(
+                "python -m nx_mcp.drawing_intelligence.mode_b_coordinator "
+                "resume"
+            ),
+            description=(
+                "Resume exactly once from awaiting_confirmation through "
+                "second resolve and Gate A"
+            ),
+        )
+        parser.add_argument("state")
+        parser.add_argument("answers")
+        args = parser.parse_args(effective_argv[1:])
+        code, report = resume_mode_b_coordinator(
+            args.state,
+            args.answers,
+        )
+    else:
+        parser = argparse.ArgumentParser(
+            prog="python -m nx_mcp.drawing_intelligence.mode_b_coordinator",
+            description=(
+                "Deterministic one-pass Mode B coordinator from immutable "
+                "reader-observations through Gate A"
+            ),
+        )
+        parser.add_argument("observations")
+        parser.add_argument(
+            "artifact_prefix",
+            help=(
+                "workspace-local prefix; coordinator creates "
+                "state/capture/evidence/draft/confirmation/drawing "
+                "artifacts from this prefix"
+            ),
+        )
+        args = parser.parse_args(effective_argv)
+        code, report = run_mode_b_coordinator(
+            args.observations,
+            args.artifact_prefix,
+        )
+
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return code
 

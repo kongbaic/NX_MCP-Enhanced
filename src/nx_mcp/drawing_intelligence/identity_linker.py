@@ -94,6 +94,7 @@ _VIEW_NORMAL_AXIS: dict[str, Axis] = {
     "side": "X",
     "top": "Z",
 }
+_ALL_AXES: tuple[Axis, ...] = ("X", "Y", "Z")
 _CIRCULAR_PROJECTION_SHAPES = {"circle", "concentric_circles"}
 
 
@@ -105,7 +106,7 @@ def _component_axis_from_projections(
 
     entities = {item.id: item for item in capture.entities}
     views = {item.id: item for item in capture.views}
-    candidates: set[Axis] = {"X", "Y", "Z"}
+    candidates: set[Axis] = set(_ALL_AXES)
     evidence: list[str] = []
     constrained = False
 
@@ -121,7 +122,8 @@ def _component_axis_from_projections(
         if entity.shape in _CIRCULAR_PROJECTION_SHAPES:
             allowed: set[Axis] = {normal}
         elif entity.shape == "hidden_parallel":
-            allowed = {"X", "Y", "Z"} - {normal}
+            allowed = set(_ALL_AXES)
+            allowed.discard(normal)
         else:
             continue
 
@@ -143,8 +145,6 @@ def _structured_symmetric_count_two_sources(
 ) -> list[str]:
     source_ids: list[str] = []
     for observation in capture.observations:
-        if not isinstance(observation, dict):
-            continue
         if observation.get("kind") != _STRUCTURED_SYMMETRIC_COUNT_TWO_KIND:
             continue
         if observation.get("axis") != axis or observation.get("datum") != "overall_center":
@@ -834,14 +834,17 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         feature_id = entity_to_feature.get(component[0])
         if feature_id is None:
             continue
-        axis, axis_sources = _component_axis_from_projections(capture, component)
-        if axis is None:
+        component_axis, axis_sources = _component_axis_from_projections(
+            capture,
+            component,
+        )
+        if component_axis is None:
             continue
         inferred_axis_values.append(
             DirectValueEvidence(
                 id=f"L_AXIS_{feature_id}",
                 target=f"feature:{feature_id}.axis",
-                value=axis,
+                value=component_axis,
                 semantic="axis",
                 source_ids=axis_sources,
             )
@@ -1033,15 +1036,28 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 if feature_id is not None
                 else None
             )
-            feature_axis = str(
+            raw_feature_axis = (
                 _direct_target_value(
                     direct_values,
                     f"feature:{feature_id}.axis",
                 )
                 if feature_id is not None
-                else ""
-            ).upper()
-            center_indexes = _TRANSVERSE_CENTER_INDEX.get(feature_axis, {})
+                else None
+            )
+            feature_axis: Axis | None
+            if raw_feature_axis == "X":
+                feature_axis = "X"
+            elif raw_feature_axis == "Y":
+                feature_axis = "Y"
+            elif raw_feature_axis == "Z":
+                feature_axis = "Z"
+            else:
+                feature_axis = None
+            center_indexes: dict[Axis, int] = (
+                _TRANSVERSE_CENTER_INDEX[feature_axis]
+                if feature_axis is not None
+                else {}
+            )
             coordinate_index = center_indexes.get(item.axis)
             marker_present = _SYMMETRIC_COUNT_TWO_MARKER in base_source_ids
             symmetry_proven = marker_present or bool(structured_symmetry_sources)
@@ -1197,16 +1213,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         ]
         if len(feature_ids) != len(item.entity_ids) or len(set(feature_ids)) < 2:
             continue
-        for axis in ("X", "Y", "Z"):
-            if axis == item.feature_axis:
+        for alignment_axis in _ALL_AXES:
+            if alignment_axis == item.feature_axis:
                 continue
             synthetic_relations.append(
                 RelationEvidence(
-                    id=f"{item.id}_{axis}",
+                    id=f"{item.id}_{alignment_axis}",
                     kind="alignment",
-                    axis=axis,
+                    axis=alignment_axis,
                     targets=[
-                        f"feature:{feature_id}.centerline.{axis.lower()}"
+                        f"feature:{feature_id}.centerline.{alignment_axis.lower()}"
                         for feature_id in feature_ids
                     ],
                     source_ids=item.source_ids,

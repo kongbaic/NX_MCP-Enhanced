@@ -2864,7 +2864,12 @@ def _drawing_eval_expr(
     sources: dict[str, dict],
     expr: Any,
 ) -> tuple[float | None, set[str], set[str], list[str]]:
-    """Evaluate a tiny arithmetic expression and return provenance."""
+    """Validate a tiny arithmetic expression and return provenance.
+
+    Gate A intentionally does not re-evaluate composite derived arithmetic.
+    Numeric solving belongs to the deterministic Resolver; this helper only
+    validates expression shape, references, and numeric operand sanity.
+    """
     errors: list[str] = []
     if not isinstance(expr, dict):
         return None, set(), set(), ["derived expr must be an object"]
@@ -2911,36 +2916,17 @@ def _drawing_eval_expr(
     if len(args) != expected:
         return None, set(), set(), [f"derived op {op!r} requires {expected} args"]
 
-    values: list[float] = []
     source_refs: set[str] = set()
     target_refs: set[str] = set()
     for arg in args:
-        value, child_sources, child_targets, child_errors = _drawing_eval_expr(
+        _, child_sources, child_targets, child_errors = _drawing_eval_expr(
             data, sources, arg
         )
         errors.extend(child_errors)
         source_refs.update(child_sources)
         target_refs.update(child_targets)
-        if value is not None:
-            values.append(value)
-    if errors or len(values) != expected:
-        return None, source_refs, target_refs, errors
 
-    if op == "add":
-        result = values[0] + values[1]
-    elif op == "sub":
-        result = values[0] - values[1]
-    elif op == "mul":
-        result = values[0] * values[1]
-    elif op == "div":
-        if abs(values[1]) <= 1e-12:
-            return None, source_refs, target_refs, ["derived division by zero"]
-        result = values[0] / values[1]
-    elif op == "neg":
-        result = -values[0]
-    else:
-        result = abs(values[0])
-    return result, source_refs, target_refs, errors
+    return None, source_refs, target_refs, errors
 
 
 def _drawing_relation_source_ok(
@@ -3584,18 +3570,25 @@ def check_drawing_json(data: dict) -> list[str]:
             errors.append(f"derived {did!r} targets missing field {target!r}")
             actual = None
 
-        value, source_refs, target_refs, expr_errors = _drawing_eval_expr(
+        _, source_refs, target_refs, expr_errors = _drawing_eval_expr(
             data, sources, item.get("expr")
         )
         errors.extend(f"derived {did!r}: {error}" for error in expr_errors)
 
-        if value is not None:
-            if "value" not in item:
-                errors.append(f"derived {did!r} missing value")
-            elif not _drawing_equal(value, item.get("value")):
-                errors.append(f"derived {did!r} expr does not match declared value")
-            if actual is not None and not _drawing_equal(value, actual):
-                errors.append(f"derived {did!r} expr does not match target {target!r}")
+        if "value" not in item:
+            errors.append(f"derived {did!r} missing value")
+        else:
+            declared_value = _num(item.get("value"))
+            if declared_value is None:
+                errors.append(f"derived {did!r} value must be numeric")
+            elif actual is not None:
+                actual_value = _num(actual)
+                if actual_value is None:
+                    errors.append(f"derived {did!r} target {target!r} must be numeric")
+                elif not _drawing_equal(declared_value, actual_value):
+                    errors.append(
+                        f"derived {did!r} declared value does not match target {target!r}"
+                    )
 
         relation_refs = item.get("relation_refs") or []
         if not isinstance(relation_refs, list) or not all(

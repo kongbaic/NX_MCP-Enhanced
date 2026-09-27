@@ -607,13 +607,21 @@ class DrawingGateATests(unittest.TestCase):
         errors = R.check_drawing_json(data)
         self.assertTrue(any("endpoints must be center coordinates" in error for error in errors))
 
-    def test_derived_target_expr_and_relation_source_are_checked(self) -> None:
+    def test_derived_expr_arithmetic_is_not_recomputed_in_gate_a(self) -> None:
         data = relation_fixture()
         derived = data["derived"][0]
         derived["expr"]["args"][1] = {"const": 14}
         errors = R.check_drawing_json(data)
-        self.assertTrue(any("expr does not match" in error for error in errors))
+        self.assertFalse(any("expr does not match" in error for error in errors))
         self.assertTrue(any("without relation evidence" in error for error in errors))
+
+    def test_derived_declared_value_must_match_materialized_target(self) -> None:
+        data = relation_fixture()
+        data["derived"][0]["value"] = 34
+        errors = R.check_drawing_json(data)
+        self.assertTrue(
+            any("declared value does not match target" in error for error in errors)
+        )
 
     def test_hole_axis_requires_transverse_center_coordinates(self) -> None:
         valid = {

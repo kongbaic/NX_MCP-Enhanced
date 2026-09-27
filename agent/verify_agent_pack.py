@@ -526,7 +526,7 @@ def main() -> None:
     for token in (
         "SetAllowMultipleDisplayedParts(true)",
         "GetDisplayedParts()",
-        '"displayed_parts"',
+        '\\"displayed_parts\\"',
         "new part replaced a pre-existing displayed part",
     ):
         if token not in loader_source:

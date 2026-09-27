@@ -841,6 +841,14 @@ def test_future_native_tool_can_preempt_surrogate_without_changing_feature_contr
         "X",
         registry=registry,
         available_tools={*R.CERTIFIED_TOOLS, "nx_thread"},
+        planner_adapter_handlers={
+            *R.REGISTERED_PLANNER_ADAPTER_HANDLERS,
+            "native_thread",
+        },
+        gate_b_validator_handlers={
+            *R.REGISTERED_GATE_B_VALIDATOR_HANDLERS,
+            "native_thread_geometry",
+        },
     )
 
     assert errors == []
@@ -848,6 +856,32 @@ def test_future_native_tool_can_preempt_surrogate_without_changing_feature_contr
         "native-thread",
         "thread-surrogate",
     ]
+
+
+def test_capability_registry_fails_closed_when_planner_adapter_is_unbound():
+    registry = R.load_modeling_capability_registry()
+    registry = json.loads(json.dumps(registry))
+    registry["implementations"][0]["planner_adapter"] = "missing_adapter"
+
+    errors = R.capability_registry_errors(registry)
+
+    assert any(
+        "unbound planner_adapter 'missing_adapter'" in item
+        for item in errors
+    )
+
+
+def test_capability_registry_fails_closed_when_gate_b_validator_is_unbound():
+    registry = R.load_modeling_capability_registry()
+    registry = json.loads(json.dumps(registry))
+    registry["implementations"][0]["gate_b_validator"] = "missing_validator"
+
+    errors = R.capability_registry_errors(registry)
+
+    assert any(
+        "unbound gate_b_validator 'missing_validator'" in item
+        for item in errors
+    )
 
 
 def test_capability_registry_fails_closed_when_required_tool_is_unavailable():

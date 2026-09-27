@@ -95,6 +95,28 @@ RAW_PIPE_TOOLS = {"nx_edge_blend", "nx_chamfer"}
 RUNTIME_CONFIG_FILENAME = "runtime-config.json"
 CAPABILITY_REGISTRY_FILENAME = "modeling_capabilities.json"
 
+# Static handler binding surface for capability declarations. These identifiers
+# are deliberately separate from task/run state: the capability file may only
+# reference adapter/validator handlers that this Runner knows how to dispatch.
+REGISTERED_PLANNER_ADAPTER_HANDLERS = frozenset(
+    {
+        "native_z_hole",
+        "principal_axis_circular_subtract",
+        "native_z_counterbore",
+        "principal_axis_counterbore",
+        "metric_thread_surrogate",
+    }
+)
+REGISTERED_GATE_B_VALIDATOR_HANDLERS = frozenset(
+    {
+        "native_hole_geometry",
+        "circular_subtract_geometry",
+        "native_counterbore_geometry",
+        "transverse_recess_geometry",
+        "thread_surrogate",
+    }
+)
+
 
 def _default_capability_registry_path() -> str:
     return os.path.join(
@@ -107,6 +129,8 @@ def capability_registry_errors(
     data: dict[str, Any],
     *,
     available_tools: set[str] | None = None,
+    planner_adapter_handlers: set[str] | frozenset[str] | None = None,
+    gate_b_validator_handlers: set[str] | frozenset[str] | None = None,
 ) -> list[str]:
     """Validate the static feature-to-implementation capability seam."""
     errors: list[str] = []
@@ -121,6 +145,16 @@ def capability_registry_errors(
         return [*errors, "capability registry implementations must be a list"]
 
     tools = set(CERTIFIED_TOOLS if available_tools is None else available_tools)
+    adapter_handlers = set(
+        REGISTERED_PLANNER_ADAPTER_HANDLERS
+        if planner_adapter_handlers is None
+        else planner_adapter_handlers
+    )
+    validator_handlers = set(
+        REGISTERED_GATE_B_VALIDATOR_HANDLERS
+        if gate_b_validator_handlers is None
+        else gate_b_validator_handlers
+    )
     seen: set[str] = set()
     for index, item in enumerate(implementations):
         label = f"capability implementations[{index}]"
@@ -165,9 +199,21 @@ def capability_registry_errors(
                     + ", ".join(missing)
                 )
 
-        for field in ("planner_adapter", "gate_b_validator"):
-            if not isinstance(item.get(field), str) or not item[field]:
-                errors.append(f"{label} requires {field}")
+        planner_adapter = item.get("planner_adapter")
+        if not isinstance(planner_adapter, str) or not planner_adapter:
+            errors.append(f"{label} requires planner_adapter")
+        elif planner_adapter not in adapter_handlers:
+            errors.append(
+                f"{label} references unbound planner_adapter {planner_adapter!r}"
+            )
+
+        gate_b_validator = item.get("gate_b_validator")
+        if not isinstance(gate_b_validator, str) or not gate_b_validator:
+            errors.append(f"{label} requires gate_b_validator")
+        elif gate_b_validator not in validator_handlers:
+            errors.append(
+                f"{label} references unbound gate_b_validator {gate_b_validator!r}"
+            )
 
         priority = item.get("priority")
         if not isinstance(priority, int) or isinstance(priority, bool) or priority < 0:
@@ -198,6 +244,8 @@ def resolve_modeling_capabilities(
     allow_surrogate: bool = True,
     registry: dict[str, Any] | None = None,
     available_tools: set[str] | None = None,
+    planner_adapter_handlers: set[str] | frozenset[str] | None = None,
+    gate_b_validator_handlers: set[str] | frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Return deterministic implementation candidates for one Feature Contract."""
     axis = str(axis or "").upper()
@@ -205,7 +253,12 @@ def resolve_modeling_capabilities(
         return [], [f"unsupported feature axis {axis!r}"]
 
     data = registry if registry is not None else load_modeling_capability_registry()
-    errors = capability_registry_errors(data, available_tools=available_tools)
+    errors = capability_registry_errors(
+        data,
+        available_tools=available_tools,
+        planner_adapter_handlers=planner_adapter_handlers,
+        gate_b_validator_handlers=gate_b_validator_handlers,
+    )
     if errors:
         return [], errors
 

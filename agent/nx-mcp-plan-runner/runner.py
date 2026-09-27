@@ -34,6 +34,7 @@ import re
 import sys
 import tempfile
 import time
+from pathlib import PureWindowsPath
 from typing import Any
 
 # --------------------------------------------------------------------------
@@ -1547,6 +1548,11 @@ def _unknown_criteria_keys(criteria: dict, kind: str) -> list[str]:
     return unknown
 
 
+def _plan_path_is_absolute(path: str) -> bool:
+    """Return True for POSIX, drive-letter, or UNC absolute plan paths."""
+    return os.path.isabs(path) or bool(PureWindowsPath(path).anchor)
+
+
 def check_plan(plan: dict, executable: bool = True) -> list[str]:
     errors: list[str] = []
     ops = plan.get("operations") or []
@@ -1566,6 +1572,14 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
         if not isinstance(args, dict):
             errors.append(f"step {step}: tool_args must be an object")
             continue
+
+        if tool in ("nx_create_part", "nx_open_part", "nx_export_step"):
+            path_value = args.get("path")
+            if isinstance(path_value, str) and _plan_path_is_absolute(path_value):
+                errors.append(
+                    f"step {step}: {tool} path must be NX_MCP_WORKSPACE-relative, "
+                    f"got {path_value!r}"
+                )
 
         # selection_criteria grammar
         crit = op.get("selection_criteria") or {}
@@ -5091,31 +5105,78 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             "c3_export_complete_utc": timing_state.get("c3_export_complete_utc"),
         })
 
+    def finish(result: dict[str, Any], exit_code: int) -> int:
+        timed(result)
+        if args.report:
+            try:
+                with open(args.report, "w", encoding="utf-8") as handle:
+                    json.dump(result, handle, ensure_ascii=False, indent=2)
+            except OSError as exc:
+                result["status"] = "failed"
+                result.setdefault("errors", []).append(
+                    f"cannot write runner report: {type(exc).__name__}: {exc}"
+                )
+                exit_code = 1
+        print("===REPORT===")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return exit_code
+
     t_start = time.monotonic()
-    plan = _load_plan(args.plan)
+    try:
+        plan = _load_plan(args.plan)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [f"cannot load plan: {type(exc).__name__}: {exc}"],
+            },
+            1,
+        )
     if not _is_executable(plan):
         result = {"status": "failed", "failed_step": None,
                           "errors": ["plan is not in executable format "
                                      "(no result_bindings / selection_binding); run `build` first"]}
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
+        return finish(result, 1)
     errs = check_plan(plan, executable=True)
     if errs:
         result = {"status": "failed", "failed_step": None,
                   "errors": errs[:20], "error_count": len(errs)}
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
-    transport = NXTransport(workspace_root=args.workspace)
-    if not transport.ping():
-        detail = transport.ping_error()
-        error = "loader health check failed"
-        if detail:
-            error += ": " + detail
-        result = {"status": "failed", "failed_step": None, "errors": [error]}
-        print(json.dumps(timed(result), ensure_ascii=False))
-        return 1
+        return finish(result, 1)
+    try:
+        transport = NXTransport(workspace_root=args.workspace)
+        if not transport.ping():
+            detail = transport.ping_error()
+            error = "loader health check failed"
+            if detail:
+                error += ": " + detail
+            result = {"status": "failed", "failed_step": None, "errors": [error]}
+            return finish(result, 1)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [
+                    f"loader health check failed: {type(exc).__name__}: {exc}"
+                ],
+            },
+            1,
+        )
 
-    planned_for_repair = derive_planned_part(plan, transport)
+    try:
+        planned_for_repair = derive_planned_part(plan, transport)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [
+                    f"planned part resolution failed: {type(exc).__name__}: {exc}"
+                ],
+            },
+            1,
+        )
     previous_report = None
     if args.repair_report:
         try:
@@ -5127,8 +5188,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 "failed_step": None,
                 "errors": [f"cannot read repair report: {exc}"],
             }
-            print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-            return 1
+            return finish(result, 1)
 
     repair_errors = repair_request_errors(
         args.repair_attempt,
@@ -5143,8 +5203,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             "failed_step": None,
             "errors": repair_errors,
         }
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
+        return finish(result, 1)
 
     history_path = args.history or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "run_history.json")
@@ -5158,22 +5217,30 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 "failed_step": None,
                 "errors": ["controlled self-healing already consumed for this planned part"],
             }
-            print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-            return 1
+            return finish(result, 1)
 
     t_preflight = time.monotonic()
-    blocked, info = await run_preflight(
-        transport,
-        plan,
-        args.mode,
-        args.allow_overwrite,
-        history,
-        repair_authorized=(args.repair_attempt == 1),
-    )
+    try:
+        blocked, info = await run_preflight(
+            transport,
+            plan,
+            args.mode,
+            args.allow_overwrite,
+            history,
+            repair_authorized=(args.repair_attempt == 1),
+        )
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [f"preflight failed: {type(exc).__name__}: {exc}"],
+            },
+            1,
+        )
     preflight_elapsed = time.monotonic() - t_preflight
     if blocked is not None:
-        print(json.dumps(timed(blocked), ensure_ascii=False, indent=2))
-        return 1
+        return finish(blocked, 1)
     planned_part = info["planned_part"] if info else None
     if planned_part:
         history.record_start(
@@ -5186,13 +5253,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     report["preflight_elapsed"] = round(preflight_elapsed, 3)
     report["repair_attempt"] = int(args.repair_attempt)
     report["repair_source_report"] = args.repair_report
-    timed(report)
-    print("===REPORT===")
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-    if args.report:
-        with open(args.report, "w", encoding="utf-8") as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-    return 0 if report["status"] == "success" else 1
+    return finish(report, 0 if report["status"] == "success" else 1)
 
 
 def _cmd_check(args: argparse.Namespace) -> int:

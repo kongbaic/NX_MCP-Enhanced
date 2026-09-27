@@ -443,6 +443,77 @@ def test_frozen_check_rejects_executable_only_fields():
     assert any("retry" in e for e in errs)
 
 
+def test_plan_check_rejects_absolute_workspace_paths():
+    plan = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": r"C:\\workspace\\part.prt", "units": "mm"},
+                "topology_changes": False,
+            },
+            {
+                "step": 2,
+                "tool": "nx_export_step",
+                "tool_args": {"path": "/tmp/part.step"},
+                "topology_changes": False,
+            },
+        ],
+    }
+
+    errors = R.check_plan(plan, executable=False)
+
+    assert sum("NX_MCP_WORKSPACE-relative" in item for item in errors) == 2
+
+
+def test_cmd_run_early_failure_writes_requested_report(tmp_path=None):
+    import argparse
+    import asyncio
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    plan_path = os.path.join(directory, "not-executable.json")
+    report_path = os.path.join(directory, "early-report.json")
+
+    with open(plan_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "mode": "FAST",
+                "operations": [
+                    {
+                        "step": 1,
+                        "tool": "nx_status",
+                        "tool_args": {},
+                        "topology_changes": False,
+                    }
+                ],
+            },
+            handle,
+        )
+
+    args = argparse.Namespace(
+        plan=plan_path,
+        workspace=directory,
+        report=report_path,
+        mode="normal",
+        allow_overwrite=False,
+        history=None,
+        repair_attempt=0,
+        repair_report=None,
+    )
+
+    exit_code = asyncio.run(R._cmd_run(args))
+
+    assert exit_code == 1
+    assert os.path.isfile(report_path)
+    with open(report_path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    assert payload["status"] == "failed"
+    assert payload["failed_step"] is None
+    assert any("not in executable format" in item for item in payload["errors"])
+
+
 def test_frozen_check_rejects_dollar_references():
     plan = {"mode": "FAST", "operations": [{
         "step": 1,

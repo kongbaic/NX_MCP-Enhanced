@@ -281,6 +281,7 @@ def test_resolution_is_deterministic_for_identical_input():
 
     assert first == second
 
+
 def test_center_distance_with_two_known_wrong_endpoints_reports_conflict():
     a = "feature:F_A.centerline.x"
     b = "feature:F_B.centerline.x"

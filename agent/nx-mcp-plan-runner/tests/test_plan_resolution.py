@@ -1017,7 +1017,7 @@ def _plan_from_operation_contract(contract):
     step = 1
     for item in contract["operations"]:
         tool = item["tool"]
-        args = dict(item.get("fixed_args") or {})
+        args = json.loads(json.dumps(item.get("fixed_args") or {}))
         if "sketch_id" in item.get("requires", []):
             args["sketch_id"] = sketch_id
         if "target_body_id" in item.get("requires", []):

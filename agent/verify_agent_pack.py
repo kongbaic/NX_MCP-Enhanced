@@ -305,7 +305,9 @@ def main() -> None:
     reader_prep_contracts = {
         "SKILL.md": (
             "唯一权威几何输入",
-            "prepare-reader-input <current-raster-path> <workspace_root>",
+            "python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>",
+            "禁止把 `prepare-reader-input` 猜成 Python 模块名",
+            "禁止用 Get-ChildItem、源码搜索、模块枚举或读取实现文件来发现入口",
             "reader-input.json",
             "reader-contact-sheet.png",
             "禁止顺序打开全部单张 crop",
@@ -329,6 +331,8 @@ def main() -> None:
         ),
         "reader-runtime-contract.md": (
             "### Deterministic Reader input bundle",
+            "python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>",
+            "The first A0.5 failure is terminal for the production run",
             "sole authoritative geometry source",
             "exactly one current `reader-input.json`",
             "exactly one current `reader-contact-sheet.png`",

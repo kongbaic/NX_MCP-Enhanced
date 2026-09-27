@@ -20,6 +20,19 @@ operator documents, previous Agent results, or downstream outputs.
 
 ### Deterministic Reader input bundle
 
+When the current request provides a runtime-local raster path, the only production A0.5 invocation is:
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>
+~~~
+
+Do not reinterpret `prepare-reader-input` as a Python module. Do not invoke
+`nx_mcp.drawing_intelligence.prepare_reader_input` or
+`nx_mcp.drawing_intelligence.reader_input_prep`. Do not search source files,
+enumerate modules, or inspect implementation to discover an alternate entrypoint.
+The first A0.5 failure is terminal for the production run; report it and STOP.
+
+
 The current engineering drawing remains the sole authoritative geometry source.
 
 When the pipeline successfully generated the current `reader-input.json` from the

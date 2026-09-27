@@ -59,6 +59,7 @@ nx-mcp-plan-runner/
 python runner.py canonicalize-drawing <semantic-draft.json> <drawing.json>
 python runner.py validate-drawing <drawing.json>
 python runner.py capabilities [--feature-kind KIND --axis X|Y|Z] [--exact-only]
+python runner.py plan-contracts <current-drawing.json>
 python runner.py run   <executable-plan.json> [--workspace DIR] [--report out.json]
                        [--mode normal|benchmark] [--allow-overwrite] [--history FILE]
                        [--repair-attempt 0|1] [--repair-report attempt1.json]
@@ -77,6 +78,14 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
   按 Feature Contract 的 `feature_kind + axis` 返回可用 implementation；只声明
   exact/surrogate、所需 certified tools、Planner adapter 与 Gate B validator，
   不保存运行状态、不修改 drawing，也不执行 NX。无匹配能力时 fail closed。
+- `plan-contracts`：读取本轮 canonical drawing，先执行同一 Gate A /
+  modeling-context fail-closed 检查，再为每个受支持 Feature Contract 选择
+  implementation，并返回 deterministic `geometries` / `recipes` /
+  `operation_contracts`。其中 `fixed_args` 是 Adapter 已从工程真值解析出的
+  NX 参数，Planner 不得重算或改写；`requires` 只表示 Planner 需要补齐的
+  symbol wiring（如 `body_id` / `sketch_id` / `target_body_id`）和步骤顺序。
+  该命令不执行 NX，不修改 drawing；任何 capability / materialization 缺口直接
+  fail closed。
 - `run`：静态校验 → Loader ping → **preflight 安全检查** → 顺序执行全部
   operation → 输出 JSON 报告（per-step 日志 + 汇总 + 分阶段计时）。
 - `check`：不触 NX 的静态检查（工具合法性、参数合法性、引用可解析、占位符

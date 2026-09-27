@@ -6696,6 +6696,52 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     return finish(report, 0 if report["status"] == "success" else 1)
 
 
+def _cmd_plan_contracts(args: argparse.Namespace) -> int:
+    """Expose deterministic capability/geometry/operation contracts to Planner."""
+    timing_state = _begin_command_timing("B2_PLAN_CONTRACTS", args.drawing)
+    drawing_path = args.drawing
+    _drawing, dispatches, errors = _drawing_modeling_context(drawing_path)
+
+    contracts: list[dict] = []
+    if not errors:
+        for item in dispatches:
+            capability = item.get("capability")
+            payload = item.get("payload")
+            if not isinstance(capability, dict) or not isinstance(payload, dict):
+                errors.append(
+                    "capability_dispatch_violation: malformed selected dispatch"
+                )
+                continue
+
+            contracts.append(
+                {
+                    "implementation_id": capability.get("implementation_id"),
+                    "feature_kind": capability.get("feature_kind"),
+                    "exactness": capability.get("exactness"),
+                    "supported_axes": list(
+                        capability.get("supported_axes") or []
+                    ),
+                    "planner_adapter": capability.get("planner_adapter"),
+                    "gate_b_validator": capability.get("gate_b_validator"),
+                    "geometries": list(payload.get("geometries") or []),
+                    "recipes": list(payload.get("recipes") or []),
+                    "operation_contracts": list(
+                        payload.get("operation_contracts") or []
+                    ),
+                }
+            )
+
+    result = {
+        "drawing": drawing_path,
+        "contracts": contracts if not errors else [],
+        "errors": errors,
+        "ok": not errors,
+    }
+    _attach_command_timing(result, timing_state)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("B3_CHECK", args.plan)
     plan = _load_plan(args.plan)
@@ -6810,6 +6856,16 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--drawing", default=None,
                     help="optional Mode B drawing for thread surrogate validation")
     pb.set_defaults(func=_cmd_build)
+
+    pcontracts = sub.add_parser(
+        "plan-contracts",
+        help=(
+            "resolve canonical drawing Feature Contracts into deterministic "
+            "Planner operation contracts (no NX)"
+        ),
+    )
+    pcontracts.add_argument("drawing")
+    pcontracts.set_defaults(func=_cmd_plan_contracts)
 
     pcap = sub.add_parser(
         "capabilities",

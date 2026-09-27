@@ -371,14 +371,19 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 读取本轮 canonical drawing.json（Mode B）或已确认结构化意图（Mode A）
 → 检查 unresolved / dimension closure
 → 读取本地冻结契约（runner-contract.md + certified-tool-contract.json）
-→ 对需要实现选择的 Feature Contract 调用已安装 Runner：
+→ Mode B 调用已安装 Runner：
+  `plan-contracts <current-drawing.json>`
+→ 直接消费返回的 selected implementation + geometries + operation_contracts；
+  `fixed_args` 不得由 Planner 重算、改写或反推，Planner 只补 `requires`
+  指定的 symbol wiring 与步骤顺序
+→ Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
   `capabilities --feature-kind <kind> --axis <X|Y|Z>`
-→ 只从返回的 implementation 中选择；无能力则 fail closed
+→ 无 capability / adapter / operation materialization 时 fail closed
 → 生成 FAST plan（含版本号）
 → 发布前静态自检 selection_criteria
 → frozen plan 落盘
-→ 调用 runner build
-→ 调用 runner check
+→ 调用 runner build --drawing <current-drawing.json>（Mode B）
+→ 调用 runner check --drawing <current-drawing.json>（Mode B）
 → 输出结果
 ```
 
@@ -395,6 +400,11 @@ Capability 边界：
   required certified tool 缺失、axis 不支持或没有 validator 时必须 fail closed。
 - Gate B 校验的是 implementation 最终工程几何是否等于 Feature Contract，不得把
   某个具体工具名本身当成几何真值。
+- Mode B 的 Planner Adapter 必须通过 `plan-contracts` 暴露
+  `operation_contracts`：工程真值到 NX 几何关键参数（如 axis/range →
+  plane/reverse/start_offset/distance）的转换归 deterministic Adapter 所有。
+  Planner 不得自行重新解释这些参数；只允许按 `requires` 补 symbol binding、
+  安排合法 step 顺序以及非工程真值的执行编排。
 
 
 ## 13. 输出格式（默认 FAST，强制）

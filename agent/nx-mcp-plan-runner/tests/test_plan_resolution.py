@@ -1444,6 +1444,122 @@ def _capture_json_command(command, args):
     return exit_code, json.loads(output.getvalue())
 
 
+def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    drawing_path = os.path.join(directory, "drawing.json")
+    with open(drawing_path, "w", encoding="utf-8") as handle:
+        json.dump({}, handle)
+
+    original = R._drawing_modeling_context
+    try:
+        R._drawing_modeling_context = lambda path: (
+            {},
+            [
+                {
+                    "capability": {
+                        "implementation_id": "principal-axis-thread-v1",
+                        "feature_kind": "threaded_hole",
+                        "exactness": "surrogate",
+                        "supported_axes": ["X", "Y"],
+                        "planner_adapter": "metric_thread_surrogate",
+                        "gate_b_validator": "thread_surrogate",
+                    },
+                    "payload": {
+                        "geometries": [
+                            {
+                                "feature_id": "T1",
+                                "axis": "X",
+                                "axial_range": [-1.0, -13.0],
+                            }
+                        ],
+                        "recipes": [
+                            {
+                                "feature_id": "T1",
+                                "surrogate_diameter": 5.0,
+                            }
+                        ],
+                        "operation_contracts": [
+                            {
+                                "feature_id": "T1",
+                                "role": "thread_surrogate",
+                                "axis": "X",
+                                "operations": [
+                                    {
+                                        "tool": "nx_extrude",
+                                        "fixed_args": {
+                                            "distance": 12.0,
+                                            "start_offset": 1.0,
+                                            "reverse": True,
+                                            "operation": "subtract",
+                                        },
+                                        "requires": [
+                                            "sketch_id",
+                                            "target_body_id",
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ],
+            [],
+        )
+        exit_code, result = _capture_json_command(
+            R._cmd_plan_contracts,
+            SimpleNamespace(drawing=drawing_path),
+        )
+    finally:
+        R._drawing_modeling_context = original
+
+    assert exit_code == 0
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["contracts"][0]["implementation_id"] == (
+        "principal-axis-thread-v1"
+    )
+    assert result["contracts"][0]["operation_contracts"][0]["operations"][0][
+        "fixed_args"
+    ] == {
+        "distance": 12.0,
+        "start_offset": 1.0,
+        "reverse": True,
+        "operation": "subtract",
+    }
+
+
+def test_plan_contracts_cli_fails_closed_on_drawing_context_error(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    drawing_path = os.path.join(directory, "drawing.json")
+    with open(drawing_path, "w", encoding="utf-8") as handle:
+        json.dump({}, handle)
+
+    original = R._drawing_modeling_context
+    try:
+        R._drawing_modeling_context = lambda path: (
+            {},
+            [],
+            ["dimension_closure is not closed"],
+        )
+        exit_code, result = _capture_json_command(
+            R._cmd_plan_contracts,
+            SimpleNamespace(drawing=drawing_path),
+        )
+    finally:
+        R._drawing_modeling_context = original
+
+    assert exit_code == 1
+    assert result["ok"] is False
+    assert result["contracts"] == []
+    assert result["errors"] == ["dimension_closure is not closed"]
+
+
 def _write_timing_drawing_fixture(directory):
     path = os.path.join(directory, "timing-drawing.json")
     drawing = {

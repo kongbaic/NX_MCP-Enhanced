@@ -73,6 +73,13 @@ from .reader_semantic_queries import (
 from .reader_visual_aid import build_reader_visual_aid
 from .resolver import resolve_evidence_graph
 from .stability import compare_evidence_runs
+from .structural_context import (
+    StructuralContextAnswers,
+    StructuralContextError,
+    StructuralContextQueryPlan,
+    assemble_structural_context,
+    build_structural_context_queries,
+)
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -535,6 +542,88 @@ def _cmd_assemble_reader_semantic_regions(args: argparse.Namespace) -> int:
     report["entity_count"] = len(partial.entities)
     report["dimension_count"] = len(partial.dimensions)
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_build_structural_context_queries(args: argparse.Namespace) -> int:
+    reader_input_path = str(Path(args.reader_input).resolve())
+    hybrid_report_path = str(Path(args.hybrid_report).resolve())
+    output_path = str(Path(args.out).resolve())
+    result: dict[str, Any] = {
+        "reader_input": reader_input_path,
+        "hybrid_report": hybrid_report_path,
+        "query_plan": output_path,
+        "written": False,
+        "query_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = build_structural_context_queries(
+            _load_json(reader_input_path),
+            _load_json(hybrid_report_path),
+        )
+        _atomic_write_json(output_path, plan.model_dump(mode="json", by_alias=True))
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        StructuralContextError,
+        ValueError,
+    ) as exc:
+        result["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    result["written"] = True
+    result["query_count"] = len(plan.queries)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assemble_structural_context(args: argparse.Namespace) -> int:
+    plan_path = str(Path(args.query_plan).resolve())
+    answers_path = str(Path(args.answers).resolve())
+    hybrid_report_path = str(Path(args.hybrid_report).resolve())
+    output_path = str(Path(args.out).resolve())
+    result: dict[str, Any] = {
+        "query_plan": plan_path,
+        "answers": answers_path,
+        "hybrid_report": hybrid_report_path,
+        "context": output_path,
+        "written": False,
+        "region_count": 0,
+        "overall_fact_count": 0,
+        "errors": [],
+    }
+
+    try:
+        plan = StructuralContextQueryPlan.model_validate(_load_json(plan_path))
+        answers = StructuralContextAnswers.model_validate(_load_json(answers_path))
+        context = assemble_structural_context(
+            plan,
+            answers,
+            _load_json(hybrid_report_path),
+        )
+        _atomic_write_json(
+            output_path,
+            context.model_dump(mode="json", by_alias=True),
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        StructuralContextError,
+        ValueError,
+    ) as exc:
+        result["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    result["written"] = True
+    result["region_count"] = len(context.region_views)
+    result["overall_fact_count"] = len(context.overall_dimension_facts)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1170,6 +1259,25 @@ def main(argv: list[str] | None = None) -> int:
     assemble_semantic_regions.add_argument("answers_out")
     assemble_semantic_regions.add_argument("partial_out")
     assemble_semantic_regions.set_defaults(func=_cmd_assemble_reader_semantic_regions)
+
+    structural_queries = sub.add_parser(
+        "build-structural-context-queries",
+        help="build minimal view-kind/overall-candidate structural questions",
+    )
+    structural_queries.add_argument("reader_input")
+    structural_queries.add_argument("hybrid_report")
+    structural_queries.add_argument("out")
+    structural_queries.set_defaults(func=_cmd_build_structural_context_queries)
+
+    structural_context = sub.add_parser(
+        "assemble-structural-context",
+        help="assemble minimal structural answers into HybridAdapterContext",
+    )
+    structural_context.add_argument("query_plan")
+    structural_context.add_argument("answers")
+    structural_context.add_argument("hybrid_report")
+    structural_context.add_argument("out")
+    structural_context.set_defaults(func=_cmd_assemble_structural_context)
 
     adapt_hybrid = sub.add_parser(
         "adapt-hybrid-ocr",

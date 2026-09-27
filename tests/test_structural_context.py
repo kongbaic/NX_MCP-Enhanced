@@ -255,9 +255,7 @@ def test_structural_context_rejects_conflicting_cross_view_overall():
 
 def test_structural_models_fail_closed_on_invalid_evidence_and_answer_shape():
     with pytest.raises(ValidationError, match="evidence must contain"):
-        StructuralOverallFact.model_validate(
-            {"axis": "X", "value": 40, "evidence": [" "]}
-        )
+        StructuralOverallFact.model_validate({"axis": "X", "value": 40, "evidence": [" "]})
 
     with pytest.raises(ValidationError, match="structured unresolved reason"):
         StructuralRegionAnswer.model_validate(

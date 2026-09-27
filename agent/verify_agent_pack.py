@@ -256,7 +256,7 @@ def main() -> None:
         "operation_fields",
         "frozen operation 顶层",
         "requires",
-        "禁止第二次 build/check",
+        "不得执行第二次 build/check",
         "B 阶段不属于 Controlled Self-Healing",
         "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
         "runner.py check <current-executable> --drawing <current-drawing>",

@@ -50,11 +50,21 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>
 ~~~
 
+一旦本轮 runtime-local raster 路径明确，Agent 禁止打开、查看或视觉解读整张工程图，
+禁止提前判断零件类型、feature inventory 或尺寸；这里只允许确认候选 raster 路径存在。
+`fresh-hybrid-run-directory 必须在调用前不存在`；Agent 只允许检查该候选路径是否存在，
+不得预创建目录、删除目录后重试，也不得执行第二次 frontend。
+
 该入口内部执行 deterministic Reader prep → production Hybrid OCR →
 structural-context query plan，并以 `exit code=4, phase=awaiting_structural_context`
 停在受限视觉边界。Agent 只读取本轮 `structural-context-queries.json`，逐个查看
-query.image_path 一次，写 `structural-context-answers-v1`；只允许回答 view_kind、
-当前视图直接标出的 overall X/Y/Z、原样 evidence label 与 unresolved。
+query.image_path 一次。queries JSON 内置 schema-valid 的 `answer_template`；
+Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶层 schema 保持
+`structural-context-answers-v1`，禁止自行设计字段。每个 answer 的 query_id 与 evidence
+保持模板原值，只允许填写 view_kind、overall_dimension_facts 与 unresolved；每个 overall
+fact 固定为 axis + positive value + evidence:[原样 evidence_label]。view_kind 已确定时必须
+清空 `pending_structural_visual_read`；无法唯一判断时保留 structured unresolved 且不得写
+overall_dimension_facts。禁止增加其它字段。
 
 随后只允许执行一次：
 

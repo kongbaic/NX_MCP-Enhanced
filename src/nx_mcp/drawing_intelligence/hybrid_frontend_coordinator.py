@@ -13,8 +13,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from .hybrid_capture_adapter import HybridCaptureAdapterError, adapt_hybrid_ocr_report
-from .mode_b_coordinator import run_mode_b_coordinator
 from .hybrid_ocr import run_hybrid_ocr
+from .mode_b_coordinator import run_mode_b_coordinator
 from .reader_input_prep import prepare_reader_input
 from .reader_observation_finalizer import (
     ReaderObservationFinalizationError,

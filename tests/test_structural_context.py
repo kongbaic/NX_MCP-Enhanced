@@ -327,6 +327,11 @@ def test_structural_query_plan_rejects_duplicate_query_and_region_ids():
         "evidence_label": "structural:R1:crop",
         "instruction_key": "structural-context-v1",
     }
+    view_axis_map = {
+        "front": {"horizontal": "X", "vertical": "Z"},
+        "side": {"horizontal": "Y", "vertical": "Z"},
+        "top": {"horizontal": "X", "vertical": "Y"},
+    }
 
     with pytest.raises(ValidationError, match="query ids must be unique"):
         StructuralContextQueryPlan.model_validate(
@@ -337,6 +342,7 @@ def test_structural_query_plan_rejects_duplicate_query_and_region_ids():
                     {"query_id": "S001", **{**query, "region_id": "R2"}},
                 ],
                 "rules": {},
+                "view_axis_map": view_axis_map,
             }
         )
 
@@ -349,6 +355,7 @@ def test_structural_query_plan_rejects_duplicate_query_and_region_ids():
                     {"query_id": "S002", **query},
                 ],
                 "rules": {},
+                "view_axis_map": view_axis_map,
             }
         )
 

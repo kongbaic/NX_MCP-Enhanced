@@ -178,7 +178,13 @@ def build_structural_context_queries(
             "local_feature_values": False,
             "pixel_measurement": False,
         },
-        view_axis_map=_CANONICAL_VIEW_AXIS_MAP,
+        view_axis_map={
+            view_kind: StructuralViewAxes(
+                horizontal=axes["horizontal"],
+                vertical=axes["vertical"],
+            )
+            for view_kind, axes in _CANONICAL_VIEW_AXIS_MAP.items()
+        },
         answer_template={
             "schema": "structural-context-answers-v1",
             "answers": [

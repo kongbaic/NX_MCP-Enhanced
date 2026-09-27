@@ -3445,35 +3445,20 @@ def check_drawing_json(data: dict) -> list[str]:
                         f"source {sid!r} edge_offset requires targets/axis/from/value"
                     )
                 else:
-                    bbox = _drawing_overall_bbox(data)
-                    if bbox is None:
-                        errors.append(
-                            f"source {sid!r} edge_offset requires valid overall dimensions"
-                        )
-                    else:
-                        lx, ly, hz = bbox
-                        bounds = {
-                            "x": (-lx / 2.0, lx / 2.0),
-                            "y": (-ly / 2.0, ly / 2.0),
-                            "z": (0.0, hz),
-                        }
-                        lo, hi = bounds[axis]
-                        expected = lo + value if side == "min" else hi - value
-                        for target in targets:
-                            try:
-                                actual = _num(_drawing_path_get(data, target))
-                            except KeyError:
-                                actual = None
-                            if actual is None:
-                                errors.append(
-                                    f"source {sid!r} edge_offset target {target!r} is missing"
-                                )
-                                continue
-                            if abs(actual - expected) > 1e-9:
-                                errors.append(
-                                    f"source {sid!r} edge_offset does not match {target!r}"
-                                )
-                            relation_targets.add(target)
+                    # Numerical relation solving belongs to the deterministic
+                    # Resolver. Gate A only validates relation shape, concrete
+                    # target presence/type, and provenance coverage.
+                    for target in targets:
+                        try:
+                            actual = _num(_drawing_path_get(data, target))
+                        except KeyError:
+                            actual = None
+                        if actual is None:
+                            errors.append(
+                                f"source {sid!r} edge_offset target {target!r} is missing"
+                            )
+                            continue
+                        relation_targets.add(target)
                 continue
             if semantic in {"center_distance", "center_spacing"}:
                 between = source.get("between")
@@ -3498,19 +3483,14 @@ def check_drawing_json(data: dict) -> list[str]:
                     value = _drawing_source_value(source)
                     if value is None:
                         errors.append(f"source {sid!r} must have numeric value")
-                    else:
+                    for target in between:
                         try:
-                            a = _num(_drawing_path_get(data, between[0]))
-                            b = _num(_drawing_path_get(data, between[1]))
+                            endpoint = _num(_drawing_path_get(data, target))
                         except KeyError:
-                            a, b = None, None
-                        if (
-                            a is not None
-                            and b is not None
-                            and abs(abs(a - b) - value) > 1e-9
-                        ):
+                            endpoint = None
+                        if endpoint is None:
                             errors.append(
-                                f"source {sid!r} center distance does not match endpoints"
+                                f"source {sid!r} center distance endpoint {target!r} must be numeric"
                             )
             elif semantic in {"upper_tangent", "lower_tangent"}:
                 center = source.get("center")
@@ -3544,13 +3524,6 @@ def check_drawing_json(data: dict) -> list[str]:
                         or tangent_value is None
                     ):
                         errors.append(f"source {sid!r} tangent targets must be numeric")
-                    else:
-                        sign = 1.0 if semantic == "upper_tangent" else -1.0
-                        expected = center_value + sign * diameter_value / 2.0
-                        if abs(expected - tangent_value) > 1e-9:
-                            errors.append(
-                                f"source {sid!r} tangent relation does not match geometry"
-                            )
                     relation_targets.add(tangent)
             elif semantic == "symmetry":
                 _drawing_check_symmetry(errors, source, features)

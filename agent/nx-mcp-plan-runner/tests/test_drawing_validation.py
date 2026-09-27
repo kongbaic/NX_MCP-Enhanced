@@ -425,7 +425,7 @@ class DrawingGateATests(unittest.TestCase):
         source(data, "S_BOSS_C")["value"] = [50, 0]
         self.assertTrue(R.check_drawing_json(data))
 
-    def test_center_distance_back_check_fails(self) -> None:
+    def test_center_distance_numeric_relation_is_not_recomputed_in_gate_a(self) -> None:
         data = example()
         data["source_ledger"].append({
             "id": "S_DISTANCE",
@@ -436,7 +436,7 @@ class DrawingGateATests(unittest.TestCase):
                 "feature:F_HOLE.position.center.0",
             ],
         })
-        self.assertTrue(R.check_drawing_json(data))
+        self.assertEqual([], R.check_drawing_json(data))
 
     def test_symmetry_back_check_fails(self) -> None:
         data = example()
@@ -587,14 +587,14 @@ class DrawingGateATests(unittest.TestCase):
             "writer conflict" in error for error in R.check_drawing_json(data)
         ))
 
-    def test_edge_offset_preserves_min_and_max_side(self) -> None:
+    def test_edge_offset_numeric_relation_is_not_recomputed_in_gate_a(self) -> None:
         self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="min")))
         self.assertEqual([], R.check_drawing_json(relation_fixture(target_edge="max")))
 
         mismatched = relation_fixture(target_edge="min")
         target = next(item for item in mismatched["features"] if item["id"] == "F_TARGET")
         target["centerline"]["y"] = 30
-        self.assertTrue(any("edge_offset does not match" in error for error in R.check_drawing_json(mismatched)))
+        self.assertEqual([], R.check_drawing_json(mismatched))
 
     def test_relation_source_cannot_use_direct_target_shape(self) -> None:
         data = relation_fixture()

@@ -279,9 +279,7 @@ def assign_items_to_cells(
     items: list[dict[str, Any]],
     cells: dict[str, dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
-    assigned: dict[str, list[dict[str, Any]]] = {
-        candidate_id: [] for candidate_id in cells
-    }
+    assigned: dict[str, list[dict[str, Any]]] = {candidate_id: [] for candidate_id in cells}
     for item in items:
         center_x, center_y = _item_center(item)
         owners = []

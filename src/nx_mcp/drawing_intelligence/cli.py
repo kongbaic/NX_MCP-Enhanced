@@ -31,11 +31,11 @@ from .hybrid_capture_adapter import (
     HybridCaptureAdapterError,
     adapt_hybrid_ocr_report,
 )
-from .hybrid_ocr import run_hybrid_ocr
 from .hybrid_frontend_coordinator import (
     resume_hybrid_frontend,
     start_hybrid_frontend,
 )
+from .hybrid_ocr import run_hybrid_ocr
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
 from .reader_candidate_answers import (

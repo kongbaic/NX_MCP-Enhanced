@@ -2058,6 +2058,31 @@ def test_runner_timing_boundaries_are_operation_events(tmp_path=None):
     assert failed_state["c2_modeling_complete_utc"] is None
     assert failed_state["c3_export_complete_utc"] is None
 
+def test_load_plan_accepts_utf8_bom_from_powershell_51(tmp_path=None):
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    path = os.path.join(directory, "powershell51-plan.json")
+    payload = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": "bom-smoke.prt", "units": "mm"},
+                "topology_changes": False,
+            }
+        ],
+    }
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    with open(path, "wb") as handle:
+        handle.write(b"\xef\xbb\xbf" + raw)
+
+    loaded = R._load_plan(path)
+
+    assert loaded == payload
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------

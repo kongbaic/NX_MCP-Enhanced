@@ -6986,7 +6986,9 @@ def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
 # CLI
 # --------------------------------------------------------------------------
 def _load_plan(path: str) -> dict:
-    with open(path, encoding="utf-8") as f:
+    # Windows PowerShell 5.1 writes a UTF-8 BOM for -Encoding UTF8.
+    # Accept both BOM and non-BOM plan JSON consistently with drawing/runtime JSON.
+    with open(path, encoding="utf-8-sig") as f:
         plan = json.load(f)
     if not isinstance(plan, dict) or "operations" not in plan:
         raise PlanError(f"{path}: not a modeling plan (missing operations)")

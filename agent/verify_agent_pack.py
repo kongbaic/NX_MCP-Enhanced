@@ -726,6 +726,10 @@ def main() -> None:
     plan_tests = (RUNNER / "tests" / "test_plan_resolution.py").read_text(encoding="utf-8")
     if "test_transport_ping_error_passthrough" not in plan_tests:
         fail("Runner Loader ping diagnostic test missing")
+    if "test_load_plan_accepts_utf8_bom_from_powershell_51" not in plan_tests:
+        fail("Runner PowerShell 5.1 plan BOM regression test missing")
+    if 'def _load_plan(path: str) -> dict:' not in runner_source or 'encoding="utf-8-sig"' not in runner_source:
+        fail("Runner plan loader must accept UTF-8 BOM")
     for token in (
         "test_preflight_runner_history_part_preserved_for_create_new",
         "test_run_preflight_create_new_does_not_close_unrelated_part",

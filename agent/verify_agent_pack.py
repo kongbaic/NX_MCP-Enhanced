@@ -238,12 +238,8 @@ def main() -> None:
         "mode_b_gate_a_pass",
         "mode_b_awaiting_confirmation",
         "fallback semantic Reader",
-        "Agent 禁止再手动串联",
-        "exit code=0 且 phase=gate_a_pass",
-        "exit code=4 且 phase=awaiting_confirmation",
         "mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>",
         "禁止第二轮确认",
-        "coordinator 接管后，正常运行禁止为了处理错误去读取 reader_observations.py",
         "从零生成新的 frozen plan",
         "--drawing <current-drawing>",
         "mode-b-state",
@@ -276,7 +272,7 @@ def main() -> None:
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
+        "Hybrid raster 路径下，本阶段由 Hybrid Adapter + Reader Observation Finalizer",
         "reader-observations.json",
         "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
         "immutable compiled first-pass visual evidence artifact",

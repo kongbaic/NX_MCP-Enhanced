@@ -312,7 +312,7 @@ def main() -> None:
             "对应的那一张现成 crop",
             "不得直接读取 raw-evidence.json / reader-visual-aid.json",
             "不得创建额外 crop",
-            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture",
+            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、mode-b-state、reader-capture",
         ),
         "pipeline-contract.md": (
             "### A0.5. Deterministic Reader input preparation",

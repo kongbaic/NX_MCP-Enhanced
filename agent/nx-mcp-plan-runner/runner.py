@@ -2426,28 +2426,70 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         else:
             side_value = _thread_feature_value(feature, "start_side", "side")
             side = str(side_value or "").lower()
-            bbox = _drawing_overall_bbox(drawing)
-            if side not in {"min", "max"} or bbox is None:
+            if side not in {"min", "max"}:
                 errors.append(
                     f"thread_geometry_violation: feature {fid!r} has no explicit "
-                    "axial range and no derivable start_side/overall bounds"
+                    "axial range and no confirmed start_side"
                 )
                 continue
-            lx, ly, hz = bbox
-            lo, hi = {
-                "X": (-lx / 2.0, lx / 2.0),
-                "Y": (-ly / 2.0, ly / 2.0),
-                "Z": (0.0, hz),
-            }[axis]
-            start = lo if side == "min" else hi
-            end = start + float(depth) if side == "min" else start - float(depth)
-            if end < lo - 1e-9 or end > hi + 1e-9:
+
+            derived_ranges: list[list[float]] = []
+            material_failed = False
+            for center in centers:
+                material, material_errors = resolve_axis_material_intervals(
+                    drawing,
+                    axis,
+                    center,
+                    exclude_feature_ids={fid},
+                )
+                if material_errors:
+                    errors.extend(
+                        f"thread_geometry_violation: feature {fid!r}: {item}"
+                        for item in material_errors
+                    )
+                    material_failed = True
+                    break
+                selected = _select_material_interval(material, side)
+                if selected is None:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} has no "
+                        f"material interval on start_side={side}"
+                    )
+                    material_failed = True
+                    break
+                value = _depth_range_from_material_interval(
+                    selected,
+                    side,
+                    float(depth),
+                )
+                if value is None:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} depth exceeds "
+                        "the selected material interval"
+                    )
+                    material_failed = True
+                    break
+                derived_ranges.append(value)
+            if material_failed:
+                continue
+            if not derived_ranges or any(
+                len(value) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(
+                        value,
+                        derived_ranges[0],
+                        strict=False,
+                    )
+                )
+                for value in derived_ranges[1:]
+            ):
                 errors.append(
-                    f"thread_geometry_violation: feature {fid!r} depth exceeds "
-                    "overall bounds from its confirmed start_side"
+                    f"thread_geometry_violation: feature {fid!r} centers do not "
+                    "share one deterministic axial range"
                 )
                 continue
-            axial_range = [float(start), float(end)]
+            axial_range = derived_ranges[0]
 
         if not _drawing_equal(abs(axial_range[1] - axial_range[0]), depth):
             errors.append(f"thread_geometry_violation: feature {fid!r} depth and axial range disagree")
@@ -2594,80 +2636,597 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
     return errors
 
 
-def _transverse_slot_interrupt_candidates(
+def _axis_bounds(
     drawing: dict,
-    *,
+    axis: str,
+) -> tuple[float, float] | None:
+    bbox = _drawing_overall_bbox(drawing)
+    if bbox is None:
+        return None
+    lx, ly, hz = bbox
+    return {
+        "X": (-lx / 2.0, lx / 2.0),
+        "Y": (-ly / 2.0, ly / 2.0),
+        "Z": (0.0, hz),
+    }.get(axis.upper())
+
+
+def _fixed_global_coordinates(
+    axis: str,
+    transverse_point: Any,
+) -> dict[str, float] | None:
+    center = _axis_transverse_center(axis, transverse_point)
+    if center is None:
+        return None
+    keys = {
+        "X": ("Y", "Z"),
+        "Y": ("X", "Z"),
+        "Z": ("X", "Y"),
+    }.get(axis.upper())
+    if keys is None:
+        return None
+    return {keys[0]: center[0], keys[1]: center[1]}
+
+
+def _profile_line_polygon(
+    drawing: dict,
+) -> tuple[tuple[str, str] | None, list[tuple[float, float]], list[str]]:
+    """Read one ordered closed, line-segment canonical body profile."""
+    profile = drawing.get("profile")
+    if not isinstance(profile, dict):
+        return None, [], ["material_interval_violation: canonical profile is missing"]
+
+    plane = str(profile.get("plane") or "").upper()
+    if plane not in {"XY", "XZ", "YZ"}:
+        return None, [], [
+            f"material_interval_violation: unsupported profile plane {plane!r}"
+        ]
+    axes = (plane[0], plane[1])
+    segments = profile.get("segments")
+    if not isinstance(segments, list) or len(segments) < 3:
+        return None, [], [
+            "material_interval_violation: profile requires at least three line segments"
+        ]
+
+    polygon: list[tuple[float, float]] = []
+    errors: list[str] = []
+    first_start: tuple[float, float] | None = None
+    previous_end: tuple[float, float] | None = None
+    for index, segment in enumerate(segments):
+        label = f"profile.segments[{index}]"
+        if not isinstance(segment, dict) or str(segment.get("type") or "").lower() != "line":
+            errors.append(
+                f"material_interval_violation: {label} must be a line segment"
+            )
+            continue
+        a = axes[0].lower()
+        b = axes[1].lower()
+        values = [
+            _num(segment.get(f"{a}1")),
+            _num(segment.get(f"{b}1")),
+            _num(segment.get(f"{a}2")),
+            _num(segment.get(f"{b}2")),
+        ]
+        if any(value is None for value in values):
+            errors.append(
+                f"material_interval_violation: {label} has incomplete coordinates"
+            )
+            continue
+        start = (float(values[0]), float(values[1]))
+        end = (float(values[2]), float(values[3]))
+        if start == end:
+            errors.append(
+                f"material_interval_violation: {label} has zero length"
+            )
+            continue
+        if first_start is None:
+            first_start = start
+            polygon.append(start)
+        elif previous_end is None or any(
+            abs(left - right) > 1e-9
+            for left, right in zip(previous_end, start, strict=False)
+        ):
+            errors.append(
+                f"material_interval_violation: {label} is not continuous with "
+                "the previous profile segment"
+            )
+        polygon.append(end)
+        previous_end = end
+
+    if errors:
+        return None, [], errors
+    if first_start is None or previous_end is None or any(
+        abs(left - right) > 1e-9
+        for left, right in zip(previous_end, first_start, strict=False)
+    ):
+        return None, [], [
+            "material_interval_violation: profile is not closed"
+        ]
+    return axes, polygon[:-1], []
+
+
+def _point_on_segment_2d(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> bool:
+    px, py = point
+    ax, ay = start
+    bx, by = end
+    cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    if abs(cross) > 1e-9:
+        return False
+    return (
+        min(ax, bx) - 1e-9 <= px <= max(ax, bx) + 1e-9
+        and min(ay, by) - 1e-9 <= py <= max(ay, by) + 1e-9
+    )
+
+
+def _point_in_polygon(
+    point: tuple[float, float],
+    polygon: list[tuple[float, float]],
+) -> tuple[bool, bool]:
+    """Return (strictly_inside, on_boundary) for a simple line polygon."""
+    if len(polygon) < 3:
+        return False, False
+    inside = False
+    px, py = point
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        if _point_on_segment_2d(point, start, end):
+            return False, True
+        ax, ay = start
+        bx, by = end
+        if (ay > py) == (by > py):
+            continue
+        x_cross = ax + (py - ay) * (bx - ax) / (by - ay)
+        if x_cross > px:
+            inside = not inside
+    return inside, False
+
+
+def _merge_intervals(
+    intervals: list[list[float]],
+) -> list[list[float]]:
+    normalized = sorted(
+        (
+            [min(float(value[0]), float(value[1])), max(float(value[0]), float(value[1]))]
+            for value in intervals
+            if len(value) == 2 and abs(float(value[1]) - float(value[0])) > 1e-9
+        ),
+        key=lambda value: (value[0], value[1]),
+    )
+    merged: list[list[float]] = []
+    for interval in normalized:
+        if not merged or interval[0] > merged[-1][1] + 1e-9:
+            merged.append(interval)
+        else:
+            merged[-1][1] = max(merged[-1][1], interval[1])
+    return merged
+
+
+def _subtract_intervals(
+    material: list[list[float]],
+    voids: list[list[float]],
+) -> list[list[float]]:
+    output = _merge_intervals(material)
+    for void_lo, void_hi in _merge_intervals(voids):
+        next_output: list[list[float]] = []
+        for mat_lo, mat_hi in output:
+            overlap_lo = max(mat_lo, void_lo)
+            overlap_hi = min(mat_hi, void_hi)
+            if overlap_hi <= overlap_lo + 1e-9:
+                next_output.append([mat_lo, mat_hi])
+                continue
+            if overlap_lo > mat_lo + 1e-9:
+                next_output.append([mat_lo, overlap_lo])
+            if overlap_hi < mat_hi - 1e-9:
+                next_output.append([overlap_hi, mat_hi])
+        output = next_output
+    return output
+
+
+def _profile_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    """Intersect one principal-axis query line with canonical body profile."""
+    axis = axis.upper()
+    bounds = _axis_bounds(drawing, axis)
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    profile_axes, polygon, errors = _profile_line_polygon(drawing)
+    if errors:
+        return [], errors
+    if bounds is None or fixed is None or profile_axes is None:
+        return [], [
+            "material_interval_violation: incomplete query axis/overall geometry"
+        ]
+
+    extrusion_axis = next(
+        value for value in ("X", "Y", "Z") if value not in profile_axes
+    )
+    if axis == extrusion_axis:
+        point = (fixed[profile_axes[0]], fixed[profile_axes[1]])
+        inside, boundary = _point_in_polygon(point, polygon)
+        if boundary:
+            return [], [
+                "material_interval_violation: query line lies on profile boundary"
+            ]
+        return ([list(bounds)] if inside else []), []
+
+    if axis not in profile_axes:
+        return [], [
+            f"material_interval_violation: axis {axis!r} is incompatible with "
+            f"profile plane {''.join(profile_axes)!r}"
+        ]
+
+    extrusion_coordinate = fixed.get(extrusion_axis)
+    extrusion_bounds = _axis_bounds(drawing, extrusion_axis)
+    if extrusion_coordinate is None or extrusion_bounds is None:
+        return [], [
+            "material_interval_violation: profile extrusion coordinate is unavailable"
+        ]
+    if not (
+        extrusion_bounds[0] - 1e-9
+        <= extrusion_coordinate
+        <= extrusion_bounds[1] + 1e-9
+    ):
+        return [], []
+
+    axis_index = profile_axes.index(axis)
+    other_index = 1 - axis_index
+    other_axis = profile_axes[other_index]
+    fixed_value = fixed.get(other_axis)
+    if fixed_value is None:
+        return [], [
+            "material_interval_violation: profile scan coordinate is unavailable"
+        ]
+
+    crossings: list[float] = []
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        start_axis = start[axis_index]
+        end_axis = end[axis_index]
+        start_fixed = start[other_index]
+        end_fixed = end[other_index]
+
+        if (
+            abs(start_fixed - fixed_value) <= 1e-9
+            and abs(end_fixed - fixed_value) <= 1e-9
+        ):
+            return [], [
+                "material_interval_violation: profile scan coincides with a "
+                "profile boundary segment"
+            ]
+        if abs(end_fixed - start_fixed) <= 1e-12:
+            continue
+        low = min(start_fixed, end_fixed)
+        high = max(start_fixed, end_fixed)
+        if fixed_value < low - 1e-9 or fixed_value > high + 1e-9:
+            continue
+        ratio = (fixed_value - start_fixed) / (end_fixed - start_fixed)
+        if -1e-9 <= ratio <= 1.0 + 1e-9:
+            crossings.append(
+                float(start_axis + ratio * (end_axis - start_axis))
+            )
+
+    unique: list[float] = []
+    for value in sorted(crossings):
+        if not unique or abs(value - unique[-1]) > 1e-9:
+            unique.append(value)
+
+    intervals: list[list[float]] = []
+    for lo, hi in zip(unique, unique[1:], strict=False):
+        if hi <= lo + 1e-9:
+            continue
+        midpoint = (lo + hi) / 2.0
+        point = (
+            (midpoint, fixed_value)
+            if axis_index == 0
+            else (fixed_value, midpoint)
+        )
+        inside, boundary = _point_in_polygon(point, polygon)
+        if inside and not boundary:
+            intervals.append([float(lo), float(hi)])
+    return _merge_intervals(intervals), []
+
+
+def _slot_void_intervals(
+    drawing: dict,
     feature: dict,
     axis: str,
-) -> list[dict]:
-    """Return slot/slit interruptions proven to cross one transverse hole centerline.
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    if str(feature.get("type") or "").lower() not in {"slot", "slit", "cut"}:
+        return [], []
 
-    This is engineering-topology only.  Pixel coordinates never enter this stage.
-    The narrow v1 rule supports X/Y holes intersected by a vertical-bounded slot
-    whose through axis is the other horizontal principal axis.
-    """
-    other_horizontal = "Y" if axis == "X" else "X"
-    center_z = _num(_drawing_feature_coord(feature, "z"))
-    if center_z is None:
-        return []
+    width_axis = str(feature.get("width_axis") or "").upper()
+    through_axis = str(feature.get("through_axis") or "").upper()
+    if (
+        width_axis not in {"X", "Y"}
+        or through_axis not in {"X", "Y"}
+        or width_axis == through_axis
+    ):
+        return [], [
+            "material_interval_violation: prismatic slot requires distinct "
+            "horizontal width_axis/through_axis"
+        ]
 
-    candidates: list[dict] = []
-    for slot in drawing.get("features") or []:
-        if not isinstance(slot, dict):
-            continue
-        if str(slot.get("type") or "").lower() not in {"slot", "slit", "cut"}:
-            continue
-        if str(slot.get("width_axis") or "").upper() != axis:
-            continue
-        if str(slot.get("through_axis") or "").upper() != other_horizontal:
-            continue
+    width = _num(feature.get("width"))
+    center = _num(_drawing_feature_coord(feature, width_axis.lower()))
+    bottom_z = _num(feature.get("bottom_z"))
+    top_z = _num(feature.get("top_z"))
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    through_bounds = _axis_bounds(drawing, through_axis)
+    if (
+        width is None
+        or width <= 0
+        or center is None
+        or bottom_z is None
+        or top_z is None
+        or top_z <= bottom_z
+        or fixed is None
+        or through_bounds is None
+    ):
+        return [], [
+            f"material_interval_violation: slot {feature.get('id')!r} has "
+            "incomplete canonical geometry"
+        ]
 
-        width = _num(slot.get("width"))
-        center = _num(_drawing_feature_coord(slot, axis.lower()))
-        bottom_z = _num(slot.get("bottom_z"))
-        top_z = _num(slot.get("top_z"))
+    width_interval = [
+        float(center - width / 2.0),
+        float(center + width / 2.0),
+    ]
+    z_interval = [float(bottom_z), float(top_z)]
+
+    if axis == width_axis:
+        through_value = fixed.get(through_axis)
+        z_value = fixed.get("Z")
         if (
-            width is None
-            or width <= 0
-            or center is None
-            or bottom_z is None
-            or top_z is None
-            or top_z < bottom_z
-            or center_z < bottom_z - 1e-9
-            or center_z > top_z + 1e-9
+            through_value is None
+            or z_value is None
+            or not (
+                through_bounds[0] - 1e-9
+                <= through_value
+                <= through_bounds[1] + 1e-9
+            )
+            or not (z_interval[0] - 1e-9 <= z_value <= z_interval[1] + 1e-9)
         ):
-            continue
+            return [], []
+        return [width_interval], []
 
-        candidates.append(
-            {
-                "feature_id": str(slot.get("id") or ""),
-                "interval": [
-                    float(center - width / 2.0),
-                    float(center + width / 2.0),
-                ],
-            }
+    if axis == through_axis:
+        width_value = fixed.get(width_axis)
+        z_value = fixed.get("Z")
+        if (
+            width_value is None
+            or z_value is None
+            or not (
+                width_interval[0] - 1e-9
+                <= width_value
+                <= width_interval[1] + 1e-9
+            )
+            or not (z_interval[0] - 1e-9 <= z_value <= z_interval[1] + 1e-9)
+        ):
+            return [], []
+        return [list(through_bounds)], []
+
+    if axis == "Z":
+        width_value = fixed.get(width_axis)
+        through_value = fixed.get(through_axis)
+        if (
+            width_value is None
+            or through_value is None
+            or not (
+                width_interval[0] - 1e-9
+                <= width_value
+                <= width_interval[1] + 1e-9
+            )
+            or not (
+                through_bounds[0] - 1e-9
+                <= through_value
+                <= through_bounds[1] + 1e-9
+            )
+        ):
+            return [], []
+        return [z_interval], []
+
+    return [], []
+
+
+def _feature_explicit_axial_range(feature: dict) -> list[float] | None:
+    value = _thread_feature_value(
+        feature,
+        "axis_range",
+        "axial_range",
+        "through_range",
+        "range",
+    )
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) != 2
+        or any(_num(item) is None for item in value)
+    ):
+        return None
+    first = float(_num(value[0]))
+    second = float(_num(value[1]))
+    if abs(first - second) <= 1e-9:
+        return None
+    return [min(first, second), max(first, second)]
+
+
+def _cylindrical_void_intervals(
+    drawing: dict,
+    feature: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    if str(feature.get("type") or "").lower() not in {
+        "hole",
+        "through_hole",
+        "threaded_hole",
+        "counterbore_hole",
+        "countersink_hole",
+    }:
+        return [], []
+
+    feature_axis = str(feature.get("axis") or "").upper()
+    axial_range = _feature_explicit_axial_range(feature)
+    diameter = _num(
+        feature.get("diameter")
+        if feature.get("diameter") is not None
+        else feature.get("hole_diameter")
+    )
+    if (
+        feature_axis not in {"X", "Y", "Z"}
+        or axial_range is None
+        or diameter is None
+        or diameter <= 0
+    ):
+        return [], []
+
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    if fixed is None:
+        return [], [
+            "material_interval_violation: cylindrical void query center is invalid"
+        ]
+
+    transverse_axes = [
+        value for value in ("X", "Y", "Z") if value != feature_axis
+    ]
+    feature_center = {
+        value: _num(_drawing_feature_coord(feature, value.lower()))
+        for value in transverse_axes
+    }
+    if any(feature_center[value] is None for value in transverse_axes):
+        return [], []
+
+    radius = float(diameter) / 2.0
+    if axis == feature_axis:
+        radial_sq = 0.0
+        for value in transverse_axes:
+            coordinate = fixed.get(value)
+            if coordinate is None:
+                return [], []
+            radial_sq += (coordinate - float(feature_center[value])) ** 2
+        return ([axial_range] if radial_sq < radius * radius - 1e-12 else []), []
+
+    if axis not in transverse_axes:
+        return [], []
+    third_axis = next(
+        value for value in transverse_axes if value != axis
+    )
+    feature_axis_coordinate = fixed.get(feature_axis)
+    third_coordinate = fixed.get(third_axis)
+    axis_center = feature_center.get(axis)
+    third_center = feature_center.get(third_axis)
+    if (
+        feature_axis_coordinate is None
+        or third_coordinate is None
+        or axis_center is None
+        or third_center is None
+        or not (
+            axial_range[0] - 1e-9
+            <= feature_axis_coordinate
+            <= axial_range[1] + 1e-9
         )
-    return candidates
+    ):
+        return [], []
+
+    radial_offset = third_coordinate - float(third_center)
+    remaining = radius * radius - radial_offset * radial_offset
+    if remaining <= 1e-12:
+        return [], []
+    half_span = math.sqrt(remaining)
+    return [[float(axis_center) - half_span, float(axis_center) + half_span]], []
+
+
+_MATERIAL_VOID_PROVIDERS = (
+    _slot_void_intervals,
+    _cylindrical_void_intervals,
+)
+
+
+def resolve_axis_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+    *,
+    exclude_feature_ids: set[str] | None = None,
+) -> tuple[list[list[float]], list[str]]:
+    """Resolve real solid intervals on one principal-axis engineering query line.
+
+    The body contribution comes from the canonical closed profile.  Canonical
+    subtractive features are projected through independent void providers and
+    subtracted as intervals.  The result contains engineering coordinates only;
+    no pixel measurement and no NX tool implementation participates.
+    """
+    axis = str(axis or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return [], [f"material_interval_violation: invalid axis {axis!r}"]
+
+    material, errors = _profile_material_intervals(
+        drawing,
+        axis,
+        transverse_point,
+    )
+    if errors or not material:
+        return material, errors
+
+    excluded = set(exclude_feature_ids or set())
+    voids: list[list[float]] = []
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_id = str(feature.get("id") or "")
+        if feature_id and feature_id in excluded:
+            continue
+        for provider in _MATERIAL_VOID_PROVIDERS:
+            intervals, provider_errors = provider(
+                drawing,
+                feature,
+                axis,
+                transverse_point,
+            )
+            if provider_errors:
+                errors.extend(provider_errors)
+            voids.extend(intervals)
+
+    if errors:
+        return [], errors
+    return _subtract_intervals(material, voids), []
+
+
+def _select_material_interval(
+    intervals: list[list[float]],
+    side: str,
+) -> list[float] | None:
+    normalized = _merge_intervals(intervals)
+    if not normalized or side not in {"min", "max"}:
+        return None
+    return list(normalized[0] if side == "min" else normalized[-1])
+
+
+def _depth_range_from_material_interval(
+    interval: list[float],
+    side: str,
+    depth: float,
+) -> list[float] | None:
+    if len(interval) != 2 or depth <= 0 or side not in {"min", "max"}:
+        return None
+    lo, hi = min(interval), max(interval)
+    start = lo if side == "min" else hi
+    end = start + depth if side == "min" else start - depth
+    if end < lo - 1e-9 or end > hi + 1e-9:
+        return None
+    return [float(start), float(end)]
 
 
 def resolve_transverse_recess_drawing_geometries(
     drawing: dict,
 ) -> tuple[list[dict], list[str]]:
-    """Derive X/Y counterbore execution ranges from canonical material topology.
-
-    The rule intentionally activates only when one unique slot/slit/cut crosses
-    the hole centerline.  Overall bounds, slot width/center, start_side and recess
-    depth are the only numeric inputs.  Ambiguous interruptions fail closed.
-    """
-    bbox = _drawing_overall_bbox(drawing)
-    if bbox is None:
-        return [], []
-
-    lx, ly, _ = bbox
-    bounds = {
-        "X": (-lx / 2.0, lx / 2.0),
-        "Y": (-ly / 2.0, ly / 2.0),
-    }
+    """Derive X/Y counterbore execution ranges from canonical material intervals."""
     geometries: list[dict] = []
     errors: list[str] = []
 
@@ -2680,22 +3239,7 @@ def resolve_transverse_recess_drawing_geometries(
         if axis not in {"X", "Y"} or feature.get("through") is not True:
             continue
 
-        interrupts = _transverse_slot_interrupt_candidates(
-            drawing,
-            feature=feature,
-            axis=axis,
-        )
-        if not interrupts:
-            continue
-
         fid = str(feature.get("id") or "?")
-        if len(interrupts) != 1:
-            errors.append(
-                f"transverse_recess_geometry_violation: feature {fid!r} has "
-                f"{len(interrupts)} material-interrupting slot candidates"
-            )
-            continue
-
         side_value = (
             feature.get("start_side")
             if feature.get("start_side") is not None
@@ -2732,39 +3276,40 @@ def resolve_transverse_recess_drawing_geometries(
             )
             continue
 
-        lo, hi = bounds[axis]
-        slot_lo, slot_hi = interrupts[0]["interval"]
-        if slot_lo < lo - 1e-9 or slot_hi > hi + 1e-9:
-            errors.append(
-                f"transverse_recess_geometry_violation: feature {fid!r} slot "
-                "interruption lies outside overall bounds"
+        material, material_errors = resolve_axis_material_intervals(
+            drawing,
+            axis,
+            center,
+            exclude_feature_ids={fid},
+        )
+        if material_errors:
+            errors.extend(
+                f"transverse_recess_geometry_violation: feature {fid!r}: {item}"
+                for item in material_errors
             )
             continue
-
-        outer = lo if side == "min" else hi
-        boundary = slot_lo if side == "min" else slot_hi
-        if (
-            (side == "min" and boundary <= outer + 1e-9)
-            or (side == "max" and boundary >= outer - 1e-9)
-        ):
+        selected = _select_material_interval(material, side)
+        if selected is None:
             errors.append(
                 f"transverse_recess_geometry_violation: feature {fid!r} has no "
-                "positive material span before the slot interruption"
+                f"material interval on start_side={side}"
             )
             continue
 
-        recess_end = (
-            outer + float(recess_depth)
+        through_range = (
+            [selected[0], selected[1]]
             if side == "min"
-            else outer - float(recess_depth)
+            else [selected[1], selected[0]]
         )
-        if (
-            (side == "min" and recess_end > boundary + 1e-9)
-            or (side == "max" and recess_end < boundary - 1e-9)
-        ):
+        counterbore_range = _depth_range_from_material_interval(
+            selected,
+            side,
+            float(recess_depth),
+        )
+        if counterbore_range is None:
             errors.append(
                 f"transverse_recess_geometry_violation: feature {fid!r} "
-                "counterbore depth crosses the slot interruption"
+                "counterbore depth exceeds the selected material interval"
             )
             continue
 
@@ -2774,12 +3319,13 @@ def resolve_transverse_recess_drawing_geometries(
                 "axis": axis,
                 "transverse_center": center,
                 "side": side,
-                "interrupt_feature_id": interrupts[0]["feature_id"],
+                "material_intervals": material,
+                "material_interval": selected,
                 "through_diameter": float(through_diameter),
                 "counterbore_diameter": float(recess_diameter),
                 "counterbore_depth": float(recess_depth),
-                "through_axial_range": [float(outer), float(boundary)],
-                "counterbore_axial_range": [float(outer), float(recess_end)],
+                "through_axial_range": through_range,
+                "counterbore_axial_range": counterbore_range,
             }
         )
 
@@ -2865,7 +3411,7 @@ def transverse_recess_plan_errors(
     plan: dict,
     geometries: list[dict],
 ) -> list[str]:
-    """Gate B check for slot-interrupted X/Y through + counterbore operations."""
+    """Gate B check for material-resolved X/Y through + counterbore operations."""
     if not geometries:
         return []
 

@@ -80,7 +80,10 @@ python runner.py test  #（等价：运行 tests/test_plan_resolution.py）
 - `run`：静态校验 → Loader ping → **preflight 安全检查** → 顺序执行全部
   operation → 输出 JSON 报告（per-step 日志 + 汇总 + 分阶段计时）。
 - `check`：不触 NX 的静态检查（工具合法性、参数合法性、引用可解析、占位符
-  清零、selection criteria 语法）。
+  清零、selection criteria 语法）。Mode B `--drawing` 同时由 deterministic
+  material-interval solver 从 canonical closed profile 与 subtractive feature
+  geometry 计算真实轴向材料区间，再由 Gate B 核对 thread / through / recess
+  实际操作范围；不使用 pixel→mm。
 - `build`：冻结 → 可执行转换（无 NX）。
 
 ### 命令计时

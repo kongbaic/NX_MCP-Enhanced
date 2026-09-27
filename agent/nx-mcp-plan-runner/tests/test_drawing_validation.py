@@ -1365,6 +1365,53 @@ def thread_plan(**arg_overrides) -> dict:
     }]}
 
 
+def profile_from_points(plane: str, points: list[tuple[float, float]]) -> dict:
+    first = plane[0].lower()
+    second = plane[1].lower()
+    closed = [*points, points[0]]
+    segments = []
+    for start, end in zip(closed, closed[1:], strict=False):
+        segments.append({
+            "type": "line",
+            f"{first}1": start[0],
+            f"{second}1": start[1],
+            f"{first}2": end[0],
+            f"{second}2": end[1],
+        })
+    return {
+        "plane": plane,
+        "topology": "closed_polygon",
+        "segments": segments,
+    }
+
+
+def shkss_like_profile() -> dict:
+    return profile_from_points(
+        "YZ",
+        [
+            (-16, 0),
+            (16, 0),
+            (16, 66),
+            (0, 66),
+            (0, 8),
+            (-16, 8),
+        ],
+    )
+
+
+def box_yz_profile(width: float = 32, height: float = 66) -> dict:
+    half = width / 2.0
+    return profile_from_points(
+        "YZ",
+        [
+            (-half, 0),
+            (half, 0),
+            (half, height),
+            (-half, height),
+        ],
+    )
+
+
 class MetricThreadSurrogateTests(unittest.TestCase):
     def test_m6_parameters(self) -> None:
         value, error = R.resolve_metric_thread_parameters("M6")
@@ -1402,7 +1449,18 @@ class MetricThreadSurrogateTests(unittest.TestCase):
                 "width_y": 32,
                 "height_z": 66,
             },
+            "profile": shkss_like_profile(),
             "features": [
+                {
+                    "id": "S1",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": 0},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
                 {
                     "id": "T1",
                     "type": "threaded_hole",
@@ -1411,7 +1469,7 @@ class MetricThreadSurrogateTests(unittest.TestCase):
                     "axis": "X",
                     "centerline": {"y": 8, "z": 58},
                     "start_side": "min",
-                }
+                },
             ],
             "unresolved": [],
         }
@@ -1575,13 +1633,177 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         self.assertEqual(12.0, actual["depth"])
         self.assertEqual([20.0, 8.0], actual["axial_range"])
 
-    def test_transverse_counterbore_ranges_derive_from_unique_slot_interruption(self) -> None:
+    def test_axis_material_intervals_use_profile_without_voids(self) -> None:
         drawing = {
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
                 "height_z": 66,
             },
+            "profile": box_yz_profile(),
+            "features": [],
+        }
+
+        intervals, errors = R.resolve_axis_material_intervals(
+            drawing,
+            "X",
+            {"y": 8, "z": 58},
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual([[-20.0, 20.0]], intervals)
+
+    def test_axis_material_intervals_subtract_off_center_and_multiple_voids(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": box_yz_profile(),
+            "features": [
+                {
+                    "id": "S1",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": 4},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
+                {
+                    "id": "S2",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": -6},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
+            ],
+        }
+
+        intervals, errors = R.resolve_axis_material_intervals(
+            drawing,
+            "X",
+            {"y": 8, "z": 58},
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual(
+            [[-20.0, -7.0], [-5.0, 3.0], [5.0, 20.0]],
+            intervals,
+        )
+
+    def test_axis_material_intervals_scan_concave_profile(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 10,
+                "width_y": 10,
+                "height_z": 10,
+            },
+            "profile": profile_from_points(
+                "YZ",
+                [
+                    (-5, 0),
+                    (5, 0),
+                    (5, 10),
+                    (2, 10),
+                    (2, 3),
+                    (-2, 3),
+                    (-2, 10),
+                    (-5, 10),
+                ],
+            ),
+            "features": [],
+        }
+
+        intervals, errors = R.resolve_axis_material_intervals(
+            drawing,
+            "Y",
+            {"x": 0, "z": 5},
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual([[-5.0, -2.0], [2.0, 5.0]], intervals)
+
+    def test_axis_material_intervals_support_explicit_cylindrical_void(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 20,
+                "width_y": 20,
+                "height_z": 20,
+            },
+            "profile": box_yz_profile(width=20, height=20),
+            "features": [
+                {
+                    "id": "H1",
+                    "type": "hole",
+                    "axis": "Y",
+                    "centerline": {"x": 0, "z": 10},
+                    "diameter": 4,
+                    "axial_range": [-10, 10],
+                }
+            ],
+        }
+
+        intervals, errors = R.resolve_axis_material_intervals(
+            drawing,
+            "X",
+            {"y": 0, "z": 10},
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual([[-10.0, -2.0], [2.0, 10.0]], intervals)
+
+    def test_axis_material_intervals_fail_closed_for_open_profile(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": {
+                "plane": "YZ",
+                "segments": [
+                    {
+                        "type": "line",
+                        "y1": -16,
+                        "z1": 0,
+                        "y2": 16,
+                        "z2": 0,
+                    },
+                    {
+                        "type": "line",
+                        "y1": 16,
+                        "z1": 0,
+                        "y2": 16,
+                        "z2": 66,
+                    },
+                ],
+            },
+            "features": [],
+        }
+
+        intervals, errors = R.resolve_axis_material_intervals(
+            drawing,
+            "X",
+            {"y": 8, "z": 58},
+        )
+
+        self.assertEqual([], intervals)
+        self.assertTrue(any("profile is not closed" in item for item in errors))
+
+    def test_transverse_counterbore_ranges_use_material_intervals(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": shkss_like_profile(),
             "features": [
                 {
                     "id": "S1",
@@ -1613,54 +1835,15 @@ class MetricThreadSurrogateTests(unittest.TestCase):
 
         self.assertEqual([], errors)
         self.assertEqual(1, len(geometries))
+        self.assertEqual(
+            [[-20.0, -1.0], [1.0, 20.0]],
+            geometries[0]["material_intervals"],
+        )
+        self.assertEqual([1.0, 20.0], geometries[0]["material_interval"])
         self.assertEqual([20.0, 1.0], geometries[0]["through_axial_range"])
         self.assertEqual(
             [20.0, 13.5],
             geometries[0]["counterbore_axial_range"],
-        )
-
-    def test_transverse_counterbore_range_fails_closed_on_ambiguous_slots(self) -> None:
-        drawing = {
-            "overall_dimensions": {
-                "length_x": 40,
-                "width_y": 32,
-                "height_z": 66,
-            },
-            "features": [
-                {
-                    "id": slot_id,
-                    "type": "slot",
-                    "width": 2,
-                    "width_axis": "X",
-                    "through_axis": "Y",
-                    "centerline": {"x": center_x},
-                    "bottom_z": 50,
-                    "top_z": 66,
-                }
-                for slot_id, center_x in (("S1", 0), ("S2", 4))
-            ]
-            + [
-                {
-                    "id": "H1",
-                    "type": "counterbore_hole",
-                    "axis": "X",
-                    "centerline": {"y": 8, "z": 58},
-                    "diameter": 6.6,
-                    "counterbore_diameter": 11,
-                    "counterbore_depth": 6.5,
-                    "through": True,
-                    "start_side": "max",
-                }
-            ],
-        }
-
-        geometries, errors = R.resolve_transverse_recess_drawing_geometries(
-            drawing
-        )
-
-        self.assertEqual([], geometries)
-        self.assertTrue(
-            any("material-interrupting slot candidates" in item for item in errors)
         )
 
     def test_transverse_counterbore_gate_b_checks_loader_signed_ranges(self) -> None:

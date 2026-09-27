@@ -29,7 +29,6 @@ from .resolver import resolve_evidence_graph
 
 
 STATE_SCHEMA = "mode-b-coordinator-state-v1"
-TERMINAL_PHASES = {"gate_a_pass", "terminal_failed"}
 
 
 class ModeBCoordinatorError(RuntimeError):
@@ -300,23 +299,28 @@ def run_mode_b_coordinator(
         }
 
     workspace: Path = runtime["workspace"]
-    observations_path = _require_workspace_file(
-        Path(observations),
-        workspace,
-        "reader observations",
-    )
-    prefix = _require_workspace_file(
-        Path(artifact_prefix),
-        workspace,
-        "artifact prefix",
-    )
-    if prefix.parent != workspace:
+    try:
+        observations_path = _require_workspace_file(
+            Path(observations),
+            workspace,
+            "reader observations",
+        )
+        prefix = _require_workspace_file(
+            Path(artifact_prefix),
+            workspace,
+            "artifact prefix",
+        )
+        if prefix.parent != workspace:
+            raise ModeBCoordinatorError(
+                "artifact prefix must be directly inside NX_MCP_WORKSPACE"
+            )
+    except Exception as exc:
         return 2, {
             "schema": STATE_SCHEMA,
             "status": "blocked",
             "phase": "artifact_check",
             "terminal": True,
-            "errors": ["artifact prefix must be directly inside NX_MCP_WORKSPACE"],
+            "errors": [f"{type(exc).__name__}: {exc}"],
         }
 
     artifacts = _artifact_paths(prefix)

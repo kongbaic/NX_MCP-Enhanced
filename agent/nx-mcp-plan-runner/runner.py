@@ -2709,7 +2709,7 @@ def transverse_recess_plan_errors(
                 or len(actual_range) != 2
                 or any(
                     not _drawing_equal(a, b)
-                    for a, b in zip(actual_range, expected_range)
+                    for a, b in zip(actual_range, expected_range, strict=False)
                 )
             ):
                 errors.append(

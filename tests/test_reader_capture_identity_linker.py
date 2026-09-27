@@ -1100,6 +1100,36 @@ def test_current_capture_contract_accepts_canonical_start_side_value():
     assert not any("non-canonical field" in item for item in errors)
 
 
+def test_current_capture_contract_accepts_split_thread_entry_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="hidden_parallel")],
+        values=[
+            CaptureValue(
+                id="M1",
+                entity_id="E1",
+                field="material_side",
+                value="min",
+            ),
+            CaptureValue(
+                id="E2",
+                entity_id="E1",
+                field="entry_endpoint",
+                value="max",
+            ),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
 def _unresolved_capture(prefix: str, kind: str) -> ReaderCapture:
     entity_id = f"{prefix}_ENTITY"
     return ReaderCapture(

@@ -258,6 +258,9 @@ def main() -> None:
         "requires",
         "不得执行第二次 build/check",
         "B 阶段不属于 Controlled Self-Healing",
+        "unrelated_part_open",
+        "严禁创建、生成或执行任何 `nx_close_part` 计划",
+        "要求用户手动关闭",
         "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
         "runner.py check <current-executable> --drawing <current-drawing>",
         "从零写本轮新的 frozen plan",
@@ -298,6 +301,27 @@ def main() -> None:
     ):
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
+    for token in (
+        "precheck_blocked",
+        "unrelated_part_open",
+        "用户手动处理",
+        "禁止调用 `nx_close_part`",
+        "禁止生成 close-part frozen/executable",
+        "不属于 Controlled Self-Healing",
+    ):
+        if token not in pipeline_contract:
+            fail(f"Stage C unrelated-part safety regression: missing {token}")
+
+    for token in (
+        "precheck_blocked",
+        "unrelated_part_open",
+        "用户手动关闭无关零件",
+        "不得生成或执行 `nx_close_part` 计划",
+        "不得自动重跑",
+    ):
+        if token not in runner_contract:
+            fail(f"Runner unrelated-part contract regression: missing {token}")
+
     for token in (
         "Hybrid raster 路径下，本阶段由 Hybrid Adapter + Reader Observation Finalizer",
         "reader-observations.json",

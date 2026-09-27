@@ -233,6 +233,8 @@ Loader 日志固定写入 `NX_MCP_WORKSPACE\nx_mcp_loader.log`；安装器会持
 
 Runner 只做 repair 门禁与安全 preflight，不自行修改 plan。
 
+若安全 preflight 返回 `precheck_blocked` 且 reason=`unrelated_part_open`，调用方必须 STOP，并要求用户手动关闭无关零件。该状态不是 repair；调用方不得生成或执行 `nx_close_part` 计划，不得读取/修改 close-part executable，也不得自动重跑。
+
 ## 11. 当前路径与版本
 
 - Runner 路径：`<runtime-config.workspace_root>\nx-mcp-plan-runner\runner.py`

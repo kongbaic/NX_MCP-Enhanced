@@ -130,6 +130,7 @@ frozen plan 首次落盘前必须完成静态自检。B 阶段 build/check 失�
 - B 阶段 build/check 全部 PASS 后，正常 attempt 1 必须直接执行本轮 current executable：
   `python_exe runner.py run <current-executable.json> --workspace <workspace_root> --report <attempt1-report.json> --mode normal --repair-attempt 0`
 - 正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；不得改用 benchmark 模式。Runner report 是阶段 C 成败的唯一执行结果。
+- **若 Runner preflight 返回 `precheck_blocked` 且 reason=`unrelated_part_open`，本轮必须立即 STOP 并要求用户手动关闭该无关 NX 零件。Agent 严禁创建、生成或执行任何 `nx_close_part` 计划，严禁读取或修改 close-part frozen/executable，严禁手工补 result_bindings / selection_binding，严禁自动重跑当前 Runner；该环境 blocker 不属于 Controlled Self-Healing。**
 - 单次 Runner 尝试严格 fail-fast：任意 modeling step 失败，当前尝试立即停止。
 - **Controlled Self-Healing 仅适用于 Stage C Runner attempt 1 已实际执行后的失败；Stage B 的 plan-contracts / build / check 失败永远不允许自修复。** 每个任务最多允许 1 次 Stage C Controlled Self-Healing。
 - 只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题。

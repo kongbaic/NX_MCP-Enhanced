@@ -407,6 +407,8 @@ python_exe runner.py run <current-executable.json>
 - 探测 named pipe nx_mcp_loader；
 - 检查 Python/Runner/plan/workspace。
 
+Runner preflight 若返回 `precheck_blocked` / reason=`unrelated_part_open`，表示 NX 当前打开的是与本任务 planned_part 无关的用户零件。此状态必须由用户手动处理：Agent 立即报告并 STOP，禁止调用 `nx_close_part`，禁止生成 close-part frozen/executable，禁止读取或修改 close-part executable，禁止手工补 binding 后执行，也禁止自动重跑当前 Runner。该 blocker 不属于 Controlled Self-Healing。
+
 Loader ready 优先使用仓库 loader/nx_client.ps1 -Cmd nx_status；CONNECTED + ok=true + ready=true 即 ready。
 
 禁止用 %LOCALAPPDATA%\nx-mcp\bridge.json 判断 resident Loader。
@@ -447,7 +449,7 @@ Runner 正式开始建模后，任一 operation 失败：
 - Boolean 不相交且根因属于几何设计/规划错误；
 - 超出 certified tools 能力边界；
 - 需要新增或修改 NX_MCP / Runner / Loader；
-- 当前 dirty part 不是本 Pipeline 本次任务自己创建的目标零件；
+- 当前 dirty/open part 不是本 Pipeline 本次任务自己创建的目标零件；尤其 `unrelated_part_open` 必须由用户手动关闭，Agent 不得自动关闭或生成关闭计划；
 - 无法确定修复是否改变最终几何；
 - 第一次修复后的 attempt 2 再次失败。
 

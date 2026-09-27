@@ -629,6 +629,139 @@ def test_preflight_unrelated_part_open_blocked():
     assert payload["reason"] == "unrelated_part_open"
 
 
+def test_preflight_unrelated_part_preserved_for_create_new():
+    dec, payload = R.preflight_decision(
+        active_path=r"C:\work\user_own.prt",
+        planned_path=r"C:\work\new_task.prt",
+        mode="normal",
+        overwrite_allowed=False,
+        dirty=True,
+        runner_parts=(),
+        part_entry_tool="nx_create_part",
+    )
+    assert dec == "allow"
+    assert payload["state"] == "unrelated_part_preserved_for_create"
+
+
+def test_preflight_unrelated_part_open_existing_edit_blocked():
+    dec, payload = R.preflight_decision(
+        active_path=r"C:\work\user_own.prt",
+        planned_path=r"C:\work\existing_task.prt",
+        mode="normal",
+        overwrite_allowed=False,
+        dirty=True,
+        runner_parts=(),
+        part_entry_tool="nx_open_part",
+    )
+    assert dec == "blocked"
+    assert payload["reason"] == "unrelated_part_open"
+
+
+def test_run_preflight_create_new_does_not_close_unrelated_part():
+    import asyncio
+
+    class History:
+        def most_recent(self, path):
+            return None
+
+        def paths(self):
+            return ()
+
+    class Transport:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_path(self, path):
+            return path
+
+        async def call(self, tool, args):
+            self.calls.append((tool, args))
+            if tool == "nx_status":
+                return {"active_part": ObjectRef(r"C:\work\user_own.prt")}
+            if tool == "nx_close_part":
+                raise AssertionError("unrelated user part must not be closed")
+            raise AssertionError(f"unexpected preflight tool {tool}")
+
+    transport = Transport()
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": r"C:\work\new_task.prt"},
+            }
+        ]
+    }
+    blocked, info = asyncio.run(
+        R.run_preflight(
+            transport,
+            plan,
+            "normal",
+            False,
+            History(),
+            repair_authorized=False,
+        )
+    )
+    assert blocked is None
+    assert info["state"] == "unrelated_part_preserved_for_create"
+    assert [tool for tool, _ in transport.calls] == ["nx_status"]
+
+
+def test_create_part_verifies_real_work_part_before_continuing():
+    import asyncio
+
+    expected = r"C:\work\new_task.prt"
+
+    class Transport:
+        def __init__(self, active_after_create):
+            self.active_after_create = active_after_create
+
+        def resolve_path(self, path):
+            return path
+
+        async def call(self, tool, args):
+            if tool == "nx_create_part":
+                return {
+                    "status": "success",
+                    "part": ObjectRef(args["path"]),
+                    "message": "created",
+                }
+            if tool == "nx_status":
+                return {
+                    "status": "success",
+                    "active_part": ObjectRef(self.active_after_create),
+                }
+            raise AssertionError(f"unexpected tool {tool}")
+
+    plan = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": expected},
+            }
+        ],
+    }
+
+    ok = asyncio.run(
+        R.run_plan(plan, Transport(expected), planned_part=expected)
+    )
+    assert ok["status"] == "success"
+    assert ok["operations_completed"] == 1
+
+    wrong = asyncio.run(
+        R.run_plan(
+            plan,
+            Transport(r"C:\work\user_own.prt"),
+            planned_part=expected,
+        )
+    )
+    assert wrong["status"] == "failed"
+    assert wrong["failed_step"] == 1
+    assert "did not become active work part" in wrong["steps"][0]["error"]
+
+
 def test_preflight_planned_benchmark_clean_allowed():
     dec, payload = R.preflight_decision(
         active_path=r"C:\work\test.prt", planned_path=r"C:\work\test.prt",

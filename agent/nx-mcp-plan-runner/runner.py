@@ -1024,14 +1024,18 @@ def runtime_dirty(active_path: str, history: RunHistory | None) -> bool:
 
 def preflight_decision(active_path: str, planned_path: str, mode: str,
                        overwrite_allowed: bool, dirty: bool,
-                       runner_parts, repair_authorized: bool = False) -> tuple[str, dict]:
+                       runner_parts, repair_authorized: bool = False,
+                       part_entry_tool: str | None = None) -> tuple[str, dict]:
     """Pure preflight policy (unit-testable without NX).
 
     Runner may auto-close ONLY:
       A. the part whose path exactly matches the plan's target part, and
       B. parts the Runner itself created (recorded in its own history).
-    Anything else -> blocked. A dirty planned part is closed only for an
-    explicitly authorized controlled-repair attempt in benchmark mode.
+    For a fresh nx_create_part task only, an unrelated user part may remain
+    open and is never closed; nx_create_part must switch the real NX Work Part
+    to planned_path and the executor verifies that immediately after creation.
+    Other unrelated active parts -> blocked. A dirty planned part is closed
+    only for an explicitly authorized controlled-repair attempt in benchmark mode.
     """
     if not active_path:
         return ("allow", {"active_part": None, "state": "no_active_part"})
@@ -1049,9 +1053,24 @@ def preflight_decision(active_path: str, planned_path: str, mode: str,
             "mode": mode, "overwrite_allowed": overwrite_allowed})
     if active_n in {_norm_path(p) for p in (runner_parts or ())}:
         return ("allow", {"active_part": active_path, "state": "runner_test_part"})
+    if part_entry_tool == "nx_create_part" and planned_n:
+        return ("allow", {
+            "active_part": active_path,
+            "planned_part": planned_path,
+            "state": "unrelated_part_preserved_for_create",
+        })
     return ("blocked", {
         "reason": "unrelated_part_open",
         "active_part": active_path, "planned_part": planned_path})
+
+
+def derive_part_entry_tool(plan: dict) -> str | None:
+    """Return the first part-entry tool that establishes the task work part."""
+    for op in plan.get("operations") or []:
+        tool = op.get("tool")
+        if tool in ("nx_create_part", "nx_open_part"):
+            return str(tool)
+    return None
 
 
 def derive_planned_part(plan: dict, transport) -> str | None:
@@ -1113,21 +1132,41 @@ async def run_preflight(transport, plan: dict, mode: str, overwrite_allowed: boo
     Returns (blocked_payload, info); exactly one is non-None.
     """
     planned = derive_planned_part(plan, transport)
+    part_entry_tool = derive_part_entry_tool(plan)
     resp = await transport.call("nx_status", {})
     active = resp.get("active_part")
     active_path = str(_item_id(active)) if active else ""
     dirty = runtime_dirty(active_path, history) if active_path else False
     decision, payload = preflight_decision(
         active_path, planned or "", mode, overwrite_allowed, dirty, history.paths(),
-        repair_authorized=repair_authorized)
+        repair_authorized=repair_authorized, part_entry_tool=part_entry_tool)
     if decision == "blocked":
         payload["status"] = "precheck_blocked"
         return payload, None
-    if active_path:
+    preserve_active = payload.get("state") == "unrelated_part_preserved_for_create"
+    if active_path and not preserve_active:
         # allowed close: planned part (clean / benchmark overwrite) or own test part
         await transport.call("nx_close_part", {"save": False})
     return None, {"planned_part": planned, "active_part": active_path,
+                  "part_entry_tool": part_entry_tool,
                   "state": payload.get("state")}
+
+
+async def verify_created_work_part(transport, expected_path: str) -> str:
+    """Fail closed unless nx_create_part made expected_path the real NX Work Part."""
+    resp = await transport.call("nx_status", {})
+    active = resp.get("active_part")
+    actual_path = str(_item_id(active)) if active else ""
+    if (
+        not expected_path
+        or not actual_path
+        or _norm_path(actual_path) != _norm_path(expected_path)
+    ):
+        raise PlanError(
+            "nx_create_part did not become active work part: "
+            f"expected={expected_path!r} actual={actual_path!r}"
+        )
+    return actual_path
 
 
 # --------------------------------------------------------------------------
@@ -1242,6 +1281,10 @@ async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
                         raise
                     retried += 1
                     total_retries += 1
+
+            if tool == "nx_create_part":
+                expected_created_path = str(args.get("path") or planned_part or "")
+                await verify_created_work_part(transport, expected_created_path)
 
             # selection (list steps with selection_criteria)
             selection = None

@@ -33,7 +33,6 @@ from .reader_observations import (
 )
 from .resolver import resolve_evidence_graph
 
-
 STATE_SCHEMA = "mode-b-coordinator-state-v1"
 
 
@@ -594,9 +593,7 @@ def resume_mode_b_coordinator(
 
         state = _load_json(state_path)
         if state.get("schema") != STATE_SCHEMA:
-            raise ModeBCoordinatorError(
-                f"unsupported Mode B state schema: {state.get('schema')!r}"
-            )
+            raise ModeBCoordinatorError(f"unsupported Mode B state schema: {state.get('schema')!r}")
         if state.get("phase") != "awaiting_confirmation" or state.get("terminal") is True:
             return 3, {
                 "schema": STATE_SCHEMA,
@@ -606,8 +603,7 @@ def resume_mode_b_coordinator(
                 "reason": "invalid_resume_phase",
                 "state": str(state_path),
                 "errors": [
-                    "Mode B confirmation resume is allowed only once from "
-                    "awaiting_confirmation"
+                    "Mode B confirmation resume is allowed only once from awaiting_confirmation"
                 ],
             }
 
@@ -625,9 +621,7 @@ def resume_mode_b_coordinator(
         for name in required_names:
             raw_path = artifact_values.get(name)
             if not isinstance(raw_path, str) or not raw_path:
-                raise ModeBCoordinatorError(
-                    f"Mode B state missing artifact path: {name}"
-                )
+                raise ModeBCoordinatorError(f"Mode B state missing artifact path: {name}")
             path = _require_workspace_file(
                 Path(raw_path),
                 workspace,
@@ -697,12 +691,8 @@ def resume_mode_b_coordinator(
         state["summary"].update(
             {
                 "confirmation_answer_count": len(answer_model.answers),
-                "confirmation_questions_before": before_request.get(
-                    "question_count", 0
-                ),
-                "confirmation_questions_after": after_request.get(
-                    "question_count", 0
-                ),
+                "confirmation_questions_before": before_request.get("question_count", 0),
+                "confirmation_questions_after": after_request.get("question_count", 0),
             }
         )
     except (
@@ -740,9 +730,7 @@ def resume_mode_b_coordinator(
         {
             "second_resolve_blocking_unresolved": blocking_unresolved,
             "second_resolve_conflicts": conflicts,
-            "second_resolve_dimension_closure": draft.get(
-                "dimension_closure", {}
-            ).get("status"),
+            "second_resolve_dimension_closure": draft.get("dimension_closure", {}).get("status"),
         }
     )
     _record_stage(state, state_path, stage, stage_started)
@@ -795,13 +783,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if effective_argv and effective_argv[0] == "resume":
         parser = argparse.ArgumentParser(
-            prog=(
-                "python -m nx_mcp.drawing_intelligence.mode_b_coordinator "
-                "resume"
-            ),
+            prog=("python -m nx_mcp.drawing_intelligence.mode_b_coordinator resume"),
             description=(
-                "Resume exactly once from awaiting_confirmation through "
-                "second resolve and Gate A"
+                "Resume exactly once from awaiting_confirmation through second resolve and Gate A"
             ),
         )
         parser.add_argument("state")

@@ -209,16 +209,8 @@ def _write_resume_case(
     graph = _confirmation_graph()
     request = build_confirmation_request(graph)
     question = request["questions"][0]
-    endpoint = next(
-        item
-        for item in question["endpoints"]
-        if item["requires_confirmation"]
-    )
-    option = next(
-        item
-        for item in endpoint["options"]
-        if item["role"] == selected_role
-    )
+    endpoint = next(item for item in question["endpoints"] if item["requires_confirmation"])
+    option = next(item for item in endpoint["options"] if item["role"] == selected_role)
 
     prefix = workspace / prefix_name
     state_path = Path(str(prefix) + "-mode-b-state.json")
@@ -350,4 +342,3 @@ def test_confirmation_resume_second_resolve_failure_is_terminal(
     assert code2 == 3
     assert report2["reason"] == "invalid_resume_phase"
     assert report2["phase"] == "terminal_failed"
-

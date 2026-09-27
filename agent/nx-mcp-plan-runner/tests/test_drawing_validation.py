@@ -1575,6 +1575,186 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         self.assertEqual(12.0, actual["depth"])
         self.assertEqual([20.0, 8.0], actual["axial_range"])
 
+    def test_transverse_counterbore_ranges_derive_from_unique_slot_interruption(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": "S1",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": 0},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
+                {
+                    "id": "H1",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "diameter": 6.6,
+                    "counterbore_diameter": 11,
+                    "counterbore_depth": 6.5,
+                    "through": True,
+                    "start_side": "max",
+                },
+            ],
+        }
+
+        geometries, errors = R.resolve_transverse_recess_drawing_geometries(
+            drawing
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual([20.0, 1.0], geometries[0]["through_axial_range"])
+        self.assertEqual(
+            [20.0, 13.5],
+            geometries[0]["counterbore_axial_range"],
+        )
+
+    def test_transverse_counterbore_range_fails_closed_on_ambiguous_slots(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "features": [
+                {
+                    "id": slot_id,
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": center_x},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                }
+                for slot_id, center_x in (("S1", 0), ("S2", 4))
+            ]
+            + [
+                {
+                    "id": "H1",
+                    "type": "counterbore_hole",
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "diameter": 6.6,
+                    "counterbore_diameter": 11,
+                    "counterbore_depth": 6.5,
+                    "through": True,
+                    "start_side": "max",
+                }
+            ],
+        }
+
+        geometries, errors = R.resolve_transverse_recess_drawing_geometries(
+            drawing
+        )
+
+        self.assertEqual([], geometries)
+        self.assertTrue(
+            any("material-interrupting slot candidates" in item for item in errors)
+        )
+
+    def test_transverse_counterbore_gate_b_checks_loader_signed_ranges(self) -> None:
+        geometries = [
+            {
+                "feature_id": "H1",
+                "axis": "X",
+                "transverse_center": [8.0, 58.0],
+                "side": "max",
+                "interrupt_feature_id": "S1",
+                "through_diameter": 6.6,
+                "counterbore_diameter": 11.0,
+                "counterbore_depth": 6.5,
+                "through_axial_range": [20.0, 1.0],
+                "counterbore_axial_range": [20.0, 13.5],
+            }
+        ]
+        plan = {
+            "operations": [
+                {
+                    "step": 1,
+                    "tool": "nx_create_sketch",
+                    "tool_args": {"plane": "YZ"},
+                },
+                {
+                    "step": 2,
+                    "tool": "nx_sketch_circle",
+                    "tool_args": {
+                        "sketch_id": "sketch_clearance",
+                        "center": {"x": 8, "y": 58},
+                        "diameter": 6.6,
+                    },
+                },
+                {
+                    "step": 3,
+                    "tool": "nx_finish_sketch",
+                    "tool_args": {"sketch_id": "sketch_clearance"},
+                },
+                {
+                    "step": 4,
+                    "tool": "nx_extrude",
+                    "tool_args": {
+                        "sketch_id": "sketch_clearance",
+                        "distance": 19,
+                        "start_offset": -20,
+                        "reverse": True,
+                        "operation": "subtract",
+                        "target_body_id": "body_main",
+                    },
+                },
+                {
+                    "step": 5,
+                    "tool": "nx_create_sketch",
+                    "tool_args": {"plane": "YZ"},
+                },
+                {
+                    "step": 6,
+                    "tool": "nx_sketch_circle",
+                    "tool_args": {
+                        "sketch_id": "sketch_counterbore",
+                        "center": {"x": 8, "y": 58},
+                        "diameter": 11,
+                    },
+                },
+                {
+                    "step": 7,
+                    "tool": "nx_finish_sketch",
+                    "tool_args": {"sketch_id": "sketch_counterbore"},
+                },
+                {
+                    "step": 8,
+                    "tool": "nx_extrude",
+                    "tool_args": {
+                        "sketch_id": "sketch_counterbore",
+                        "distance": 6.5,
+                        "start_offset": -20,
+                        "reverse": True,
+                        "operation": "subtract",
+                        "target_body_id": "body_main",
+                    },
+                },
+            ]
+        }
+
+        self.assertEqual(
+            [],
+            R.transverse_recess_plan_errors(plan, geometries),
+        )
+
+        plan["operations"][3]["tool_args"]["start_offset"] = 20
+        errors = R.transverse_recess_plan_errors(plan, geometries)
+        self.assertTrue(any("through changes axial range" in item for item in errors))
+
+
     def test_surrogate_cannot_change_axis(self) -> None:
         drawing = thread_drawing(axis="X", position={"center": [3, 4]})
         geometries, _ = R.resolve_thread_drawing_geometries(drawing)

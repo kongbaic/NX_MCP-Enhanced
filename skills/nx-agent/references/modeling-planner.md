@@ -154,7 +154,7 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
 - Planner只能消费本轮canonicalizer以exit code = 0、`written=true`、`output_exists=true`生成的drawing，并原样消费其中已闭合的HARD几何。若canonical drawing不存在，或bbox、中心距、对称、count、evidence检查失败，必须停止且不得回退到任何其它drawing。
 - 禁止 Planner 纠正 Reader 坐标：不得平移、自动居中、使用 `abs()`、改正负号、自动镜像，或以“看起来合理”为由改写 profile、axis、center、start/end/range。
 - 图纸明确的左/右对齐或偏置 profile 必须保留；source `count` 已是总数，禁止因 symmetry/mirror 再翻倍。
-- 同轴组成员若需要分别从轴线两侧加工，Planner 必须从 Reader 给出的 side / axial range 生成；这些字段缺失且会改变实体时停止规划，禁止“一个放中心高、一个放 E 派生高”式二次猜测。
+- 同轴组成员若需要分别从轴线两侧加工，优先原样消费 Reader 给出的 side / axial range。若 axial range 缺失，仅当 Gate B 能从 canonical engineering topology 唯一求解时才允许派生：例如横向 through/counterbore 已有 start_side，且唯一相交 slot/slit 的 width_axis、centerline、width、top/bottom 与 overall bbox 能确定材料边界；派生后必须由 `check/build --drawing` 对实际 subtract 的 axis、center、diameter、signed axial range 做结构化核对。禁止 pixel→mm、自由猜测或用 overall 全宽替代被开缝中断的材料区间；不能唯一求解时停止规划。
 - frozen plan 发布前必须检查：同一 `coaxial_hole_group` 展开的所有 member operation 的非轴向中心坐标完全一致；若不一致，B 阶段前直接判为规划错误。
 - **Chamfer 不得由参数名拼接生成**：只有 Reader 已输出具有明确 target edge/edge semantics 的 chamfer feature，Planner 才能创建 Chamfer operation。孤立参数 `C=2`、表格字段 C 或没有边绑定的数值不得被 Planner 转写成“C2 倒角”。
 - **圆角 / 倒角一律放最后**：完成主体几何 → 完成孔 → 完成 Boolean →

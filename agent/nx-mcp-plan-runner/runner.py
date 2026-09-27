@@ -2394,6 +2394,331 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
     return errors
 
 
+def _transverse_slot_interrupt_candidates(
+    drawing: dict,
+    *,
+    feature: dict,
+    axis: str,
+) -> list[dict]:
+    """Return slot/slit interruptions proven to cross one transverse hole centerline.
+
+    This is engineering-topology only.  Pixel coordinates never enter this stage.
+    The narrow v1 rule supports X/Y holes intersected by a vertical-bounded slot
+    whose through axis is the other horizontal principal axis.
+    """
+    other_horizontal = "Y" if axis == "X" else "X"
+    center_z = _num(_drawing_feature_coord(feature, "z"))
+    if center_z is None:
+        return []
+
+    candidates: list[dict] = []
+    for slot in drawing.get("features") or []:
+        if not isinstance(slot, dict):
+            continue
+        if str(slot.get("type") or "").lower() not in {"slot", "slit", "cut"}:
+            continue
+        if str(slot.get("width_axis") or "").upper() != axis:
+            continue
+        if str(slot.get("through_axis") or "").upper() != other_horizontal:
+            continue
+
+        width = _num(slot.get("width"))
+        center = _num(_drawing_feature_coord(slot, axis.lower()))
+        bottom_z = _num(slot.get("bottom_z"))
+        top_z = _num(slot.get("top_z"))
+        if (
+            width is None
+            or width <= 0
+            or center is None
+            or bottom_z is None
+            or top_z is None
+            or top_z < bottom_z
+            or center_z < bottom_z - 1e-9
+            or center_z > top_z + 1e-9
+        ):
+            continue
+
+        candidates.append(
+            {
+                "feature_id": str(slot.get("id") or ""),
+                "interval": [
+                    float(center - width / 2.0),
+                    float(center + width / 2.0),
+                ],
+            }
+        )
+    return candidates
+
+
+def resolve_transverse_recess_drawing_geometries(
+    drawing: dict,
+) -> tuple[list[dict], list[str]]:
+    """Derive X/Y counterbore execution ranges from canonical material topology.
+
+    The rule intentionally activates only when one unique slot/slit/cut crosses
+    the hole centerline.  Overall bounds, slot width/center, start_side and recess
+    depth are the only numeric inputs.  Ambiguous interruptions fail closed.
+    """
+    bbox = _drawing_overall_bbox(drawing)
+    if bbox is None:
+        return [], []
+
+    lx, ly, _ = bbox
+    bounds = {
+        "X": (-lx / 2.0, lx / 2.0),
+        "Y": (-ly / 2.0, ly / 2.0),
+    }
+    geometries: list[dict] = []
+    errors: list[str] = []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if str(feature.get("type") or "").lower() != "counterbore_hole":
+            continue
+        axis = str(feature.get("axis") or "").upper()
+        if axis not in {"X", "Y"} or feature.get("through") is not True:
+            continue
+
+        interrupts = _transverse_slot_interrupt_candidates(
+            drawing,
+            feature=feature,
+            axis=axis,
+        )
+        if not interrupts:
+            continue
+
+        fid = str(feature.get("id") or "?")
+        if len(interrupts) != 1:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has "
+                f"{len(interrupts)} material-interrupting slot candidates"
+            )
+            continue
+
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"min", "max"}:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has no "
+                "confirmed start_side/side"
+            )
+            continue
+
+        center = _axis_transverse_center(axis, feature.get("centerline"))
+        through_diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        recess_diameter = _num(feature.get("counterbore_diameter"))
+        recess_depth = _num(feature.get("counterbore_depth"))
+        if (
+            center is None
+            or through_diameter is None
+            or through_diameter <= 0
+            or recess_diameter is None
+            or recess_diameter <= through_diameter
+            or recess_depth is None
+            or recess_depth <= 0
+        ):
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has "
+                "incomplete counterbore geometry"
+            )
+            continue
+
+        lo, hi = bounds[axis]
+        slot_lo, slot_hi = interrupts[0]["interval"]
+        if slot_lo < lo - 1e-9 or slot_hi > hi + 1e-9:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} slot "
+                "interruption lies outside overall bounds"
+            )
+            continue
+
+        outer = lo if side == "min" else hi
+        boundary = slot_lo if side == "min" else slot_hi
+        if (
+            (side == "min" and boundary <= outer + 1e-9)
+            or (side == "max" and boundary >= outer - 1e-9)
+        ):
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has no "
+                "positive material span before the slot interruption"
+            )
+            continue
+
+        recess_end = (
+            outer + float(recess_depth)
+            if side == "min"
+            else outer - float(recess_depth)
+        )
+        if (
+            (side == "min" and recess_end > boundary + 1e-9)
+            or (side == "max" and recess_end < boundary - 1e-9)
+        ):
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} "
+                "counterbore depth crosses the slot interruption"
+            )
+            continue
+
+        geometries.append(
+            {
+                "feature_id": fid,
+                "axis": axis,
+                "transverse_center": center,
+                "side": side,
+                "interrupt_feature_id": interrupts[0]["feature_id"],
+                "through_diameter": float(through_diameter),
+                "counterbore_diameter": float(recess_diameter),
+                "counterbore_depth": float(recess_depth),
+                "through_axial_range": [float(outer), float(boundary)],
+                "counterbore_axial_range": [float(outer), float(recess_end)],
+            }
+        )
+
+    return geometries, errors
+
+
+def _subtract_circle_operation_geometry(
+    plan: dict,
+    op: dict,
+) -> dict | None:
+    """Read one principal-plane circular subtract in global engineering coordinates."""
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_extrude" or args.get("operation") != "subtract":
+        return None
+    if any(
+        key not in args
+        for key in ("sketch_id", "distance", "start_offset", "reverse")
+    ):
+        return None
+    if not isinstance(args.get("reverse"), bool):
+        return None
+
+    operations = plan.get("operations") or []
+    try:
+        op_index = operations.index(op)
+    except ValueError:
+        return None
+    sketch_id = args.get("sketch_id")
+    circles = [
+        candidate
+        for candidate in operations[:op_index]
+        if candidate.get("tool") == "nx_sketch_circle"
+        and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+    ]
+    if len(circles) != 1:
+        return None
+
+    circle = circles[0]
+    circle_index = operations.index(circle)
+    creates = [
+        candidate
+        for candidate in operations[:circle_index]
+        if candidate.get("tool") == "nx_create_sketch"
+    ]
+    if not creates:
+        return None
+    plane = str((creates[-1].get("tool_args") or {}).get("plane") or "").upper()
+    axis = {"XY": "Z", "XZ": "Y", "YZ": "X"}.get(plane)
+    if axis is None:
+        return None
+
+    center = _axis_transverse_center(
+        "Z",
+        (circle.get("tool_args") or {}).get("center"),
+    )
+    diameter = _num((circle.get("tool_args") or {}).get("diameter"))
+    distance = _num(args.get("distance"))
+    start = _num(args.get("start_offset"))
+    if (
+        center is None
+        or diameter is None
+        or diameter <= 0
+        or distance is None
+        or distance <= 0
+        or start is None
+    ):
+        return None
+
+    direction = -1.0 if args["reverse"] else 1.0
+    return {
+        "step": op.get("step"),
+        "axis": axis,
+        "transverse_center": center,
+        "diameter": float(diameter),
+        "axial_range": [
+            float(direction * start),
+            float(direction * (start + distance)),
+        ],
+    }
+
+
+def transverse_recess_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+) -> list[str]:
+    """Gate B check for slot-interrupted X/Y through + counterbore operations."""
+    if not geometries:
+        return []
+
+    actual = [
+        geometry
+        for op in plan.get("operations") or []
+        if isinstance(op, dict)
+        if (geometry := _subtract_circle_operation_geometry(plan, op)) is not None
+    ]
+    errors: list[str] = []
+
+    for expected in geometries:
+        fid = str(expected.get("feature_id") or "?")
+        axis = expected.get("axis")
+        center = expected.get("transverse_center")
+
+        for label, diameter_key, range_key in (
+            ("through", "through_diameter", "through_axial_range"),
+            ("counterbore", "counterbore_diameter", "counterbore_axial_range"),
+        ):
+            diameter = expected.get(diameter_key)
+            expected_range = expected.get(range_key)
+            matches = [
+                item
+                for item in actual
+                if item.get("axis") == axis
+                and item.get("transverse_center") == center
+                and _drawing_equal(item.get("diameter"), diameter)
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"transverse recess feature {fid!r} {label} operation count "
+                    f"must be 1, got {len(matches)}"
+                )
+                continue
+            actual_range = matches[0].get("axial_range")
+            if (
+                not isinstance(expected_range, list)
+                or len(expected_range) != 2
+                or not isinstance(actual_range, list)
+                or len(actual_range) != 2
+                or any(
+                    not _drawing_equal(a, b)
+                    for a, b in zip(actual_range, expected_range)
+                )
+            ):
+                errors.append(
+                    f"transverse recess feature {fid!r} {label} changes axial range"
+                )
+
+    return errors
+
+
 def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:
     original = _load_drawing(path)
     drawing, normalization_errors, _ = normalize_drawing_schema(original)
@@ -4001,10 +4326,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
         drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        recess_geometries, recess_errors = (
+            resolve_transverse_recess_drawing_geometries(drawing)
+        )
+        drawing_errors.extend(recess_errors)
         drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         errs.extend(drawing_errors)
         if not drawing_errors:
             errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
+            errs.extend(transverse_recess_plan_errors(plan, recess_geometries))
     result = {"plan": args.plan, "frozen": bool(args.frozen),
                       "drawing": drawing_path,
                       "operations": len(plan.get("operations") or []),
@@ -4020,11 +4350,20 @@ def _cmd_build(args: argparse.Namespace) -> int:
     frozen_errs = check_plan(plan, executable=False)
     recipes: list[dict] = []
     geometries: list[dict] = []
+    recess_geometries: list[dict] = []
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
         drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        recess_geometries, recess_errors = (
+            resolve_transverse_recess_drawing_geometries(drawing)
+        )
+        drawing_errors.extend(recess_errors)
         drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         frozen_errs.extend(drawing_errors)
+        if not drawing_errors:
+            frozen_errs.extend(
+                transverse_recess_plan_errors(plan, recess_geometries)
+            )
     if frozen_errs:
         result = {
             "built": None,
@@ -4041,6 +4380,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
         exe["thread_surrogates"] = recipes
         exe["thread_drawing_geometries"] = geometries
     errs = check_plan(exe, executable=True)
+    if drawing_path and not frozen_errs:
+        errs.extend(transverse_recess_plan_errors(exe, recess_geometries))
     if not errs:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(exe, f, ensure_ascii=False, indent=2)

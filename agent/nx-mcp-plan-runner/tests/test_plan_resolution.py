@@ -884,6 +884,208 @@ def test_capability_registry_fails_closed_when_gate_b_validator_is_unbound():
     )
 
 
+
+def _rect_profile(plane, u_min, u_max, v_min, v_max):
+    axis_u, axis_v = plane.lower()
+    points = [
+        (u_min, v_min),
+        (u_max, v_min),
+        (u_max, v_max),
+        (u_min, v_max),
+    ]
+    segments = []
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        segments.append(
+            {
+                "type": "line",
+                f"{axis_u}1": start[0],
+                f"{axis_v}1": start[1],
+                f"{axis_u}2": end[0],
+                f"{axis_v}2": end[1],
+            }
+        )
+    return {"plane": plane, "topology": "rect", "segments": segments}
+
+
+def test_capability_handler_maps_cover_registered_bindings():
+    assert set(R.PLANNER_ADAPTER_HANDLER_MAP) == set(
+        R.REGISTERED_PLANNER_ADAPTER_HANDLERS
+    )
+    assert set(R.GATE_B_VALIDATOR_HANDLER_MAP) == set(
+        R.REGISTERED_GATE_B_VALIDATOR_HANDLERS
+    )
+
+
+def test_native_z_hole_capability_dispatch_round_trip():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "count": 1,
+            }
+        ],
+    }
+    capability = R.resolve_modeling_capabilities("hole", "Z")[0][0]
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    assert errors == []
+    assert payload is not None
+    assert payload["geometries"] == [
+        {
+            "feature_id": "H1",
+            "axis": "Z",
+            "transverse_centers": [[0.0, 0.0]],
+            "diameter": 6.0,
+            "axial_range": [0.0, 10.0],
+            "count": 1,
+        }
+    ]
+
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_hole",
+                "tool_args": {
+                    "body_id": "$body",
+                    "center": {"x": 0, "y": 0},
+                    "diameter": 6,
+                    "depth": 10,
+                    "start_offset": 0,
+                },
+            }
+        ]
+    }
+
+    assert R.dispatch_gate_b_validator(capability, plan, payload) == []
+
+    plan["operations"][0]["tool_args"]["depth"] = 9
+    assert any(
+        "changes axial range" in item
+        for item in R.dispatch_gate_b_validator(capability, plan, payload)
+    )
+
+
+def test_principal_axis_hole_capability_dispatch_round_trip():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("YZ", -10, 10, 0, 10),
+        "features": [
+            {
+                "id": "HX",
+                "type": "hole",
+                "axis": "X",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"y": 0, "z": 5},
+                "count": 1,
+            }
+        ],
+    }
+    capability = R.resolve_modeling_capabilities("hole", "X")[0][0]
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    assert errors == []
+    assert payload is not None
+    assert payload["geometries"][0]["axial_range"] == [-10.0, 10.0]
+
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_sketch",
+                "tool_args": {"plane": "YZ"},
+            },
+            {
+                "step": 2,
+                "tool": "nx_sketch_circle",
+                "tool_args": {
+                    "sketch_id": "S1",
+                    "center": {"x": 0, "y": 5},
+                    "diameter": 6,
+                },
+            },
+            {
+                "step": 3,
+                "tool": "nx_extrude",
+                "tool_args": {
+                    "sketch_id": "S1",
+                    "distance": 20,
+                    "start_offset": -10,
+                    "reverse": False,
+                    "operation": "subtract",
+                },
+            },
+        ]
+    }
+
+    assert R.dispatch_gate_b_validator(capability, plan, payload) == []
+
+
+def test_native_z_counterbore_capability_dispatch_round_trip():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "CB1",
+                "type": "counterbore_hole",
+                "axis": "Z",
+                "hole_diameter": 6,
+                "counterbore_diameter": 10,
+                "counterbore_depth": 3,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+            }
+        ],
+    }
+    capability = R.resolve_modeling_capabilities("counterbore_hole", "Z")[0][0]
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    assert errors == []
+    assert payload is not None
+
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_counterbore_hole",
+                "tool_args": {
+                    "body_id": "$body",
+                    "center": {"x": 0, "y": 0},
+                    "hole_diameter": 6,
+                    "hole_depth": 10,
+                    "counterbore_diameter": 10,
+                    "counterbore_depth": 3,
+                    "start_offset": 0,
+                },
+            }
+        ]
+    }
+
+    assert R.dispatch_gate_b_validator(capability, plan, payload) == []
+
+
 def test_capability_registry_fails_closed_when_required_tool_is_unavailable():
     registry = {
         "schema_version": 1,

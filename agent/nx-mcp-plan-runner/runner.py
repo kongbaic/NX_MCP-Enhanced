@@ -35,7 +35,7 @@ import sys
 import tempfile
 import time
 from pathlib import PureWindowsPath
-from typing import Any
+from typing import Any, Callable
 
 # --------------------------------------------------------------------------
 # certified tool contract — static data, not part-specific
@@ -3607,6 +3607,737 @@ def transverse_recess_plan_errors(
                 )
 
     return errors
+
+
+
+def _capability_feature_centers(
+    feature: dict,
+    axis: str,
+) -> tuple[list[list[float]], list[str]]:
+    """Normalize one feature's explicit/transverse centers without pixel geometry."""
+    fid = str(feature.get("id") or "?")
+    centers_value = feature.get("explicit_centers")
+    if not isinstance(centers_value, list) or not centers_value:
+        center_value = feature.get("centerline")
+        position = feature.get("position")
+        if center_value is None and isinstance(position, dict):
+            center_value = position.get("center")
+        if center_value is None:
+            center_value = feature.get("center")
+        centers_value = [center_value] if center_value is not None else []
+
+    centers = [_axis_transverse_center(axis, value) for value in centers_value]
+    if not centers or any(value is None for value in centers):
+        return [], [f"capability_geometry_violation: feature {fid!r} has no valid center"]
+
+    normalized = [list(value) for value in centers if value is not None]
+    count_value = _num(feature.get("count"))
+    if count_value is not None:
+        if count_value <= 0 or not float(count_value).is_integer():
+            return [], [
+                f"capability_geometry_violation: feature {fid!r} has invalid count"
+            ]
+        if len(normalized) != int(count_value):
+            return [], [
+                f"capability_geometry_violation: feature {fid!r} center count "
+                f"{len(normalized)} != count {int(count_value)}"
+            ]
+    return normalized, []
+
+
+def _feature_explicit_axial_range(feature: dict) -> list[float] | None:
+    value = _thread_feature_value(
+        feature,
+        "axis_range",
+        "axial_range",
+        "through_range",
+        "range",
+    )
+    if not (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(_num(item) is not None for item in value)
+    ):
+        return None
+    return [float(_num(value[0])), float(_num(value[1]))]
+
+
+def resolve_hole_drawing_geometries(
+    drawing: dict,
+) -> tuple[list[dict], list[str]]:
+    """Resolve plain-hole Feature Contracts into deterministic engineering ranges."""
+    geometries: list[dict] = []
+    errors: list[str] = []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_type = str(feature.get("type") or feature.get("kind") or "").lower()
+        if feature_type not in {"hole", "through_hole"}:
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+
+        fid = str(feature.get("id") or "?")
+        axis = str(feature.get("axis") or "").upper()
+        if axis not in {"X", "Y", "Z"}:
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} has invalid axis {axis!r}"
+            )
+            continue
+
+        diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        if diameter is None or diameter <= 0:
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} has invalid diameter"
+            )
+            continue
+
+        centers, center_errors = _capability_feature_centers(feature, axis)
+        if center_errors:
+            errors.extend(center_errors)
+            continue
+
+        explicit_range = _feature_explicit_axial_range(feature)
+        ranges: list[list[float]] = []
+        failed = False
+
+        for center in centers:
+            if explicit_range is not None:
+                ranges.append(list(explicit_range))
+                continue
+
+            material, material_errors = resolve_axis_material_intervals(
+                drawing,
+                axis,
+                center,
+                exclude_feature_ids={fid},
+            )
+            if material_errors:
+                errors.extend(
+                    f"capability_geometry_violation: hole {fid!r}: {item}"
+                    for item in material_errors
+                )
+                failed = True
+                break
+            normalized_material = _merge_intervals(material)
+            if not normalized_material:
+                errors.append(
+                    f"capability_geometry_violation: hole {fid!r} has no material "
+                    "interval at its center"
+                )
+                failed = True
+                break
+
+            through = feature.get("through") is True or feature_type == "through_hole"
+            side_value = (
+                feature.get("start_side")
+                if feature.get("start_side") is not None
+                else feature.get("side")
+            )
+            side = str(side_value or "").lower()
+            if axis == "Z" and side not in {"min", "max"}:
+                side = "min"
+
+            if through:
+                if len(normalized_material) != 1:
+                    errors.append(
+                        f"capability_geometry_violation: through hole {fid!r} "
+                        "crosses multiple material intervals without explicit axial range"
+                    )
+                    failed = True
+                    break
+                selected = normalized_material[0]
+                ranges.append(
+                    [selected[0], selected[1]]
+                    if side != "max"
+                    else [selected[1], selected[0]]
+                )
+                continue
+
+            depth = _num(
+                feature.get("depth")
+                if feature.get("depth") is not None
+                else feature.get("hole_depth")
+            )
+            if depth is None or depth <= 0 or side not in {"min", "max"}:
+                errors.append(
+                    f"capability_geometry_violation: blind hole {fid!r} requires "
+                    "positive depth and deterministic start_side"
+                )
+                failed = True
+                break
+            selected = _select_material_interval(normalized_material, side)
+            axial_range = (
+                _depth_range_from_material_interval(selected, side, float(depth))
+                if selected is not None
+                else None
+            )
+            if axial_range is None:
+                errors.append(
+                    f"capability_geometry_violation: blind hole {fid!r} depth "
+                    "exceeds selected material interval"
+                )
+                failed = True
+                break
+            ranges.append(axial_range)
+
+        if failed:
+            continue
+        if not ranges or any(
+            len(value) != 2
+            or any(
+                not _drawing_equal(left, right)
+                for left, right in zip(value, ranges[0], strict=False)
+            )
+            for value in ranges[1:]
+        ):
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} centers do not share "
+                "one deterministic axial range"
+            )
+            continue
+
+        geometries.append(
+            {
+                "feature_id": fid,
+                "axis": axis,
+                "transverse_centers": centers,
+                "diameter": float(diameter),
+                "axial_range": ranges[0],
+                "count": len(centers),
+            }
+        )
+
+    return geometries, errors
+
+
+def resolve_counterbore_drawing_geometries(
+    drawing: dict,
+) -> tuple[list[dict], list[str]]:
+    """Resolve both principal-axis and native-Z counterbore Feature Contracts."""
+    geometries, errors = resolve_transverse_recess_drawing_geometries(drawing)
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if str(feature.get("type") or "").lower() != "counterbore_hole":
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+        if str(feature.get("axis") or "").upper() != "Z":
+            continue
+
+        fid = str(feature.get("id") or "?")
+        centers, center_errors = _capability_feature_centers(feature, "Z")
+        if center_errors:
+            errors.extend(center_errors)
+            continue
+
+        through_diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        counterbore_diameter = _num(feature.get("counterbore_diameter"))
+        counterbore_depth = _num(feature.get("counterbore_depth"))
+        if (
+            through_diameter is None
+            or through_diameter <= 0
+            or counterbore_diameter is None
+            or counterbore_diameter <= through_diameter
+            or counterbore_depth is None
+            or counterbore_depth <= 0
+        ):
+            errors.append(
+                f"capability_geometry_violation: counterbore {fid!r} has incomplete geometry"
+            )
+            continue
+
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"", "min"}:
+            errors.append(
+                f"capability_geometry_violation: native Z counterbore {fid!r} "
+                "cannot enter from max side"
+            )
+            continue
+
+        explicit_range = _feature_explicit_axial_range(feature)
+        for center in centers:
+            material, material_errors = resolve_axis_material_intervals(
+                drawing,
+                "Z",
+                center,
+                exclude_feature_ids={fid},
+            )
+            if material_errors:
+                errors.extend(
+                    f"capability_geometry_violation: counterbore {fid!r}: {item}"
+                    for item in material_errors
+                )
+                continue
+            normalized = _merge_intervals(material)
+            if not normalized:
+                errors.append(
+                    f"capability_geometry_violation: counterbore {fid!r} has no material"
+                )
+                continue
+
+            selected = normalized[0]
+            if explicit_range is not None:
+                through_range = list(explicit_range)
+            elif feature.get("through") is True:
+                if len(normalized) != 1:
+                    errors.append(
+                        f"capability_geometry_violation: counterbore {fid!r} crosses "
+                        "multiple material intervals without explicit axial range"
+                    )
+                    continue
+                through_range = [selected[0], selected[1]]
+            else:
+                hole_depth = _num(feature.get("hole_depth"))
+                through_range = (
+                    _depth_range_from_material_interval(
+                        selected,
+                        "min",
+                        float(hole_depth),
+                    )
+                    if hole_depth is not None and hole_depth > 0
+                    else None
+                )
+                if through_range is None:
+                    errors.append(
+                        f"capability_geometry_violation: counterbore {fid!r} requires "
+                        "through=true, explicit axial range, or valid hole_depth"
+                    )
+                    continue
+
+            counterbore_range = _depth_range_from_material_interval(
+                selected,
+                "min",
+                float(counterbore_depth),
+            )
+            if counterbore_range is None:
+                errors.append(
+                    f"capability_geometry_violation: counterbore {fid!r} depth exceeds material"
+                )
+                continue
+
+            geometries.append(
+                {
+                    "feature_id": fid,
+                    "axis": "Z",
+                    "transverse_center": center,
+                    "side": "min",
+                    "material_intervals": normalized,
+                    "material_interval": selected,
+                    "through_diameter": float(through_diameter),
+                    "counterbore_diameter": float(counterbore_diameter),
+                    "counterbore_depth": float(counterbore_depth),
+                    "through_axial_range": through_range,
+                    "counterbore_axial_range": counterbore_range,
+                }
+            )
+
+    return geometries, errors
+
+
+def _native_hole_operation_geometry(op: dict) -> dict | None:
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_hole":
+        return None
+    center = _axis_transverse_center("Z", args.get("center"))
+    diameter = _num(args.get("diameter"))
+    depth = _num(args.get("depth"))
+    start = _num(args.get("start_offset", 0.0))
+    if (
+        center is None
+        or diameter is None
+        or diameter <= 0
+        or depth is None
+        or depth <= 0
+        or start is None
+    ):
+        return None
+    return {
+        "step": op.get("step"),
+        "axis": "Z",
+        "transverse_center": center,
+        "diameter": float(diameter),
+        "axial_range": [float(start), float(start + depth)],
+    }
+
+
+def hole_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+    *,
+    adapter_name: str,
+) -> list[str]:
+    """Gate B for plain-hole adapters using engineering-coordinate geometry."""
+    if not geometries:
+        return []
+
+    if adapter_name == "native_z_hole":
+        actual = [
+            geometry
+            for op in plan.get("operations") or []
+            if isinstance(op, dict)
+            if (geometry := _native_hole_operation_geometry(op)) is not None
+        ]
+        allowed_axes = {"Z"}
+    elif adapter_name == "principal_axis_circular_subtract":
+        actual = [
+            geometry
+            for op in plan.get("operations") or []
+            if isinstance(op, dict)
+            if (geometry := _subtract_circle_operation_geometry(plan, op)) is not None
+        ]
+        allowed_axes = {"X", "Y"}
+    else:
+        return [f"capability_dispatch_violation: unknown hole adapter {adapter_name!r}"]
+
+    errors: list[str] = []
+    for expected in geometries:
+        if expected.get("axis") not in allowed_axes:
+            continue
+        fid = str(expected.get("feature_id") or "?")
+        for center in expected.get("transverse_centers") or []:
+            matches = [
+                item
+                for item in actual
+                if item.get("axis") == expected.get("axis")
+                and item.get("transverse_center") == center
+                and _drawing_equal(item.get("diameter"), expected.get("diameter"))
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"hole feature {fid!r} operation count must be 1, got {len(matches)}"
+                )
+                continue
+            actual_range = matches[0].get("axial_range")
+            expected_range = expected.get("axial_range")
+            if (
+                not isinstance(actual_range, list)
+                or not isinstance(expected_range, list)
+                or len(actual_range) != 2
+                or len(expected_range) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(actual_range, expected_range, strict=False)
+                )
+            ):
+                errors.append(
+                    f"hole feature {fid!r} changes axial range"
+                )
+    return errors
+
+
+def _native_counterbore_operation_geometry(op: dict) -> dict | None:
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_counterbore_hole":
+        return None
+    center = _axis_transverse_center("Z", args.get("center"))
+    hole_diameter = _num(args.get("hole_diameter"))
+    hole_depth = _num(args.get("hole_depth"))
+    counterbore_diameter = _num(args.get("counterbore_diameter"))
+    counterbore_depth = _num(args.get("counterbore_depth"))
+    start = _num(args.get("start_offset", 0.0))
+    if (
+        center is None
+        or hole_diameter is None
+        or hole_diameter <= 0
+        or hole_depth is None
+        or hole_depth <= 0
+        or counterbore_diameter is None
+        or counterbore_diameter <= hole_diameter
+        or counterbore_depth is None
+        or counterbore_depth <= 0
+        or start is None
+    ):
+        return None
+    return {
+        "step": op.get("step"),
+        "axis": "Z",
+        "transverse_center": center,
+        "through_diameter": float(hole_diameter),
+        "counterbore_diameter": float(counterbore_diameter),
+        "through_axial_range": [float(start), float(start + hole_depth)],
+        "counterbore_axial_range": [
+            float(start),
+            float(start + counterbore_depth),
+        ],
+    }
+
+
+def native_counterbore_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+) -> list[str]:
+    actual = [
+        geometry
+        for op in plan.get("operations") or []
+        if isinstance(op, dict)
+        if (geometry := _native_counterbore_operation_geometry(op)) is not None
+    ]
+    errors: list[str] = []
+    for expected in geometries:
+        if expected.get("axis") != "Z":
+            continue
+        fid = str(expected.get("feature_id") or "?")
+        matches = [
+            item
+            for item in actual
+            if item.get("transverse_center") == expected.get("transverse_center")
+            and _drawing_equal(
+                item.get("through_diameter"),
+                expected.get("through_diameter"),
+            )
+            and _drawing_equal(
+                item.get("counterbore_diameter"),
+                expected.get("counterbore_diameter"),
+            )
+        ]
+        if len(matches) != 1:
+            errors.append(
+                f"counterbore feature {fid!r} operation count must be 1, got {len(matches)}"
+            )
+            continue
+        actual_geometry = matches[0]
+        for label, key in (
+            ("through", "through_axial_range"),
+            ("counterbore", "counterbore_axial_range"),
+        ):
+            actual_range = actual_geometry.get(key)
+            expected_range = expected.get(key)
+            if (
+                not isinstance(actual_range, list)
+                or not isinstance(expected_range, list)
+                or len(actual_range) != 2
+                or len(expected_range) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(actual_range, expected_range, strict=False)
+                )
+            ):
+                errors.append(
+                    f"counterbore feature {fid!r} {label} changes axial range"
+                )
+    return errors
+
+
+def _adapter_payload(
+    capability: dict,
+    geometries: list[dict],
+    errors: list[str],
+    *,
+    recipes: list[dict] | None = None,
+) -> tuple[dict | None, list[str]]:
+    if errors:
+        return None, errors
+    supported_axes = set(capability.get("supported_axes") or [])
+    selected = [
+        geometry
+        for geometry in geometries
+        if geometry.get("axis") in supported_axes
+    ]
+    feature_ids = {str(item.get("feature_id") or "") for item in selected}
+    payload: dict[str, Any] = {
+        "implementation_id": capability.get("implementation_id"),
+        "planner_adapter": capability.get("planner_adapter"),
+        "gate_b_validator": capability.get("gate_b_validator"),
+        "feature_kind": capability.get("feature_kind"),
+        "supported_axes": list(capability.get("supported_axes") or []),
+        "geometries": selected,
+    }
+    if recipes is not None:
+        payload["recipes"] = [
+            item for item in recipes if str(item.get("feature_id") or "") in feature_ids
+        ]
+    return payload, []
+
+
+def _planner_adapter_native_z_hole(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_hole_drawing_geometries(drawing)
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_principal_axis_circular_subtract(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_hole_drawing_geometries(drawing)
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_native_z_counterbore(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_counterbore_drawing_geometries(drawing)
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_principal_axis_counterbore(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_counterbore_drawing_geometries(drawing)
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_metric_thread_surrogate(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, geometry_errors = resolve_thread_drawing_geometries(drawing)
+    recipes, recipe_errors = resolve_thread_surrogates(drawing)
+    return _adapter_payload(
+        capability,
+        geometries,
+        [*geometry_errors, *recipe_errors],
+        recipes=recipes,
+    )
+
+
+def _gate_b_native_hole_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return hole_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+        adapter_name="native_z_hole",
+    )
+
+
+def _gate_b_circular_subtract_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return hole_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+        adapter_name="principal_axis_circular_subtract",
+    )
+
+
+def _gate_b_native_counterbore_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return native_counterbore_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+    )
+
+
+def _gate_b_transverse_recess_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return transverse_recess_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+    )
+
+
+def _gate_b_thread_surrogate(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return thread_surrogate_plan_errors(
+        plan,
+        payload.get("recipes") or [],
+        payload.get("geometries") or [],
+    )
+
+
+PLANNER_ADAPTER_HANDLER_MAP: dict[
+    str,
+    Callable[[dict, dict], tuple[dict | None, list[str]]],
+] = {
+    "native_z_hole": _planner_adapter_native_z_hole,
+    "principal_axis_circular_subtract": (
+        _planner_adapter_principal_axis_circular_subtract
+    ),
+    "native_z_counterbore": _planner_adapter_native_z_counterbore,
+    "principal_axis_counterbore": _planner_adapter_principal_axis_counterbore,
+    "metric_thread_surrogate": _planner_adapter_metric_thread_surrogate,
+}
+
+GATE_B_VALIDATOR_HANDLER_MAP: dict[
+    str,
+    Callable[[dict, dict], list[str]],
+] = {
+    "native_hole_geometry": _gate_b_native_hole_geometry,
+    "circular_subtract_geometry": _gate_b_circular_subtract_geometry,
+    "native_counterbore_geometry": _gate_b_native_counterbore_geometry,
+    "transverse_recess_geometry": _gate_b_transverse_recess_geometry,
+    "thread_surrogate": _gate_b_thread_surrogate,
+}
+
+
+def resolve_capability_handlers(
+    capability: dict,
+) -> tuple[
+    Callable[[dict, dict], tuple[dict | None, list[str]]] | None,
+    Callable[[dict, dict], list[str]] | None,
+    list[str],
+]:
+    """Resolve a capability declaration to concrete executable handlers."""
+    adapter_name = str(capability.get("planner_adapter") or "")
+    validator_name = str(capability.get("gate_b_validator") or "")
+    adapter = PLANNER_ADAPTER_HANDLER_MAP.get(adapter_name)
+    validator = GATE_B_VALIDATOR_HANDLER_MAP.get(validator_name)
+    errors: list[str] = []
+    if adapter is None:
+        errors.append(
+            f"capability_dispatch_violation: planner_adapter {adapter_name!r} is not executable"
+        )
+    if validator is None:
+        errors.append(
+            f"capability_dispatch_violation: gate_b_validator {validator_name!r} is not executable"
+        )
+    return adapter, validator, errors
+
+
+def dispatch_planner_adapter(
+    capability: dict,
+    drawing: dict,
+) -> tuple[dict | None, list[str]]:
+    adapter, _, errors = resolve_capability_handlers(capability)
+    if errors or adapter is None:
+        return None, errors
+    return adapter(drawing, capability)
+
+
+def dispatch_gate_b_validator(
+    capability: dict,
+    plan: dict,
+    adapter_payload: dict,
+) -> list[str]:
+    _, validator, errors = resolve_capability_handlers(capability)
+    if errors or validator is None:
+        return errors
+    if adapter_payload.get("implementation_id") != capability.get("implementation_id"):
+        return [
+            "capability_dispatch_violation: adapter payload implementation_id "
+            "does not match selected capability"
+        ]
+    return validator(plan, adapter_payload)
 
 
 def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:

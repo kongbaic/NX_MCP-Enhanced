@@ -221,23 +221,22 @@ def main() -> None:
         "runtime-local raster 路径",
         "prepare-reader-input <current-raster-path> <workspace_root>",
         "reader-input.json",
+        "禁止顺序打开全部单张 crop",
+        "对应的那一张现成 crop",
         "不得直接读取 raw-evidence.json / reader-visual-aid.json",
         "不得创建额外 crop",
-        "reader-observations.json",
-        "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
-        "禁止第二版 observations",
-        "reader-capture.json",
-        "check-capture <reader-capture.json>",
-        "link-capture <reader-capture.json> <drawing-evidence.json>",
-        "resolve <drawing-evidence.json> <semantic-draft.json>",
-        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
-        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
-        "禁止第二轮用户确认",
-        "canonicalize-drawing <semantic-draft.json 或 semantic-draft-confirmed.json> <drawing.json>",
+        "reader-observations.json 写出后，正常 Mode B 必须立即把控制权交给 deterministic coordinator",
+        "python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>",
+        "coordinator 是正常 Mode B 从 observations 到 Gate A 的唯一生产入口",
+        "Agent 禁止再手动串联",
+        "exit code=0 且 phase=gate_a_pass",
+        "exit code=4 且 phase=awaiting_confirmation",
+        "mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>",
+        "禁止第二轮确认",
+        "coordinator 接管后，正常运行禁止为了处理错误去读取 reader_observations.py",
         "从零生成新的 frozen plan",
-        "不得跳过 Planner",
         "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、reader-capture",
+        "mode-b-state",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:
@@ -353,6 +352,23 @@ def main() -> None:
             if token not in reader_prep_texts[name]:
                 fail(f"Reader preparation contract regression in {name}: missing {token}")
 
+    coordinator_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "mode_b_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'STATE_SCHEMA = "mode-b-coordinator-state-v1"',
+        '"reader_submitted"',
+        '"capture_pass"',
+        '"awaiting_confirmation"',
+        '"confirmation_submitted"',
+        '"second_resolve"',
+        '"gate_a_pass"',
+        '"terminal_failed"',
+        "def resume_mode_b_coordinator(",
+    ):
+        if token not in coordinator_source:
+            fail(f"Mode B coordinator implementation regression: missing {token}")
+
     drawing_cli_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
     ).read_text(encoding="utf-8")
@@ -453,22 +469,26 @@ def main() -> None:
 
     mode_b_evidence_tokens = {
         "SKILL.md": (
-            "Reader 只允许一次写出本轮 reader-observations.json",
-            "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
-            "该程序只允许做确定性 ID/source/schema 组装",
-            "禁止第二版 observations",
-            "check-capture PASS 后立即执行 link-capture",
-            "再执行 deterministic resolve，生成 semantic-draft.json",
-            "最多 3 个可确认的 dimension endpoint",
-            "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
+            "一次连续 first-pass",
+            "只写一次 immutable reader-observations.json",
+            "deterministic coordinator",
+            "fresh-artifact-prefix",
+            "唯一生产入口",
+            "Agent 禁止再手动串联",
+            "phase=awaiting_confirmation",
+            "只允许执行一次",
+            "resume 内部负责 apply-confirmations → second resolve → Gate A",
+            "禁止第二轮确认",
+            "正常运行禁止为了处理错误去读取 reader_observations.py",
         ),
         "pipeline-contract.md": (
+            "### 3.0 正常 Mode B 唯一生产入口",
+            "deterministic Mode B coordinator",
+            "A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述 coordinator 的内部阶段",
+            "不得由 Agent 逐条手动执行",
+            "phase=awaiting_confirmation",
+            "resume 内部完成 apply-confirmations → second resolve → Gate A",
             "### A1. Reader semantic observations + deterministic Capture assembly",
-            "Reader 只从当前上传工程图执行一次连续视觉语义 first-pass",
-            "创建 Agent 没有声明的 association",
-            "把 unresolved endpoint 绑定到某个 entity",
-            "deterministic identity linker + Gate 0 生成 drawing-evidence.json",
-            "semantic-draft.json 由固定程序生成",
             "该阶段只允许解决**尺寸端点 ownership**",
             "最多一次",
             "禁止第二轮用户确认",

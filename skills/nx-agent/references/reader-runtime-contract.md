@@ -90,6 +90,7 @@ Top level:
   "values": [],
   "dimensions": [],
   "datum_alignments": [],
+  "pattern_symmetries": [],
   "unresolved": []
 }
 ~~~
@@ -139,6 +140,8 @@ semantic values into one item:
   `ambiguous_owner` may carry `candidate_entity_keys`.
 - `datum_alignments[]`: `entity_key, axis, evidence`, optional
   `required_for_modeling`.
+- `pattern_symmetries[]`: `entity_key, axis, evidence`, optional
+  `required_for_modeling`; `datum` is fixed to `overall_center`.
 - `centerline_alignments[]`: `entity_keys, feature_axis, evidence`, optional
   `required_for_modeling`.
 - `unresolved[]`: `kind, reason, evidence` plus only the applicable optional
@@ -197,6 +200,15 @@ If no plausible modeling counterpart exists, use `single_view`.
 
 Never merge only because dimensions match, objects are both holes, they look
 symmetric, or they are nearby.
+
+For a repeated feature controlled by one quantity/specification callout, keep one
+grouped entity per view when the members differ only by their intra-group spacing.
+A center-to-center spacing dimension between two members of a `count=2` group does
+not by itself require two member entities. In that grouped case the spacing
+dimension may use the same grouped `entity_key` for both `entity_center`
+endpoints, but each endpoint must carry its own witness/center evidence and
+`direction` must preserve the measured min-to-max or max-to-min order. Do not
+also emit duplicate member entities for the same view.
 
 Association claims must be disjoint before the immutable write:
 
@@ -260,6 +272,16 @@ Do not derive missing overall extents by arithmetic.
 Record `datum_alignments` only when the drawing explicitly establishes an
 entity center on `overall_center`. Visual centering or symmetry by appearance
 is insufficient.
+
+For a grouped `count=2` repeated feature, `pattern_symmetries[]` is a separate
+topology relation: it may record that the two-member pattern is symmetric about
+the overall center on one axis when that symmetry is supported by the visible
+centerline/witness layout or equivalent traceable drawing geometry. This record
+does not contain member coordinates and must not calculate them from pixels.
+The deterministic linker combines the proven symmetry relation with the accepted
+overall extent and member-spacing dimension to derive the two engineering
+coordinates. If the symmetry relation is not supported, omit
+`pattern_symmetries[]` and keep the member placement unresolved.
 
 Do not calculate centered global coordinates in Reader.
 

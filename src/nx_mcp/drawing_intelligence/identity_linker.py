@@ -80,12 +80,90 @@ def _canonical_field(
 
 
 _SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
+_STRUCTURED_SYMMETRIC_COUNT_TWO_KIND = "symmetric_count_two_overall_center"
 
 _TRANSVERSE_CENTER_INDEX: dict[str, dict[str, int]] = {
     "X": {"Y": 0, "Z": 1},
     "Y": {"X": 0, "Z": 1},
     "Z": {"X": 0, "Y": 1},
 }
+
+_VIEW_NORMAL_AXIS = {
+    "front": "Y",
+    "side": "X",
+    "top": "Z",
+}
+_CIRCULAR_PROJECTION_SHAPES = {"circle", "concentric_circles"}
+
+
+def _component_axis_from_projections(
+    capture: ReaderCapture,
+    entity_ids: list[str],
+) -> tuple[str | None, list[str]]:
+    """Infer a principal cylindrical axis from orthographic projection classes."""
+
+    entities = {item.id: item for item in capture.entities}
+    views = {item.id: item for item in capture.views}
+    candidates = {"X", "Y", "Z"}
+    evidence: list[str] = []
+    constrained = False
+
+    for entity_id in entity_ids:
+        entity = entities.get(entity_id)
+        if entity is None:
+            continue
+        view = views.get(entity.view_id)
+        if view is None:
+            continue
+        normal = _VIEW_NORMAL_AXIS.get(view.kind)
+        if normal is None:
+            continue
+
+        if entity.shape in _CIRCULAR_PROJECTION_SHAPES:
+            allowed = {normal}
+        elif entity.shape == "hidden_parallel":
+            allowed = {"X", "Y", "Z"} - {normal}
+        else:
+            continue
+
+        constrained = True
+        candidates.intersection_update(allowed)
+        evidence.extend([entity.id, *entity.source_ids, view.id, *view.source_ids])
+
+    if constrained and len(candidates) == 1:
+        return next(iter(candidates)), list(dict.fromkeys(evidence))
+    return None, list(dict.fromkeys(evidence))
+
+
+def _structured_symmetric_count_two_sources(
+    capture: ReaderCapture,
+    *,
+    feature_id: str,
+    axis: str,
+    entity_to_feature: dict[str, str],
+) -> list[str]:
+    source_ids: list[str] = []
+    for observation in capture.observations:
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") != _STRUCTURED_SYMMETRIC_COUNT_TWO_KIND:
+            continue
+        if observation.get("axis") != axis or observation.get("datum") != "overall_center":
+            continue
+        entity_id = observation.get("entity_id")
+        if not isinstance(entity_id, str):
+            continue
+        if entity_to_feature.get(entity_id) != feature_id:
+            continue
+        observation_id = observation.get("id")
+        if isinstance(observation_id, str) and observation_id:
+            source_ids.append(observation_id)
+        raw_sources = observation.get("source_ids")
+        if isinstance(raw_sources, list):
+            source_ids.extend(
+                item for item in raw_sources if isinstance(item, str) and item
+            )
+    return list(dict.fromkeys(source_ids))
 
 
 def _direct_target_value(
@@ -752,20 +830,43 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         if item.id in entity_to_feature
     ]
 
+    inferred_axis_values: list[DirectValueEvidence] = []
+    for component in components:
+        if not component:
+            continue
+        feature_id = entity_to_feature.get(component[0])
+        if feature_id is None:
+            continue
+        axis, axis_sources = _component_axis_from_projections(capture, component)
+        if axis is None:
+            continue
+        inferred_axis_values.append(
+            DirectValueEvidence(
+                id=f"L_AXIS_{feature_id}",
+                target=f"feature:{feature_id}.axis",
+                value=axis,
+                semantic="axis",
+                source_ids=axis_sources,
+            )
+        )
+
     direct_values, direct_unresolved = _normalize_direct_values(
         [
-            DirectValueEvidence(
-                id=item.id,
-                target=(
-                    f"feature:{entity_to_feature[item.entity_id]}."
-                    f"{_canonical_field(capture, item.entity_id, item.field)}"
-                ),
-                value=item.value,
-                semantic=item.semantic,
-                source_ids=item.source_ids,
-            )
-            for item in capture.values
-            if item.entity_id in entity_to_feature
+            *[
+                DirectValueEvidence(
+                    id=item.id,
+                    target=(
+                        f"feature:{entity_to_feature[item.entity_id]}."
+                        f"{_canonical_field(capture, item.entity_id, item.field)}"
+                    ),
+                    value=item.value,
+                    semantic=item.semantic,
+                    source_ids=item.source_ids,
+                )
+                for item in capture.values
+                if item.entity_id in entity_to_feature
+            ],
+            *inferred_axis_values,
         ]
     )
     unresolved.extend(direct_unresolved)
@@ -905,7 +1006,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 for endpoint in item.endpoints
                 for source_id in endpoint.source_ids
             ]
-            all_source_ids = list(
+            base_source_ids = list(
                 dict.fromkeys([*item.source_ids, *endpoint_source_ids])
             )
             feature_ids = {
@@ -914,6 +1015,19 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 if entity_id in entity_to_feature
             }
             feature_id = next(iter(feature_ids)) if len(feature_ids) == 1 else None
+            structured_symmetry_sources = (
+                _structured_symmetric_count_two_sources(
+                    capture,
+                    feature_id=feature_id,
+                    axis=item.axis,
+                    entity_to_feature=entity_to_feature,
+                )
+                if feature_id is not None
+                else []
+            )
+            all_source_ids = list(
+                dict.fromkeys([*base_source_ids, *structured_symmetry_sources])
+            )
             count_value = (
                 _direct_target_value(
                     direct_values,
@@ -932,7 +1046,8 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             ).upper()
             center_indexes = _TRANSVERSE_CENTER_INDEX.get(feature_axis, {})
             coordinate_index = center_indexes.get(item.axis)
-            marker_present = _SYMMETRIC_COUNT_TWO_MARKER in all_source_ids
+            marker_present = _SYMMETRIC_COUNT_TWO_MARKER in base_source_ids
+            symmetry_proven = marker_present or bool(structured_symmetry_sources)
             count_is_two = (
                 not isinstance(count_value, bool)
                 and isinstance(count_value, (int, float))
@@ -944,7 +1059,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 "Z": capture.overall_dimensions.height_z,
             }[item.axis]
             can_expand_symmetric_pair = (
-                marker_present
+                symmetry_proven
                 and feature_id is not None
                 and count_is_two
                 and coordinate_index is not None
@@ -989,7 +1104,11 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                         source_ids=all_source_ids,
                         required_for_modeling=item.required_for_modeling,
                         metadata={
-                            "basis": "overall_center_symmetry_plus_spacing",
+                            "basis": (
+                                "structured_overall_center_symmetry_plus_spacing"
+                                if structured_symmetry_sources
+                                else "overall_center_symmetry_plus_spacing"
+                            ),
                             "overall_extent": overall_extent,
                         },
                     )

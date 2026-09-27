@@ -175,6 +175,16 @@ class ObservationDatumAlignment(_StrictObservationModel):
     _validate_evidence = field_validator("evidence")(_clean_evidence)
 
 
+class ObservationPatternSymmetry(_StrictObservationModel):
+    entity_key: str = Field(min_length=1)
+    axis: Axis
+    datum: Literal["overall_center"] = "overall_center"
+    evidence: list[str] = Field(min_length=1)
+    required_for_modeling: bool = True
+
+    _validate_evidence = field_validator("evidence")(_clean_evidence)
+
+
 class ObservationCenterlineAlignment(_StrictObservationModel):
     entity_keys: list[str] = Field(min_length=2)
     feature_axis: Axis
@@ -234,6 +244,7 @@ class ReaderObservations(_StrictObservationModel):
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)
+    pattern_symmetries: list[ObservationPatternSymmetry] = Field(default_factory=list)
     centerline_alignments: list[ObservationCenterlineAlignment] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved: list[ObservationUnresolved] = Field(default_factory=list)
@@ -315,6 +326,12 @@ class ReaderObservations(_StrictObservationModel):
             if alignment.entity_key not in entity_set:
                 raise ValueError(
                     f"datum alignment references unknown entity key {alignment.entity_key!r}"
+                )
+
+        for symmetry in self.pattern_symmetries:
+            if symmetry.entity_key not in entity_set:
+                raise ValueError(
+                    f"pattern symmetry references unknown entity key {symmetry.entity_key!r}"
                 )
 
         for alignment in self.centerline_alignments:
@@ -443,10 +460,31 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
         "datum_alignments": [],
         "centerline_alignments": [],
         "required_targets": [],
-        "observations": _capture_observations_with_entity_ids(
-            observations,
-            entity_ids,
-        ),
+        "observations": [
+            *_capture_observations_with_entity_ids(
+                observations,
+                entity_ids,
+            ),
+            *[
+                {
+                    "id": f"PS{index:03d}",
+                    "kind": "symmetric_count_two_overall_center",
+                    "entity_id": _mapped(
+                        entity_ids,
+                        symmetry.entity_key,
+                        "pattern symmetry entity",
+                    ),
+                    "axis": symmetry.axis,
+                    "datum": symmetry.datum,
+                    "source_ids": symmetry.evidence,
+                    "required_for_modeling": symmetry.required_for_modeling,
+                }
+                for index, symmetry in enumerate(
+                    observations.pattern_symmetries,
+                    start=1,
+                )
+            ],
+        ],
         "unresolved_evidence": [],
     }
 

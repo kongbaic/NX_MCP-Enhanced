@@ -2780,6 +2780,141 @@ def test_capture_accepts_circle_center_as_entity_center_basis():
     assert endpoint.entity_id == "E1"
     assert endpoint.basis == "circle_center"
 
+def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_marker():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["SRC_FRONT"]),
+            CaptureView(id="VS", kind="side", source_ids=["SRC_SIDE"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_FRONT_PAIR",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+                source_ids=["SRC_FRONT_PAIR"],
+            ),
+            CaptureEntity(
+                id="E_SIDE_PAIR",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+                source_ids=["SRC_SIDE_PAIR"],
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_PAIR",
+                entity_ids=["E_FRONT_PAIR", "E_SIDE_PAIR"],
+                basis=["projection_alignment", "matching_specification"],
+                source_ids=["SRC_PAIR_SPEC"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="V_COUNT",
+                entity_id="E_SIDE_PAIR",
+                field="count",
+                value=2,
+            ),
+            CaptureValue(
+                id="V_DIA",
+                entity_id="E_SIDE_PAIR",
+                field="diameter",
+                value=6.6,
+            ),
+            CaptureValue(
+                id="V_THROUGH",
+                entity_id="E_SIDE_PAIR",
+                field="through",
+                value=True,
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_X24",
+                value=24,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_FRONT_PAIR",
+                        basis="centerline",
+                        source_ids=["SRC_LEFT_MEMBER"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_FRONT_PAIR",
+                        basis="centerline",
+                        source_ids=["SRC_RIGHT_MEMBER"],
+                    ),
+                ],
+                source_ids=["SRC_SPACING_24"],
+            ),
+            CaptureDimension(
+                id="D_Y24",
+                value=24,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_SIDE_PAIR",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+        observations=[
+            {
+                "id": "PS001",
+                "kind": "symmetric_count_two_overall_center",
+                "entity_id": "E_FRONT_PAIR",
+                "axis": "X",
+                "datum": "overall_center",
+                "source_ids": ["SRC_PAIR_SYMMETRY"],
+                "required_for_modeling": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    feature_id = linked.entity_to_feature["E_FRONT_PAIR"]
+    assert linked.entity_to_feature["E_SIDE_PAIR"] == feature_id
+
+    axis = next(
+        item
+        for item in linked.evidence.direct_values
+        if item.target == f"feature:{feature_id}.axis"
+    )
+    assert axis.value == "Z"
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+
+    reader_x0 = f"feature:{feature_id}.explicit_centers.0.0"
+    reader_x1 = f"feature:{feature_id}.explicit_centers.1.0"
+    reader_y0 = f"feature:{feature_id}.explicit_centers.0.1"
+    reader_y1 = f"feature:{feature_id}.explicit_centers.1.1"
+
+    assert resolution.values[reader_x0] == 8.0
+    assert resolution.values[reader_x1] == 32.0
+    assert resolution.values[reader_y0] == 8.0
+    assert resolution.values[reader_y1] == 8.0
+    assert resolution.ok
+
+    feature = next(item for item in draft["features"] if item["id"] == feature_id)
+    assert feature["axis"] == "Z"
+    assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
+
+
 def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explicit_centers():
     marker = "hybrid:symmetric-count2-overall-center"
     capture = ReaderCapture(

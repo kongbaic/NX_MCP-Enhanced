@@ -951,6 +951,88 @@ def _rect_profile(plane, u_min, u_max, v_min, v_max):
     return {"plane": plane, "topology": "rect", "segments": segments}
 
 
+def _r6_l_profile():
+    points = [
+        (-16.0, 0.0),
+        (16.0, 0.0),
+        (16.0, 66.0),
+        (0.0, 66.0),
+        (0.0, 8.0),
+        (-16.0, 8.0),
+    ]
+    segments = []
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        segments.append(
+            {
+                "type": "line",
+                "y1": start[0],
+                "z1": start[1],
+                "y2": end[0],
+                "z2": end[1],
+            }
+        )
+    return {
+        "plane": "YZ",
+        "topology": "L",
+        "segments": segments,
+    }
+
+
+def _r6_continuous_hole_slot_drawing():
+    return {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 32,
+            "height_z": 66,
+        },
+        "profile": _r6_l_profile(),
+        "features": [
+            {
+                "id": "S1",
+                "type": "slot",
+                "width": 2,
+                "width_axis": "X",
+                "through_axis": "Y",
+                "centerline": {"x": 0},
+                "bottom_z": 50,
+                "top_z": 66,
+            },
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Y",
+                "diameter": 20,
+                "through": True,
+                "centerline": {"x": 0, "z": 40},
+                "count": 1,
+            },
+        ],
+    }
+
+
+def _plan_from_operation_contract(contract):
+    operations = []
+    sketch_id = "sketch_hole_slot"
+    step = 1
+    for item in contract["operations"]:
+        tool = item["tool"]
+        args = dict(item.get("fixed_args") or {})
+        if "sketch_id" in item.get("requires", []):
+            args["sketch_id"] = sketch_id
+        if "target_body_id" in item.get("requires", []):
+            args["target_body_id"] = "body_main"
+        operations.append(
+            {
+                "step": step,
+                "tool": tool,
+                "tool_args": args,
+            }
+        )
+        step += 1
+    return {"operations": operations}
+
+
 def test_capability_handler_maps_cover_registered_bindings():
     assert set(R.PLANNER_ADAPTER_HANDLER_MAP) == set(
         R.REGISTERED_PLANNER_ADAPTER_HANDLERS
@@ -1037,6 +1119,77 @@ def test_native_z_hole_capability_dispatch_round_trip():
     assert any(
         "changes axial range" in item
         for item in R.dispatch_gate_b_validator(capability, plan, payload)
+    )
+
+
+def test_principal_axis_hole_composes_point_tangent_slot_profile():
+    drawing = _r6_continuous_hole_slot_drawing()
+    capability = R.resolve_modeling_capabilities("hole", "Y")[0][0]
+
+    payload, errors = R.dispatch_planner_adapter(
+        capability,
+        drawing,
+    )
+
+    assert errors == []
+    assert payload is not None
+    geometry = payload["geometries"][0]
+    assert geometry["axial_range"] == [0.0, 16.0]
+    assert geometry["representation"] == "continuous_hole_slot_profile"
+    assert geometry["composed_feature_ids"] == ["H1", "S1"]
+
+    contract = payload["operation_contracts"][0]
+    assert contract["role"] == "continuous_hole_slot_cut"
+    assert contract["representation"] == "continuous_hole_slot_profile"
+    assert [item["tool"] for item in contract["operations"]] == [
+        "nx_create_sketch",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_sketch_arc",
+        "nx_sketch_arc",
+        "nx_sketch_arc",
+        "nx_sketch_arc",
+        "nx_sketch_line",
+        "nx_finish_sketch",
+        "nx_extrude",
+    ]
+    assert contract["operations"][-1]["fixed_args"] == {
+        "distance": 16.0,
+        "start_offset": 0.0,
+        "reverse": False,
+        "operation": "subtract",
+    }
+
+    plan = _plan_from_operation_contract(contract)
+    assert R.dispatch_gate_b_validator(capability, plan, payload) == []
+
+
+def test_principal_axis_hole_composite_gate_rejects_slot_profile_drift():
+    drawing = _r6_continuous_hole_slot_drawing()
+    capability = R.resolve_modeling_capabilities("hole", "Y")[0][0]
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+    assert errors == []
+    assert payload is not None
+
+    plan = _plan_from_operation_contract(
+        payload["operation_contracts"][0]
+    )
+    line = next(
+        item
+        for item in plan["operations"]
+        if item["tool"] == "nx_sketch_line"
+    )
+    line["tool_args"]["end"]["y"] = 65.0
+
+    gate_errors = R.dispatch_gate_b_validator(
+        capability,
+        plan,
+        payload,
+    )
+
+    assert any(
+        "continuous profile operation count must be 1, got 0" in item
+        for item in gate_errors
     )
 
 

@@ -106,7 +106,10 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
    增加重叠量等方式绕过 NX 零壁厚错误；这会改变工程图几何。
 5. drawing 中原始 feature 语义不得删除或改写。Planner 仅允许在建模表达层把多个
    已确认、连续相接的 cut feature 合成为一个 executable profile；Gate A 的尺寸、
-   centerline、axis、depth/range 与 ownership 仍保持原值。
+   centerline、axis、depth/range 与 ownership 仍保持原值。Mode B 若属于
+   deterministic point-tangent hole+slot 组合，合并后的草图弧/线连接几何必须由
+   `plan-contracts` 的 Adapter operation contract 给出；Planner 不得自行重算
+   切点或退回两个独立 subtract。
 6. 若无法仅由工程尺寸唯一求得连接几何，则 fail-closed，报告缺口；不得猜连接点。
 
 推荐总体顺序（具体任务可调整，但必须优先减少拓扑反复变化）：

@@ -4439,6 +4439,17 @@ def materialize_capability_operation_contracts(
             continue
 
         if adapter_name == "principal_axis_circular_subtract":
+            if geometry.get("representation") == "continuous_hole_slot_profile":
+                contract, contract_errors = (
+                    _continuous_hole_slot_operation_contract(
+                        geometry,
+                    )
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+                continue
+
             for center in geometry.get("transverse_centers") or []:
                 contract, contract_errors = _principal_axis_circle_operation_contract(
                     feature_id=feature_id,
@@ -4636,6 +4647,363 @@ def materialize_capability_operation_contracts(
     return contracts, errors
 
 
+def _principal_hole_continuous_slot_compositions(
+    drawing: dict,
+    geometries: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Mark point-tangent principal-axis hole/slot pairs for one-profile subtract."""
+    output = copy.deepcopy(geometries)
+    errors: list[str] = []
+
+    for geometry in output:
+        axis = str(geometry.get("axis") or "").upper()
+        if axis not in {"X", "Y"}:
+            continue
+        centers = geometry.get("transverse_centers") or []
+        if len(centers) != 1:
+            continue
+
+        feature_id = str(geometry.get("feature_id") or "?")
+        center = centers[0]
+        if not (
+            isinstance(center, (list, tuple))
+            and len(center) == 2
+            and all(_num(value) is not None for value in center)
+        ):
+            continue
+        diameter = _num(geometry.get("diameter"))
+        if diameter is None or diameter <= 0:
+            continue
+
+        width_axis = "Y" if axis == "X" else "X"
+        width_coordinate = float(_num(center[0]))
+        center_z = float(_num(center[1]))
+        radius = float(diameter) / 2.0
+        matches: list[dict] = []
+
+        for feature in drawing.get("features") or []:
+            if not isinstance(feature, dict):
+                continue
+            if feature.get("required_for_modeling") is False:
+                continue
+            if str(feature.get("type") or "").lower() not in {"slot", "slit", "cut"}:
+                continue
+            if str(feature.get("through_axis") or "").upper() != axis:
+                continue
+            if str(feature.get("width_axis") or "").upper() != width_axis:
+                continue
+
+            width = _num(feature.get("width"))
+            slot_center = _num(
+                _drawing_feature_coord(feature, width_axis.lower())
+            )
+            bottom_z = _num(feature.get("bottom_z"))
+            top_z = _num(feature.get("top_z"))
+            if (
+                width is None
+                or width <= 0
+                or width >= float(diameter)
+                or slot_center is None
+                or bottom_z is None
+                or top_z is None
+                or top_z <= bottom_z
+                or not _drawing_equal(slot_center, width_coordinate)
+                or not _drawing_equal(bottom_z, center_z + radius)
+            ):
+                continue
+
+            half_width = float(width) / 2.0
+            join_delta = math.sqrt(max(0.0, radius * radius - half_width * half_width))
+            join_z = center_z + join_delta
+            if top_z <= join_z + 1e-9:
+                continue
+
+            matches.append(
+                {
+                    "feature_id": str(feature.get("id") or "?"),
+                    "through_axis": axis,
+                    "width_axis": width_axis,
+                    "width": float(width),
+                    "center": float(slot_center),
+                    "bottom_z": float(bottom_z),
+                    "top_z": float(top_z),
+                    "join_z": float(join_z),
+                }
+            )
+
+        if len(matches) > 1:
+            errors.append(
+                f"capability_composition_violation: hole {feature_id!r} has "
+                "multiple point-tangent continuous slot candidates"
+            )
+            continue
+        if not matches:
+            continue
+
+        slot = matches[0]
+        geometry["representation"] = "continuous_hole_slot_profile"
+        geometry["composed_feature_ids"] = [
+            feature_id,
+            slot["feature_id"],
+        ]
+        geometry["continuous_slot"] = slot
+
+    return output, errors
+
+
+def _continuous_hole_slot_operation_contract(
+    geometry: dict,
+) -> tuple[dict | None, list[str]]:
+    feature_id = str(geometry.get("feature_id") or "?")
+    axis = str(geometry.get("axis") or "").upper()
+    plane = {"X": "YZ", "Y": "XZ"}.get(axis)
+    centers = geometry.get("transverse_centers") or []
+    slot = geometry.get("continuous_slot")
+    diameter = _num(geometry.get("diameter"))
+    if (
+        plane is None
+        or len(centers) != 1
+        or not isinstance(slot, dict)
+        or diameter is None
+        or diameter <= 0
+    ):
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} is incomplete"
+        ]
+
+    center = centers[0]
+    transverse = _axis_transverse_center(axis, center)
+    width = _num(slot.get("width"))
+    slot_center = _num(slot.get("center"))
+    top_z = _num(slot.get("top_z"))
+    join_z = _num(slot.get("join_z"))
+    if (
+        transverse is None
+        or width is None
+        or width <= 0
+        or slot_center is None
+        or top_z is None
+        or join_z is None
+    ):
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} has invalid slot geometry"
+        ]
+
+    range_args, range_errors = _principal_axis_range_args(
+        geometry.get("axial_range"),
+        feature_id=feature_id,
+        role="continuous hole-slot cut",
+    )
+    if range_errors or range_args is None:
+        return None, range_errors
+
+    radius = float(diameter) / 2.0
+    half_width = float(width) / 2.0
+    if half_width >= radius:
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} slot width does not intersect the circle sides"
+        ]
+
+    angle_right = math.degrees(
+        math.atan2(float(join_z) - float(transverse[1]), half_width)
+    )
+    angle_left = 180.0 - angle_right
+    left_x = float(slot_center) - half_width
+    right_x = float(slot_center) + half_width
+    center_local = {
+        "x": float(transverse[0]),
+        "y": float(transverse[1]),
+    }
+
+    operations = [
+        {
+            "tool": "nx_create_sketch",
+            "fixed_args": {"plane": plane},
+        },
+        {
+            "tool": "nx_sketch_line",
+            "fixed_args": {
+                "start": {"x": left_x, "y": float(top_z)},
+                "end": {"x": right_x, "y": float(top_z)},
+            },
+            "requires": ["sketch_id"],
+        },
+        {
+            "tool": "nx_sketch_line",
+            "fixed_args": {
+                "start": {"x": right_x, "y": float(top_z)},
+                "end": {"x": right_x, "y": float(join_z)},
+            },
+            "requires": ["sketch_id"],
+        },
+    ]
+    for start_angle, end_angle in (
+        (angle_left, 180.0),
+        (180.0, 270.0),
+        (270.0, 360.0),
+        (0.0, angle_right),
+    ):
+        operations.append(
+            {
+                "tool": "nx_sketch_arc",
+                "fixed_args": {
+                    "center": dict(center_local),
+                    "radius": radius,
+                    "start_angle": start_angle,
+                    "end_angle": end_angle,
+                },
+                "requires": ["sketch_id"],
+            }
+        )
+    operations.extend(
+        [
+            {
+                "tool": "nx_sketch_line",
+                "fixed_args": {
+                    "start": {"x": left_x, "y": float(join_z)},
+                    "end": {"x": left_x, "y": float(top_z)},
+                },
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_extrude",
+                "fixed_args": {
+                    **range_args,
+                    "operation": "subtract",
+                },
+                "requires": ["sketch_id", "target_body_id"],
+            },
+        ]
+    )
+    return {
+        "feature_id": feature_id,
+        "role": "continuous_hole_slot_cut",
+        "axis": axis,
+        "representation": "continuous_hole_slot_profile",
+        "composed_feature_ids": list(
+            geometry.get("composed_feature_ids") or []
+        ),
+        "operations": operations,
+    }, []
+
+
+def _contract_value_equal(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(
+            key in actual and _contract_value_equal(actual[key], value)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return _drawing_equal(actual, expected)
+    return actual == expected
+
+
+def _operation_matches_fixed_args(
+    op: dict,
+    expected: dict,
+) -> bool:
+    if op.get("tool") != expected.get("tool"):
+        return False
+    actual_args = op.get("tool_args") or {}
+    fixed_args = expected.get("fixed_args") or {}
+    return _contract_value_equal(actual_args, fixed_args)
+
+
+def _continuous_hole_slot_plan_errors(
+    plan: dict,
+    contract: dict,
+) -> list[str]:
+    feature_id = str(contract.get("feature_id") or "?")
+    expected_operations = contract.get("operations") or []
+    expected_profile = [
+        item
+        for item in expected_operations
+        if item.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
+    ]
+    expected_create = next(
+        (
+            item
+            for item in expected_operations
+            if item.get("tool") == "nx_create_sketch"
+        ),
+        None,
+    )
+    expected_extrude = next(
+        (
+            item
+            for item in reversed(expected_operations)
+            if item.get("tool") == "nx_extrude"
+        ),
+        None,
+    )
+    if expected_create is None or expected_extrude is None:
+        return [
+            f"capability_dispatch_violation: continuous hole-slot contract "
+            f"{feature_id!r} is incomplete"
+        ]
+
+    operations = plan.get("operations") or []
+    matches = 0
+    for index, op in enumerate(operations):
+        if not isinstance(op, dict):
+            continue
+        if not _operation_matches_fixed_args(op, expected_extrude):
+            continue
+
+        sketch_id = (op.get("tool_args") or {}).get("sketch_id")
+        if not isinstance(sketch_id, str) or not sketch_id:
+            continue
+
+        profile_ops = [
+            candidate
+            for candidate in operations[:index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(profile_ops) != len(expected_profile):
+            continue
+        if any(
+            not _operation_matches_fixed_args(actual, expected)
+            for actual, expected in zip(
+                profile_ops,
+                expected_profile,
+                strict=False,
+            )
+        ):
+            continue
+
+        first_profile_index = operations.index(profile_ops[0])
+        creates = [
+            candidate
+            for candidate in operations[:first_profile_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_create_sketch"
+        ]
+        if not creates:
+            continue
+        if not _operation_matches_fixed_args(creates[-1], expected_create):
+            continue
+        matches += 1
+
+    if matches != 1:
+        return [
+            f"hole feature {feature_id!r} continuous profile operation count "
+            f"must be 1, got {matches}"
+        ]
+    return []
+
+
 def _planner_adapter_native_z_hole(
     drawing: dict,
     capability: dict,
@@ -4655,7 +5023,19 @@ def _planner_adapter_principal_axis_circular_subtract(
         drawing,
         axes=set(capability.get("supported_axes") or []),
     )
-    return _adapter_payload(capability, geometries, errors)
+    if errors:
+        return None, errors
+    geometries, composition_errors = (
+        _principal_hole_continuous_slot_compositions(
+            drawing,
+            geometries,
+        )
+    )
+    return _adapter_payload(
+        capability,
+        geometries,
+        composition_errors,
+    )
 
 
 def _planner_adapter_native_z_counterbore(
@@ -4716,11 +5096,50 @@ def _gate_b_circular_subtract_geometry(
     plan: dict,
     payload: dict,
 ) -> list[str]:
-    return hole_plan_errors(
+    geometries = [
+        item
+        for item in payload.get("geometries") or []
+        if isinstance(item, dict)
+    ]
+    simple_geometries = [
+        item
+        for item in geometries
+        if item.get("representation") != "continuous_hole_slot_profile"
+    ]
+    errors = hole_plan_errors(
         plan,
-        payload.get("geometries") or [],
+        simple_geometries,
         adapter_name="principal_axis_circular_subtract",
     )
+
+    contracts = [
+        item
+        for item in payload.get("operation_contracts") or []
+        if isinstance(item, dict)
+        and item.get("representation") == "continuous_hole_slot_profile"
+    ]
+    for contract in contracts:
+        errors.extend(
+            _continuous_hole_slot_plan_errors(
+                plan,
+                contract,
+            )
+        )
+    composite_ids = {
+        str(item.get("feature_id") or "")
+        for item in geometries
+        if item.get("representation") == "continuous_hole_slot_profile"
+    }
+    contract_ids = {
+        str(item.get("feature_id") or "")
+        for item in contracts
+    }
+    if composite_ids != contract_ids:
+        errors.append(
+            "capability_dispatch_violation: continuous hole-slot geometry/"
+            "operation-contract feature sets differ"
+        )
+    return errors
 
 
 def _gate_b_native_counterbore_geometry(

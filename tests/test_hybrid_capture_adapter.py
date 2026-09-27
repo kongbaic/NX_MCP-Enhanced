@@ -1943,7 +1943,7 @@ def test_transverse_recess_start_side_uses_unique_boundary_contact():
     assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
 
 
-def test_paired_transverse_thread_start_side_complements_unique_recess_side():
+def test_paired_transverse_thread_entry_splits_material_side_from_entry_endpoint():
     thread = "R1.HIDDEN_PAIR.horizontal.001.002"
     recess = "R2.C1"
     callout_values = [
@@ -1983,20 +1983,24 @@ def test_paired_transverse_thread_start_side_complements_unique_recess_side():
         )
     ]
 
-    values, ledger = hybrid_adapter._paired_transverse_thread_start_side_values(
+    values, ledger = hybrid_adapter._paired_transverse_thread_entry_values(
         callout_values=callout_values,
         centerline_alignments=alignments,
         recess_start_side_values=recess_sides,
     )
 
-    assert len(values) == 1
-    assert values[0].entity_key == thread
-    assert values[0].field == "start_side"
-    assert values[0].value == "min"
-    assert values[0].semantic == "start_side"
+    assert len(values) == 2
+    by_field = {item.field: item for item in values}
+    assert by_field["material_side"].entity_key == thread
+    assert by_field["material_side"].value == "min"
+    assert by_field["material_side"].semantic == "material_side"
+    assert by_field["entry_endpoint"].entity_key == thread
+    assert by_field["entry_endpoint"].value == "max"
+    assert by_field["entry_endpoint"].semantic == "entry_endpoint"
     assert ledger[0]["paired_recess_entity"] == recess
     assert ledger[0]["paired_recess_start_side"] == "max"
-    assert ledger[0]["start_side"] == "min"
+    assert ledger[0]["material_side"] == "min"
+    assert ledger[0]["entry_endpoint"] == "max"
     assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
 
     unresolved = hybrid_adapter._missing_transverse_thread_start_side_unresolved(
@@ -2015,7 +2019,7 @@ def test_paired_transverse_thread_start_side_complements_unique_recess_side():
     assert unresolved == []
 
 
-def test_paired_transverse_thread_start_side_fails_closed_when_pairing_not_unique():
+def test_paired_transverse_thread_entry_fails_closed_when_pairing_not_unique():
     thread = "R1.HIDDEN_PAIR.horizontal.001.002"
     recess_a = "R2.C1"
     recess_b = "R3.C1"
@@ -2062,7 +2066,7 @@ def test_paired_transverse_thread_start_side_fails_closed_when_pairing_not_uniqu
         ),
     ]
 
-    values, ledger = hybrid_adapter._paired_transverse_thread_start_side_values(
+    values, ledger = hybrid_adapter._paired_transverse_thread_entry_values(
         callout_values=callout_values,
         centerline_alignments=alignments,
         recess_start_side_values=recess_sides,

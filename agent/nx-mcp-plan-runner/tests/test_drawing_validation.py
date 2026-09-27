@@ -1485,6 +1485,77 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         self.assertEqual(1, geometries[0]["count"])
         self.assertEqual("min", geometries[0]["side"])
 
+    def test_missing_range_can_enter_min_material_from_inner_max_endpoint(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": shkss_like_profile(),
+            "features": [
+                {
+                    "id": "S1",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": 0},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "material_side": "min",
+                    "entry_endpoint": "max",
+                },
+            ],
+            "unresolved": [],
+        }
+
+        geometries, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(geometries))
+        self.assertEqual([-1.0, -13.0], geometries[0]["axial_range"])
+        self.assertEqual("min", geometries[0]["material_side"])
+        self.assertEqual("max", geometries[0]["entry_endpoint"])
+        self.assertNotIn("side", geometries[0])
+
+    def test_split_thread_entry_requires_interrupted_material(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": box_yz_profile(),
+            "features": [
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "material_side": "min",
+                    "entry_endpoint": "max",
+                },
+            ],
+            "unresolved": [],
+        }
+
+        _, errors = R.resolve_thread_drawing_geometries(drawing)
+
+        self.assertTrue(
+            any("canonical material is not interrupted" in item for item in errors)
+        )
+
     def test_missing_range_still_fails_closed_without_confirmed_side(self) -> None:
         drawing = {
             "overall_dimensions": {
@@ -1937,6 +2008,95 @@ class MetricThreadSurrogateTests(unittest.TestCase):
         errors = R.transverse_recess_plan_errors(plan, geometries)
         self.assertTrue(any("through changes axial range" in item for item in errors))
 
+
+    def test_split_material_entry_gate_b_accepts_inner_entry_only(self) -> None:
+        drawing = {
+            "overall_dimensions": {
+                "length_x": 40,
+                "width_y": 32,
+                "height_z": 66,
+            },
+            "profile": shkss_like_profile(),
+            "features": [
+                {
+                    "id": "S1",
+                    "type": "slot",
+                    "width": 2,
+                    "width_axis": "X",
+                    "through_axis": "Y",
+                    "centerline": {"x": 0},
+                    "bottom_z": 50,
+                    "top_z": 66,
+                },
+                {
+                    "id": "T1",
+                    "type": "threaded_hole",
+                    "thread_spec": "M6",
+                    "thread_depth": 12,
+                    "axis": "X",
+                    "centerline": {"y": 8, "z": 58},
+                    "material_side": "min",
+                    "entry_endpoint": "max",
+                },
+            ],
+            "unresolved": [],
+        }
+        geometries, geometry_errors = R.resolve_thread_drawing_geometries(drawing)
+        recipes, recipe_errors = R.resolve_thread_surrogates(drawing)
+        self.assertEqual([], geometry_errors)
+        self.assertEqual([], recipe_errors)
+
+        plan = {
+            "operations": [
+                {
+                    "step": 1,
+                    "tool": "nx_create_sketch",
+                    "tool_args": {"plane": "YZ"},
+                },
+                {
+                    "step": 2,
+                    "tool": "nx_sketch_circle",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "center": {"x": 8, "y": 58},
+                        "diameter": 5,
+                    },
+                },
+                {
+                    "step": 3,
+                    "tool": "nx_finish_sketch",
+                    "tool_args": {"sketch_id": "sketch_thread"},
+                },
+                {
+                    "step": 4,
+                    "tool": "nx_extrude",
+                    "tool_args": {
+                        "sketch_id": "sketch_thread",
+                        "distance": 12,
+                        "start_offset": 1,
+                        "reverse": True,
+                        "operation": "subtract",
+                        "target_body_id": "body_main",
+                    },
+                    "thread_surrogate_use": {
+                        "feature_id": "T1",
+                        "owner_feature_id": "T1",
+                        "material_side": "min",
+                        "entry_endpoint": "max",
+                    },
+                },
+            ]
+        }
+
+        self.assertEqual(
+            [],
+            R.thread_surrogate_plan_errors(plan, recipes, geometries),
+        )
+
+        plan["operations"][3]["tool_args"]["start_offset"] = -20
+        plan["operations"][3]["tool_args"]["reverse"] = False
+        errors = R.thread_surrogate_plan_errors(plan, recipes, geometries)
+        self.assertTrue(any("changes axial range" in item for item in errors))
 
     def test_surrogate_cannot_change_axis(self) -> None:
         drawing = thread_drawing(axis="X", position={"center": [3, 4]})

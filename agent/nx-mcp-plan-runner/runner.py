@@ -2424,14 +2424,41 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
                 float(_num(axial_range[1])),
             ]
         else:
-            side_value = _thread_feature_value(feature, "start_side", "side")
-            side = str(side_value or "").lower()
-            if side not in {"min", "max"}:
-                errors.append(
-                    f"thread_geometry_violation: feature {fid!r} has no explicit "
-                    "axial range and no confirmed start_side"
-                )
-                continue
+            legacy_side_value = _thread_feature_value(feature, "start_side", "side")
+            legacy_side = str(legacy_side_value or "").lower()
+            material_side_value = _thread_feature_value(feature, "material_side")
+            entry_endpoint_value = _thread_feature_value(feature, "entry_endpoint")
+            material_side = str(material_side_value or "").lower()
+            entry_endpoint = str(entry_endpoint_value or "").lower()
+
+            split_present = (
+                material_side_value is not None or entry_endpoint_value is not None
+            )
+            if split_present:
+                if legacy_side in {"min", "max"}:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} mixes legacy "
+                        "start_side with material_side/entry_endpoint"
+                    )
+                    continue
+                if (
+                    material_side not in {"min", "max"}
+                    or entry_endpoint not in {"min", "max"}
+                ):
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} requires both "
+                        "material_side and entry_endpoint as min|max"
+                    )
+                    continue
+            else:
+                if legacy_side not in {"min", "max"}:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} has no explicit "
+                        "axial range and no complete machining-entry semantics"
+                    )
+                    continue
+                material_side = legacy_side
+                entry_endpoint = legacy_side
 
             derived_ranges: list[list[float]] = []
             material_failed = False
@@ -2449,23 +2476,32 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
                     )
                     material_failed = True
                     break
-                selected = _select_material_interval(material, side)
+                normalized_material = _merge_intervals(material)
+                if material_side != entry_endpoint and len(normalized_material) < 2:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} uses split "
+                        "material/entry semantics but canonical material is not interrupted"
+                    )
+                    material_failed = True
+                    break
+                selected = _select_material_interval(material, material_side)
                 if selected is None:
                     errors.append(
                         f"thread_geometry_violation: feature {fid!r} has no "
-                        f"material interval on start_side={side}"
+                        f"material interval on material_side={material_side}"
                     )
                     material_failed = True
                     break
                 value = _depth_range_from_material_interval(
                     selected,
-                    side,
+                    entry_endpoint,
                     float(depth),
                 )
                 if value is None:
                     errors.append(
                         f"thread_geometry_violation: feature {fid!r} depth exceeds "
-                        "the selected material interval"
+                        "the selected material interval from entry_endpoint="
+                        f"{entry_endpoint}"
                     )
                     material_failed = True
                     break
@@ -2516,8 +2552,21 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
             "count": count,
         }
         side_value = _thread_feature_value(feature, "start_side", "side")
-        if str(side_value or "").lower() in {"min", "max"}:
-            geometry["side"] = str(side_value).lower()
+        side = str(side_value or "").lower()
+        material_side_value = _thread_feature_value(feature, "material_side")
+        entry_endpoint_value = _thread_feature_value(feature, "entry_endpoint")
+        material_side = str(material_side_value or "").lower()
+        entry_endpoint = str(entry_endpoint_value or "").lower()
+        if side in {"min", "max"}:
+            geometry["side"] = side
+            geometry["material_side"] = side
+            geometry["entry_endpoint"] = side
+        elif (
+            material_side in {"min", "max"}
+            and entry_endpoint in {"min", "max"}
+        ):
+            geometry["material_side"] = material_side
+            geometry["entry_endpoint"] = entry_endpoint
         geometries.append(geometry)
     return geometries, errors
 
@@ -2616,7 +2665,35 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
             use = op["thread_surrogate_use"]
             if use.get("owner_feature_id") != expected.get("owner_feature_id"):
                 errors.append(f"thread surrogate for feature {fid!r} changes feature ownership")
-            if use.get("side") != expected.get("side"):
+            expected_material_side = expected.get("material_side")
+            expected_entry_endpoint = expected.get("entry_endpoint")
+            if (
+                expected_material_side is not None
+                or expected_entry_endpoint is not None
+            ):
+                if (
+                    use.get("material_side") is not None
+                    or use.get("entry_endpoint") is not None
+                ):
+                    if use.get("material_side") != expected_material_side:
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} changes material-side semantics"
+                        )
+                    if use.get("entry_endpoint") != expected_entry_endpoint:
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} changes entry-endpoint semantics"
+                        )
+                else:
+                    legacy_use_side = use.get("side")
+                    if not (
+                        expected_material_side == expected_entry_endpoint
+                        and legacy_use_side == expected_material_side
+                    ):
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} cannot represent "
+                            "split material-side/entry-endpoint semantics"
+                        )
+            elif use.get("side") != expected.get("side"):
                 errors.append(f"thread surrogate for feature {fid!r} changes side semantics")
             actual, op_errors = _thread_operation_geometry(plan, op, float(recipe["surrogate_diameter"]))
             errors.extend(op_errors)
@@ -3515,6 +3592,8 @@ _DRAWING_HARD_KEYS = {
     "end_z",
     "side",
     "start_side",
+    "material_side",
+    "entry_endpoint",
     "through",
     "through_z",
     "count",
@@ -3645,7 +3724,10 @@ def _drawing_unresolved_geometry_pattern(item: dict) -> str | None:
         return pattern
     if ".explicit_centers." in lower and leaf in {"0", "1", "2", "*"}:
         return pattern
-    if leaf in {"top_z", "bottom_z", "start_z", "end_z", "side", "start_side"}:
+    if leaf in {
+        "top_z", "bottom_z", "start_z", "end_z", "side", "start_side",
+        "material_side", "entry_endpoint",
+    }:
         return pattern
     if re.fullmatch(
         r"profile\.segments\.(\d+|\*)\.(x1|y1|z1|x2|y2|z2|start|end)",
@@ -3872,6 +3954,10 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
         return leaf in {"side", "start_side"}
     if semantic == "start_side":
         return leaf == "start_side"
+    if semantic == "material_side":
+        return leaf == "material_side"
+    if semantic == "entry_endpoint":
+        return leaf == "entry_endpoint"
     if semantic == "through":
         return leaf in {"through", "through_z"}
     if semantic == "pattern_dimension":
@@ -3916,6 +4002,8 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
             "top_z",
             "side",
             "start_side",
+            "material_side",
+            "entry_endpoint",
             "spec",
             "pattern_type",
         }
@@ -4326,6 +4414,48 @@ def _drawing_check_feature_structure(errors: list[str], feature: dict) -> None:
         if _drawing_feature_coord(feature, coord) is None:
             errors.append(
                 f"feature {fid!r} axis {axis} requires center coordinate {coord}"
+            )
+
+    if feature_type == "threaded_hole" and axis in {"X", "Y"}:
+        explicit_range = next(
+            (
+                feature.get(key)
+                for key in ("axis_range", "axial_range", "through_range", "range")
+                if isinstance(feature.get(key), (list, tuple))
+                and len(feature.get(key)) == 2
+            ),
+            None,
+        )
+        legacy_side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        legacy_side = str(legacy_side_value or "").lower()
+        material_side_value = feature.get("material_side")
+        entry_endpoint_value = feature.get("entry_endpoint")
+        material_side = str(material_side_value or "").lower()
+        entry_endpoint = str(entry_endpoint_value or "").lower()
+        split_present = (
+            material_side_value is not None or entry_endpoint_value is not None
+        )
+        if split_present and legacy_side in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} threaded_hole must not mix legacy start_side/side "
+                "with material_side/entry_endpoint"
+            )
+        elif split_present and (
+            material_side not in {"min", "max"}
+            or entry_endpoint not in {"min", "max"}
+        ):
+            errors.append(
+                f"feature {fid!r} threaded_hole requires both material_side and "
+                "entry_endpoint as min|max"
+            )
+        elif explicit_range is None and not split_present and legacy_side not in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} axis {axis} threaded_hole requires explicit axial "
+                "range, material_side+entry_endpoint, or legacy start_side/side"
             )
 
     if feature_type in {"counterbore_hole", "countersink_hole"} and axis in {"X", "Y"}:

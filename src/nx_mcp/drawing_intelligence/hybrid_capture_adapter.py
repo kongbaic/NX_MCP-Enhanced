@@ -135,9 +135,20 @@ def _missing_transverse_thread_start_side_unresolved(
         spec_item = fields.get("thread_spec")
         depth_item = fields.get("thread_depth")
         side_item = fields.get("start_side")
+        material_side_item = fields.get("material_side")
+        entry_endpoint_item = fields.get("entry_endpoint")
 
         axis_text = str(axis_item.value).upper() if axis_item is not None else ""
         depth = depth_item.value if depth_item is not None else None
+        legacy_side_ok = (
+            side_item is not None and side_item.value in {"min", "max"}
+        )
+        split_entry_ok = (
+            material_side_item is not None
+            and material_side_item.value in {"min", "max"}
+            and entry_endpoint_item is not None
+            and entry_endpoint_item.value in {"min", "max"}
+        )
         if (
             axis_text not in {"X", "Y"}
             or spec_item is None
@@ -146,10 +157,8 @@ def _missing_transverse_thread_start_side_unresolved(
             or not isinstance(depth, (int, float))
             or isinstance(depth, bool)
             or float(depth) <= 0
-            or (
-                side_item is not None
-                and side_item.value in {"min", "max"}
-            )
+            or legacy_side_ok
+            or split_entry_ok
         ):
             continue
 
@@ -157,7 +166,13 @@ def _missing_transverse_thread_start_side_unresolved(
         evidence = list(
             dict.fromkeys(
                 source
-                for item in (axis_item, spec_item, depth_item)
+                for item in (
+                    axis_item,
+                    spec_item,
+                    depth_item,
+                    material_side_item,
+                    entry_endpoint_item,
+                )
                 if item is not None
                 for source in item.evidence
             )
@@ -167,7 +182,8 @@ def _missing_transverse_thread_start_side_unresolved(
                 kind="start_side",
                 reason=(
                     "Transverse threaded feature has explicit thread depth but no "
-                    "confirmed machining entry side; start_side is required to derive "
+                    "complete machining-entry semantics; provide material_side + "
+                    "entry_endpoint, or a legacy confirmed start_side, to derive "
                     "its canonical axial range without pixel-to-mm conversion."
                 ),
                 entity_keys=[entity_key],
@@ -4150,19 +4166,22 @@ def _transverse_recess_start_side_values(
     return output, ledger
 
 
-def _paired_transverse_thread_start_side_values(
+def _paired_transverse_thread_entry_values(
     *,
     callout_values: list[ObservationValue],
     centerline_alignments: list[ObservationCenterlineAlignment],
     recess_start_side_values: list[ObservationValue],
 ) -> tuple[list[ObservationValue], list[dict[str, Any]]]:
-    """Resolve a paired transverse thread entry side from the opposite recess side.
+    """Resolve paired thread material side separately from its entry endpoint.
 
-    This rule consumes only an already-unique threaded/recessed centerline
-    continuation and an automatically resolved recess start_side.  It does not
-    convert pixels to engineering coordinates: the paired thread enters from the
-    opposite resolved overall material side along the same feature axis.  Any
-    non-unique pairing or conflicting recess-side evidence fails closed.
+    A unique threaded/recessed continuation plus an automatically resolved
+    recess outer entry identifies the opposite material side for the thread.
+    The thread enters that opposite material segment from the endpoint facing
+    the recess, so entry_endpoint retains the recess side label while
+    material_side is its complement. The Runner must still prove that canonical
+    material topology is actually interrupted when those two labels differ.
+    Pixels are used only for identity/topology; no pixel distance becomes an
+    engineering coordinate.
     """
 
     fields_by_entity: dict[str, dict[str, ObservationValue]] = {}
@@ -4196,6 +4215,8 @@ def _paired_transverse_thread_start_side_values(
             spec_item = fields.get("thread_spec")
             depth_item = fields.get("thread_depth")
             existing_side = fields.get("start_side")
+            existing_material_side = fields.get("material_side")
+            existing_entry_endpoint = fields.get("entry_endpoint")
             depth = depth_item.value if depth_item is not None else None
             if (
                 spec_item is not None
@@ -4208,6 +4229,8 @@ def _paired_transverse_thread_start_side_values(
                     existing_side is not None
                     and existing_side.value in {"min", "max"}
                 )
+                and existing_material_side is None
+                and existing_entry_endpoint is None
             ):
                 thread_entities.append(entity_key)
 
@@ -4250,27 +4273,37 @@ def _paired_transverse_thread_start_side_values(
             continue
 
         recess_side = str(recess_item.value)
-        thread_side = "max" if recess_side == "min" else "min"
+        material_side = "max" if recess_side == "min" else "min"
+        entry_endpoint = recess_side
         evidence = list(
             dict.fromkeys(
                 [
                     *alignment.evidence,
                     *recess_item.evidence,
                     (
-                        "hybrid:paired-thread-start-side:"
-                        f"{thread_entity}:{thread_side}"
+                        "hybrid:paired-thread-material-entry:"
+                        f"{thread_entity}:{material_side}:{entry_endpoint}"
                     ),
                 ]
             )
         )
-        output.append(
-            ObservationValue(
-                entity_key=thread_entity,
-                field="start_side",
-                value=thread_side,
-                semantic="start_side",
-                evidence=evidence,
-            )
+        output.extend(
+            [
+                ObservationValue(
+                    entity_key=thread_entity,
+                    field="material_side",
+                    value=material_side,
+                    semantic="material_side",
+                    evidence=evidence,
+                ),
+                ObservationValue(
+                    entity_key=thread_entity,
+                    field="entry_endpoint",
+                    value=entry_endpoint,
+                    semantic="entry_endpoint",
+                    evidence=evidence,
+                ),
+            ]
         )
         ledger.append(
             {
@@ -4278,10 +4311,11 @@ def _paired_transverse_thread_start_side_values(
                 "paired_recess_entity": recess_entity,
                 "feature_axis": feature_axis,
                 "paired_recess_start_side": recess_side,
-                "start_side": thread_side,
+                "material_side": material_side,
+                "entry_endpoint": entry_endpoint,
                 "basis": (
                     "unique_thread_recess_centerline_plus_resolved_recess_"
-                    "entry_implies_opposite_thread_entry"
+                    "outer_entry_implies_opposite_material_and_facing_entry"
                 ),
                 "evidence": evidence,
                 "engineering_coordinate_inferred_from_pixels": False,
@@ -4635,8 +4669,8 @@ def adapt_hybrid_ocr_report(
             centerline_alignments=centerline_alignments,
         )
     )
-    paired_thread_start_side_values, paired_thread_start_side_ledger = (
-        _paired_transverse_thread_start_side_values(
+    paired_thread_entry_values, paired_thread_entry_ledger = (
+        _paired_transverse_thread_entry_values(
             callout_values=callout_values,
             centerline_alignments=centerline_alignments,
             recess_start_side_values=recess_start_side_values,
@@ -4649,7 +4683,7 @@ def adapt_hybrid_ocr_report(
             existing_values=[
                 *callout_values,
                 *recess_start_side_values,
-                *paired_thread_start_side_values,
+                *paired_thread_entry_values,
             ],
         )
     )
@@ -4659,7 +4693,7 @@ def adapt_hybrid_ocr_report(
                 *geometry_values,
                 *callout_values,
                 *recess_start_side_values,
-                *paired_thread_start_side_values,
+                *paired_thread_entry_values,
                 *confirmed_start_side_values,
             ],
         )
@@ -4938,9 +4972,9 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_topology_only": True,
         },
         {
-            "kind": "hybrid_paired_thread_start_side_ledger",
+            "kind": "hybrid_paired_thread_entry_ledger",
             "schema": "1.0",
-            "items": paired_thread_start_side_ledger,
+            "items": paired_thread_entry_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_or_topology_only": True,
         },
@@ -5012,7 +5046,7 @@ def adapt_hybrid_ocr_report(
             *geometry_values,
             *callout_values,
             *recess_start_side_values,
-            *paired_thread_start_side_values,
+            *paired_thread_entry_values,
             *confirmed_start_side_values,
             *slot_values,
         ],

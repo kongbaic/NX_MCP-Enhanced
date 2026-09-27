@@ -34,8 +34,9 @@ import re
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import PureWindowsPath
-from typing import Any, Callable
+from typing import Any
 
 # --------------------------------------------------------------------------
 # certified tool contract — static data, not part-specific
@@ -2416,7 +2417,11 @@ def _thread_subsuming_through_feature(
     return matches[0] if len(matches) == 1 else None
 
 
-def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
+def resolve_thread_drawing_geometries(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     """Resolve thread surrogate geometry from explicit drawing facts only.
 
     An absent axial range may be derived only when the drawing explicitly provides
@@ -2430,6 +2435,9 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
+        feature_axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        if axes is not None and feature_axis not in axes:
+            continue
         parameters, parameter_error = resolve_metric_thread_parameters(_thread_spec(feature))
         if parameter_error is None and parameters is not None:
             covering = _thread_subsuming_through_feature(
@@ -2457,7 +2465,7 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
                     }
                 )
                 continue
-        axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        axis = feature_axis
         if axis not in {"X", "Y", "Z"}:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid axis")
             continue
@@ -2638,7 +2646,11 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
     return geometries, errors
 
 
-def resolve_thread_surrogates(drawing: dict) -> tuple[list[dict], list[str]]:
+def resolve_thread_surrogates(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     resolved: list[dict] = []
     errors: list[str] = []
     for index, record in enumerate(_thread_feature_records(drawing)):
@@ -2646,6 +2658,9 @@ def resolve_thread_surrogates(drawing: dict) -> tuple[list[dict], list[str]]:
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
+        feature_axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        if axes is not None and feature_axis not in axes:
+            continue
         parameters, error = resolve_metric_thread_parameters(_thread_spec(feature))
         if error or parameters is None:
             errors.append(f"capability_violation: threaded feature {fid!r}: {error}")
@@ -3369,6 +3384,8 @@ def _depth_range_from_material_interval(
 
 def resolve_transverse_recess_drawing_geometries(
     drawing: dict,
+    *,
+    axes: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Derive X/Y counterbore execution ranges from canonical material intervals."""
     geometries: list[dict] = []
@@ -3380,7 +3397,11 @@ def resolve_transverse_recess_drawing_geometries(
         if str(feature.get("type") or "").lower() != "counterbore_hole":
             continue
         axis = str(feature.get("axis") or "").upper()
-        if axis not in {"X", "Y"} or feature.get("through") is not True:
+        if (
+            axis not in {"X", "Y"}
+            or (axes is not None and axis not in axes)
+            or feature.get("through") is not True
+        ):
             continue
 
         fid = str(feature.get("id") or "?")
@@ -3664,6 +3685,8 @@ def _feature_explicit_axial_range(feature: dict) -> list[float] | None:
 
 def resolve_hole_drawing_geometries(
     drawing: dict,
+    *,
+    axes: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Resolve plain-hole Feature Contracts into deterministic engineering ranges."""
     geometries: list[dict] = []
@@ -3680,6 +3703,8 @@ def resolve_hole_drawing_geometries(
 
         fid = str(feature.get("id") or "?")
         axis = str(feature.get("axis") or "").upper()
+        if axes is not None and axis not in axes:
+            continue
         if axis not in {"X", "Y", "Z"}:
             errors.append(
                 f"capability_geometry_violation: hole {fid!r} has invalid axis {axis!r}"
@@ -3818,9 +3843,18 @@ def resolve_hole_drawing_geometries(
 
 def resolve_counterbore_drawing_geometries(
     drawing: dict,
+    *,
+    axes: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Resolve both principal-axis and native-Z counterbore Feature Contracts."""
-    geometries, errors = resolve_transverse_recess_drawing_geometries(drawing)
+    transverse_axes = {"X", "Y"} if axes is None else (set(axes) & {"X", "Y"})
+    if transverse_axes:
+        geometries, errors = resolve_transverse_recess_drawing_geometries(
+            drawing,
+            axes=transverse_axes,
+        )
+    else:
+        geometries, errors = [], []
 
     for feature in drawing.get("features") or []:
         if not isinstance(feature, dict):
@@ -3830,6 +3864,8 @@ def resolve_counterbore_drawing_geometries(
         if feature.get("required_for_modeling") is False:
             continue
         if str(feature.get("axis") or "").upper() != "Z":
+            continue
+        if axes is not None and "Z" not in axes:
             continue
 
         fid = str(feature.get("id") or "?")
@@ -4170,7 +4206,10 @@ def _planner_adapter_native_z_hole(
     drawing: dict,
     capability: dict,
 ) -> tuple[dict | None, list[str]]:
-    geometries, errors = resolve_hole_drawing_geometries(drawing)
+    geometries, errors = resolve_hole_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
     return _adapter_payload(capability, geometries, errors)
 
 
@@ -4178,7 +4217,10 @@ def _planner_adapter_principal_axis_circular_subtract(
     drawing: dict,
     capability: dict,
 ) -> tuple[dict | None, list[str]]:
-    geometries, errors = resolve_hole_drawing_geometries(drawing)
+    geometries, errors = resolve_hole_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
     return _adapter_payload(capability, geometries, errors)
 
 
@@ -4186,7 +4228,10 @@ def _planner_adapter_native_z_counterbore(
     drawing: dict,
     capability: dict,
 ) -> tuple[dict | None, list[str]]:
-    geometries, errors = resolve_counterbore_drawing_geometries(drawing)
+    geometries, errors = resolve_counterbore_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
     return _adapter_payload(capability, geometries, errors)
 
 
@@ -4194,7 +4239,10 @@ def _planner_adapter_principal_axis_counterbore(
     drawing: dict,
     capability: dict,
 ) -> tuple[dict | None, list[str]]:
-    geometries, errors = resolve_counterbore_drawing_geometries(drawing)
+    geometries, errors = resolve_counterbore_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
     return _adapter_payload(capability, geometries, errors)
 
 
@@ -4202,8 +4250,15 @@ def _planner_adapter_metric_thread_surrogate(
     drawing: dict,
     capability: dict,
 ) -> tuple[dict | None, list[str]]:
-    geometries, geometry_errors = resolve_thread_drawing_geometries(drawing)
-    recipes, recipe_errors = resolve_thread_surrogates(drawing)
+    axes = set(capability.get("supported_axes") or [])
+    geometries, geometry_errors = resolve_thread_drawing_geometries(
+        drawing,
+        axes=axes,
+    )
+    recipes, recipe_errors = resolve_thread_surrogates(
+        drawing,
+        axes=axes,
+    )
     return _adapter_payload(
         capability,
         geometries,
@@ -4338,6 +4393,172 @@ def dispatch_gate_b_validator(
             "does not match selected capability"
         ]
     return validator(plan, adapter_payload)
+
+
+
+def _capability_feature_kind(feature: dict) -> str:
+    kind = str(feature.get("type") or feature.get("kind") or "").lower()
+    if kind == "through_hole":
+        return "hole"
+    return kind
+
+
+def resolve_drawing_capability_dispatches(
+    drawing: dict,
+    *,
+    registry: dict[str, Any] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Select one implementation per supported Feature Contract and bind handlers."""
+    data = registry if registry is not None else load_modeling_capability_registry()
+    registry_errors = capability_registry_errors(data)
+    if registry_errors:
+        return [], registry_errors
+
+    supported_feature_kinds = {
+        str(item.get("feature_kind") or "")
+        for item in data.get("implementations", [])
+        if isinstance(item, dict)
+    }
+    selected: dict[str, dict] = {}
+    errors: list[str] = []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+
+        feature_kind = _capability_feature_kind(feature)
+        if feature_kind not in supported_feature_kinds:
+            continue
+
+        fid = str(feature.get("id") or "?")
+        axis = str(feature.get("axis") or "").upper()
+        candidates, resolution_errors = resolve_modeling_capabilities(
+            feature_kind,
+            axis,
+            registry=data,
+        )
+        if resolution_errors:
+            errors.extend(
+                f"capability_selection_violation: feature {fid!r}: {item}"
+                for item in resolution_errors
+            )
+            continue
+
+        capability = candidates[0]
+        implementation_id = str(capability.get("implementation_id") or "")
+        previous = selected.get(implementation_id)
+        if previous is not None and previous != capability:
+            errors.append(
+                f"capability_selection_violation: implementation_id "
+                f"{implementation_id!r} resolved inconsistently"
+            )
+            continue
+        selected[implementation_id] = capability
+
+    if errors:
+        return [], errors
+
+    dispatches: list[dict] = []
+    for implementation_id in sorted(selected):
+        capability = selected[implementation_id]
+        payload, adapter_errors = dispatch_planner_adapter(capability, drawing)
+        if adapter_errors:
+            errors.extend(
+                f"capability_adapter_violation: {implementation_id}: {item}"
+                for item in adapter_errors
+            )
+            continue
+        if payload is None:
+            errors.append(
+                f"capability_adapter_violation: {implementation_id}: "
+                "adapter returned no payload"
+            )
+            continue
+        dispatches.append(
+            {
+                "capability": capability,
+                "payload": payload,
+            }
+        )
+
+    return dispatches, errors
+
+
+def capability_plan_errors(
+    plan: dict,
+    dispatches: list[dict],
+) -> list[str]:
+    """Run each selected capability's bound Gate B validator."""
+    errors: list[str] = []
+    for item in dispatches:
+        capability = item.get("capability")
+        payload = item.get("payload")
+        if not isinstance(capability, dict) or not isinstance(payload, dict):
+            errors.append(
+                "capability_dispatch_violation: malformed selected dispatch"
+            )
+            continue
+        errors.extend(
+            dispatch_gate_b_validator(
+                capability,
+                plan,
+                payload,
+            )
+        )
+    return errors
+
+
+def _drawing_modeling_context(
+    path: str,
+) -> tuple[dict, list[dict], list[str]]:
+    original = _load_drawing(path)
+    drawing, normalization_errors, _ = normalize_drawing_schema(original)
+    errors = list(normalization_errors)
+    if not errors:
+        errors.extend(check_drawing_json(drawing))
+    errors.extend(_drawing_modeling_body_errors(drawing))
+    if errors:
+        return drawing, [], errors
+
+    dispatches, capability_errors = resolve_drawing_capability_dispatches(drawing)
+    errors.extend(capability_errors)
+    return drawing, dispatches, errors
+
+
+def _thread_metadata_from_dispatches(
+    dispatches: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    recipes: list[dict] = []
+    geometries: list[dict] = []
+    for item in dispatches:
+        capability = item.get("capability")
+        payload = item.get("payload")
+        if not isinstance(capability, dict) or not isinstance(payload, dict):
+            continue
+        if capability.get("feature_kind") != "threaded_hole":
+            continue
+        recipes.extend(
+            entry
+            for entry in payload.get("recipes") or []
+            if isinstance(entry, dict)
+        )
+        geometries.extend(
+            entry
+            for entry in payload.get("geometries") or []
+            if isinstance(entry, dict)
+        )
+
+    def dedupe(items: list[dict]) -> list[dict]:
+        by_id: dict[str, dict] = {}
+        for item in items:
+            feature_id = str(item.get("feature_id") or "")
+            if feature_id:
+                by_id[feature_id] = item
+        return [by_id[key] for key in sorted(by_id)]
+
+    return dedupe(recipes), dedupe(geometries)
 
 
 def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:
@@ -6046,16 +6267,12 @@ def _cmd_check(args: argparse.Namespace) -> int:
     errs = check_plan(plan, executable=not args.frozen)
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
-        recess_geometries, recess_errors = (
-            resolve_transverse_recess_drawing_geometries(drawing)
+        _drawing, dispatches, drawing_errors = _drawing_modeling_context(
+            drawing_path
         )
-        drawing_errors.extend(recess_errors)
-        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         errs.extend(drawing_errors)
         if not drawing_errors:
-            errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
-            errs.extend(transverse_recess_plan_errors(plan, recess_geometries))
+            errs.extend(capability_plan_errors(plan, dispatches))
     result = {"plan": args.plan, "frozen": bool(args.frozen),
                       "drawing": drawing_path,
                       "operations": len(plan.get("operations") or []),
@@ -6071,20 +6288,16 @@ def _cmd_build(args: argparse.Namespace) -> int:
     frozen_errs = check_plan(plan, executable=False)
     recipes: list[dict] = []
     geometries: list[dict] = []
-    recess_geometries: list[dict] = []
+    dispatches: list[dict] = []
     drawing_path = getattr(args, "drawing", None)
     if drawing_path:
-        drawing, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
-        recess_geometries, recess_errors = (
-            resolve_transverse_recess_drawing_geometries(drawing)
+        _drawing, dispatches, drawing_errors = _drawing_modeling_context(
+            drawing_path
         )
-        drawing_errors.extend(recess_errors)
-        drawing_errors.extend(_drawing_modeling_body_errors(drawing))
         frozen_errs.extend(drawing_errors)
         if not drawing_errors:
-            frozen_errs.extend(
-                transverse_recess_plan_errors(plan, recess_geometries)
-            )
+            frozen_errs.extend(capability_plan_errors(plan, dispatches))
+            recipes, geometries = _thread_metadata_from_dispatches(dispatches)
     if frozen_errs:
         result = {
             "built": None,
@@ -6102,7 +6315,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         exe["thread_drawing_geometries"] = geometries
     errs = check_plan(exe, executable=True)
     if drawing_path and not frozen_errs:
-        errs.extend(transverse_recess_plan_errors(exe, recess_geometries))
+        errs.extend(capability_plan_errors(exe, dispatches))
     if not errs:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(exe, f, ensure_ascii=False, indent=2)
@@ -6141,7 +6354,7 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("plan")
     pc.add_argument("--frozen", action="store_true")
     pc.add_argument("--drawing", default=None,
-                    help="optional Mode B drawing for thread geometry Gate B checks")
+                    help="optional Mode B drawing for capability-selected Gate B checks")
     pc.set_defaults(func=_cmd_check)
 
     pb = sub.add_parser("build", help="convert a frozen plan to the executable format (no NX)")

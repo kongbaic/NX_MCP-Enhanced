@@ -1086,6 +1086,122 @@ def test_native_z_counterbore_capability_dispatch_round_trip():
     assert R.dispatch_gate_b_validator(capability, plan, payload) == []
 
 
+
+def test_unified_capability_dispatch_selects_native_z_hole():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "count": 1,
+            }
+        ],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert errors == []
+    assert [
+        item["capability"]["implementation_id"]
+        for item in dispatches
+    ] == ["native-z-hole-v1"]
+
+
+def test_unified_capability_gate_b_rejects_plain_hole_range_drift():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "count": 1,
+            }
+        ],
+    }
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    assert errors == []
+
+    wrong_plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_hole",
+                "tool_args": {
+                    "body_id": "$body",
+                    "center": {"x": 0, "y": 0},
+                    "diameter": 6,
+                    "depth": 9,
+                    "start_offset": 0,
+                },
+            }
+        ]
+    }
+
+    gate_errors = R.capability_plan_errors(wrong_plan, dispatches)
+
+    assert any("changes axial range" in item for item in gate_errors)
+
+
+def test_unified_capability_dispatch_deduplicates_shared_xy_implementation():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("YZ", -10, 10, 0, 10),
+        "features": [
+            {
+                "id": "HX",
+                "type": "hole",
+                "axis": "X",
+                "diameter": 4,
+                "through": True,
+                "centerline": {"y": -4, "z": 5},
+            },
+            {
+                "id": "HY",
+                "type": "hole",
+                "axis": "Y",
+                "diameter": 4,
+                "axial_range": [-10, 10],
+                "centerline": {"x": 0, "z": 5},
+            },
+        ],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert errors == []
+    assert [
+        item["capability"]["implementation_id"]
+        for item in dispatches
+    ] == ["principal-axis-hole-v1"]
+    assert {
+        geometry["feature_id"]
+        for geometry in dispatches[0]["payload"]["geometries"]
+    } == {"HX", "HY"}
+
+
 def test_capability_registry_fails_closed_when_required_tool_is_unavailable():
     registry = {
         "schema_version": 1,

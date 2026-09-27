@@ -32,6 +32,10 @@ from .hybrid_capture_adapter import (
     adapt_hybrid_ocr_report,
 )
 from .hybrid_ocr import run_hybrid_ocr
+from .hybrid_frontend_coordinator import (
+    resume_hybrid_frontend,
+    start_hybrid_frontend,
+)
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
 from .reader_candidate_answers import (
@@ -1156,6 +1160,25 @@ def _cmd_stability(args: argparse.Namespace) -> int:
     return 0 if result.stable else 2
 
 
+def _cmd_run_hybrid_frontend(args: argparse.Namespace) -> int:
+    code, report = start_hybrid_frontend(
+        args.image,
+        args.run_directory,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return code
+
+
+def _cmd_resume_hybrid_frontend(args: argparse.Namespace) -> int:
+    code, report = resume_hybrid_frontend(
+        args.manifest,
+        args.structural_answers,
+        args.mode_b_prefix,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m nx_mcp.drawing_intelligence",
@@ -1179,6 +1202,29 @@ def main(argv: list[str] | None = None) -> int:
     hybrid_ocr.add_argument("out")
     hybrid_ocr.add_argument("--artifact-dir")
     hybrid_ocr.set_defaults(func=_cmd_run_hybrid_ocr)
+
+    hybrid_frontend = sub.add_parser(
+        "run-hybrid-frontend",
+        help=(
+            "run deterministic Reader prep and Hybrid OCR, then stop at "
+            "the Structural Reader answer boundary"
+        ),
+    )
+    hybrid_frontend.add_argument("image")
+    hybrid_frontend.add_argument("run_directory")
+    hybrid_frontend.set_defaults(func=_cmd_run_hybrid_frontend)
+
+    hybrid_frontend_resume = sub.add_parser(
+        "resume-hybrid-frontend",
+        help=(
+            "resume from structural answers through Hybrid Adapter, "
+            "Reader finalization, and Mode B"
+        ),
+    )
+    hybrid_frontend_resume.add_argument("manifest")
+    hybrid_frontend_resume.add_argument("structural_answers")
+    hybrid_frontend_resume.add_argument("mode_b_prefix")
+    hybrid_frontend_resume.set_defaults(func=_cmd_resume_hybrid_frontend)
 
     extract_raster = sub.add_parser(
         "extract-raster-evidence",

@@ -120,6 +120,35 @@ For threaded entities use `thread_depth`, not generic `depth`.
 `required_targets=[]`, `schema_version`, `coordinate_system`, formal IDs and
 ReaderCapture bookkeeping are assembler responsibilities, not Agent output.
 
+The following item field names are exact. Do not invent aliases or pack several
+semantic values into one item:
+
+- `views[]`: `key, kind, evidence`.
+- `entities[]`: `key, view_key, shape, cross_view_disposition, evidence`, optional
+  `required_for_modeling`.
+- `associations[]`: `entity_keys, basis, evidence`, optional
+  `required_for_modeling`.
+- `values[]`: exactly one semantic value per item:
+  `entity_key, field, value, evidence`, optional `semantic`.
+- `dimensions[]`: `key, value, axis, endpoints, evidence`, optional
+  `unresolved_reason, direction, required_for_modeling`. `endpoints` is always a
+  two-item list; never use `endpoint_min` / `endpoint_max`.
+- resolved center/profile endpoint: `role, entity_key, basis, evidence`;
+  overall endpoint: `role, evidence`; unresolved endpoint:
+  `role="unresolved", unresolved_kind, evidence` and only
+  `ambiguous_owner` may carry `candidate_entity_keys`.
+- `datum_alignments[]`: `entity_key, axis, evidence`, optional
+  `required_for_modeling`.
+- `centerline_alignments[]`: `entity_keys, feature_axis, evidence`, optional
+  `required_for_modeling`.
+- `unresolved[]`: `kind, reason, evidence` plus only the applicable optional
+  `entity_keys, dimension_key, dimension_value, field, axis, basis,
+  required_for_modeling`.
+
+Do not use `view` in place of `view_key`, do not put `diameter/fit/thread_spec`
+as sibling keys inside a `values[]` item, and do not omit `reason` from
+`unresolved[]`.
+
 ## 4. Source evidence
 
 For multi-view production observations, non-empty `evidence` labels are required for:
@@ -168,6 +197,20 @@ If no plausible modeling counterpart exists, use `single_view`.
 
 Never merge only because dimensions match, objects are both holes, they look
 symmetric, or they are nearby.
+
+Association claims must be disjoint before the immutable write:
+
+- one `entity_key` may appear in at most one `associations[]` item;
+- one association may contain at most one entity from each view;
+- if one view has a grouped entity while another view exposes multiple individual
+  members, never associate the grouped entity separately to multiple members;
+- for that grouped/member granularity mismatch, keep all affected entities separate,
+  set their `cross_view_disposition="unresolved"`, and emit one blocking
+  `member_identity` unresolved record containing the affected `entity_keys`.
+
+Before writing `reader-observations.json`, flatten all association `entity_keys`
+in memory and verify there are no duplicates. This is a contract-shape preflight,
+not a second drawing interpretation.
 
 ## 6. Dimensions
 
@@ -275,6 +318,12 @@ python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-stat
 
 Only `exit code=0` with `phase=gate_a_pass` may continue to Planner. Any other
 terminal or blocked result stops the production run.
+
+A Mode B front-end failure from Reader input preparation through Gate A is never
+eligible for Controlled Self-Healing. After the first coordinator terminal/blocked
+result, do not read schema/source code, do not rewrite `reader-observations.json`,
+do not choose a new artifact prefix to retry, and do not call the coordinator again.
+Report the first state/phase/errors and STOP.
 
 Standalone `assemble-reader-capture`, `check-capture`, `link-capture`,
 `resolve`, confirmation, and Gate A commands remain available only for

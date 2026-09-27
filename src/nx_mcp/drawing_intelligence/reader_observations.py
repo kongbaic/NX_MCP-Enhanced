@@ -262,10 +262,34 @@ class ReaderObservations(_StrictObservationModel):
                     f"entity {entity.key!r} references unknown view {entity.view_key!r}"
                 )
 
-        for association in self.associations:
+        entity_views = {item.key: item.view_key for item in self.entities}
+        association_owner: dict[str, int] = {}
+        for index, association in enumerate(self.associations):
             missing = [item for item in association.entity_keys if item not in entity_set]
             if missing:
                 raise ValueError(f"association references unknown entity keys {missing}")
+
+            by_view: dict[str, list[str]] = {}
+            for entity_key in association.entity_keys:
+                previous = association_owner.get(entity_key)
+                if previous is not None:
+                    raise ValueError(
+                        f"entity {entity_key!r} appears in multiple observation "
+                        f"associations {previous} and {index}"
+                    )
+                association_owner[entity_key] = index
+                by_view.setdefault(entity_views[entity_key], []).append(entity_key)
+
+            duplicate_views = {
+                view_key: keys
+                for view_key, keys in by_view.items()
+                if len(keys) > 1
+            }
+            if duplicate_views:
+                raise ValueError(
+                    f"association[{index}] contains multiple entities from the same "
+                    f"view: {duplicate_views}"
+                )
 
         for value in self.values:
             if value.entity_key not in entity_set:

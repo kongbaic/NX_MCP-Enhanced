@@ -166,6 +166,43 @@ def test_unknown_entity_reference_rejected_before_assembly():
         ReaderObservations.model_validate(payload)
 
 
+def test_overlapping_observation_associations_are_rejected_before_assembly():
+    payload = _base_observations()
+    payload["associations"].append(
+        {
+            "entity_keys": ["front_bore", "side_bore"],
+            "basis": ["projection_alignment", "matching_specification"],
+            "evidence": ["overview-duplicate"],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="appears in multiple observation associations"):
+        ReaderObservations.model_validate(payload)
+
+
+def test_observation_association_cannot_contain_two_entities_from_same_view():
+    payload = _base_observations()
+    payload["entities"].append(
+        {
+            "key": "front_bore_2",
+            "view_key": "front",
+            "shape": "circle",
+            "cross_view_disposition": "associated",
+            "evidence": ["R1.other"],
+        }
+    )
+    payload["associations"] = [
+        {
+            "entity_keys": ["front_bore", "front_bore_2"],
+            "basis": ["projection_alignment", "matching_specification"],
+            "evidence": ["overview"],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="multiple entities from the same view"):
+        ReaderObservations.model_validate(payload)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

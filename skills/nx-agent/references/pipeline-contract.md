@@ -83,7 +83,7 @@ deterministic coordinator 的内部阶段与开发审计语义，**不得由 Age
 
 ### A0.5. Hybrid Frontend raster preparation
 
-当前上传工程图始终是本轮唯一权威几何输入。当当前请求环境**明确提供本轮上传工程图的 runtime-local raster 文件路径**时，Agent 不得单独调用 `prepare-reader-input`；正常生产必须调用 `run-hybrid-frontend`。Hybrid Frontend 内部会且只会对本轮 raster 执行一次等价的 deterministic Reader input preparation：
+当前上传工程图始终是本轮唯一权威几何输入。当当前请求环境**明确提供本轮上传工程图的 runtime-local raster 文件路径**时，Agent 不得在 frontend 前打开/视觉解读整张 raster，不得单独调用 `prepare-reader-input`；正常生产必须直接调用 `run-hybrid-frontend`。fresh run directory 由 Hybrid Frontend 创建，Agent 不得预创建后再删除重试。Hybrid Frontend 内部会且只会对本轮 raster 执行一次等价的 deterministic Reader input preparation：
 
 ~~~text
 internal: prepare-reader-input <current-raster-path> <fresh-hybrid-run-directory>

@@ -83,6 +83,14 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False
     assert plan.rules["pixel_measurement"] is False
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    assert [item.query_id for item in template.answers] == ["S001", "S002"]
+    assert template.answers[0].evidence == ["structural:R1:crop"]
+    assert template.answers[1].evidence == ["structural:R2:crop"]
+    assert all(
+        item.unresolved == ["pending_structural_visual_read"]
+        for item in template.answers
+    )
 
 
 def test_structural_context_builds_independent_overall_facts():

@@ -41,6 +41,7 @@ class StructuralContextQueryPlan(_StrictStructuralModel):
     )
     queries: list[StructuralRegionQuery] = Field(min_length=1, max_length=4)
     rules: dict[str, bool]
+    answer_template: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _unique_queries(self) -> StructuralContextQueryPlan:
@@ -161,6 +162,19 @@ def build_structural_context_queries(
             "dimension_endpoint_ownership": False,
             "local_feature_values": False,
             "pixel_measurement": False,
+        },
+        answer_template={
+            "schema": "structural-context-answers-v1",
+            "answers": [
+                {
+                    "query_id": query.query_id,
+                    "view_kind": None,
+                    "evidence": [query.evidence_label],
+                    "overall_dimension_facts": [],
+                    "unresolved": ["pending_structural_visual_read"],
+                }
+                for query in queries
+            ],
         },
     )
 

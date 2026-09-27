@@ -145,7 +145,9 @@ def _assign_global_items(
     candidates: list[dict[str, Any]],
     items: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
-    assigned = {str(candidate["candidate_id"]): [] for candidate in candidates}
+    assigned: dict[str, list[dict[str, Any]]] = {
+        str(candidate["candidate_id"]): [] for candidate in candidates
+    }
 
     for item_index, item in enumerate(items):
         tokens = _linear_tokens(str(item.get("text") or ""))

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import cv2
+import numpy as np
+
+
 def _load_module():
     from nx_mcp.drawing_intelligence import hybrid_ocr
 
@@ -20,3 +28,131 @@ def test_stdout_json_is_safe_for_windows_legacy_encoding():
     rendered.encode("cp936")
     assert "\\u00d8" in rendered
     assert "\\u2205" in rendered
+
+
+def test_production_hybrid_ocr_two_pass_flow(tmp_path: Path, monkeypatch):
+    module = _load_module()
+
+    source = tmp_path / "drawing.png"
+    image = np.full((200, 200, 3), 255, dtype=np.uint8)
+    assert cv2.imwrite(str(source), image)
+
+    visual_aid = {
+        "schema": "reader-visual-aid-v1",
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 200, 200],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "candidate_buckets": [
+            {
+                "bucket_id": "R1.horizontal.middle",
+                "region_id": "R1",
+                "status": "bounded",
+                "candidates": [
+                    {
+                        "candidate_id": "DG1",
+                        "region_id": "R1",
+                        "orientation": "horizontal",
+                        "axis_px": 100.0,
+                        "line_span_px": [20.0, 180.0],
+                        "witness_positions_px": [50.0, 150.0],
+                        "witness_anchor_evidence": [],
+                        "witness_line_evidence": [],
+                    }
+                ],
+            }
+        ],
+        "annotation_line_candidates": [],
+        "structural_profile_inventory": [],
+    }
+    visual_path = tmp_path / "reader-visual-aid.json"
+    visual_path.write_text(json.dumps(visual_aid), encoding="utf-8")
+
+    reader_input = {
+        "schema": "reader-input-v1",
+        "source_raster_path": str(source),
+        "reader_visual_aid_path": str(visual_path),
+    }
+    reader_input_path = tmp_path / "reader-input.json"
+    reader_input_path.write_text(json.dumps(reader_input), encoding="utf-8")
+
+    class FakeEngine:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, _image):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    boxes=[
+                        [[80, 90], [120, 90], [120, 110], [80, 110]],
+                        [[10, 10], [50, 10], [50, 30], [10, 30]],
+                    ],
+                    txts=["24", "Ø20"],
+                    scores=[0.99, 0.95],
+                )
+            return SimpleNamespace(
+                boxes=[[[80, 50], [120, 50], [120, 70], [80, 70]]],
+                txts=["24"],
+                scores=[0.99],
+            )
+
+    engine = FakeEngine()
+
+    class FakeRapidOcrModule:
+        @staticmethod
+        def RapidOCR(*, params):
+            assert params["Global.use_cls"] is True
+            assert params["Global.return_word_box"] is False
+            return engine
+
+    real_import = module.importlib.import_module
+
+    def fake_import(name: str):
+        if name == "rapidocr":
+            return FakeRapidOcrModule
+        return real_import(name)
+
+    monkeypatch.setattr(module.importlib, "import_module", fake_import)
+
+    output = tmp_path / "hybrid-report.json"
+    artifact_dir = tmp_path / "ocr-artifacts"
+    exit_code = module.main(
+        [
+            str(reader_input_path),
+            str(output),
+            "--artifact-dir",
+            str(artifact_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert engine.calls == 2
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["schema"] == "dg-hybrid-ocr-bakeoff-v2"
+    assert report["candidate_count"] == 1
+    assert report["accepted_count"] == 1
+    assert report["unresolved_count"] == 0
+    assert report["candidates"][0]["accepted_token"] == "24"
+    assert report["coverage"]["observed_silent_drop_count"] == 0
+    assert len(report["coverage"]["accepted_support_observations"]) == 1
+    assert len(report["coverage"]["routed_elsewhere_or_unclassified_observations"]) == 1
+    assert (artifact_dir / "dg-hybrid-wide.png").is_file()
+    assert (artifact_dir / "crops" / "DG1-wide.png").is_file()
+
+
+def test_hybrid_decision_fails_closed_on_disagreement():
+    module = _load_module()
+
+    assert module._hybrid_decision("6", {"66"}) == (
+        None,
+        "global_local_token_disagreement",
+    )
+    assert module._hybrid_decision(None, {"66"}) == (
+        None,
+        "no_global_proposal",
+    )

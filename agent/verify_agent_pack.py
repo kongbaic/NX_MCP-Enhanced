@@ -230,15 +230,14 @@ def main() -> None:
         "当前上传工程图",
         "唯一权威几何输入",
         "runtime-local raster 路径",
-        "prepare-reader-input <current-raster-path> <workspace_root>",
-        "reader-input.json",
-        "禁止顺序打开全部单张 crop",
-        "对应的那一张现成 crop",
-        "不得直接读取 raw-evidence.json / reader-visual-aid.json",
-        "不得创建额外 crop",
-        "reader-observations.json 写出后，正常 Mode B 必须立即把控制权交给 deterministic coordinator",
-        "python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>",
-        "coordinator 是正常 Mode B 从 observations 到 Gate A 的唯一生产入口",
+        "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+        "awaiting_structural_context",
+        "structural-context-answers-v1",
+        "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+        "Hybrid Adapter",
+        "mode_b_gate_a_pass",
+        "mode_b_awaiting_confirmation",
+        "fallback semantic Reader",
         "Agent 禁止再手动串联",
         "exit code=0 且 phase=gate_a_pass",
         "exit code=4 且 phase=awaiting_confirmation",
@@ -316,45 +315,37 @@ def main() -> None:
     reader_prep_contracts = {
         "SKILL.md": (
             "唯一权威几何输入",
-            "python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>",
-            "禁止把 `prepare-reader-input` 猜成 Python 模块名",
-            "禁止用 Get-ChildItem、源码搜索、模块枚举或读取实现文件来发现入口",
-            "reader-input.json",
-            "reader-contact-sheet.png",
-            "禁止顺序打开全部单张 crop",
-            "对应的那一张现成 crop",
-            "不得直接读取 raw-evidence.json / reader-visual-aid.json",
-            "不得创建额外 crop",
-            "旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、mode-b-state、reader-capture",
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "awaiting_structural_context",
+            "structural-context-queries.json",
+            "structural-context-answers-v1",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "fallback semantic Reader",
         ),
         "pipeline-contract.md": (
-            "### A0.5. Deterministic Reader input preparation",
-            "prepare-reader-input <current-raster-path> <workspace_root>",
-            "reader-input.json",
-            "reader-contact-sheet.png",
-            "reader-crops\\overview.png",
-            "有明确 current raster path 时",
-            "禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本",
-            "Reader 默认只读取当前原图、当前 `reader-input.json` 与当前 `reader-contact-sheet.png`",
-            "禁止顺序打开全部单张 crop",
-            "Reader 禁止创建额外 crop、重新预处理图片、扫描历史文件或重新组织一套 visual search pipeline",
-            "旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用",
+            "### A0.5. Hybrid Frontend raster preparation",
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "awaiting_structural_context",
+            "bounded Structural Reader answers",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "fallback semantic Reader",
         ),
         "reader-runtime-contract.md": (
-            "### Deterministic Reader input bundle",
-            "python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>",
-            "The first A0.5 failure is terminal for the production run",
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "phase=awaiting_structural_context",
+            "Structural Reader",
+            "structural-context-answers-v1",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "fallback semantic Reader",
             "sole authoritative geometry source",
-            "exactly one current `reader-input.json`",
-            "exactly one current `reader-contact-sheet.png`",
-            "Do not open all individual crops sequentially",
-            "corresponding already-listed crop",
-            "do not read `raw-evidence.json` or `reader-visual-aid.json` directly",
-            "do not scan the workspace, chat history, repository, or user directories",
-            "do not create additional crops, PowerShell image scripts, PIL/.NET image helpers",
-            "`overflow` bucket",
-            "never match a dimension by numeric/pixel-scale coincidence",
-            "never create or merge a physical feature",
         ),
     }
     reader_prep_texts = {
@@ -366,6 +357,25 @@ def main() -> None:
         for token in tokens:
             if token not in reader_prep_texts[name]:
                 fail(f"Reader preparation contract regression in {name}: missing {token}")
+
+
+    hybrid_frontend_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def start_hybrid_frontend(",
+        "def resume_hybrid_frontend(",
+        '"awaiting_structural_context"',
+        '"mode_b_gate_a_pass"',
+        '"mode_b_awaiting_confirmation"',
+        "run_hybrid_ocr(",
+        "build_structural_context_queries(",
+        "adapt_hybrid_ocr_report(",
+        "finalize_partial_reader_observations(",
+        "run_mode_b_coordinator(",
+    ):
+        if token not in hybrid_frontend_source:
+            fail(f"Hybrid Frontend implementation regression: missing {token}")
 
     coordinator_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "mode_b_coordinator.py"
@@ -391,6 +401,10 @@ def main() -> None:
         fail("Reader preparation CLI regression: missing prepare-reader-input")
     if "run-hybrid-ocr" not in drawing_cli_source:
         fail("Hybrid OCR CLI regression: missing run-hybrid-ocr")
+    if "run-hybrid-frontend" not in drawing_cli_source:
+        fail("Hybrid Frontend CLI regression: missing run-hybrid-frontend")
+    if "resume-hybrid-frontend" not in drawing_cli_source:
+        fail("Hybrid Frontend CLI regression: missing resume-hybrid-frontend")
     if "assemble-reader-capture" not in drawing_cli_source:
         fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
     if "build-reader-semantic-queries" not in drawing_cli_source:
@@ -491,30 +505,34 @@ def main() -> None:
 
     mode_b_evidence_tokens = {
         "SKILL.md": (
-            "一次连续 first-pass",
-            "只写一次 immutable reader-observations.json",
-            "deterministic coordinator",
-            "fresh-artifact-prefix",
-            "唯一生产入口",
-            "Agent 禁止再手动串联",
-            "phase=awaiting_confirmation",
-            "只允许执行一次",
-            "resume 内部负责 apply-confirmations → second resolve → Gate A",
+            "run-hybrid-frontend",
+            "awaiting_structural_context",
+            "structural-context-answers-v1",
+            "resume-hybrid-frontend",
+            "Hybrid Adapter",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "fallback semantic Reader",
             "禁止第二轮确认",
-            "正常运行禁止为了处理错误去读取 reader_observations.py",
         ),
         "pipeline-contract.md": (
             "### 3.0 正常 Mode B 唯一生产入口",
+            "run-hybrid-frontend",
+            "awaiting_structural_context",
+            "bounded Structural Reader answers",
+            "resume-hybrid-frontend",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
             "deterministic Mode B coordinator",
-            "A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述 coordinator 的内部阶段",
+            "A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述",
             "不得由 Agent 逐条手动执行",
-            "phase=awaiting_confirmation",
-            "resume 内部完成 apply-confirmations → second resolve → Gate A",
             "### A1. Reader semantic observations + deterministic Capture assembly",
             "该阶段只允许解决**尺寸端点 ownership**",
             "最多一次",
             "禁止第二轮用户确认",
-            "其它结果立即 BLOCKED / STOP",
+            "其它结果 BLOCKED / STOP",
         ),
     }
     mode_b_evidence_texts = {

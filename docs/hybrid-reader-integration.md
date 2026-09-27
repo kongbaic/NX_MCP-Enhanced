@@ -5,19 +5,33 @@ contract. It does not write Gate A input directly.
 
 ## Production path
 
+For a current raster drawing, the nx-agent production entry is
+`run-hybrid-frontend`, not a direct free-form Reader first-pass.
+
 ```text
-Hybrid OCR
--> PartialReaderObservations
--> explicit structural context
--> ReaderObservations
--> ReaderCapture
--> check-capture
--> identity linker / Gate0
--> Resolver
--> optional one Human Confirmation
--> second resolve
--> Gate A
+current raster
+-> run-hybrid-frontend
+   -> deterministic Reader prep
+   -> Hybrid OCR
+   -> structural-context query plan
+-> bounded Structural Reader answers
+-> resume-hybrid-frontend
+   -> PartialReaderObservations
+   -> explicit structural context
+   -> Reader Observation Finalizer
+   -> ReaderObservations
+   -> Mode B coordinator
+      -> ReaderCapture / contract check
+      -> identity linker / Gate0
+      -> Resolver
+      -> optional one Human Confirmation
+      -> second resolve
+      -> Gate A
 ```
+
+The Agent must not bypass this path by calling `prepare-reader-input` and then
+writing a full `reader-observations.json` itself when an explicit raster path is
+available.
 
 The Hybrid adapter may assert only facts that have already passed its
 whole-drawing plus local-verification gates. Dimension endpoint ownership stays

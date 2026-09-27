@@ -44,32 +44,52 @@ Mode B 在开始 drawing interpretation 前执行一次且仅一次 runtime disc
 
 ### 3.0 正常 Mode B 唯一生产入口
 
-Reader 一次性写出 `reader-observations.json` 后，必须立即执行：
+当本轮有明确 runtime-local raster 路径时，唯一生产入口是：
 
 ~~~text
-python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>
+python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>
 ~~~
 
-正常 Mode B 中，A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述 coordinator 的内部阶段与开发审计语义，**不得由 Agent 逐条手动执行**。独立 CLI 只能用于用户明确要求的开发、审计或单步排障。
+该入口内部执行 deterministic Reader prep → production Hybrid OCR →
+structural-context query plan，并以 `exit code=4, phase=awaiting_structural_context`
+停在受限视觉边界。Agent 只读取本轮 `structural-context-queries.json`，逐个查看
+query.image_path 一次，写 `structural-context-answers-v1`；只允许回答 view_kind、
+当前视图直接标出的 overall X/Y/Z、原样 evidence label 与 unresolved。
 
-coordinator 返回：
-- `exit code=0, phase=gate_a_pass`：阶段 A PASS，state 中的 canonical drawing 是唯一允许交给 Planner 的语义 artifact；
-- `exit code=4, phase=awaiting_confirmation`：只展示 coordinator 生成的 1..3 个结构化 confirmation questions，用户选择现有 option_id 后写出 `user-confirmations.json`，并且只允许执行一次 `mode_b_coordinator resume <state> <answers>`；
-- 其它 exit code / phase：BLOCKED / STOP。
+随后只允许执行一次：
 
-resume 内部完成 apply-confirmations → second resolve → Gate A。只有 `exit code=0, phase=gate_a_pass` 才继续；禁止第二轮 confirmation、禁止重写 observations、禁止重新看图、禁止手动调用内部 CLI 绕过 state machine。
+~~~text
+python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>
+~~~
+
+resume 内部完成 structural context assembly → Hybrid Adapter → Reader Observation
+Finalizer → deterministic Mode B coordinator。若返回 `exit code=0,
+phase=mode_b_gate_a_pass`，其 mode_b 子报告/state 中的 canonical drawing 是唯一允许交给
+Planner 的语义 artifact；若返回 `exit code=4, phase=mode_b_awaiting_confirmation`，
+只展示 mode_b 子报告生成的 1..3 个结构化 confirmation questions，用户选择现有
+option_id 后写出 `user-confirmations.json`，并只允许执行一次
+`mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>`。
+其它结果 BLOCKED / STOP。
+
+只有本轮没有明确 runtime-local raster 路径或输入不是 raster 时，才使用 fallback
+semantic Reader：一次性写出 `reader-observations.json` 后立即调用
+`python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>`。
+
+正常 Mode B 中，A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述
+deterministic coordinator 的内部阶段与开发审计语义，**不得由 Agent 逐条手动执行**。
+独立 CLI 只能用于用户明确要求的开发、审计或单步排障。
 
 以下 A1–A5 保留为 coordinator 内部阶段定义与调试参考。
 
-### A0.5. Deterministic Reader input preparation
+### A0.5. Hybrid Frontend raster preparation
 
-当前上传工程图始终是本轮唯一权威几何输入。只有当当前请求环境**明确提供本轮上传工程图的 runtime-local raster 文件路径**时，Reader first-pass 前必须使用 runtime-config 指定的 `python_exe` 执行一次：
+当前上传工程图始终是本轮唯一权威几何输入。当当前请求环境**明确提供本轮上传工程图的 runtime-local raster 文件路径**时，Agent 不得单独调用 `prepare-reader-input`；正常生产必须调用 `run-hybrid-frontend`。Hybrid Frontend 内部会且只会对本轮 raster 执行一次等价的 deterministic Reader input preparation：
 
 ~~~text
-python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>
+internal: prepare-reader-input <current-raster-path> <fresh-hybrid-run-directory>
 ~~~
 
-该命令必须一次性生成本轮：
+该内部阶段必须一次性生成本轮：
 
 - `raw-evidence.json`；
 - `reader-visual-aid.json`；
@@ -82,17 +102,20 @@ python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-p
 硬规则：
 
 - 禁止扫描 workspace、用户目录、历史聊天目录或仓库去寻找/猜测当前上传图的文件路径；
-- 有明确 current raster path 时，`prepare-reader-input` 返回非零、`written!=true` 或 schema 不是 `reader-input-v1`，立即 BLOCKED / STOP；禁止退回 Agent 自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本；
+- 有明确 current raster path 时，`run-hybrid-frontend` 的 deterministic prep / Hybrid OCR / structural query 任一阶段失败都立即 BLOCKED / STOP；禁止退回 Agent 直接调用 `prepare-reader-input`，也禁止自己写 PowerShell、PIL、.NET 或其它裁图/预处理脚本；
 - 没有明确 runtime-local raster path 或输入不是 raster 时，不得扫描寻找替代文件；直接进入 A1 原始 Reader first-pass；
-- Reader 默认只读取当前原图、当前 `reader-input.json` 与当前 `reader-contact-sheet.png`；禁止顺序打开全部单张 crop。只有 contact sheet 中某个已列出的具体区域无法辨认时，才允许打开 manifest 中对应的那一张现成 crop；
-- `raw-evidence.json` 与 `reader-visual-aid.json` 是 deterministic 中间 artifact，Reader 不得直接读取；
+- Hybrid raster 路径的 Structural Reader 只读取 `structural-context-queries.json` 列出的 query.image_path；不得顺序打开全部 crop。fallback semantic Reader 才按其 runtime contract 读取当前原图/辅助图；
+- `raw-evidence.json`、`reader-visual-aid.json`、`reader-input.json` 与 Hybrid OCR report 都是 deterministic 中间 artifact；Structural Reader 不得直接把它们当答案来源；
 - `reader-input.json` 只提供 geometry-only 的 region / orientation / normalized band / witness-anchor 与 crop 索引，不提供尺寸数字、feature identity 或 endpoint ownership；
 - `overflow` bucket 不得截断或猜测；Reader 对该 bucket 只能回到当前原图进行正常视觉判断；
 - Reader 禁止创建额外 crop、重新预处理图片、扫描历史文件或重新组织一套 visual search pipeline。
 
 ### A1. Reader semantic observations + deterministic Capture assembly
 
-Reader 只从当前上传工程图执行一次连续视觉语义 first-pass，并且只写一次 `reader-observations.json`。
+Hybrid raster 路径下，本阶段由 Hybrid Adapter + Reader Observation Finalizer 从本轮
+Hybrid OCR 与受限 Structural Reader answers 确定性生成一次 `reader-observations.json`；
+Agent 不得手写。只有 no-raster/non-raster fallback 才由 Reader 从当前上传工程图执行一次
+连续视觉语义 first-pass 并写一次 `reader-observations.json`。
 
 `reader-observations.json` 使用 `reader-observations-v1`，只记录 Reader 真正判断出的工程语义：standard views、view-local entities、direct values、visible dimensions、physical endpoint ownership 或 structured unresolved、cross-view association visual basis、datum alignment 与 blocking ambiguity。临时 key 只用于本轮文件内引用。
 
@@ -310,12 +333,16 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 
 ~~~text
 当前上传工程图
-→ [若有明确 raster path：prepare-reader-input → reader-input.json + reader-contact-sheet.png]
-→ 一次性 reader-observations.json
-→ deterministic Mode B coordinator
-   ├─ PASS → Gate A canonical drawing.json
-   ├─ awaiting_confirmation → 一次 user-confirmations → coordinator resume → Gate A
-   └─ blocked / terminal_failed → STOP
+→ [若有明确 raster path：
+   run-hybrid-frontend
+   → Hybrid OCR
+   → awaiting_structural_context
+   → bounded Structural Reader answers
+   → resume-hybrid-frontend
+   → Hybrid Adapter / Reader Observation Finalizer
+   → deterministic Mode B coordinator]
+→ [若无 raster path：fallback semantic Reader → reader-observations.json → deterministic Mode B coordinator]
+→ Gate A canonical drawing.json
 → 根据当前 drawing.json 新生成 frozen plan
 → runner build --drawing <current-drawing>
 → runner check
@@ -325,8 +352,8 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 ### 4.1 Mode B 当前请求 artifact isolation
 
 - 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
-- 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops 不得复用；只有本轮从当前明确 raster path 成功运行 prepare-reader-input 生成的 reader-input.json 与其中列出的 crops 才能作为 Reader 的非权威 geometry-only 辅助。
-- Reader 必须从当前图纸重新生成一次性 reader-observations.json；旧 observations 不得复用。
+- 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / hybrid-ocr-report / structural-context-queries / structural-context-answers 不得复用；只有本轮 fresh Hybrid Frontend 生成并在 manifest 中列出的 artifact 才属于当前 raster 前端。
+- raster 路径必须由本轮 Hybrid Adapter + Reader Observation Finalizer 重新生成一次性 reader-observations.json；fallback 路径才由 Reader 直接生成；旧 observations 均不得复用。
 - observations 写出后必须由本轮 fresh coordinator state 独占生成 reader-capture、drawing-evidence、semantic-draft、confirmation artifacts 与 canonical drawing；Agent 不得手动重建或覆盖这些中间 artifact。
 - coordinator Gate A PASS 后必须重新运行 Planner，只从 state 指向的本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。

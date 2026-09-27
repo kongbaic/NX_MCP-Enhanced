@@ -7,40 +7,54 @@ references and are not normal runtime input.
 
 ## 1. Mission
 
-Read the current engineering drawing once as a continuous first-pass session
-and produce exactly one immutable `reader-observations-v1` payload.
+For a current request with an explicit runtime-local raster path, normal production
+Mode B does **not** run the full free-form semantic Reader first. The sole raster
+front-end entry is:
 
-The semantic Reader stops after `reader-observations.json`. The pipeline then
-runs deterministic `assemble-reader-capture` once to produce ReaderCapture v2.
-Do not run check-capture, link-capture, Resolver, Gate A, Planner, Runner or NX
-until that deterministic assembly succeeds.
+~~~text
+python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>
+~~~
+
+That coordinator owns deterministic Reader input preparation, production Whole +
+Wide-Local Hybrid OCR, and the structural query plan. It intentionally stops at
+`phase=awaiting_structural_context`. The Agent then acts only as the bounded
+Structural Reader: inspect each listed `query.image_path` once and write
+`structural-context-answers-v1` containing only view_kind, directly visible overall
+X/Y/Z facts allowed by that view, the exact query evidence label, and unresolved
+reasons. Do not answer feature inventory, cross-view identity, local feature values,
+dimension endpoint ownership, start side, termination, or pixel-derived coordinates.
+
+Resume exactly once with:
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>
+~~~
+
+The resume path owns Structural Context assembly → Hybrid Adapter → Reader Observation
+Finalizer → deterministic Mode B coordinator. Do not hand-write
+`partial-reader-observations.json` or `reader-observations.json` on this raster path.
+
+Only when the current request has no explicit runtime-local raster path, or the input
+is not raster, use the fallback semantic Reader defined below: read the current
+engineering drawing once as a continuous first-pass session and produce exactly one
+immutable `reader-observations-v1` payload, then hand it to the Mode B coordinator.
 
 Do not read historical artifacts, tests, fixtures, expected answers, benchmark
 operator documents, previous Agent results, or downstream outputs.
 
 ### Deterministic Reader input bundle
 
-When the current request provides a runtime-local raster path, the only production A0.5 invocation is:
-
-~~~text
-python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>
-~~~
-
-Do not reinterpret `prepare-reader-input` as a Python module. Do not invoke
-`nx_mcp.drawing_intelligence.prepare_reader_input` or
-`nx_mcp.drawing_intelligence.reader_input_prep`. Do not search source files,
-enumerate modules, or inspect implementation to discover an alternate entrypoint.
-The first A0.5 failure is terminal for the production run; report it and STOP.
-
+On the Hybrid raster path, `prepare-reader-input` is an internal implementation
+stage owned by `run-hybrid-frontend`; the Agent must not invoke it separately.
+The first Hybrid Frontend failure is terminal for the production run; report it and
+STOP. On the fallback semantic path, no raster path may be scanned or guessed.
 
 The current engineering drawing remains the sole authoritative geometry source.
 
-When the pipeline successfully generated the current `reader-input.json` from the
-explicit runtime-local path of the current uploaded raster drawing, Reader normally reads:
-
-- the current source drawing;
-- exactly one current `reader-input.json`;
-- exactly one current `reader-contact-sheet.png`.
+When Hybrid Frontend successfully generated the current `reader-input.json`, its
+Structural Reader may inspect only the image paths listed by
+`structural-context-queries.json`. The fallback semantic Reader may use the source
+drawing directly under the rules below.
 
 Do not open all individual crops sequentially. Only when one specific contact-sheet
 panel is unreadable may Reader open the corresponding already-listed crop from the
@@ -65,7 +79,17 @@ Hard boundaries:
 
 ## 2. Runtime discipline
 
-Use one continuous interpretation pass:
+### Hybrid raster Structural Reader
+
+For each structural query, inspect exactly its listed `image_path` once and answer
+only the fields allowed by the generated query contract. Evidence must be exactly the
+query's `evidence_label`. If view_kind is unresolved, provide a structured unresolved
+reason and no overall facts. Never use OCR output, pixel scale, old artifacts, or
+another crop to fill a missing structural answer.
+
+### Fallback semantic Reader
+
+Only on the no-raster/non-raster fallback path, use one continuous interpretation pass:
 
 1. identify standard views;
 2. capture view-local modeling entities;
@@ -75,9 +99,8 @@ Use one continuous interpretation pass:
 6. record explicit datum alignment and blocking ambiguity;
 7. assemble one compact `reader-observations-v1` payload using temporary local keys;
 8. write `reader-observations.json` exactly once;
-9. run deterministic `assemble-reader-capture` exactly once;
-10. if assembly fails, stop without a second interpretation or second observations file;
-11. if assembly succeeds, freeze the resulting `reader-capture.json`.
+9. immediately hand it to the deterministic Mode B coordinator;
+10. if the coordinator blocks, stop without a second interpretation or second observations file.
 
 Inspect the source drawing and the contact sheet directly. Do not open every listed
 crop as a checklist. Open at most the specific existing crop needed for an unreadable
@@ -324,8 +347,13 @@ must be an association, not unresolved.
 
 ## 9. Freeze
 
-Write `reader-observations.json` exactly once. Normal production Mode B must
-immediately hand control to the deterministic coordinator:
+On the Hybrid raster path, `resume-hybrid-frontend` writes the canonical
+`reader-observations.json` through Hybrid Adapter + Reader Observation Finalizer and
+immediately hands it to the deterministic Mode B coordinator. The Agent must not
+create or rewrite that observations file.
+
+On the no-raster/non-raster fallback path, write `reader-observations.json` exactly
+once and immediately hand control to the deterministic coordinator:
 
 ~~~text
 python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>

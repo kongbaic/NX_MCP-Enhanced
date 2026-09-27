@@ -29,12 +29,12 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 1. 在开始 drawing interpretation 前，按“运行时与路径”的 Mode B 规则只定位并读取一次 runtime-config.json；本轮固定使用该 runtime，之后不得重新发现或切换 runtime。
 2. 正常 Mode B Reader 只读取 references/reader-runtime-contract.md + references/nx-drawing-rules.md。禁止为了“再确认规则”重复读取完整 drawing-reader.md / reader-capture-contract.md；两者仅供开发、审计或单独排障，不是正常运行时输入。
 2a. 仅当用户明确要求 bounded semantic query / Region Query Reader 性能验收时，先立即记录本轮 smoke_start。新的性能验收默认只读 references/reader-candidate-value-contract.md，执行 Candidate Value-Only Reader v3.2：deterministic setup 先生成 candidate overlay 与 reader-candidate-queries.json；Agent 每个 query 只能直接视觉读取 query.image_path 一次，只为每个已列出的 target 返回可见正数值或 null，禁止输出 dimension/not_dimension/uncertain 分类，禁止判断 endpoint ownership、feature ownership、cross-view identity、datum 或其它工程语义；每个 query 后立即写 reader-candidate-value-<query_id>.json，全部 query 完成后只允许调用 deterministic assemble-reader-candidate-values 生成 reader-candidate-value-partial-observations.json。只有用户明确要求 Candidate-Addressed v3/v3.1 时才读 references/reader-candidate-addressed-contract.md；只有用户明确要求 Token Reader v2 时才读 references/reader-bounded-token-contract.md；只有用户明确要求 legacy strict smoke 时才读 references/reader-bounded-query-contract.md。所有 smoke 都必须在各自合同规定的 partial observations 产物后 STOP，不得继续 ReaderCapture / linker / Resolver / Gate A / Planner / Runner / NX；严禁 PIL/Pillow、OpenCV、System.Drawing、PowerShell/.NET 图像代码、GetPixel/LockBits、ASCII 图、OCR、像素坐标测量、边线检测或任何二次程序化图像分析；证据不足保持 null/unresolved。该 smoke 未经验收前不得替代正常 Mode B 主线。
-3. 当前上传工程图是本轮 interpretation 的唯一权威几何输入。若当前请求环境已明确提供本轮上传工程图的 runtime-local raster 路径，A0.5 唯一允许的执行形式是 runtime-config 指定的 `python_exe -m nx_mcp.drawing_intelligence prepare-reader-input <current-raster-path> <workspace_root>`，只执行一次。禁止把 `prepare-reader-input` 猜成 Python 模块名，禁止调用 `-m nx_mcp.drawing_intelligence.prepare_reader_input` / `-m nx_mcp.drawing_intelligence.reader_input_prep`，也禁止用 Get-ChildItem、源码搜索、模块枚举或读取实现文件来发现入口。该唯一命令首次返回非零、written!=true 或 schema 不正确时立即 BLOCKED / STOP，不得换入口重试。成功后 Reader 默认只读取当前原图、当前 reader-input.json 与当前 reader-contact-sheet.png；禁止顺序打开全部单张 crop。只有 contact sheet 中某个已列出的具体区域无法辨认时，才允许打开 manifest 中对应的那一张现成 crop；不得直接读取 raw-evidence.json / reader-visual-aid.json；不得创建额外 crop。随后按 reader-runtime-contract.md 完成一次连续 first-pass，只写一次 immutable reader-observations.json。
-4. reader-observations.json 写出后，正常 Mode B 必须立即把控制权交给 deterministic coordinator。使用 runtime-config 指定的 python_exe 执行：`python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>`。artifact prefix 必须是本轮 workspace_root 直属的全新前缀，不能复用任何已有 state/capture/evidence/draft/drawing 输出。
-5. coordinator 是正常 Mode B 从 observations 到 Gate A 的唯一生产入口。Agent 禁止再手动串联 `assemble-reader-capture`、`check-capture`、`link-capture`、`gate0`、`resolve`、`request-confirmations`、`apply-confirmations`、`canonicalize-drawing` 或 `validate-drawing`。这些独立命令仅供开发、审计或用户明确要求的单步排障，不得在正常生产运行中代替 coordinator。
-6. coordinator 初次返回：exit code=0 且 phase=gate_a_pass 时，唯一允许向后传递的工程图语义输入是 state 中记录的本轮 canonical drawing artifact；exit code=4 且 phase=awaiting_confirmation 时，只允许读取本轮 confirmation-request artifact 并向用户展示其中 1..3 个结构化 option；其它 exit code / phase 一律 BLOCKED / STOP。Mode B 从 A0.5 Reader input preparation 到 Gate A 的任何前端失败都不属于 Controlled Self-Healing，即使错误文本包含 schema / contract / validation 也不得套用模式 A 或阶段 C 的修复规则。
-7. 若 phase=awaiting_confirmation，用户只能从 confirmation-request 已提供的 option_id 中选择。Agent 把选择写成独立 user-confirmations.json 后，只允许执行一次：`python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>`。resume 内部负责 apply-confirmations → second resolve → Gate A；只有 exit code=0、phase=gate_a_pass 才允许继续。其它结果立即 BLOCKED / STOP；禁止第二轮确认、禁止重写 observations、禁止重新看图。
-8. coordinator 接管后，正常运行禁止为了处理错误去读取 reader_observations.py、identity_linker.py、resolver.py、runner.py、schema、tool signatures 或其它实现源码，也禁止重新读取完整 Skill/合同“研究下一步”。首次 coordinator 返回 terminal/blocked 后，不得改写 reader-observations.json，不得换新 artifact prefix 重试，不得第二次调用 coordinator；只报告首次 coordinator state / phase / errors 并 STOP。只有用户明确要求开发排障时才允许进入源码审计。
+3. 当前上传工程图是本轮 interpretation 的唯一权威几何输入。若当前请求环境明确提供本轮上传工程图的 runtime-local raster 路径，正常 Mode B 的唯一前端入口是 runtime-config 指定的：`python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>`。该命令只允许执行一次；它内部独占执行 deterministic Reader prep（含 prepare-reader-input）→ production Whole + Wide-Local Hybrid OCR → structural-context query plan。Agent 在该 raster 路径下禁止自行调用 `prepare-reader-input`、`run-hybrid-ocr`，也禁止跳过 Hybrid OCR 改走完整自由视觉 first-pass。
+4. `run-hybrid-frontend` 正常返回 exit code=4、phase=awaiting_structural_context。此时 Agent 只允许读取本轮 `structural-context-queries.json`，逐个直接查看 query.image_path 一次，并写一个 `structural-context-answers-v1`：只回答 query_id、view_kind、query 视图直接标出的 overall_dimension_facts、原样 evidence_label 与 unresolved。禁止在 Structural Reader 阶段判断 feature inventory、cross-view identity、feature/local value、dimension endpoint ownership、start side、termination 或 pixel→mm；无法唯一判断就写 unresolved，不得猜。
+5. structural answers 写出后只允许执行一次：`python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>`。resume 内部独占执行 structural context assembly → Hybrid Adapter → Reader Observation Finalizer → deterministic Mode B coordinator；Agent 不得手工拼接 partial-reader-observations.json / reader-observations.json，也不得绕过 Hybrid Adapter。
+6. Hybrid Frontend resume 返回 exit code=0、phase=mode_b_gate_a_pass 时，唯一允许向后传递的是其 `mode_b` 子报告/state 指向的本轮 canonical drawing artifact。若 exit code=4、phase=mode_b_awaiting_confirmation，只允许读取其 `mode_b` 子报告指向的 confirmation-request 并向用户展示现有 1..3 个 option；用户选择后只允许执行一次 `python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>`。其它 exit code / phase 一律 BLOCKED / STOP；禁止第二轮确认。
+7. 若当前请求没有明确 runtime-local raster 路径或输入不是 raster，才允许使用 reader-runtime-contract.md 的 fallback semantic Reader：当前图纸一次连续 first-pass → immutable reader-observations.json → `python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>`。该 fallback 不得扫描寻找 raster，也不得调用 Hybrid Frontend 猜路径。
+8. Hybrid Frontend 或 Mode B coordinator 接管后，正常运行禁止为了处理错误读取实现源码、schema、tool signatures，禁止重写 observations/partial observations，禁止换 fresh prefix 重试，禁止绕过 state machine 手工串联 `assemble-reader-capture` / `link-capture` / `resolve` / Gate A。首次 terminal/blocked 即报告并 STOP；前端失败不属于 Controlled Self-Healing。只有用户明确要求开发排障时才允许源码审计。
 9. Gate A PASS 后根据 state 指向的本轮 canonical drawing.json 从零生成新的 frozen plan；Planner 只读取该 drawing.json，不得读取中间 reader-capture、drawing-evidence 或 semantic-draft。
 10. 固定执行 runner.py build <current-frozen> <current-executable> --drawing <current-drawing>，随后 check 当前 executable，再调用 Runner。
 11. 本轮 interpretation 开始后，禁止主动读取或把工作区中的旧 raw-evidence、reader-visual-aid、reader-input、reader-contact-sheet、reader-crops、reader-observations、mode-b-state、reader-capture、drawing-evidence、semantic-draft、drawing、frozen/executable plan、旧 report、旧 run_history.json、旧 PRT/STEP 当作当前任务输入或规划参考。禁止扫描工作区寻找可复用历史 plan；文件名、零件类型或尺寸看起来相同也不构成复用依据。
@@ -50,12 +50,15 @@ description: 作者：抖音 无趣。Siemens NX 自动建模统一入口。支�
 → PRT + STEP
 
 二维工程图
-→ [若有明确 raster path：prepare-reader-input → reader-input.json + reader-contact-sheet.png]
-→ 一次性 reader-observations.json
-→ deterministic Mode B coordinator
-   ├─ PASS → Gate A canonical drawing.json
-   ├─ awaiting_confirmation → 一次用户确认 → coordinator resume → Gate A
-   └─ 其它结果 → STOP
+→ [有明确 raster path：run-hybrid-frontend
+   → Hybrid OCR
+   → awaiting_structural_context
+   → bounded Structural Reader answers
+   → resume-hybrid-frontend
+   → Hybrid Adapter / Reader finalizer
+   → deterministic Mode B coordinator]
+→ [无 raster path：fallback semantic Reader → reader-observations.json → deterministic Mode B coordinator]
+→ Gate A canonical drawing.json
 → 建模规划
 → Plan Runner
 → Siemens NX

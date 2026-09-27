@@ -152,6 +152,7 @@ def test_gate_a_uses_frozen_runtime_runner(tmp_path: Path):
     assert result["ok"] is True
     assert drawing.is_file()
 
+
 def _confirmation_graph() -> EvidenceGraph:
     return EvidenceGraph(
         overall_dimensions=OverallDimensions(
@@ -314,12 +315,8 @@ def test_confirmation_resume_closes_once_then_passes_gate_a(
     assert report["stage_timings"]["apply_confirmations"]["status"] == "passed"
     assert report["stage_timings"]["second_resolve"]["status"] == "passed"
     assert report["stage_timings"]["gate_a"]["status"] == "passed"
-    assert Path(
-        report["artifacts"]["confirmed_evidence"]
-    ).is_file()
-    assert Path(
-        report["artifacts"]["confirmed_draft"]
-    ).is_file()
+    assert Path(report["artifacts"]["confirmed_evidence"]).is_file()
+    assert Path(report["artifacts"]["confirmed_draft"]).is_file()
     assert Path(report["artifacts"]["drawing"]).is_file()
 
     code2, report2 = resume_mode_b_coordinator(state_path, answers_path)

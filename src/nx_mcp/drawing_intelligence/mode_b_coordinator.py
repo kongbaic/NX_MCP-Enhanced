@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -68,10 +69,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, path)
     except Exception:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary)
-        except FileNotFoundError:
-            pass
         raise
 
 
@@ -107,8 +106,7 @@ def _load_runtime() -> dict[str, Any]:
     runtime_workspace = Path(runtime["workspace_root"]).resolve()
     if runtime_workspace != workspace:
         raise ModeBCoordinatorError(
-            "runtime workspace mismatch: "
-            f"env={workspace} config={runtime_workspace}"
+            f"runtime workspace mismatch: env={workspace} config={runtime_workspace}"
         )
 
     python_exe = Path(runtime["python_exe"]).resolve()
@@ -133,9 +131,7 @@ def _require_workspace_file(path: Path, workspace: Path, label: str) -> Path:
     try:
         resolved.relative_to(workspace)
     except ValueError as exc:
-        raise ModeBCoordinatorError(
-            f"{label} must be inside NX_MCP_WORKSPACE: {resolved}"
-        ) from exc
+        raise ModeBCoordinatorError(f"{label} must be inside NX_MCP_WORKSPACE: {resolved}") from exc
     return resolved
 
 
@@ -270,9 +266,7 @@ def _run_gate_a(
     try:
         result = json.loads(stdout) if stdout else {}
     except json.JSONDecodeError as exc:
-        raise ModeBCoordinatorError(
-            "Gate A returned non-JSON output"
-        ) from exc
+        raise ModeBCoordinatorError("Gate A returned non-JSON output") from exc
 
     if process.returncode != 0:
         errors = result.get("errors") if isinstance(result, dict) else None
@@ -318,9 +312,7 @@ def run_mode_b_coordinator(
             "artifact prefix",
         )
         if prefix.parent != workspace:
-            raise ModeBCoordinatorError(
-                "artifact prefix must be directly inside NX_MCP_WORKSPACE"
-            )
+            raise ModeBCoordinatorError("artifact prefix must be directly inside NX_MCP_WORKSPACE")
     except Exception as exc:
         return 2, {
             "schema": STATE_SCHEMA,
@@ -351,11 +343,7 @@ def run_mode_b_coordinator(
             ],
         }
 
-    stale = [
-        str(path)
-        for key, path in artifacts.items()
-        if key != "state" and path.exists()
-    ]
+    stale = [str(path) for key, path in artifacts.items() if key != "state" and path.exists()]
     if stale:
         return 2, {
             "schema": STATE_SCHEMA,
@@ -438,12 +426,8 @@ def run_mode_b_coordinator(
         evidence_payload = gate0.evidence.model_dump(mode="json")
         _atomic_write_json(artifacts["evidence"], evidence_payload)
         graph = EvidenceGraph.model_validate(evidence_payload)
-        state["summary"]["linker_blocking_unresolved"] = linked.report.get(
-            "blocking_unresolved", 0
-        )
-        state["summary"]["gate0_total_unresolved"] = gate0.report.get(
-            "total_unresolved", 0
-        )
+        state["summary"]["linker_blocking_unresolved"] = linked.report.get("blocking_unresolved", 0)
+        state["summary"]["gate0_total_unresolved"] = gate0.report.get("total_unresolved", 0)
     except (
         OSError,
         ValueError,
@@ -478,9 +462,7 @@ def run_mode_b_coordinator(
         return _fail(state, state_path, stage, exc, stage_started)
 
     blocking_unresolved = sum(
-        1
-        for item in resolution.unresolved
-        if item.get("required_for_modeling", True)
+        1 for item in resolution.unresolved if item.get("required_for_modeling", True)
     )
     conflicts = len(resolution.conflicts)
     state["summary"].update(
@@ -522,9 +504,7 @@ def run_mode_b_coordinator(
                     "awaiting_confirmation route requires a confirmation request"
                 ),
             )
-        state["summary"]["confirmation_question_count"] = confirmation_request[
-            "question_count"
-        ]
+        state["summary"]["confirmation_question_count"] = confirmation_request["question_count"]
         _set_phase(
             state,
             state_path,
@@ -535,14 +515,8 @@ def run_mode_b_coordinator(
         return 4, _public_report(state, state_path)
 
     if route == "terminal_failed":
-        reason = (
-            "resolver_conflict"
-            if conflicts
-            else "blocking_unresolved_not_confirmable"
-        )
-        state.setdefault("errors", []).append(
-            {"stage": "resolve", "message": reason}
-        )
+        reason = "resolver_conflict" if conflicts else "blocking_unresolved_not_confirmable"
+        state.setdefault("errors", []).append({"stage": "resolve", "message": reason})
         _set_phase(
             state,
             state_path,
@@ -616,19 +590,14 @@ def resume_mode_b_coordinator(
         if not state_path.is_file():
             raise ModeBCoordinatorError(f"Mode B state missing: {state_path}")
         if not answers_path.is_file():
-            raise ModeBCoordinatorError(
-                f"user confirmations missing: {answers_path}"
-            )
+            raise ModeBCoordinatorError(f"user confirmations missing: {answers_path}")
 
         state = _load_json(state_path)
         if state.get("schema") != STATE_SCHEMA:
             raise ModeBCoordinatorError(
                 f"unsupported Mode B state schema: {state.get('schema')!r}"
             )
-        if (
-            state.get("phase") != "awaiting_confirmation"
-            or state.get("terminal") is True
-        ):
+        if state.get("phase") != "awaiting_confirmation" or state.get("terminal") is True:
             return 3, {
                 "schema": STATE_SCHEMA,
                 "status": "blocked",
@@ -703,10 +672,7 @@ def resume_mode_b_coordinator(
         previous_elapsed = float(previous_elapsed)
     except (TypeError, ValueError):
         previous_elapsed = 0.0
-    state["_started_monotonic"] = time.monotonic() - max(
-        0.0,
-        previous_elapsed,
-    )
+    state["_started_monotonic"] = time.monotonic() - max(0.0, previous_elapsed)
     state["user_confirmations"] = str(answers_path)
     _set_phase(
         state,
@@ -719,12 +685,8 @@ def resume_mode_b_coordinator(
     stage = "apply_confirmations"
     stage_started = time.monotonic()
     try:
-        graph = EvidenceGraph.model_validate(
-            _load_json(artifacts["evidence"])
-        )
-        answer_model = ConfirmationAnswers.model_validate(
-            _load_json(answers_path)
-        )
+        graph = EvidenceGraph.model_validate(_load_json(artifacts["evidence"]))
+        answer_model = ConfirmationAnswers.model_validate(_load_json(answers_path))
         before_request = build_confirmation_request(graph)
         confirmed = apply_confirmation_answers(graph, answer_model)
         after_request = build_confirmation_request(confirmed)
@@ -771,9 +733,7 @@ def resume_mode_b_coordinator(
         return _fail(state, state_path, stage, exc, stage_started)
 
     blocking_unresolved = sum(
-        1
-        for item in resolution.unresolved
-        if item.get("required_for_modeling", True)
+        1 for item in resolution.unresolved if item.get("required_for_modeling", True)
     )
     conflicts = len(resolution.conflicts)
     state["summary"].update(
@@ -789,10 +749,7 @@ def resume_mode_b_coordinator(
 
     if not resolution.ok:
         state.setdefault("errors", []).append(
-            {
-                "stage": "second_resolve",
-                "message": "second_resolve_not_closed",
-            }
+            {"stage": "second_resolve", "message": "second_resolve_not_closed"}
         )
         _set_phase(
             state,

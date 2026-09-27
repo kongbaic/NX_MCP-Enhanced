@@ -506,6 +506,15 @@ def run_mode_b_coordinator(
     )
 
     if route == "awaiting_confirmation":
+        if confirmation_request is None:
+            return _fail(
+                state,
+                state_path,
+                "confirmation_request",
+                ModeBCoordinatorError(
+                    "awaiting_confirmation route requires a confirmation request"
+                ),
+            )
         state["summary"]["confirmation_question_count"] = confirmation_request[
             "question_count"
         ]

@@ -1154,8 +1154,12 @@ async def run_preflight(transport, plan: dict, mode: str, overwrite_allowed: boo
                   "state": payload.get("state")}
 
 
-async def verify_created_work_part(transport, expected_path: str) -> str:
-    """Fail closed unless nx_create_part made expected_path the real NX Work Part."""
+async def verify_created_work_part(
+    transport,
+    expected_path: str,
+    preserved_displayed_path: str | None = None,
+) -> str:
+    """Fail closed unless create switched Work Part and preserved the old display."""
     resp = await transport.call("nx_status", {})
     active = resp.get("active_part")
     actual_path = str(_item_id(active)) if active else ""
@@ -1168,6 +1172,18 @@ async def verify_created_work_part(transport, expected_path: str) -> str:
             "nx_create_part did not become active work part: "
             f"expected={expected_path!r} actual={actual_path!r}"
         )
+    if preserved_displayed_path:
+        displayed = [
+            _norm_path(str(item))
+            for item in (resp.get("displayed_parts") or [])
+            if item
+        ]
+        if _norm_path(preserved_displayed_path) not in displayed:
+            raise PlanError(
+                "nx_create_part did not preserve pre-existing displayed part: "
+                f"expected_preserved={preserved_displayed_path!r} "
+                f"displayed_parts={resp.get('displayed_parts')!r}"
+            )
     return actual_path
 
 
@@ -1210,6 +1226,7 @@ def _timing_bucket(tool: str, op_index: int, validation_start_idx: int) -> str:
 async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
                    wall_start: float | None = None, history: RunHistory | None = None,
                    mode: str = "normal", planned_part: str | None = None,
+                   preserved_displayed_part: str | None = None,
                    timing_state: dict[str, Any] | None = None) -> dict:
     ops = plan.get("operations") or []
     symbols = Symbols()
@@ -1286,7 +1303,11 @@ async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
 
             if tool == "nx_create_part":
                 expected_created_path = str(args.get("path") or planned_part or "")
-                await verify_created_work_part(transport, expected_created_path)
+                await verify_created_work_part(
+                    transport,
+                    expected_created_path,
+                    preserved_displayed_part,
+                )
 
             # selection (list steps with selection_criteria)
             selection = None
@@ -7158,6 +7179,9 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     if blocked is not None:
         return finish(blocked, 1)
     planned_part = info["planned_part"] if info else None
+    preserved_displayed_part = None
+    if info and info.get("state") == "unrelated_part_preserved_for_create":
+        preserved_displayed_part = info.get("active_part") or None
     if planned_part:
         history.record_start(
             planned_part, args.mode, args.plan, repair_attempt=args.repair_attempt
@@ -7165,6 +7189,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     report = await run_plan(plan, transport, plan_path=args.plan,
                             wall_start=t_start, history=history,
                             mode=args.mode, planned_part=planned_part,
+                            preserved_displayed_part=preserved_displayed_part,
                             timing_state=timing_state)
     report["preflight_elapsed"] = round(preflight_elapsed, 3)
     report["repair_attempt"] = int(args.repair_attempt)

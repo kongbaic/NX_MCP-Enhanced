@@ -498,8 +498,10 @@ def main() -> None:
         'preserve_active = payload.get("state") == "unrelated_part_preserved_for_create"',
         "async def verify_created_work_part(",
         '"nx_create_part did not become active work part: "',
+        '"nx_create_part did not preserve pre-existing displayed part: "',
+        "preserved_displayed_part",
         'if tool == "nx_create_part":',
-        "await verify_created_work_part(transport, expected_created_path)",
+        "await verify_created_work_part(",
     ):
         if token not in runner_source:
             fail(f"Runner create-new work-part implementation regression: missing {token}")
@@ -519,6 +521,22 @@ def main() -> None:
     ):
         if token not in runner_source:
             fail(f"Mode B plan-contract implementation regression: missing {token}")
+
+    loader_source = (ROOT / "loader" / "NX_MCP_Loader.cs").read_text(encoding="utf-8")
+    for token in (
+        "SetAllowMultipleDisplayedParts(true)",
+        "GetDisplayedParts()",
+        '"displayed_parts"',
+        "new part replaced a pre-existing displayed part",
+    ):
+        if token not in loader_source:
+            fail(f"Loader multi-display preservation regression: missing {token}")
+
+    loader_bridge_source = (
+        ROOT / "src" / "nx_mcp" / "loader_bridge.py"
+    ).read_text(encoding="utf-8")
+    if '"displayed_parts": displayed_parts' not in loader_bridge_source:
+        fail("Loader bridge displayed_parts propagation regression")
 
     drawing_cli_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"

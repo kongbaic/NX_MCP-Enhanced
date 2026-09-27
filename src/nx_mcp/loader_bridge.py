@@ -258,12 +258,18 @@ def _adapt(method: str, params: dict[str, Any], resp: dict[str, Any]) -> dict[st
         active = None
         if resp.get("part"):
             active = _ref("part", resp["part"], resp["part"])
+        displayed_parts = [
+            str(item)
+            for item in (resp.get("displayed_parts") or [])
+            if isinstance(item, str) and item
+        ]
         return {
             "status": "success",
             "connected": True,
             "nx_version": resp.get("nx", _LOADER_VERSION),
             "bridge_protocol": 1,
             "active_part": active,
+            "displayed_parts": displayed_parts,
         }
     if method == "nx_create_part":
         return {"status": "success", "part": _ref("part", resp.get("part", params["path"]), part_id), "message": msg}

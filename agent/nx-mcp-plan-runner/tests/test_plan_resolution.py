@@ -761,8 +761,9 @@ def test_create_part_verifies_real_work_part_before_continuing():
     expected = r"C:\work\new_task.prt"
 
     class Transport:
-        def __init__(self, active_after_create):
+        def __init__(self, active_after_create, displayed_parts=None):
             self.active_after_create = active_after_create
+            self.displayed_parts = list(displayed_parts or [active_after_create])
 
         def resolve_path(self, path):
             return path
@@ -778,6 +779,7 @@ def test_create_part_verifies_real_work_part_before_continuing():
                 return {
                     "status": "success",
                     "active_part": ObjectRef(self.active_after_create),
+                    "displayed_parts": list(self.displayed_parts),
                 }
             raise AssertionError(f"unexpected tool {tool}")
 
@@ -808,6 +810,29 @@ def test_create_part_verifies_real_work_part_before_continuing():
     assert wrong["status"] == "failed"
     assert wrong["failed_step"] == 1
     assert "did not become active work part" in wrong["steps"][0]["error"]
+
+    old_part = r"C:\work\previous_runner_part.prt"
+    preserved = asyncio.run(
+        R.run_plan(
+            plan,
+            Transport(expected, [old_part, expected]),
+            planned_part=expected,
+            preserved_displayed_part=old_part,
+        )
+    )
+    assert preserved["status"] == "success"
+
+    lost = asyncio.run(
+        R.run_plan(
+            plan,
+            Transport(expected, [expected]),
+            planned_part=expected,
+            preserved_displayed_part=old_part,
+        )
+    )
+    assert lost["status"] == "failed"
+    assert lost["failed_step"] == 1
+    assert "did not preserve pre-existing displayed part" in lost["steps"][0]["error"]
 
 
 def test_preflight_planned_benchmark_clean_allowed():

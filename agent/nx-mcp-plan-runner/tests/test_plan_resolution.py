@@ -1176,7 +1176,7 @@ def test_unified_capability_dispatch_deduplicates_shared_xy_implementation():
                 "axis": "X",
                 "diameter": 4,
                 "through": True,
-                "centerline": {"y": -4, "z": 5},
+                "centerline": {"y": -4, "z": 2},
             },
             {
                 "id": "HY",
@@ -1184,7 +1184,7 @@ def test_unified_capability_dispatch_deduplicates_shared_xy_implementation():
                 "axis": "Y",
                 "diameter": 4,
                 "axial_range": [-10, 10],
-                "centerline": {"x": 0, "z": 5},
+                "centerline": {"x": 0, "z": 8},
             },
         ],
     }

@@ -34,6 +34,18 @@ class StructuralRegionQuery(_StrictStructuralModel):
     instruction_key: Literal["structural-context-v1"] = "structural-context-v1"
 
 
+class StructuralViewAxes(_StrictStructuralModel):
+    horizontal: Axis
+    vertical: Axis
+
+
+_CANONICAL_VIEW_AXIS_MAP: dict[ViewKind, dict[str, Axis]] = {
+    "front": {"horizontal": "X", "vertical": "Z"},
+    "side": {"horizontal": "Y", "vertical": "Z"},
+    "top": {"horizontal": "X", "vertical": "Y"},
+}
+
+
 class StructuralContextQueryPlan(_StrictStructuralModel):
     schema_version: Literal["structural-context-queries-v1"] = Field(
         default="structural-context-queries-v1",
@@ -41,6 +53,7 @@ class StructuralContextQueryPlan(_StrictStructuralModel):
     )
     queries: list[StructuralRegionQuery] = Field(min_length=1, max_length=4)
     rules: dict[str, bool]
+    view_axis_map: dict[ViewKind, StructuralViewAxes]
     answer_template: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -51,6 +64,15 @@ class StructuralContextQueryPlan(_StrictStructuralModel):
             raise ValueError("structural query ids must be unique")
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("structural query region ids must be unique")
+        actual_axis_map = {
+            view_kind: {
+                "horizontal": axes.horizontal,
+                "vertical": axes.vertical,
+            }
+            for view_kind, axes in self.view_axis_map.items()
+        }
+        if actual_axis_map != _CANONICAL_VIEW_AXIS_MAP:
+            raise ValueError("structural view_axis_map must match canonical view semantics")
         return self
 
 
@@ -97,13 +119,6 @@ class StructuralContextAnswers(_StrictStructuralModel):
         alias="schema",
     )
     answers: list[StructuralRegionAnswer] = Field(min_length=1, max_length=4)
-
-
-_VISIBLE_AXES: dict[ViewKind, set[Axis]] = {
-    "front": {"X", "Z"},
-    "side": {"Y", "Z"},
-    "top": {"X", "Y"},
-}
 
 
 def build_structural_context_queries(
@@ -163,6 +178,7 @@ def build_structural_context_queries(
             "local_feature_values": False,
             "pixel_measurement": False,
         },
+        view_axis_map=_CANONICAL_VIEW_AXIS_MAP,
         answer_template={
             "schema": "structural-context-answers-v1",
             "answers": [
@@ -230,7 +246,8 @@ def assemble_structural_context(
             )
         )
 
-        visible_axes = _VISIBLE_AXES[answer.view_kind]
+        view_axes = plan.view_axis_map[answer.view_kind]
+        visible_axes = {view_axes.horizontal, view_axes.vertical}
         seen_axes: set[Axis] = set()
         for fact in answer.overall_dimension_facts:
             if fact.axis not in visible_axes:

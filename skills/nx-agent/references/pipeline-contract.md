@@ -62,7 +62,9 @@ query.image_path 一次。queries JSON 内置 schema-valid 的 `answer_template`
 Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶层 schema 保持
 `structural-context-answers-v1`，禁止自行设计字段。每个 answer 的 query_id 与 evidence
 保持模板原值，只允许填写 view_kind、overall_dimension_facts 与 unresolved；每个 overall
-fact 固定为 axis + positive value + evidence:[原样 evidence_label]。view_kind 已确定时必须
+fact 固定为 axis + positive value + evidence:[原样 evidence_label]。overall fact 的 axis
+不得由 Agent 自行推断，必须读取 queries JSON 的 `view_axis_map`：front horizontal=X /
+vertical=Z，side horizontal=Y / vertical=Z，top horizontal=X / vertical=Y。view_kind 已确定时必须
 清空 `pending_structural_visual_read`；无法唯一判断时保留 structured unresolved 且不得写
 overall_dimension_facts。禁止增加其它字段。
 

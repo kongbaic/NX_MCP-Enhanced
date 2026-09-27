@@ -83,6 +83,12 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False
     assert plan.rules["pixel_measurement"] is False
+    assert plan.view_axis_map["front"].horizontal == "X"
+    assert plan.view_axis_map["front"].vertical == "Z"
+    assert plan.view_axis_map["side"].horizontal == "Y"
+    assert plan.view_axis_map["side"].vertical == "Z"
+    assert plan.view_axis_map["top"].horizontal == "X"
+    assert plan.view_axis_map["top"].vertical == "Y"
     template = StructuralContextAnswers.model_validate(plan.answer_template)
     assert [item.query_id for item in template.answers] == ["S001", "S002"]
     assert template.answers[0].evidence == ["structural:R1:crop"]
@@ -108,6 +114,14 @@ def test_structural_context_builds_independent_overall_facts():
         for item in context.overall_dimension_facts
     )
     assert context.confirmed_start_sides == []
+
+
+def test_structural_query_plan_rejects_axis_map_drift():
+    plan = build_structural_context_queries(_reader_input())
+    payload = plan.model_dump(mode="json", by_alias=True)
+    payload["view_axis_map"]["front"]["vertical"] = "Y"
+    with pytest.raises(ValidationError, match="view_axis_map"):
+        StructuralContextQueryPlan.model_validate(payload)
 
 
 def test_structural_context_rejects_axis_not_visible_in_view():

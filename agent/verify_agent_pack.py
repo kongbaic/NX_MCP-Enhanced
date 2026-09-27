@@ -237,6 +237,8 @@ def main() -> None:
         "awaiting_structural_context",
         "answer_template",
         "原样复制 answer_template",
+        "view_axis_map",
+        "front horizontal=X / vertical=Z",
         "pending_structural_visual_read",
         "structural-context-answers-v1",
         "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
@@ -313,6 +315,8 @@ def main() -> None:
         "fresh-hybrid-run-directory 必须在调用前不存在",
         "answer_template",
         "原样复制该模板",
+        "view_axis_map",
+        "front horizontal=X /",
         "pending_structural_visual_read",
         "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json",
     ):

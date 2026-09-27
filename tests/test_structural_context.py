@@ -6,7 +6,10 @@ from pydantic import ValidationError
 from nx_mcp.drawing_intelligence.structural_context import (
     StructuralContextAnswers,
     StructuralContextError,
+    StructuralContextQueryPlan,
+    StructuralOverallFact,
     StructuralRegionAnswer,
+    StructuralRegionQuery,
     assemble_structural_context,
     build_structural_context_queries,
 )
@@ -248,3 +251,85 @@ def test_structural_context_rejects_conflicting_cross_view_overall():
 
     with pytest.raises(StructuralContextError, match="conflicting structural overall facts"):
         assemble_structural_context(plan, answers)
+
+
+def test_structural_models_fail_closed_on_invalid_evidence_and_answer_shape():
+    with pytest.raises(ValidationError, match="evidence must contain"):
+        StructuralOverallFact.model_validate(
+            {"axis": "X", "value": 40, "evidence": [" "]}
+        )
+
+    with pytest.raises(ValidationError, match="structured unresolved reason"):
+        StructuralRegionAnswer.model_validate(
+            {
+                "query_id": "S001",
+                "view_kind": None,
+                "evidence": [],
+                "overall_dimension_facts": [],
+                "unresolved": [],
+            }
+        )
+
+    with pytest.raises(ValidationError, match="cannot carry overall dimension facts"):
+        StructuralRegionAnswer.model_validate(
+            {
+                "query_id": "S001",
+                "view_kind": None,
+                "evidence": [],
+                "overall_dimension_facts": [
+                    {
+                        "axis": "X",
+                        "value": 40,
+                        "evidence": ["structural:R1:crop"],
+                    }
+                ],
+                "unresolved": ["view kind unresolved"],
+            }
+        )
+
+    with pytest.raises(ValidationError, match="resolved view_kind requires evidence"):
+        StructuralRegionAnswer.model_validate(
+            {
+                "query_id": "S001",
+                "view_kind": "front",
+                "evidence": [],
+                "overall_dimension_facts": [],
+                "unresolved": [],
+            }
+        )
+
+
+def test_structural_query_plan_rejects_duplicate_query_and_region_ids():
+    query = {
+        "kind": "structural_context",
+        "region_id": "R1",
+        "image_path": "C:/work/R1.png",
+        "evidence_label": "structural:R1:crop",
+        "instruction_key": "structural-context-v1",
+    }
+
+    with pytest.raises(ValidationError, match="query ids must be unique"):
+        StructuralContextQueryPlan.model_validate(
+            {
+                "schema": "structural-context-queries-v1",
+                "queries": [
+                    {"query_id": "S001", **query},
+                    {"query_id": "S001", **{**query, "region_id": "R2"}},
+                ],
+                "rules": {},
+            }
+        )
+
+    with pytest.raises(ValidationError, match="region ids must be unique"):
+        StructuralContextQueryPlan.model_validate(
+            {
+                "schema": "structural-context-queries-v1",
+                "queries": [
+                    {"query_id": "S001", **query},
+                    {"query_id": "S002", **query},
+                ],
+                "rules": {},
+            }
+        )
+
+    StructuralRegionQuery.model_validate({"query_id": "S001", **query})

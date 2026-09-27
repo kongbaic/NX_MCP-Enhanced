@@ -1022,13 +1022,14 @@ def _plan_from_operation_contract(contract):
             args["sketch_id"] = sketch_id
         if "target_body_id" in item.get("requires", []):
             args["target_body_id"] = "body_main"
-        operations.append(
-            {
-                "step": step,
-                "tool": tool,
-                "tool_args": args,
-            }
-        )
+        operation = {
+            "step": step,
+            "tool": tool,
+            "tool_args": args,
+        }
+        for key, value in (item.get("operation_fields") or {}).items():
+            operation[key] = json.loads(json.dumps(value))
+        operations.append(operation)
         step += 1
     return {"operations": operations}
 
@@ -1378,6 +1379,60 @@ def test_thread_adapter_materializes_split_entry_operation_contract():
     }
 
 
+def test_thread_operation_contract_operation_fields_round_trip():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 32,
+            "height_z": 66,
+        },
+        "profile": _rect_profile("YZ", -16, 16, 0, 66),
+        "features": [
+            {
+                "id": "T1",
+                "type": "threaded_hole",
+                "thread_spec": "M6",
+                "thread_depth": 12,
+                "axis": "X",
+                "centerline": {"y": 8, "z": 58},
+                "material_side": "min",
+                "entry_endpoint": "max",
+            },
+        ],
+    }
+    capability = R.resolve_modeling_capabilities(
+        "threaded_hole",
+        "X",
+    )[0][0]
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    assert errors == []
+    assert payload is not None
+    contract = payload["operation_contracts"][0]
+    plan = _plan_from_operation_contract(contract)
+
+    marked = [
+        op
+        for op in plan["operations"]
+        if isinstance(op.get("thread_surrogate_use"), dict)
+    ]
+    assert len(marked) == 1
+    assert marked[0]["thread_surrogate_use"] == {
+        "feature_id": "T1",
+        "owner_feature_id": "T1",
+        "material_side": "min",
+        "entry_endpoint": "max",
+    }
+    assert R.dispatch_gate_b_validator(capability, plan, payload) == []
+
+    marked[0].pop("thread_surrogate_use")
+    gate_errors = R.dispatch_gate_b_validator(capability, plan, payload)
+    assert any(
+        "operation count differs from drawing" in item
+        for item in gate_errors
+    )
+
+
 def test_unified_capability_dispatch_selects_native_z_hole():
     drawing = {
         "overall_dimensions": {
@@ -1674,8 +1729,14 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
     assert result["planner_contract"] == {
         "fixed_args_policy": "copy_exact_key_set_and_values",
         "preserve_explicit_false_zero_and_empty_objects": True,
+        "operation_fields_policy": "copy_exact_to_frozen_operation_root",
+        "operation_fields_are_not_tool_args": True,
         "requires_policy": "fill_only_declared_symbolic_wiring",
         "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
+        "must_stop_after_first_stage_b_failure": True,
+        "may_edit_frozen_after_stage_b_failure": False,
+        "may_retry_stage_b": False,
+        "may_inspect_source_after_stage_b_failure": False,
     }
     assert result["contracts"][0]["implementation_id"] == (
         "principal-axis-thread-v1"

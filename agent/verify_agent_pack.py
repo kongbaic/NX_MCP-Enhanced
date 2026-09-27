@@ -253,6 +253,8 @@ def main() -> None:
         "planner_contract",
         "完整 key set + 完整 value",
         "显式 `false`",
+        "operation_fields",
+        "frozen operation 顶层",
         "requires",
         "禁止第二次 build/check",
         "B 阶段不属于 Controlled Self-Healing",
@@ -288,6 +290,8 @@ def main() -> None:
         "operation_contracts + planner_contract",
         "完整 key set 与 value 原样复制",
         "`reverse:false`",
+        "`operation_fields`",
+        "frozen operation 顶层",
         "`requires`",
         "runner build --drawing <current-drawing.json>",
         "runner check --drawing <current-drawing.json>",
@@ -360,9 +364,13 @@ def main() -> None:
                 fail(f"Stage C normal Runner entry regression in {name}: missing {token}")
 
     for token in (
-        "fixed_args 的完整 key set",
+        "fixed_args",
+        "完整 key set",
         "false",
-        "数值 `0`",
+        "`0`",
+        "operation_fields",
+        "frozen operation",
+        "thread_surrogate_use",
         "requires",
     ):
         if token not in runner_contract:
@@ -459,6 +467,9 @@ def main() -> None:
         "pcontracts.set_defaults(func=_cmd_plan_contracts)",
         "operation_contracts",
         '"fixed_args_policy": "copy_exact_key_set_and_values"',
+        '"operation_fields_policy": "copy_exact_to_frozen_operation_root"',
+        '"must_stop_after_first_stage_b_failure": True',
+        '"may_retry_stage_b": False',
         '"stage_b_failure_policy": "stop_no_retry_no_source_inspection"',
         "dispatch_planner_adapter(",
         "capability_plan_errors(",

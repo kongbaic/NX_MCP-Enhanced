@@ -49,7 +49,7 @@
 
 ## 4. tool_args 规则
 
-Mode B 在 `plan-contracts` 返回 operation_contracts 后，Planner 对每个 operation 的 `fixed_args` 执行**精确复制**：tool_args 中必须包含 fixed_args 的完整 key set 且值完全相等；`false`、数值 `0`、空对象/空集合即使与工具默认值一致也不得省略。Planner 只能再加入该 operation 的 `requires` 所声明的 symbol wiring。禁止根据本节的 optional 参数定义删除 Adapter 已显式给出的 fixed_args。
+Mode B 在 `plan-contracts` 返回 operation_contracts 后，Planner 对每个 contract operation 做机械映射：`tool` 原样；`fixed_args` 精确复制到 tool_args（完整 key set 且值完全相等，`false` / `0` / 空对象不得省略）；`operation_fields` 若存在，其每个 key/value 原样复制到 frozen operation **顶层**，例如 `{"operation_fields":{"thread_surrogate_use":{...}}}` 必须生成 operation 顶层 `"thread_surrogate_use": {...}`，它不是 NX tool_args；最后只补 `requires` 声明的 symbol wiring。禁止根据 optional 参数/default 语义删除 Adapter 已显式给出的任何字段。
 
 1. `tool_args` 只能包含该 certified tool 真正支持的参数（required + optional，见 certified-tool-contract.json）。
 2. `selection_criteria` / `expectation` 及其任何内部字段（`match` / `expected_count` / `purpose` / `checks` / `expect_extent` 等）**禁止**放入 `tool_args`。

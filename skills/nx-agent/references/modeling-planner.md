@@ -377,8 +377,10 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 → Mode B 调用已安装 Runner：
   `plan-contracts <current-drawing.json>`
 → 直接消费返回的 selected implementation + geometries + operation_contracts + planner_contract；
-  `fixed_args` 必须把完整 key set 与 value 原样复制到对应 tool_args，
-  包括显式 false / 0 / 空对象；不得省略“默认值”、重算、改写或反推。
+  每个 contract operation：
+  `tool` 原样；
+  `fixed_args` 完整 key set + value 原样复制到 tool_args（含 false / 0 / 空对象）；
+  `operation_fields` 若存在则逐 key 原样展开到 frozen operation 顶层，禁止放入 tool_args；
   Planner 只补 `requires` 指定的 symbol wiring 与步骤顺序
 → Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
   `capabilities --feature-kind <kind> --axis <X|Y|Z>`
@@ -409,8 +411,10 @@ Capability 边界：
   plane/reverse/start_offset/distance）的转换归 deterministic Adapter 所有。
   Planner 不得自行重新解释这些参数；每个 operation 必须保留 fixed_args 的
   **完整字段集合和完整值**，包括 `reverse:false`、数值 `0` 和空对象，禁止依赖
-  certified tool/NX 的默认参数而省略字段。只允许按 `requires` 补 symbol binding、
-  安排合法 step 顺序以及非工程真值的执行编排。
+  certified tool/NX 的默认参数而省略字段。operation contract 若携带
+  `operation_fields`，其中字段同样是 deterministic Adapter 输出，必须原样展开到
+  frozen operation 顶层（如 `thread_surrogate_use`），不能放进 tool_args 或丢弃。
+  只允许按 `requires` 补 symbol binding、安排合法 step 顺序以及非工程真值的执行编排。
 
 
 ## 13. 输出格式（默认 FAST，强制）

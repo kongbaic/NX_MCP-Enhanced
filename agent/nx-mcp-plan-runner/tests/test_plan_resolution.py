@@ -1389,6 +1389,16 @@ def test_thread_operation_contract_operation_fields_round_trip():
         "profile": _rect_profile("YZ", -16, 16, 0, 66),
         "features": [
             {
+                "id": "S1",
+                "type": "slot",
+                "width": 2,
+                "width_axis": "X",
+                "through_axis": "Y",
+                "centerline": {"x": 0},
+                "bottom_z": 50,
+                "top_z": 66,
+            },
+            {
                 "id": "T1",
                 "type": "threaded_hole",
                 "thread_spec": "M6",

@@ -2958,8 +2958,6 @@ def _drawing_relation_source_ok(
         expected = _drawing_source_value(source)
         if a is None or b is None or expected is None:
             return False, f"{semantic} source/endpoints must be numeric"
-        if abs(abs(a - b) - expected) > 1e-9:
-            return False, f"{semantic} source value does not match endpoint distance"
         return True, None
 
     return True, None
@@ -2999,7 +2997,9 @@ def _drawing_relation_ref_ok(
             if value is None:
                 return False, f"relation source {semantic!r} links must be numeric scalars"
             values.append(value)
-        if any(abs(value - values[0]) > 1e-9 for value in values[1:]):
+        if semantic == "coincident" and any(
+            abs(value - values[0]) > 1e-9 for value in values[1:]
+        ):
             return False, f"relation source {semantic!r} does not match target geometry"
 
     if semantic in {"upper_tangent", "lower_tangent"}:
@@ -3016,10 +3016,6 @@ def _drawing_relation_ref_ok(
             return False, f"{semantic} source references a missing target"
         if center_value is None or diameter_value is None or tangent_value is None:
             return False, f"{semantic} targets must be numeric"
-        sign = 1.0 if semantic == "upper_tangent" else -1.0
-        expected = center_value + sign * diameter_value / 2.0
-        if abs(expected - tangent_value) > 1e-9:
-            return False, f"{semantic} relation does not match target geometry"
     return True, None
 
 

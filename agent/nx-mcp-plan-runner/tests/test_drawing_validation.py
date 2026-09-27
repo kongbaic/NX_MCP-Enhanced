@@ -607,6 +607,28 @@ class DrawingGateATests(unittest.TestCase):
         errors = R.check_drawing_json(data)
         self.assertTrue(any("endpoints must be center coordinates" in error for error in errors))
 
+    def test_center_distance_relation_value_is_not_recomputed_in_gate_a(self) -> None:
+        data = relation_fixture()
+        source(data, "S_CENTER_DISTANCE")["value"] = 14
+        self.assertEqual([], R.check_drawing_json(data))
+
+    def test_alignment_relation_value_is_not_recomputed_in_gate_a(self) -> None:
+        data = relation_fixture()
+        data["source_ledger"].append(
+            {
+                "id": "S_ALIGN",
+                "semantic": "alignment",
+                "links": [
+                    "feature:F_REFERENCE.centerline.z",
+                    "feature:F_TARGET.centerline.z",
+                ],
+            }
+        )
+        derived = data["derived"][0]
+        derived["expr"] = {"target": "feature:F_REFERENCE.centerline.z"}
+        derived["relation_refs"] = ["S_ALIGN"]
+        self.assertEqual([], R.check_drawing_json(data))
+
     def test_derived_expr_arithmetic_is_not_recomputed_in_gate_a(self) -> None:
         data = relation_fixture()
         derived = data["derived"][0]

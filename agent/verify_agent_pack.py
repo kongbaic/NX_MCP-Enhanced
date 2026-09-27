@@ -378,6 +378,8 @@ def main() -> None:
     ).read_text(encoding="utf-8")
     if "prepare-reader-input" not in drawing_cli_source:
         fail("Reader preparation CLI regression: missing prepare-reader-input")
+    if "run-hybrid-ocr" not in drawing_cli_source:
+        fail("Hybrid OCR CLI regression: missing run-hybrid-ocr")
     if "assemble-reader-capture" not in drawing_cli_source:
         fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
     if "build-reader-semantic-queries" not in drawing_cli_source:
@@ -439,9 +441,14 @@ def main() -> None:
         if legacy in top or legacy in pipeline_contract or legacy in reader_runtime:
             fail(f"legacy multi-step Reader preparation remains in runtime contract: {legacy}")
 
-    for token in ("import cv2, numpy", 'pip install -e "$RepoRoot[drawing]"'):
+    for token in (
+        "import cv2, numpy, rapidocr, onnxruntime",
+        "numpy + opencv-python-headless + rapidocr + onnxruntime",
+        'pip install -e "$RepoRoot[drawing]"',
+        "工程图依赖验证失败",
+    ):
         if token not in install_agent:
-            fail(f"Reader raster dependency install regression: missing {token}")
+            fail(f"Reader drawing dependency install regression: missing {token}")
 
     for token in ("所有 `Doubao.exe` 进程", "安装器不会自动终止 Doubao 进程"):
         if token not in readme:

@@ -31,6 +31,7 @@ from .hybrid_capture_adapter import (
     HybridCaptureAdapterError,
     adapt_hybrid_ocr_report,
 )
+from .hybrid_ocr import run_hybrid_ocr
 from .identity_linker import IdentityLinkError, link_reader_capture
 from .raster_evidence import extract_raw_evidence
 from .reader_candidate_answers import (
@@ -127,6 +128,52 @@ def _cmd_prepare_reader_input(args: argparse.Namespace) -> int:
 
     report.update(result)
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_run_hybrid_ocr(args: argparse.Namespace) -> int:
+    reader_input_path = str(Path(args.reader_input).resolve())
+    output_path = str(Path(args.out).resolve())
+    artifact_dir = (
+        str(Path(args.artifact_dir).resolve())
+        if args.artifact_dir is not None
+        else None
+    )
+    result: dict[str, Any] = {
+        "reader_input": reader_input_path,
+        "hybrid_report": output_path,
+        "artifact_dir": artifact_dir,
+        "written": False,
+        "schema": None,
+        "candidate_count": 0,
+        "accepted_count": 0,
+        "unresolved_count": 0,
+        "ocr_elapsed_s": {},
+        "errors": [],
+    }
+
+    try:
+        report = run_hybrid_ocr(
+            reader_input_path,
+            output_path,
+            artifact_dir=artifact_dir,
+        )
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        result["errors"].append(f"{type(exc).__name__}: {exc}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    result.update(
+        {
+            "written": True,
+            "schema": report.get("schema"),
+            "candidate_count": report.get("candidate_count", 0),
+            "accepted_count": report.get("accepted_count", 0),
+            "unresolved_count": report.get("unresolved_count", 0),
+            "ocr_elapsed_s": report.get("ocr_elapsed_s", {}),
+        }
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1045,6 +1092,15 @@ def main(argv: list[str] | None = None) -> int:
     prepare_reader.add_argument("image")
     prepare_reader.add_argument("workspace_root")
     prepare_reader.set_defaults(func=_cmd_prepare_reader_input)
+
+    hybrid_ocr = sub.add_parser(
+        "run-hybrid-ocr",
+        help="run the production Whole + Wide-Local Hybrid OCR frontend",
+    )
+    hybrid_ocr.add_argument("reader_input")
+    hybrid_ocr.add_argument("out")
+    hybrid_ocr.add_argument("--artifact-dir")
+    hybrid_ocr.set_defaults(func=_cmd_run_hybrid_ocr)
 
     extract_raster = sub.add_parser(
         "extract-raster-evidence",

@@ -405,15 +405,14 @@ def _collect_candidates(
     return candidates
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("reader_input")
-    parser.add_argument("output")
-    parser.add_argument("--artifact-dir")
-    args = parser.parse_args(argv)
-
-    reader_input_path = Path(args.reader_input).resolve()
-    output_path = Path(args.output).resolve()
+def run_hybrid_ocr(
+    reader_input: str | Path,
+    output: str | Path,
+    *,
+    artifact_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    reader_input_path = Path(reader_input).resolve()
+    output_path = Path(output).resolve()
     reader_input = load_json(reader_input_path)
     visual_aid_path = Path(str(reader_input["reader_visual_aid_path"])).resolve()
     source_path = Path(str(reader_input["source_raster_path"])).resolve()
@@ -427,12 +426,12 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(f"unable to read source raster: {source_path}")
     image_height, image_width = image.shape[:2]
 
-    artifact_dir = (
-        Path(args.artifact_dir).resolve()
-        if args.artifact_dir
+    artifact_root = (
+        Path(artifact_dir).resolve()
+        if artifact_dir is not None
         else output_path.parent / "dg-hybrid-ocr"
     )
-    crop_dir = artifact_dir / "crops"
+    crop_dir = artifact_root / "crops"
     crop_dir.mkdir(parents=True, exist_ok=True)
 
     region_lookup = {
@@ -444,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     candidates = _collect_candidates(visual_aid)
-    wide_sheet_path = artifact_dir / "dg-hybrid-wide.png"
+    wide_sheet_path = artifact_root / "dg-hybrid-wide.png"
     wide_sheet, wide_cells = build_sheet(
         image,
         candidates,
@@ -584,6 +583,21 @@ def main(argv: list[str] | None = None) -> int:
     output_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("reader_input")
+    parser.add_argument("output")
+    parser.add_argument("--artifact-dir")
+    args = parser.parse_args(argv)
+
+    report = run_hybrid_ocr(
+        args.reader_input,
+        args.output,
+        artifact_dir=args.artifact_dir,
     )
     print(_stdout_json(report))
     return 0

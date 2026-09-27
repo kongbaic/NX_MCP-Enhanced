@@ -1478,6 +1478,7 @@ def _refs_in(args: dict, kind: str) -> list[str]:
 
 def build_executable_plan(plan: dict) -> dict:
     """Convert a frozen planner plan into the executable form:
+    - explicit top-level plan_format marker,
     - explicit result_bindings (producer -> logical name of its first consumer),
     - explicit selection_binding + $selection references,
     - machine-readable retry metadata (declared safe retries only),
@@ -1485,6 +1486,7 @@ def build_executable_plan(plan: dict) -> dict:
     The modelling rules themselves are untouched.
     """
     out = copy.deepcopy(plan)
+    out["plan_format"] = "executable-v1"
     ops = out["operations"]
 
     sk_live: list[int] = []          # producer op indices with unbound sketch results
@@ -1695,6 +1697,8 @@ def check_plan(
         # Frozen plans are Planner output only. Executable-only extensions
         # must be produced by build, never hand-authored by the Planner.
         if not executable:
+            if plan.get("plan_format") is not None:
+                errors.append("frozen plan must not contain executable top-level field 'plan_format'")
             for key in ("result_bindings", "selection_binding", "retry"):
                 if key in op:
                     errors.append(
@@ -6996,7 +7000,13 @@ def _load_plan(path: str) -> dict:
 
 
 def _is_executable(plan: dict) -> bool:
-    return any(op.get("result_bindings") or op.get("selection_binding") for op in plan.get("operations") or [])
+    if plan.get("plan_format") == "executable-v1":
+        return True
+    # Backward compatibility for executable plans built before plan_format existed.
+    return any(
+        op.get("result_bindings") or op.get("selection_binding")
+        for op in plan.get("operations") or []
+    )
 
 
 async def _cmd_run(args: argparse.Namespace) -> int:

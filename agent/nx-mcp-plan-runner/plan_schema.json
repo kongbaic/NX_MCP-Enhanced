@@ -137,6 +137,11 @@
         "$selection.fast_structure.flange_top"
       ],
       "semantics": "tool_args values may reference the symbol table. $name resolves the names table (logical -> real NX id). $selection.name resolves a flat selection (list of indices); $selection.name.group resolves a named group. Bare logical names (frozen format) also resolve when present in the symbol table. A single-element selection list used where a scalar is expected (e.g. remove_face_index) unwraps to the element. Natural-language placeholders (e.g. \"<step49 匹配的 4 个 index>\") are NOT part of the executable format."
+    },
+    "top_level_marker": {
+      "name": "plan_format",
+      "value": "executable-v1",
+      "semantics": "Added by runner build even when no result_bindings or selection_binding are required. Frozen Planner output must not contain this field. Runner run uses it as the canonical executable identity marker; legacy executable plans with bindings remain accepted for backward compatibility."
     }
   },
   "selection_criteria_grammar": {

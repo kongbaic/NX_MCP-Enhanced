@@ -9,9 +9,9 @@
 - 当前 `plan_schema.json` 的 `schema_version` = **1.1**（冻结于 2026-09-18）。
 - 两种格式：
   - **frozen**（Planner 输出）：顶层含 `skill / mode / part / coordinate_system / notes / operations / final_validation / fallbacks`；`mode` 必填且只允许 `FAST | DIAGNOSTIC`；`operations` 必填。
-  - **executable**（Runner 执行格式）= frozen + 扩展字段（`result_bindings`、`selection_binding`、`retry`、`$references`）。
-- Runner 可读/校验两种格式；只有 executable 可被 `run` 执行。
-- **frozen 严禁手写 executable 扩展**：`result_bindings` / `selection_binding` /
+  - **executable**（Runner 执行格式）= frozen + build 写入的顶层 `plan_format: "executable-v1"` + 扩展字段（`result_bindings`、`selection_binding`、`retry`、`$references`）。
+- Runner 可读/校验两种格式；只有 executable 可被 `run` 执行。即使计划无需任何 result/selection binding（例如仅 `nx_create_part → nx_save_part`），build 也必须写入 `plan_format: "executable-v1"`，run 不得再以“是否存在 binding”作为唯一 executable 判据。
+- **frozen 严禁手写 executable 扩展**：顶层 `plan_format`、`result_bindings` / `selection_binding` /
   `retry` / `$references` 均只能由 build 生成。Runner 的 frozen check 与 build
   会 fail-closed；发现这些字段时直接拒绝，不生成 executable。
 

@@ -427,7 +427,7 @@ def test_build_executable_plan_resolves_all_references():
 
 
 def test_frozen_check_rejects_executable_only_fields():
-    plan = {"mode": "FAST", "operations": [{
+    plan = {"mode": "FAST", "plan_format": "executable-v1", "operations": [{
         "step": 1,
         "tool": "nx_list_edges",
         "tool_args": {"body_id": "body_main"},
@@ -438,6 +438,7 @@ def test_frozen_check_rejects_executable_only_fields():
         "topology_changes": False,
     }]}
     errs = R.check_plan(plan, executable=False)
+    assert any("plan_format" in e for e in errs)
     assert any("result_bindings" in e for e in errs)
     assert any("selection_binding" in e for e in errs)
     assert any("retry" in e for e in errs)
@@ -508,6 +509,38 @@ def test_plan_check_rejects_absolute_workspace_paths():
     errors = R.check_plan(plan, executable=False)
 
     assert sum("NX_MCP_WORKSPACE-relative" in item for item in errors) == 2
+
+
+def test_build_marks_binding_free_plan_executable():
+    frozen = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": "binding-free.prt", "units": "mm"},
+                "topology_changes": False,
+            },
+            {
+                "step": 2,
+                "tool": "nx_save_part",
+                "tool_args": {},
+                "topology_changes": False,
+            },
+        ],
+    }
+
+    assert R._is_executable(frozen) is False
+
+    executable = R.build_executable_plan(frozen)
+
+    assert executable["plan_format"] == "executable-v1"
+    assert not any(
+        op.get("result_bindings") or op.get("selection_binding")
+        for op in executable["operations"]
+    )
+    assert R._is_executable(executable) is True
+    assert R.check_plan(executable, executable=True) == []
 
 
 def test_cmd_run_early_failure_writes_requested_report(tmp_path=None):

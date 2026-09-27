@@ -738,6 +738,9 @@ def main() -> None:
             fail(f"Runner create-new preservation regression test missing: {token}")
 
     for token in (
+        'out["plan_format"] = "executable-v1"',
+        'plan.get("plan_format") == "executable-v1"',
+        "frozen plan must not contain executable top-level field 'plan_format'",
         "frozen plan must not contain executable field",
         "frozen plan must not contain executable reference",
         "frozen_errs = check_plan(",
@@ -751,6 +754,7 @@ def main() -> None:
     for token in (
         "test_frozen_check_rejects_executable_only_fields",
         "test_frozen_check_rejects_dollar_references",
+        "test_build_marks_binding_free_plan_executable",
     ):
         if token not in plan_tests:
             fail(f"Runner frozen-boundary test missing: {token}")

@@ -127,6 +127,9 @@ frozen plan 首次落盘前必须完成静态自检。B 阶段 build/check 失�
 
 ## 5. 阶段 C 与受控自动修复
 
+- B 阶段 build/check 全部 PASS 后，正常 attempt 1 必须直接执行本轮 current executable：
+  `python_exe runner.py run <current-executable.json> --workspace <workspace_root> --report <attempt1-report.json> --mode normal --repair-attempt 0`
+- 正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；不得改用 benchmark 模式。Runner report 是阶段 C 成败的唯一执行结果。
 - 单次 Runner 尝试严格 fail-fast：任意 modeling step 失败，当前尝试立即停止。
 - 每个任务最多允许 1 次 Controlled Self-Healing。
 - 只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题。

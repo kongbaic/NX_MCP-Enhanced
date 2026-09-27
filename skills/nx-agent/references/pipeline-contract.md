@@ -374,6 +374,20 @@ plan-contracts / build / check 任一失败即 B 失败。B 阶段失败不进�
 
 Runner 路径：<runtime-config.workspace_root>\nx-mcp-plan-runner\runner.py
 
+### 5.0 正常 attempt 1（唯一入口）
+
+B 阶段只有在 plan-contracts / build / check 全部 PASS 后，才允许执行本轮 current executable。正常 attempt 1 必须使用：
+
+~~~text
+python_exe runner.py run <current-executable.json>
+  --workspace <workspace_root>
+  --report <attempt1-report.json>
+  --mode normal
+  --repair-attempt 0
+~~~
+
+正常 attempt 1 禁止 `--allow-overwrite`、`--repair-report`，不得改用 benchmark 模式，也不得手工逐步调用 NX_MCP 绕过 Runner。阶段 C 成败只以该次 Runner report 为权威。
+
 ### 5.1 Preflight
 只允许：
 - 检查/启动 NX；

@@ -226,6 +226,7 @@ def main() -> None:
     )
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
+    runner_contract = (SKILL / "references" / "runner-contract.md").read_text(encoding="utf-8")
     for token in (
         "当前上传工程图",
         "唯一权威几何输入",
@@ -320,6 +321,24 @@ def main() -> None:
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
+
+    stage_c_contracts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "runner-contract.md": runner_contract,
+    }
+    for name, contract_text in stage_c_contracts.items():
+        for token in (
+            "正常 attempt 1",
+            "python_exe runner.py run <current-executable.json>",
+            "--workspace <workspace_root>",
+            "--report <attempt1-report.json>",
+            "--mode normal",
+            "--repair-attempt 0",
+            "禁止 `--allow-overwrite`",
+        ):
+            if token not in contract_text:
+                fail(f"Stage C normal Runner entry regression in {name}: missing {token}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")

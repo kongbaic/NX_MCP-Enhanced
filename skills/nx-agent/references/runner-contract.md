@@ -195,6 +195,18 @@ expectation 语法：`count` / `count_range` / `body_count`（nx_list_bodies）/
 
 Runner 安装目录包含 `runtime-config.json`，正常执行优先使用其中的 `python_exe` 与 `workspace_root`。
 
+正常 attempt 1 的固定调用是：
+
+~~~text
+python_exe runner.py run <current-executable.json>
+  --workspace <workspace_root>
+  --report <attempt1-report.json>
+  --mode normal
+  --repair-attempt 0
+~~~
+
+正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；这两个参数只属于受控 repair/benchmark 语义，不能用于首次正常执行。
+
 Loader 的 `nx_status` 必须以 NX 当前 `Session.Parts.Work` 为权威来源，不能直接
 读取可能已经失效的缓存 `_part`；用户在 NX 中关闭/切换零件后，resident Loader
 仍应保持 ready。若健康检查返回 `ok=false`，Runner 必须保留并报告 Loader 的

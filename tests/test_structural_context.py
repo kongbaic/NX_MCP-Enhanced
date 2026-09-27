@@ -154,3 +154,97 @@ def test_structural_answer_schema_forbids_feature_or_endpoint_fields():
                 "unresolved": [],
             }
         )
+
+
+def test_structural_query_builder_fails_closed_on_invalid_prep_contracts():
+    with pytest.raises(StructuralContextError, match="requires reader-input-v1"):
+        build_structural_context_queries({"schema": "wrong", "regions": []})
+
+    with pytest.raises(StructuralContextError, match="max_region_queries"):
+        build_structural_context_queries(_reader_input(), max_region_queries=0)
+
+    with pytest.raises(StructuralContextError, match="at least one region"):
+        build_structural_context_queries({"schema": "reader-input-v1", "regions": []})
+
+    with pytest.raises(StructuralContextError, match="exceeds bounded maximum"):
+        build_structural_context_queries(_reader_input(), max_region_queries=1)
+
+
+def test_structural_query_builder_fails_closed_on_malformed_regions():
+    with pytest.raises(StructuralContextError, match="must be an object"):
+        build_structural_context_queries(
+            {"schema": "reader-input-v1", "regions": ["not-an-object"]}
+        )
+
+    with pytest.raises(StructuralContextError, match="requires region_id"):
+        build_structural_context_queries(
+            {"schema": "reader-input-v1", "regions": [{"crop_path": "C:/work/R1.png"}]}
+        )
+
+    with pytest.raises(StructuralContextError, match="duplicate reader region"):
+        build_structural_context_queries(
+            {
+                "schema": "reader-input-v1",
+                "regions": [
+                    {"region_id": "R1", "crop_path": "C:/work/R1.png"},
+                    {"region_id": "R1", "crop_path": "C:/work/R1-copy.png"},
+                ],
+            }
+        )
+
+    with pytest.raises(StructuralContextError, match="requires crop_path"):
+        build_structural_context_queries(
+            {"schema": "reader-input-v1", "regions": [{"region_id": "R1"}]}
+        )
+
+
+def test_structural_context_rejects_duplicate_answer_query_ids():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1]["query_id"] = "S001"
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="query_ids must be unique"):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_context_rejects_answer_plan_mismatch():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1]["query_id"] = "S999"
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="do not match query plan"):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_context_rejects_duplicate_overall_axis():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["overall_dimension_facts"].append(
+        {
+            "axis": "X",
+            "value": 40,
+            "evidence": ["structural:R1:crop"],
+        }
+    )
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="repeats overall axis X"):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_context_rejects_conflicting_cross_view_overall():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1]["overall_dimension_facts"].append(
+        {
+            "axis": "Z",
+            "value": 65,
+            "evidence": ["structural:R2:crop"],
+        }
+    )
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="conflicting structural overall facts"):
+        assemble_structural_context(plan, answers)

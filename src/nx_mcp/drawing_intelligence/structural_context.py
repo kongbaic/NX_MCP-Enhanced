@@ -137,9 +137,7 @@ def build_structural_context_queries(
             raise StructuralContextError(f"duplicate reader region {region_id!r}")
         seen_regions.add(region_id)
         if not isinstance(image_path, str) or not image_path:
-            raise StructuralContextError(
-                f"reader region {region_id!r} requires crop_path"
-            )
+            raise StructuralContextError(f"reader region {region_id!r} requires crop_path")
 
         queries.append(
             StructuralRegionQuery(
@@ -174,9 +172,7 @@ def _assert_evidence(
     query_id: str,
 ) -> None:
     if set(evidence) != {expected}:
-        raise StructuralContextError(
-            f"query {query_id!r} evidence must be exactly {expected!r}"
-        )
+        raise StructuralContextError(f"query {query_id!r} evidence must be exactly {expected!r}")
 
 
 def assemble_structural_context(
@@ -247,8 +243,8 @@ def assemble_structural_context(
             )
 
     by_axis: dict[Axis, list[float]] = {"X": [], "Y": [], "Z": []}
-    for fact in overall_facts:
-        by_axis[fact.axis].append(fact.value)
+    for overall_fact in overall_facts:
+        by_axis[overall_fact.axis].append(overall_fact.value)
 
     for axis in ("X", "Y", "Z"):
         values = by_axis[axis]

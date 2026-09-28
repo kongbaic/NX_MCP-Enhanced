@@ -284,6 +284,34 @@ def test_hybrid_decision_accepts_decimal_split_by_local_rotation():
     )
 
 
+def test_hybrid_decision_accepts_structured_decimal_with_extra_bare_local_noise():
+    module = _load_module()
+
+    assert module._hybrid_decision(
+        "4.5",
+        {"1", "4", "5"},
+        global_text_strength=3,
+        local_strong_tokens=set(),
+    ) == (
+        "4.5",
+        "structured_global_decimal_confirmed_by_local_fragment_subset",
+    )
+
+    assert module._hybrid_decision(
+        "4.5",
+        {"1", "4", "5"},
+        global_text_strength=1,
+        local_strong_tokens=set(),
+    ) == (None, "global_local_token_disagreement")
+
+    assert module._hybrid_decision(
+        "4.5",
+        {"1", "4", "5"},
+        global_text_strength=3,
+        local_strong_tokens={"1"},
+    ) == (None, "global_local_token_disagreement")
+
+
 def test_hybrid_decision_fails_closed_on_disagreement():
     module = _load_module()
 

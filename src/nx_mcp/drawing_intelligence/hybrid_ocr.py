@@ -272,6 +272,9 @@ def _local_linear_tokens(items: list[dict[str, Any]]) -> set[str]:
 def _hybrid_decision(
     global_token: str | None,
     local_tokens: set[str],
+    *,
+    global_text_strength: int = 0,
+    local_strong_tokens: set[str] | None = None,
 ) -> tuple[str | None, str]:
     if global_token is None:
         return None, "no_global_proposal"
@@ -282,8 +285,20 @@ def _hybrid_decision(
     if decimal is not None:
         integer_part = _canonical_number(decimal.group(1))
         fractional_part = decimal.group(2).lstrip("0")
-        if fractional_part and local_tokens == {integer_part, fractional_part}:
+        decimal_fragments = {integer_part, fractional_part} if fractional_part else set()
+        if decimal_fragments and local_tokens == decimal_fragments:
             return global_token, "global_decimal_confirmed_by_local_fragments"
+        strong_local = local_strong_tokens or set()
+        if (
+            decimal_fragments
+            and global_text_strength >= 3
+            and decimal_fragments.issubset(local_tokens)
+            and not strong_local
+        ):
+            return (
+                global_token,
+                "structured_global_decimal_confirmed_by_local_fragment_subset",
+            )
 
     return None, "global_local_token_disagreement"
 
@@ -606,9 +621,26 @@ def run_hybrid_ocr(
         )
         local_items = wide_assigned[candidate_id]
         local_tokens = _local_linear_tokens(local_items)
+        global_text_strength = max(
+            (
+                _linear_text_strength(str(item.get("text") or ""))
+                for item in assignments
+                if global_token is not None and str(item.get("token")) == global_token
+            ),
+            default=0,
+        )
+        local_strong_tokens = {
+            token
+            for item in local_items
+            if _linear_text_strength(str(item.get("text") or "")) >= 2
+            for token in _linear_tokens(str(item.get("text") or ""))
+            if token != global_token
+        }
         accepted, decision_reason = _hybrid_decision(
             global_token,
             local_tokens,
+            global_text_strength=global_text_strength,
+            local_strong_tokens=local_strong_tokens,
         )
         results.append(
             {

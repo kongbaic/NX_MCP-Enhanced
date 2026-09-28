@@ -14,12 +14,7 @@ from nx_mcp.drawing_intelligence.structural_context import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHKSS_CONTEXT = (
-    ROOT
-    / "benchmarks"
-    / "hybrid_integration"
-    / "shkss20-40-adapter-context.json"
-)
+SHKSS_CONTEXT = ROOT / "benchmarks" / "hybrid_integration" / "shkss20-40-adapter-context.json"
 
 
 def _symmetry_hint(axis_direction: str) -> dict[str, object]:
@@ -104,19 +99,19 @@ def test_shkss_multiview_direct_closure_ignores_bilateral_hints_without_rotation
     context = assemble_structural_context(plan, answers)
 
     expected_overalls = {
-        (item["axis"], float(item["value"]))
-        for item in expected["overall_dimension_facts"]
+        (item["axis"], float(item["value"])) for item in expected["overall_dimension_facts"]
     }
-    actual_overalls = {
-        (item.axis, float(item.value))
-        for item in context.overall_dimension_facts
-    }
+    actual_overalls = {(item.axis, float(item.value)) for item in context.overall_dimension_facts}
 
-    assert actual_overalls == expected_overalls == {
-        ("X", 40.0),
-        ("Y", 32.0),
-        ("Z", 66.0),
-    }
+    assert (
+        actual_overalls
+        == expected_overalls
+        == {
+            ("X", 40.0),
+            ("Y", 32.0),
+            ("Z", 66.0),
+        }
+    )
     assert [(item.region_id, item.view_kind) for item in context.region_views] == [
         ("R1", "front"),
         ("R2", "side"),
@@ -169,10 +164,7 @@ def test_single_view_axial_section_uses_deterministic_vertical_hint_for_rotation
 
     context = assemble_structural_context(plan, answers)
 
-    assert {
-        (item.axis, float(item.value))
-        for item in context.overall_dimension_facts
-    } == {
+    assert {(item.axis, float(item.value)) for item in context.overall_dimension_facts} == {
         ("X", 300.0),
         ("Z", 75.0),
     }

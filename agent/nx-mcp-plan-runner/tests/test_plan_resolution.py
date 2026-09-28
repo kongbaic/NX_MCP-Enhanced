@@ -638,7 +638,6 @@ def _run_args(plan_path, directory, *, drawing):
 
 
 def test_mode_b_run_rejects_mismatched_source_drawing_before_loader(tmp_path=None):
-    import asyncio
     import tempfile
 
     directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()

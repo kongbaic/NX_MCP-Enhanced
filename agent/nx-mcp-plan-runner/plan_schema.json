@@ -21,6 +21,12 @@
         "required": false
       },
       {
+        "name": "source_drawing",
+        "required": false,
+        "type": "string",
+        "semantics": "Required for Mode B plans built/checked with --drawing. Copy exactly from plan-contracts result.drawing; build/check fail when the canonicalized path differs."
+      },
+      {
         "name": "coordinate_system",
         "required": false
       },

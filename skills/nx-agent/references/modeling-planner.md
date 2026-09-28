@@ -8,7 +8,7 @@
 **输出**：一份可直接执行的 NX_MCP 建模计划 JSON（`mode` + `operations` +
 `final_validation` + `fallbacks`），以及执行阶段的硬性规则。
 
-Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功生成的canonical `drawing.json`，并重新生成frozen plan。禁止消费`semantic-draft.json`、previous/latest/first-matching drawing、Agent手写或仅经独立`validate-drawing`通过的drawing；禁止读取、复用或参考工作区旧frozen/executable/report/PRT/STEP。build必须使用`--drawing <current-drawing>`绑定本轮输入。
+Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功生成的canonical `drawing.json`，并重新生成frozen plan。禁止消费`semantic-draft.json`、previous/latest/first-matching drawing、Agent手写或仅经独立`validate-drawing`通过的drawing；禁止读取、复用或参考工作区旧frozen/executable/report/PRT/STEP。执行 `plan-contracts <current-drawing>` 后，必须把其结果顶层 `drawing` 原样复制为 frozen 顶层 `source_drawing`；build/check 必须使用同一 `--drawing <current-drawing>`，Runner 会做 canonical absolute-path 精确匹配，禁止跨轮换图。
 
 **本模块 不做**：
 - 图片识别、OCR、工程图读取（由工程图读取模块 负责，完成后把结构化 JSON 交给本模块）

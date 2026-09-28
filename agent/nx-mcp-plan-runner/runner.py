@@ -5478,6 +5478,26 @@ def capability_plan_errors(
     return errors
 
 
+def _canonical_drawing_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _mode_b_source_drawing_errors(plan: dict, drawing_path: str) -> list[str]:
+    source = plan.get("source_drawing")
+    if not isinstance(source, str) or not source.strip():
+        return [
+            "Mode B plan missing source_drawing copied from plan-contracts output"
+        ]
+    expected = _canonical_drawing_path(drawing_path)
+    actual = _canonical_drawing_path(source)
+    if actual != expected:
+        return [
+            "Mode B source_drawing mismatch: "
+            f"plan={source!r} cli_drawing={drawing_path!r}"
+        ]
+    return []
+
+
 def _drawing_modeling_context(
     path: str,
 ) -> tuple[dict, list[dict], list[str]]:
@@ -7231,7 +7251,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_plan_contracts(args: argparse.Namespace) -> int:
     """Expose deterministic capability/geometry/operation contracts to Planner."""
     timing_state = _begin_command_timing("B2_PLAN_CONTRACTS", args.drawing)
-    drawing_path = args.drawing
+    drawing_path = os.path.abspath(args.drawing)
     _drawing, dispatches, errors = _drawing_modeling_context(drawing_path)
 
     contracts: list[dict] = []
@@ -7271,6 +7291,7 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
             "operation_fields_policy": "copy_exact_to_frozen_operation_root",
             "operation_fields_are_not_tool_args": True,
             "requires_policy": "fill_only_declared_symbolic_wiring",
+            "source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level",
             "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
             "must_stop_after_first_stage_b_failure": True,
             "may_edit_frozen_after_stage_b_failure": False,
@@ -7296,6 +7317,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         validate_embedded_thread_contract=not bool(drawing_path),
     )
     if drawing_path:
+        errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
         _drawing, dispatches, drawing_errors = _drawing_modeling_context(
             drawing_path
         )
@@ -7324,6 +7346,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     geometries: list[dict] = []
     dispatches: list[dict] = []
     if drawing_path:
+        frozen_errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
         _drawing, dispatches, drawing_errors = _drawing_modeling_context(
             drawing_path
         )

@@ -2057,12 +2057,14 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
     assert exit_code == 0
     assert result["ok"] is True
     assert result["errors"] == []
+    assert result["drawing"] == os.path.abspath(drawing_path)
     assert result["planner_contract"] == {
         "fixed_args_policy": "copy_exact_key_set_and_values",
         "preserve_explicit_false_zero_and_empty_objects": True,
         "operation_fields_policy": "copy_exact_to_frozen_operation_root",
         "operation_fields_are_not_tool_args": True,
         "requires_policy": "fill_only_declared_symbolic_wiring",
+        "source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level",
         "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
         "must_stop_after_first_stage_b_failure": True,
         "may_edit_frozen_after_stage_b_failure": False,
@@ -2080,6 +2082,30 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
         "reverse": True,
         "operation": "subtract",
     }
+
+
+def test_mode_b_source_drawing_binding_requires_exact_current_path(tmp_path=None):
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    stale = os.path.join(directory, "stale-drawing.json")
+    plan = {
+        "source_drawing": os.path.abspath(current),
+        "operations": [{"step": 1, "tool": "nx_status", "tool_args": {}}],
+    }
+
+    assert R._mode_b_source_drawing_errors(plan, current) == []
+
+    missing = dict(plan)
+    missing.pop("source_drawing")
+    missing_errors = R._mode_b_source_drawing_errors(missing, current)
+    assert any("missing source_drawing" in item for item in missing_errors)
+
+    stale_plan = dict(plan)
+    stale_plan["source_drawing"] = os.path.abspath(stale)
+    stale_errors = R._mode_b_source_drawing_errors(stale_plan, current)
+    assert any("source_drawing mismatch" in item for item in stale_errors)
 
 
 def test_plan_contracts_cli_fails_closed_on_drawing_context_error(tmp_path=None):

@@ -799,6 +799,16 @@ def main() -> None:
             fail(f"Runner create-new preservation regression test missing: {token}")
 
     for token in (
+        "def _mode_b_source_drawing_errors(",
+        '"source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level"',
+        "Mode B plan missing source_drawing copied from plan-contracts output",
+        "Mode B source_drawing mismatch:",
+        "test_mode_b_source_drawing_binding_requires_exact_current_path",
+    ):
+        if token not in runner_source and token not in plan_tests:
+            fail(f"Runner Mode B drawing-path binding regression: missing {token}")
+
+    for token in (
         'out["plan_format"] = "executable-v1"',
         'plan.get("plan_format") == "executable-v1"',
         "frozen plan must not contain executable top-level field 'plan_format'",

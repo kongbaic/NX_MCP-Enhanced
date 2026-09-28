@@ -373,7 +373,7 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 - raster 路径必须由本轮 Hybrid Adapter + Reader Observation Finalizer 重新生成一次性 reader-observations.json；fallback 路径才由 Reader 直接生成；旧 observations 均不得复用。
 - observations 写出后必须由本轮 fresh coordinator state 独占生成 reader-capture、drawing-evidence、semantic-draft、confirmation artifacts 与 canonical drawing；Agent 不得手动重建或覆盖这些中间 artifact。
 - coordinator Gate A PASS 后必须重新运行 Planner，只从 state 指向的本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。
-- 写 frozen plan 前必须执行 `runner.py plan-contracts <current-drawing.json>`；只有 exit code=0、ok=true、errors=[] 才能继续。无 capability / adapter / operation materialization 时 fail closed，禁止 Planner 自己补算法或绕过。
+- 写 frozen plan 前必须执行 `runner.py plan-contracts <current-drawing.json>`；只有 exit code=0、ok=true、errors=[] 才能继续。Planner 必须把该结果顶层 `drawing` 原样写入 frozen 顶层 `source_drawing`；后续 build/check 的 `--drawing` 必须与之 canonical absolute-path 精确一致，缺失或跨轮路径不一致 fail closed。无 capability / adapter / operation materialization 时 fail closed，禁止 Planner 自己补算法或绕过。
 - Planner 必须消费 plan-contracts 返回的 selected implementation、geometries、recipes、operation_contracts 与 planner_contract；每个 contract operation 的 `tool` 原样使用，`fixed_args` 按完整 key set + 完整 value 原样复制进 tool_args（含 `false` / `0` / 空对象），`operation_fields` 若存在则逐 key 原样展开到 frozen operation 顶层且禁止放入 tool_args；Planner 只补 `requires` 的 symbol wiring 和合法 step 顺序。
 - 当前 drawing interpretation 开始后，禁止主动读取旧 frozen/executable plan、旧 Runner report、旧 run_history.json、旧 PRT/STEP，以及其它历史零件的 evidence/drawing/frozen/executable。
 - Planner 不得读取 drawing-evidence.json 或 semantic-draft.json；Planner 只读取本轮 Gate A PASS 的 drawing.json。

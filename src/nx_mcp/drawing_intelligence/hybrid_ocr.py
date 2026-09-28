@@ -399,11 +399,33 @@ def _coverage_ledger(
     }
 
 
+def _candidate_geometry_key(candidate: dict[str, Any]) -> tuple[Any, ...] | None:
+    orientation = candidate.get("orientation")
+    axis = candidate.get("axis_px")
+    span = candidate.get("line_span_px")
+    witnesses = candidate.get("witness_positions_px", [])
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(axis, (int, float))
+        or not isinstance(span, list)
+        or len(span) != 2
+        or not all(isinstance(value, (int, float)) for value in span)
+        or not isinstance(witnesses, list)
+        or not all(isinstance(value, (int, float)) for value in witnesses)
+    ):
+        return None
+    return (
+        str(orientation),
+        round(float(axis), 3),
+        tuple(round(float(value), 3) for value in span),
+        tuple(round(float(value), 3) for value in witnesses),
+    )
+
+
 def _collect_candidates(
     visual_aid: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    by_id: dict[str, dict[str, Any]] = {}
     for bucket in visual_aid.get("candidate_buckets", []):
         if not isinstance(bucket, dict) or bucket.get("status") != "bounded":
             continue
@@ -411,10 +433,41 @@ def _collect_candidates(
             if not isinstance(candidate, dict):
                 continue
             candidate_id = str(candidate.get("candidate_id") or "")
-            if not candidate_id or candidate_id in seen:
+            if not candidate_id or candidate_id in by_id:
                 continue
-            seen.add(candidate_id)
-            candidates.append(candidate)
+            by_id[candidate_id] = candidate
+
+    candidates: list[dict[str, Any]] = []
+    canonical_by_geometry: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for candidate_id in sorted(by_id):
+        candidate = by_id[candidate_id]
+        region_id = str(candidate.get("region_id") or "")
+        geometry_key = _candidate_geometry_key(candidate)
+        if geometry_key is None:
+            candidates.append(
+                {
+                    **candidate,
+                    "source_candidate_ids": [candidate_id],
+                    "source_region_ids": ([region_id] if region_id else []),
+                }
+            )
+            continue
+
+        canonical = canonical_by_geometry.get(geometry_key)
+        if canonical is None:
+            canonical = {
+                **candidate,
+                "source_candidate_ids": [candidate_id],
+                "source_region_ids": ([region_id] if region_id else []),
+            }
+            canonical_by_geometry[geometry_key] = canonical
+            candidates.append(canonical)
+            continue
+
+        canonical["source_candidate_ids"].append(candidate_id)
+        if region_id and region_id not in canonical["source_region_ids"]:
+            canonical["source_region_ids"].append(region_id)
+
     candidates.sort(key=lambda item: str(item.get("candidate_id") or ""))
     return candidates
 
@@ -527,6 +580,14 @@ def run_hybrid_ocr(
             {
                 "candidate_id": candidate_id,
                 "region_id": candidate.get("region_id"),
+                "source_candidate_ids": candidate.get(
+                    "source_candidate_ids",
+                    [candidate_id],
+                ),
+                "source_region_ids": candidate.get(
+                    "source_region_ids",
+                    [candidate.get("region_id")],
+                ),
                 "orientation": candidate.get("orientation"),
                 "axis_px": candidate.get("axis_px"),
                 "line_span_px": candidate.get("line_span_px"),
@@ -559,6 +620,10 @@ def run_hybrid_ocr(
         "schema": "dg-hybrid-ocr-bakeoff-v2",
         "source_raster": str(source_path),
         "reader_visual_aid": str(visual_aid_path),
+        "raw_candidate_count": sum(
+            len(candidate.get("source_candidate_ids", []))
+            for candidate in candidates
+        ),
         "candidate_count": len(results),
         "accepted_count": accepted_count,
         "unresolved_count": len(results) - accepted_count,
@@ -578,6 +643,7 @@ def run_hybrid_ocr(
             "confidence_is_correctness_gate": False,
             "leading_zero_integer_is_ambiguous": True,
             "observed_evidence_silent_drop_forbidden": True,
+            "cross_region_exact_geometry_dedup": True,
         },
         "whole_drawing_items": full_items,
         "regions": visual_aid.get("regions", []),

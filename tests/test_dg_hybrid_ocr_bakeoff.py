@@ -164,6 +164,59 @@ def test_linear_tokens_accept_strict_labeled_mm_scalars_without_open_text_extrac
     assert module._linear_tokens("LENGTH - 300 mm") == set()
 
 
+def test_collect_candidates_deduplicates_exact_cross_region_geometry_with_provenance():
+    module = _load_module()
+
+    shared_geometry = {
+        "orientation": "horizontal",
+        "axis_px": 96.0,
+        "line_span_px": [445.0, 1010.0],
+        "witness_positions_px": [434.8, 1020.0],
+        "witness_anchor_evidence": [],
+        "witness_line_evidence": [],
+    }
+    visual_aid = {
+        "candidate_buckets": [
+            {
+                "status": "bounded",
+                "candidates": [
+                    {
+                        **shared_geometry,
+                        "candidate_id": "DG1",
+                        "region_id": "R2",
+                    }
+                ],
+            },
+            {
+                "status": "bounded",
+                "candidates": [
+                    {
+                        **shared_geometry,
+                        "candidate_id": "DG2",
+                        "region_id": "R3",
+                    },
+                    {
+                        "candidate_id": "DG3",
+                        "region_id": "R3",
+                        "orientation": "horizontal",
+                        "axis_px": 146.0,
+                        "line_span_px": [470.0, 974.0],
+                        "witness_positions_px": [434.8, 472.1, 984.0],
+                        "witness_anchor_evidence": [],
+                        "witness_line_evidence": [],
+                    },
+                ],
+            },
+        ]
+    }
+
+    candidates = module._collect_candidates(visual_aid)
+
+    assert [item["candidate_id"] for item in candidates] == ["DG1", "DG3"]
+    assert candidates[0]["source_candidate_ids"] == ["DG1", "DG2"]
+    assert candidates[0]["source_region_ids"] == ["R2", "R3"]
+
+
 def test_hybrid_decision_fails_closed_on_disagreement():
     module = _load_module()
 

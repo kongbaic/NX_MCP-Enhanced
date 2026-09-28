@@ -32,8 +32,15 @@ still point at the region crop. Then write
 X/Y/Z facts allowed by that view, optional `rotational_symmetry_axis`, the exact query
 evidence label, and unresolved reasons. Set `rotational_symmetry_axis` only when the
 complete drawing explicitly and uniquely establishes whole-part revolution about one
-visible engineering axis; mirror symmetry, visual resemblance, or parameter-name
-guessing is insufficient. The Agent must never synthesize the missing overall extent.
+visible engineering axis. A printed X/Y/Z axis name is not required: an explicit
+whole-part axial/longitudinal section (or equivalent complete revolved profile), a
+centerline running through the whole section, and coaxial radial/diameter profile
+evidence on both sides of that centerline may establish the rotation axis. Map the
+visible centerline direction only through the resolved view and `view_axis_map`:
+front horizontal=>X / vertical=>Z; side horizontal=>Y / vertical=>Z; top
+horizontal=>X / vertical=>Y. Mirror symmetry alone, a centerline without coaxial
+revolved-profile evidence, visual resemblance, or parameter-name guessing is
+insufficient. The Agent must never synthesize the missing overall extent.
 Deterministic closure is fixed as rotation X => Y=Z, rotation Y => X=Z, rotation Z =>
 X=Y, and the finalizer must preserve derivation provenance. Local dimensions must never be promoted to `overall_dimension_facts`.
 An overall fact requires an explicit dimension spanning the complete visible part/profile

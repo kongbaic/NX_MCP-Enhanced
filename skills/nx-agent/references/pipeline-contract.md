@@ -70,7 +70,12 @@ Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶�
 保持模板原值，只允许填写 view_kind、overall_dimension_facts、可选
 `rotational_symmetry_axis` 与 unresolved；每个 overall fact 固定为 axis + positive value +
 evidence:[原样 evidence_label]。rotational_symmetry_axis 只有在完整工程图明确且唯一表达整件
-绕某一可见工程轴回转时才允许填写；普通镜像对称、看起来像回转件或参数名猜测均不足。
+绕某一可见工程轴回转时才允许填写；**不要求图纸额外打印 X/Y/Z 轴名**。若 query 明确显示
+整件 axial/longitudinal section 或等价完整回转剖面、存在贯穿整件剖面的中心线，且中心线
+两侧由同一组同轴径向/直径轮廓共同建立 whole-part revolution，则按当前 view_kind +
+view_axis_map 唯一映射中心线方向：front horizontal→X / vertical→Z，side horizontal→Y /
+vertical→Z，top horizontal→X / vertical→Y。普通镜像对称、只有中心线但无同轴回转轮廓、
+看起来像回转件或参数名猜测均不足。
 **Agent 禁止手工补第三轴 overall；确定性闭合固定为 rotation X ⇒ Y=Z、rotation Y ⇒ X=Z、
 rotation Z ⇒ X=Y，由 finalizer 从一个直接 transverse overall + rotational_symmetry_axis
 推导缺失 transverse overall，并保存 derivation provenance。****局部尺寸不得冒充

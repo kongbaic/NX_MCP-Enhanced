@@ -70,8 +70,7 @@ Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶�
 保持模板原值，只允许填写 view_kind、overall_dimension_facts、必填的显式
 `rotational_symmetry` 判定与 unresolved；每个 overall fact 固定为 axis + positive value +
 evidence:[原样 evidence_label]。对已解析且准备继续的 answer，rotational_symmetry 只能是
-`{"status":"established","axis":"X|Y|Z","evidence":[原样 evidence_label]}` 或
-`{"status":"not_established","axis":null,"evidence":[原样 evidence_label]}`。字段省略不能视为
+`{"status":"established","basis":"centerline","centerline_direction":"horizontal|vertical","evidence":[原样 evidence_label]}`、`{"status":"established","basis":"axial_section_symmetry","paired_sides":"left_right|top_bottom","evidence":[原样 evidence_label]}` 或 `{"status":"not_established","evidence":[原样 evidence_label]}`。字段省略不能视为
 not_established，schema 必须拒绝；模板中的 null 只用于 pending/unresolved。视觉上无法确定时
 保持 null 并写 unresolved，本轮 fail-closed，禁止添加 unknown/uncertain 后继续。只有在完整
 工程图明确且唯一表达整件绕某一可见工程轴回转时才允许 established；**不要求图纸额外打印 X/Y/Z 轴名**。若 query 明确显示
@@ -80,10 +79,12 @@ not_established，schema 必须拒绝；模板中的 null 只用于 pending/unre
 同轴轮廓边/肩部表达回转体；②**无中心线轴向剖视依据**：query 通过剖面线/剖切语义明确属于
 axial/diametral section，主要材料轮廓与各阶梯/圆柱主体段围绕一条唯一剖面对称轴成对出现，
 可唯一确定回转轴方向，即使图中没有画出中心线也允许 established。第二类只适用于明确剖视，
-不适用于普通非剖视镜像轮廓；连续实线的物体轮廓/边界绝不能冒充中心线。两类依据都只按
-轴方向 + 当前 view_kind + view_axis_map 映射工程轴：front horizontal→X / vertical→Z，
-side horizontal→Y / vertical→Z，top horizontal→X / vertical→Y；无中心线剖视分支使用唯一
-剖面对称轴方向。该判断只允许使用工程制图拓扑语义，禁止测量像素距离或把视觉“等距”换算
+不适用于普通非剖视镜像轮廓；连续实线的物体轮廓/边界绝不能冒充中心线。Agent 禁止直接填写 X/Y/Z 回转轴。centerline basis 只报告
+centerline_direction=horizontal|vertical；无中心线轴向剖视只报告
+paired_sides=left_right|top_bottom。deterministic assembler 固定执行
+left_right⇒vertical、top_bottom⇒horizontal，再按当前 view_kind + view_axis_map 映射工程轴：
+front horizontal→X / vertical→Z，side horizontal→Y / vertical→Z，
+top horizontal→X / vertical→Y。该判断只允许使用工程制图拓扑语义，禁止测量像素距离或把视觉“等距”换算
 成工程值。普通镜像对称、只有中心线但无成对同轴回转轮廓、看起来像回转件、连续实线冒充
 中心线或参数名猜测均不足。not_established 不是不确定性的兜底：只有 query 明确显示整件
 不具备回转对称时才允许；既无足够 established 证据又无明确反证时必须保持

@@ -89,17 +89,40 @@ class StructuralOverallFact(_StrictStructuralModel):
 
 class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
     status: Literal["established", "not_established"]
-    axis: Axis | None = None
+    basis: Literal["centerline", "axial_section_symmetry"] | None = None
+    centerline_direction: Literal["horizontal", "vertical"] | None = None
+    paired_sides: Literal["left_right", "top_bottom"] | None = None
     evidence: list[str] = Field(min_length=1)
 
     _validate_evidence = field_validator("evidence")(_clean_evidence)
 
     @model_validator(mode="after")
     def _shape(self) -> StructuralRotationalSymmetryDecision:
-        if self.status == "established" and self.axis is None:
-            raise ValueError("established rotational symmetry requires axis")
-        if self.status == "not_established" and self.axis is not None:
-            raise ValueError("not_established rotational symmetry requires null axis")
+        if self.status == "not_established":
+            if (
+                self.basis is not None
+                or self.centerline_direction is not None
+                or self.paired_sides is not None
+            ):
+                raise ValueError(
+                    "not_established rotational symmetry requires null visual basis fields"
+                )
+            return self
+
+        if self.basis is None:
+            raise ValueError("established rotational symmetry requires visual basis")
+        if self.basis == "centerline":
+            if self.centerline_direction is None:
+                raise ValueError("centerline basis requires centerline_direction")
+            if self.paired_sides is not None:
+                raise ValueError("centerline basis forbids paired_sides")
+        elif self.basis == "axial_section_symmetry":
+            if self.paired_sides is None:
+                raise ValueError("axial_section_symmetry basis requires paired_sides")
+            if self.centerline_direction is not None:
+                raise ValueError(
+                    "axial_section_symmetry basis forbids centerline_direction"
+                )
         return self
 
 
@@ -207,7 +230,8 @@ def build_structural_context_queries(
             "open_unlisted_images": False,
             "scan_workspace": False,
             "report_only_view_kind_and_direct_overall_dimensions": True,
-            "report_only_explicit_rotational_symmetry_axis": True,
+            "report_only_visual_rotational_symmetry_basis": True,
+            "agent_must_not_report_engineering_rotation_axis": True,
             "require_explicit_rotational_symmetry_decision": True,
             "allow_nonsection_longitudinal_revolved_profile": True,
             "allow_axial_section_without_drawn_centerline": True,
@@ -315,17 +339,19 @@ def assemble_structural_context(
             query_id=query.query_id,
         )
         if rotation_decision.status == "established":
-            rotation_axis = rotation_decision.axis
-            if rotation_axis is None:
-                raise StructuralContextError(
-                    f"query {query.query_id!r} established rotational symmetry has no axis"
+            if rotation_decision.basis == "centerline":
+                visual_axis_direction = rotation_decision.centerline_direction
+            else:
+                visual_axis_direction = (
+                    "vertical"
+                    if rotation_decision.paired_sides == "left_right"
+                    else "horizontal"
                 )
-            if rotation_axis not in visible_axes:
+            if visual_axis_direction not in ("horizontal", "vertical"):
                 raise StructuralContextError(
-                    f"query {query.query_id!r} rotational symmetry axis "
-                    f"{rotation_axis!r} is not visible "
-                    f"in {answer.view_kind!r} view"
+                    f"query {query.query_id!r} has no deterministic visual rotation axis"
                 )
+            rotation_axis = getattr(view_axes, visual_axis_direction)
             rotational_facts.append(
                 PartialRotationalSymmetryFact(
                     axis=rotation_axis,

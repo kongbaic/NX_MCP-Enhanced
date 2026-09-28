@@ -32,8 +32,7 @@ still point at the region crop. Then write
 X/Y/Z facts allowed by that view, the required explicit `rotational_symmetry`
 decision, the exact query evidence label, and unresolved reasons. For every resolved
 answer that is allowed to continue, `rotational_symmetry` must be either
-`{"status":"established","axis":"X|Y|Z","evidence":[exact_query_evidence]}` or
-`{"status":"not_established","axis":null,"evidence":[exact_query_evidence]}`.
+`{"status":"established","basis":"centerline","centerline_direction":"horizontal|vertical","evidence":[exact_query_evidence]}`, `{"status":"established","basis":"axial_section_symmetry","paired_sides":"left_right|top_bottom","evidence":[exact_query_evidence]}`, or `{"status":"not_established","evidence":[exact_query_evidence]}`.
 Omitting the field is not equivalent to `not_established` and must fail schema
 validation. The template may carry `rotational_symmetry:null` only while the answer
 is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
@@ -55,9 +54,12 @@ axis even though no centerline is drawn. This basis is unavailable for an ordina
 non-section mirror-symmetric profile. A solid continuous object/profile boundary is
 never a centerline.
 
-For either basis, map only the established axis direction through the resolved view and
-`view_axis_map`: front horizontal=>X / vertical=>Z; side horizontal=>Y / vertical=>Z;
-top horizontal=>X / vertical=>Y. The section-symmetry basis is visual drafting topology,
+The Agent must not report X/Y/Z for rotational symmetry. For centerline basis it
+reports only `centerline_direction=horizontal|vertical`; for axial-section symmetry it
+reports only `paired_sides=left_right|top_bottom`. The deterministic assembler derives
+left_right=>vertical and top_bottom=>horizontal, then maps that visual direction through
+the resolved `view_axis_map`: front horizontal=>X / vertical=>Z; side horizontal=>Y /
+vertical=>Z; top horizontal=>X / vertical=>Y. The section-symmetry basis is visual drafting topology,
 not pixel measurement: do not compare pixel distances or convert visual spacing into
 engineering values. Mirror symmetry alone, a centerline without paired coaxial
 revolved-profile evidence, visual resemblance, solid-profile-line-as-centerline

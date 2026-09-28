@@ -54,7 +54,6 @@ def _answers() -> StructuralContextAnswers:
                     ],
                     "rotational_symmetry": {
                         "status": "not_established",
-                        "axis": None,
                         "evidence": ["structural:R1:crop"],
                     },
                     "unresolved": [],
@@ -72,7 +71,6 @@ def _answers() -> StructuralContextAnswers:
                     ],
                     "rotational_symmetry": {
                         "status": "not_established",
-                        "axis": None,
                         "evidence": ["structural:R2:crop"],
                     },
                     "unresolved": [],
@@ -89,7 +87,8 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.queries[0].image_path.endswith("R1.png")
     assert plan.queries[0].evidence_label == "structural:R1:crop"
     assert plan.rules["report_only_view_kind_and_direct_overall_dimensions"] is True
-    assert plan.rules["report_only_explicit_rotational_symmetry_axis"] is True
+    assert plan.rules["report_only_visual_rotational_symmetry_basis"] is True
+    assert plan.rules["agent_must_not_report_engineering_rotation_axis"] is True
     assert plan.rules["require_explicit_rotational_symmetry_decision"] is True
     assert plan.rules["allow_nonsection_longitudinal_revolved_profile"] is True
     assert plan.rules["allow_axial_section_without_drawn_centerline"] is True
@@ -177,13 +176,15 @@ def test_structural_context_allows_one_missing_transverse_axis_with_explicit_rot
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
-        "axis": "Z",
+        "basis": "centerline",
+        "centerline_direction": "vertical",
         "evidence": ["structural:R1:crop"],
     }
     payload["answers"][1]["view_kind"] = "front"
     payload["answers"][1]["rotational_symmetry"] = {
         "status": "established",
-        "axis": "Z",
+        "basis": "centerline",
+        "centerline_direction": "vertical",
         "evidence": ["structural:R2:crop"],
     }
     payload["answers"][1]["overall_dimension_facts"] = []
@@ -201,18 +202,53 @@ def test_structural_context_allows_one_missing_transverse_axis_with_explicit_rot
     ]
 
 
-def test_structural_context_rejects_rotation_axis_not_visible_in_view():
+def test_structural_context_derives_axis_from_axial_section_pairing():
     plan = build_structural_context_queries(_reader_input())
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
-        "axis": "Y",
+        "basis": "axial_section_symmetry",
+        "paired_sides": "left_right",
         "evidence": ["structural:R1:crop"],
+    }
+    payload["answers"][1]["view_kind"] = "front"
+    payload["answers"][1]["overall_dimension_facts"] = []
+    payload["answers"][1]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "axial_section_symmetry",
+        "paired_sides": "left_right",
+        "evidence": ["structural:R2:crop"],
     }
     answers = StructuralContextAnswers.model_validate(payload)
 
-    with pytest.raises(StructuralContextError, match="rotational symmetry axis"):
-        assemble_structural_context(plan, answers)
+    context = assemble_structural_context(plan, answers)
+
+    assert len(context.rotational_symmetry_facts) == 1
+    assert context.rotational_symmetry_facts[0].axis == "Z"
+
+
+def test_structural_context_maps_top_bottom_pairing_to_horizontal_axis():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    for index, evidence in ((0, "structural:R1:crop"), (1, "structural:R2:crop")):
+        payload["answers"][index]["view_kind"] = "front"
+        payload["answers"][index]["overall_dimension_facts"] = []
+        payload["answers"][index]["rotational_symmetry"] = {
+            "status": "established",
+            "basis": "axial_section_symmetry",
+            "paired_sides": "top_bottom",
+            "evidence": [evidence],
+        }
+    payload["answers"][0]["overall_dimension_facts"] = [
+        {"axis": "X", "value": 40, "evidence": ["structural:R1:crop"]},
+        {"axis": "Z", "value": 66, "evidence": ["structural:R1:crop"]},
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+
+    assert len(context.rotational_symmetry_facts) == 1
+    assert context.rotational_symmetry_facts[0].axis == "X"
 
 
 def test_structural_context_fails_closed_when_global_axis_is_missing():
@@ -430,19 +466,37 @@ def test_structural_rotational_symmetry_decision_is_fail_closed():
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
-        "axis": None,
         "evidence": ["structural:R1:crop"],
     }
-    with pytest.raises(ValidationError, match="requires axis"):
+    with pytest.raises(ValidationError, match="requires visual basis"):
+        StructuralContextAnswers.model_validate(payload)
+
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "evidence": ["structural:R1:crop"],
+    }
+    with pytest.raises(ValidationError, match="requires centerline_direction"):
+        StructuralContextAnswers.model_validate(payload)
+
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "axial_section_symmetry",
+        "evidence": ["structural:R1:crop"],
+    }
+    with pytest.raises(ValidationError, match="requires paired_sides"):
         StructuralContextAnswers.model_validate(payload)
 
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "not_established",
-        "axis": "X",
+        "basis": "centerline",
+        "centerline_direction": "horizontal",
         "evidence": ["structural:R1:crop"],
     }
-    with pytest.raises(ValidationError, match="requires null axis"):
+    with pytest.raises(ValidationError, match="requires null visual basis fields"):
         StructuralContextAnswers.model_validate(payload)
 
 
@@ -451,7 +505,8 @@ def test_structural_rotational_symmetry_decision_requires_current_query_evidence
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
-        "axis": "X",
+        "basis": "centerline",
+        "centerline_direction": "horizontal",
         "evidence": ["structural:R2:crop"],
     }
     answers = StructuralContextAnswers.model_validate(payload)
@@ -471,10 +526,18 @@ def test_structural_rotational_symmetry_may_stay_null_only_when_unresolved():
         assemble_structural_context(plan, answers)
 
 
-def test_structural_answer_rejects_legacy_rotational_symmetry_axis_field():
+def test_structural_answer_rejects_engineering_axis_input():
+    payload = _answers().model_dump(mode="json", by_alias=True)["answers"][0]
+    payload["rotational_symmetry"] = {
+        "status": "established",
+        "axis": "X",
+        "evidence": ["structural:R1:crop"],
+    }
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        StructuralRegionAnswer.model_validate(payload)
+
     payload = _answers().model_dump(mode="json", by_alias=True)["answers"][0]
     payload["rotational_symmetry_axis"] = "X"
-
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         StructuralRegionAnswer.model_validate(payload)
 

@@ -433,8 +433,10 @@ public static class NX_MCP_Loader
 
         if (File.Exists(path)) { try { File.Delete(path); } catch { } }
 
-        // NewDisplay changes the active display part. Preserve every part the
-        // user already has displayed by enabling NX multiple-display mode first.
+        // Preserve every part the user already has displayed. NewDisplay
+        // replaces the active display in this resident-loader environment even
+        // after SetAllowMultipleDisplayedParts(true), so create through FileNew
+        // with the explicit AllowAdditional display contract instead.
         NXOpen.BasePart[] priorDisplayed = new NXOpen.BasePart[0];
         var priorDisplayedTags = new HashSet<Tag>();
         try
@@ -442,17 +444,52 @@ public static class NX_MCP_Loader
             priorDisplayed = _session.Parts.GetDisplayedParts();
             foreach (NXOpen.BasePart prior in priorDisplayed)
                 priorDisplayedTags.Add(prior.Tag);
-            if (priorDisplayed.Length > 0)
-                _session.Parts.SetAllowMultipleDisplayedParts(true);
         }
         catch (Exception e)
         {
-            return ErrJson("cannot enable multiple displayed parts before create: " + e.Message);
+            return ErrJson("cannot snapshot displayed parts before create: " + e.Message);
         }
 
-        // Use NewDisplay: FileNewBuilder crashes with access violation in this
-        // resident-loader context (unmanaged exception cannot be caught).
-        NXOpen.Part part = _session.Parts.NewDisplay(path, Part.Units.Millimeters);
+        NXOpen.FileNew fileNew = null;
+        NXOpen.Part part = null;
+        try
+        {
+            fileNew = _session.Parts.FileNew();
+            fileNew.NewFileName = path;
+            fileNew.UseBlankTemplate = true;
+            fileNew.TemplateFileName = "Blank";
+            fileNew.ApplicationName = "GatewayTemplate";
+            fileNew.Units = Part.Units.Millimeters;
+            fileNew.RelationType = "";
+            fileNew.UsesMasterModel = "No";
+            fileNew.TemplateType = NXOpen.FileNewTemplateType.Item;
+            fileNew.TemplatePresentationName = "";
+            fileNew.ItemType = "";
+            fileNew.Specialization = "";
+            fileNew.MasterFileName = "";
+            fileNew.MakeDisplayedPart = true;
+            fileNew.DisplayPartOption = NXOpen.DisplayPartOption.AllowAdditional;
+
+            NXOpen.NXObject created = fileNew.Commit();
+            part = created as NXOpen.Part;
+            if (part == null) part = _session.Parts.Work;
+            if (part == null)
+                return ErrJson("FileNew did not create a usable NX part");
+        }
+        catch (Exception e)
+        {
+            return ErrJson("FileNew AllowAdditional create failed: " + e.Message);
+        }
+        finally
+        {
+            if (fileNew != null)
+            {
+                try { fileNew.Destroy(); } catch { }
+            }
+        }
+
+        try { _session.Parts.SetWork(part); }
+        catch (Exception e) { return ErrJson("cannot set new part as work part: " + e.Message); }
 
         if (priorDisplayedTags.Count > 0)
         {

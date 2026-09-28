@@ -524,13 +524,21 @@ def main() -> None:
 
     loader_source = (ROOT / "loader" / "NX_MCP_Loader.cs").read_text(encoding="utf-8")
     for token in (
-        "SetAllowMultipleDisplayedParts(true)",
+        "_session.Parts.FileNew()",
+        "DisplayPartOption.AllowAdditional",
+        "fileNew.MakeDisplayedPart = true",
+        "_session.Parts.SetWork(part)",
         "GetDisplayedParts()",
         '\\"displayed_parts\\"',
         "new part replaced a pre-existing displayed part",
     ):
         if token not in loader_source:
             fail(f"Loader multi-display preservation regression: missing {token}")
+    create_part_source = loader_source.split(
+        "private static string CreatePart(string[] parts)", 1
+    )[1].split("private static void ResetTaskState()", 1)[0]
+    if "_session.Parts.NewDisplay(" in create_part_source:
+        fail("Loader create-part must not use NewDisplay")
 
     loader_bridge_source = (
         ROOT / "src" / "nx_mcp" / "loader_bridge.py"

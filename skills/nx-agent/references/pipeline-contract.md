@@ -407,7 +407,7 @@ python_exe runner.py run <current-executable.json>
 - 探测 named pipe nx_mcp_loader；
 - 检查 Python/Runner/plan/workspace。
 
-对于 part-entry tool=`nx_create_part` 的新建零件任务，NX 中存在其它已打开零件**不是 blocker**，即使该旧零件存在于 Runner history 中也必须保留：Runner 不调用 `nx_close_part`；Loader 必须在 `nx_create_part` 前启用 multiple displayed parts，随后创建新零件；创建返回后必须立即通过 `nx_status` 同时核对真实 Work Part 路径与 planned_part 完全一致，并确认原 displayed part 仍存在于 `displayed_parts`，任一条件失败则 fail-fast，禁止执行后续建模 operation。对于 part-entry tool=`nx_open_part` / 修改已有零件等非新建任务，Runner preflight 若返回 `precheck_blocked` / reason=`unrelated_part_open`，Agent 必须立即报告并 STOP，禁止生成或执行关闭用户零件的计划，也禁止自动重跑。该 blocker 不属于 Controlled Self-Healing。
+对于 part-entry tool=`nx_create_part` 的新建零件任务，NX 中存在其它已打开零件**不是 blocker**，即使该旧零件存在于 Runner history 中也必须保留：Runner 不调用 `nx_close_part`；Loader 的 `nx_create_part` 必须通过 `Parts.FileNew()` 并设置 `DisplayPartOption.AllowAdditional` 创建新零件，禁止使用 `NewDisplay` 替换当前 display；创建返回后必须立即通过 `nx_status` 同时核对真实 Work Part 路径与 planned_part 完全一致，并确认原 displayed part 仍存在于 `displayed_parts`，任一条件失败则 fail-fast，禁止执行后续建模 operation。对于 part-entry tool=`nx_open_part` / 修改已有零件等非新建任务，Runner preflight 若返回 `precheck_blocked` / reason=`unrelated_part_open`，Agent 必须立即报告并 STOP，禁止生成或执行关闭用户零件的计划，也禁止自动重跑。该 blocker 不属于 Controlled Self-Healing。
 
 Loader ready 优先使用仓库 loader/nx_client.ps1 -Cmd nx_status；CONNECTED + ok=true + ready=true 即 ready。
 

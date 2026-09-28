@@ -8,7 +8,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from nx_mcp.drawing_intelligence.reader_input_prep import prepare_reader_input
+from nx_mcp.drawing_intelligence.reader_input_prep import (
+    _structural_bilateral_symmetry_hint,
+    prepare_reader_input,
+)
 
 
 def _write_synthetic_drawing(path: Path) -> None:
@@ -42,6 +45,51 @@ def _write_synthetic_drawing(path: Path) -> None:
     cv2.line(image, (980, 410), (980, 490), (0, 0, 0), 2)
 
     assert cv2.imwrite(str(path), image)
+
+
+def test_structural_bilateral_symmetry_hint_uses_topology_not_metric_scale():
+    image = np.full((260, 420, 3), 255, np.uint8)
+    left_right_profile = np.array(
+        [
+            [40, 30],
+            [380, 30],
+            [380, 95],
+            [320, 95],
+            [320, 225],
+            [100, 225],
+            [100, 95],
+            [40, 95],
+        ],
+        np.int32,
+    )
+    cv2.fillPoly(image, [left_right_profile], (218, 218, 218))
+
+    hint = _structural_bilateral_symmetry_hint(
+        image,
+        [0, 0, 420, 260],
+        cv2,
+        np,
+    )
+
+    assert hint["status"] == "established"
+    assert hint["axis_direction"] == "vertical"
+    assert hint["vertical_score"] > hint["horizontal_score"]
+    assert hint["score_margin"] >= 0.15
+
+
+def test_structural_bilateral_symmetry_hint_fails_closed_when_axes_tie():
+    image = np.full((240, 240, 3), 255, np.uint8)
+    cv2.rectangle(image, (40, 40), (200, 200), (218, 218, 218), -1)
+
+    hint = _structural_bilateral_symmetry_hint(
+        image,
+        [0, 0, 240, 240],
+        cv2,
+        np,
+    )
+
+    assert hint["status"] == "unresolved"
+    assert hint["axis_direction"] is None
 
 
 def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
@@ -129,6 +177,13 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
             assert int(cv2.absdiff(crop, overlay).sum()) > 0
         assert "circle_groups" not in region
         assert "linear_pattern_candidates" not in region
+        assert region["bilateral_symmetry_hint"]["method"] == (
+            "foreground_mirror_consensus_v1"
+        )
+        assert region["bilateral_symmetry_hint"]["status"] in {
+            "established",
+            "unresolved",
+        }
         assert "circle_group_count" in region
         assert "linear_pattern_candidate_count" in region
 

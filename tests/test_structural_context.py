@@ -89,6 +89,8 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["report_only_view_kind_and_direct_overall_dimensions"] is True
     assert plan.rules["report_only_visual_rotational_symmetry_basis"] is True
     assert plan.rules["agent_must_not_report_engineering_rotation_axis"] is True
+    assert plan.rules["agent_must_not_report_axial_section_symmetry_direction"] is True
+    assert plan.rules["axial_section_axis_from_deterministic_profile_symmetry"] is True
     assert plan.rules["require_explicit_rotational_symmetry_decision"] is True
     assert plan.rules["allow_nonsection_longitudinal_revolved_profile"] is True
     assert plan.rules["allow_axial_section_without_drawn_centerline"] is True
@@ -118,6 +120,27 @@ def test_structural_query_builder_only_requests_region_structure():
     assert template.answers[0].rotational_symmetry is None
     assert template.answers[1].rotational_symmetry is None
     assert all(item.unresolved == ["pending_structural_visual_read"] for item in template.answers)
+
+
+def test_structural_query_builder_carries_deterministic_profile_symmetry_axis():
+    reader_input = _reader_input()
+    reader_input["regions"][0]["bilateral_symmetry_hint"] = {
+        "status": "established",
+        "axis_direction": "vertical",
+        "method": "foreground_mirror_consensus_v1",
+        "vertical_score": 0.72,
+        "horizontal_score": 0.31,
+        "score_margin": 0.41,
+    }
+
+    plan = build_structural_context_queries(reader_input)
+
+    assert plan.queries[0].deterministic_profile_symmetry_axis == "vertical"
+    assert (
+        plan.queries[0].deterministic_profile_symmetry_method
+        == "foreground_mirror_consensus_v1"
+    )
+    assert plan.queries[1].deterministic_profile_symmetry_axis is None
 
 
 def test_structural_query_builder_prefers_full_drawing_context_image():
@@ -202,13 +225,22 @@ def test_structural_context_allows_one_missing_transverse_axis_with_explicit_rot
     ]
 
 
-def test_structural_context_derives_axis_from_axial_section_pairing():
-    plan = build_structural_context_queries(_reader_input())
+def test_structural_context_derives_axis_from_deterministic_profile_symmetry():
+    reader_input = _reader_input()
+    for region in reader_input["regions"]:
+        region["bilateral_symmetry_hint"] = {
+            "status": "established",
+            "axis_direction": "vertical",
+            "method": "foreground_mirror_consensus_v1",
+            "vertical_score": 0.72,
+            "horizontal_score": 0.31,
+            "score_margin": 0.41,
+        }
+    plan = build_structural_context_queries(reader_input)
     payload = _answers().model_dump(mode="json", by_alias=True)
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
         "basis": "axial_section_symmetry",
-        "paired_sides": "left_right",
         "evidence": ["structural:R1:crop"],
     }
     payload["answers"][1]["view_kind"] = "front"
@@ -216,7 +248,6 @@ def test_structural_context_derives_axis_from_axial_section_pairing():
     payload["answers"][1]["rotational_symmetry"] = {
         "status": "established",
         "basis": "axial_section_symmetry",
-        "paired_sides": "left_right",
         "evidence": ["structural:R2:crop"],
     }
     answers = StructuralContextAnswers.model_validate(payload)
@@ -227,8 +258,18 @@ def test_structural_context_derives_axis_from_axial_section_pairing():
     assert context.rotational_symmetry_facts[0].axis == "Z"
 
 
-def test_structural_context_maps_top_bottom_pairing_to_horizontal_axis():
-    plan = build_structural_context_queries(_reader_input())
+def test_structural_context_maps_deterministic_horizontal_symmetry_to_x():
+    reader_input = _reader_input()
+    for region in reader_input["regions"]:
+        region["bilateral_symmetry_hint"] = {
+            "status": "established",
+            "axis_direction": "horizontal",
+            "method": "foreground_mirror_consensus_v1",
+            "vertical_score": 0.30,
+            "horizontal_score": 0.70,
+            "score_margin": 0.40,
+        }
+    plan = build_structural_context_queries(reader_input)
     payload = _answers().model_dump(mode="json", by_alias=True)
     for index, evidence in ((0, "structural:R1:crop"), (1, "structural:R2:crop")):
         payload["answers"][index]["view_kind"] = "front"
@@ -236,7 +277,6 @@ def test_structural_context_maps_top_bottom_pairing_to_horizontal_axis():
         payload["answers"][index]["rotational_symmetry"] = {
             "status": "established",
             "basis": "axial_section_symmetry",
-            "paired_sides": "top_bottom",
             "evidence": [evidence],
         }
     payload["answers"][0]["overall_dimension_facts"] = [
@@ -249,6 +289,20 @@ def test_structural_context_maps_top_bottom_pairing_to_horizontal_axis():
 
     assert len(context.rotational_symmetry_facts) == 1
     assert context.rotational_symmetry_facts[0].axis == "X"
+
+
+def test_structural_context_rejects_axial_section_without_deterministic_symmetry_axis():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "axial_section_symmetry",
+        "evidence": ["structural:R1:crop"],
+    }
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="lacks deterministic profile symmetry axis"):
+        assemble_structural_context(plan, answers)
 
 
 def test_structural_context_fails_closed_when_global_axis_is_missing():
@@ -482,9 +536,10 @@ def test_structural_rotational_symmetry_decision_is_fail_closed():
     payload["answers"][0]["rotational_symmetry"] = {
         "status": "established",
         "basis": "axial_section_symmetry",
+        "paired_sides": "left_right",
         "evidence": ["structural:R1:crop"],
     }
-    with pytest.raises(ValidationError, match="requires paired_sides"):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         StructuralContextAnswers.model_validate(payload)
 
     payload = _answers().model_dump(mode="json", by_alias=True)

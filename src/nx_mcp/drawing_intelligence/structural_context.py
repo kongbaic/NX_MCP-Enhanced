@@ -34,6 +34,10 @@ class StructuralRegionQuery(_StrictStructuralModel):
     region_id: str = Field(min_length=1)
     image_path: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
+    deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None
+    deterministic_profile_symmetry_method: Literal[
+        "foreground_mirror_consensus_v1"
+    ] | None = None
     instruction_key: Literal["structural-context-v1"] = "structural-context-v1"
 
 
@@ -91,7 +95,6 @@ class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
     status: Literal["established", "not_established"]
     basis: Literal["centerline", "axial_section_symmetry"] | None = None
     centerline_direction: Literal["horizontal", "vertical"] | None = None
-    paired_sides: Literal["left_right", "top_bottom"] | None = None
     evidence: list[str] = Field(min_length=1)
 
     _validate_evidence = field_validator("evidence")(_clean_evidence)
@@ -99,11 +102,7 @@ class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
     @model_validator(mode="after")
     def _shape(self) -> StructuralRotationalSymmetryDecision:
         if self.status == "not_established":
-            if (
-                self.basis is not None
-                or self.centerline_direction is not None
-                or self.paired_sides is not None
-            ):
+            if self.basis is not None or self.centerline_direction is not None:
                 raise ValueError(
                     "not_established rotational symmetry requires null visual basis fields"
                 )
@@ -114,11 +113,7 @@ class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
         if self.basis == "centerline":
             if self.centerline_direction is None:
                 raise ValueError("centerline basis requires centerline_direction")
-            if self.paired_sides is not None:
-                raise ValueError("centerline basis forbids paired_sides")
         elif self.basis == "axial_section_symmetry":
-            if self.paired_sides is None:
-                raise ValueError("axial_section_symmetry basis requires paired_sides")
             if self.centerline_direction is not None:
                 raise ValueError(
                     "axial_section_symmetry basis forbids centerline_direction"
@@ -214,12 +209,25 @@ def build_structural_context_queries(
                 f"reader region {region_id!r} requires crop_path or structural_context_path"
             )
 
+        symmetry_hint = region.get("bilateral_symmetry_hint")
+        deterministic_axis = None
+        deterministic_method = None
+        if isinstance(symmetry_hint, dict) and symmetry_hint.get("status") == "established":
+            axis_direction = symmetry_hint.get("axis_direction")
+            method = symmetry_hint.get("method")
+            if axis_direction in {"horizontal", "vertical"}:
+                deterministic_axis = axis_direction
+            if method == "foreground_mirror_consensus_v1":
+                deterministic_method = method
+
         queries.append(
             StructuralRegionQuery(
                 query_id=f"S{index:03d}",
                 region_id=region_id,
                 image_path=image_path,
                 evidence_label=evidence_label,
+                deterministic_profile_symmetry_axis=deterministic_axis,
+                deterministic_profile_symmetry_method=deterministic_method,
             )
         )
 
@@ -232,6 +240,8 @@ def build_structural_context_queries(
             "report_only_view_kind_and_direct_overall_dimensions": True,
             "report_only_visual_rotational_symmetry_basis": True,
             "agent_must_not_report_engineering_rotation_axis": True,
+            "agent_must_not_report_axial_section_symmetry_direction": True,
+            "axial_section_axis_from_deterministic_profile_symmetry": True,
             "require_explicit_rotational_symmetry_decision": True,
             "allow_nonsection_longitudinal_revolved_profile": True,
             "allow_axial_section_without_drawn_centerline": True,
@@ -342,11 +352,12 @@ def assemble_structural_context(
             if rotation_decision.basis == "centerline":
                 visual_axis_direction = rotation_decision.centerline_direction
             else:
-                visual_axis_direction = (
-                    "vertical"
-                    if rotation_decision.paired_sides == "left_right"
-                    else "horizontal"
-                )
+                visual_axis_direction = query.deterministic_profile_symmetry_axis
+                if visual_axis_direction is None:
+                    raise StructuralContextError(
+                        f"query {query.query_id!r} axial section lacks deterministic "
+                        "profile symmetry axis"
+                    )
             if visual_axis_direction not in ("horizontal", "vertical"):
                 raise StructuralContextError(
                     f"query {query.query_id!r} has no deterministic visual rotation axis"

@@ -430,9 +430,9 @@ def main() -> None:
             '"status":"established"',
             '"basis":"centerline"',
             '"basis":"axial_section_symmetry"',
-            '"paired_sides":"left_right|top_bottom"',
             '"status":"not_established"',
-            "Agent **禁止填写 X/Y/Z 回转轴**",
+            "deterministic_profile_symmetry_axis",
+            "Agent **禁止填写 X/Y/Z 回转轴，也禁止填写无中心线轴向剖视",
             "不要求图纸额外打印 X/Y/Z 轴名",
             "front horizontal→X / vertical→Z",
             "无中心线轴向剖视依据",
@@ -469,9 +469,9 @@ def main() -> None:
             '"status":"established"',
             '"basis":"centerline"',
             '"basis":"axial_section_symmetry"',
-            '"paired_sides":"left_right|top_bottom"',
             '"status":"not_established"',
-            "Agent 禁止直接填写 X/Y/Z 回转轴",
+            "deterministic_profile_symmetry_axis",
+            "Agent 禁止直接填写 X/Y/Z 回转轴，也禁止填写无中心线轴向剖视",
             "不要求图纸额外打印 X/Y/Z 轴名",
             "front horizontal→X / vertical→Z",
             "无中心线轴向剖视依据",
@@ -500,8 +500,8 @@ def main() -> None:
             '"status":"established"',
             '"basis":"centerline"',
             '"basis":"axial_section_symmetry"',
-            '"paired_sides":"left_right|top_bottom"',
             '"status":"not_established"',
+            "deterministic_profile_symmetry_axis=horizontal|vertical",
             "The Agent must not report X/Y/Z",
             "Omitting the field is not equivalent to `not_established`",
             "The template may carry `rotational_symmetry:null` only while",
@@ -531,6 +531,17 @@ def main() -> None:
             "sole authoritative geometry source",
         ),
     }
+    reader_input_prep_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def _structural_bilateral_symmetry_hint(",
+        '"foreground_mirror_consensus_v1"',
+        '"bilateral_symmetry_hint": bilateral_symmetry_hint',
+    ):
+        if token not in reader_input_prep_source:
+            fail(f"Reader prep deterministic symmetry regression: missing {token}")
+
     reader_prep_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
@@ -573,11 +584,13 @@ def main() -> None:
         'status: Literal["established", "not_established"]',
         'basis: Literal["centerline", "axial_section_symmetry"] | None = None',
         'centerline_direction: Literal["horizontal", "vertical"] | None = None',
-        'paired_sides: Literal["left_right", "top_bottom"] | None = None',
+        'deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None',
         "rotational_symmetry: StructuralRotationalSymmetryDecision | None = Field(...)",
         "resolved structural answer requires explicit rotational symmetry decision",
         '"report_only_visual_rotational_symmetry_basis": True',
         '"agent_must_not_report_engineering_rotation_axis": True',
+        '"agent_must_not_report_axial_section_symmetry_direction": True',
+        '"axial_section_axis_from_deterministic_profile_symmetry": True',
         "require_explicit_rotational_symmetry_decision",
         '"allow_nonsection_longitudinal_revolved_profile": True',
         '"allow_axial_section_without_drawn_centerline": True',

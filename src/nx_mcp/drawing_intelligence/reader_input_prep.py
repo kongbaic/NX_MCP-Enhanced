@@ -140,6 +140,90 @@ def _clamp_local(value: float, limit: int) -> int:
     return max(0, min(limit - 1, int(round(value))))
 
 
+def _binary_mirror_score(mask: Any, mirrored: Any, np: Any) -> float:
+    intersection = int(np.logical_and(mask, mirrored).sum())
+    union = int(np.logical_or(mask, mirrored).sum())
+    if union <= 0:
+        return 0.0
+    return intersection / union
+
+
+def _structural_bilateral_symmetry_hint(
+    image: Any,
+    bbox: list[int],
+    cv2: Any,
+    np: Any,
+) -> dict[str, Any]:
+    """Classify only bilateral raster topology; never derive engineering values."""
+
+    image_height, image_width = image.shape[:2]
+    x, y, width, height = _clip_box(
+        int(bbox[0]),
+        int(bbox[1]),
+        int(bbox[0]) + int(bbox[2]),
+        int(bbox[1]) + int(bbox[3]),
+        image_width,
+        image_height,
+    )
+    crop = image[y : y + height, x : x + width]
+    if crop.size == 0 or min(width, height) < 20:
+        return {
+            "status": "unresolved",
+            "axis_direction": None,
+            "method": "foreground_mirror_consensus_v1",
+            "vertical_score": 0.0,
+            "horizontal_score": 0.0,
+            "score_margin": 0.0,
+        }
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    vertical_scores: list[float] = []
+    horizontal_scores: list[float] = []
+    votes: list[str] = []
+
+    for threshold in (245, 230, 220):
+        mask = gray < threshold
+        inset = max(1, int(round(min(width, height) * 0.01)))
+        if height > inset * 2 and width > inset * 2:
+            mask[:inset, :] = False
+            mask[-inset:, :] = False
+            mask[:, :inset] = False
+            mask[:, -inset:] = False
+
+        vertical_score = _binary_mirror_score(mask, np.fliplr(mask), np)
+        horizontal_score = _binary_mirror_score(mask, np.flipud(mask), np)
+        vertical_scores.append(vertical_score)
+        horizontal_scores.append(horizontal_score)
+
+        delta = vertical_score - horizontal_score
+        if abs(delta) >= 0.12:
+            votes.append("vertical" if delta > 0 else "horizontal")
+        else:
+            votes.append("ambiguous")
+
+    vertical_score = float(np.median(np.asarray(vertical_scores, dtype=float)))
+    horizontal_score = float(np.median(np.asarray(horizontal_scores, dtype=float)))
+    margin = abs(vertical_score - horizontal_score)
+    direction = (
+        "vertical"
+        if all(vote == "vertical" for vote in votes)
+        else "horizontal"
+        if all(vote == "horizontal" for vote in votes)
+        else None
+    )
+    if max(vertical_score, horizontal_score) < 0.55 or margin < 0.15:
+        direction = None
+
+    return {
+        "status": "established" if direction is not None else "unresolved",
+        "axis_direction": direction,
+        "method": "foreground_mirror_consensus_v1",
+        "vertical_score": round(vertical_score, 5),
+        "horizontal_score": round(horizontal_score, 5),
+        "score_margin": round(margin, 5),
+    }
+
+
 def _write_structural_context_image(
     image: Any,
     path: Path,
@@ -473,6 +557,12 @@ def prepare_reader_input(
         overlay_path = crops_dir / f"{region_id}-candidates.png"
         structural_context_path = crops_dir / f"{region_id}-structural-context.png"
         source_bbox = list(region["bbox_px"])
+        bilateral_symmetry_hint = _structural_bilateral_symmetry_hint(
+            image,
+            source_bbox,
+            cv2,
+            np,
+        )
         _write_crop(image, crop_path, bbox, cv2)
         _write_structural_context_image(
             image,
@@ -497,6 +587,7 @@ def prepare_reader_input(
                 "candidate_overlay_count": len(overlay_candidates),
                 "crop_bbox_px": bbox,
                 "source_bbox_px": source_bbox,
+                "bilateral_symmetry_hint": bilateral_symmetry_hint,
                 "circle_group_count": len(region.get("circle_groups", [])),
                 "linear_pattern_candidate_count": len(region.get("linear_pattern_candidates", [])),
             }

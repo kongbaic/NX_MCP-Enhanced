@@ -11,7 +11,7 @@ from __future__ import annotations
 
 ENGINEERING_AUTHORITATIVE = False
 
-from typing import AbstractSet, Any
+from typing import Any
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 
@@ -112,7 +112,7 @@ def derive_view_axis_boundaries(
     region_views: dict[str, str],
     overall_dimensions: dict[str, float],
     profile_inventory: list[dict[str, Any]] | None = None,
-    region_overall_fact_axes: AbstractSet[tuple[str, str]] | None = None,
+    region_overall_fact_axes: set[tuple[str, Any]] | None = None,
     relative_tolerance: float = 1e-6,
 ) -> list[dict[str, Any]]:
     """Identify overall boundary owners without inferring mm from pixel distance.

@@ -21,8 +21,13 @@ Wide-Local Hybrid OCR, and the structural query plan. It intentionally stops at
 Structural Reader: inspect each listed `query.image_path` once. Production query images
 prefer a deterministic full-drawing context image with the target region boxed; classify
 the boxed region's orthographic view, not the deterministic region as an assumed
-standalone view. Legacy reader-input without `structural_context_path` may still point
-at the region crop. Then write
+standalone view. The box is only a region-to-view locator, not an annotation-reading
+boundary. An explicit overall dimension anywhere in that query image may be reported
+when it unambiguously belongs to the boxed region's same orthographic view and spans
+that view's complete visible part/profile extent, even when its dimension line or text
+is outside the box. Never borrow an overall dimension from another view; ambiguous
+ownership stays unresolved. Legacy reader-input without `structural_context_path` may
+still point at the region crop. Then write
 `structural-context-answers-v1` containing only view_kind, directly visible overall
 X/Y/Z facts allowed by that view, the exact query evidence label, and unresolved
 reasons. Local dimensions must never be promoted to `overall_dimension_facts`.

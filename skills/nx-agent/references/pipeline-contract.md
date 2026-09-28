@@ -60,8 +60,11 @@ structural-context query plan，并以 `exit code=4, phase=awaiting_structural_c
 停在受限视觉边界。Agent 只读取本轮 `structural-context-queries.json`，逐个查看
 query.image_path 一次。**生产 query image 优先是完整工程图上用矩形框标出当前 target region
 的 deterministic structural context image；region 只是视觉连通区域，不得假设一个 region
-天然等于一个独立正投影视图。Agent 判断的是框选 region 所属 view。旧 reader-input 缺少
-`structural_context_path` 时才回退到 region crop。**queries JSON 内置 schema-valid 的 `answer_template`；
+天然等于一个独立正投影视图。Agent 判断的是框选 region 所属 view。**矩形框只负责
+region→view 归属，不是尺寸读取边界：同一 query image 中位于框外的 overall 标注，只要能
+唯一归属于框选 region 所属的同一个正投影视图，并且尺寸线跨越该视图完整外包轮廓，也必须
+允许进入 overall_dimension_facts；不得因为标注在框外就丢弃。属于其它 view 或归属不唯一
+的标注禁止借用并保持 unresolved。**旧 reader-input 缺少 `structural_context_path` 时才回退到 region crop。**queries JSON 内置 schema-valid 的 `answer_template`；
 Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶层 schema 保持
 `structural-context-answers-v1`，禁止自行设计字段。每个 answer 的 query_id 与 evidence
 保持模板原值，只允许填写 view_kind、overall_dimension_facts 与 unresolved；每个 overall

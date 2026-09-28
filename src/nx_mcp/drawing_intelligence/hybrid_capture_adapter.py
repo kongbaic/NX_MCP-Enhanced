@@ -4498,6 +4498,38 @@ def _unique_orthographic_associations(
     return associations, unresolved
 
 
+_VISIBLE_AXES_BY_VIEW: dict[ViewKind, set[Axis]] = {
+    "front": {"X", "Z"},
+    "side": {"Y", "Z"},
+    "top": {"X", "Y"},
+}
+
+
+def _region_overall_fact_axes(
+    context: HybridAdapterContext,
+) -> set[tuple[str, Axis]]:
+    """Assign overall facts only when region ownership is evidence-backed or unique."""
+
+    result: set[tuple[str, Axis]] = set()
+    for fact in context.overall_dimension_facts:
+        visible_regions = [
+            region
+            for region in context.region_views
+            if fact.axis in _VISIBLE_AXES_BY_VIEW[region.view_kind]
+        ]
+        explicit_regions = [
+            region
+            for region in visible_regions
+            if set(region.evidence) & set(fact.evidence)
+        ]
+        if explicit_regions:
+            result.update((region.region_id, fact.axis) for region in explicit_regions)
+            continue
+        if len(visible_regions) == 1:
+            result.add((visible_regions[0].region_id, fact.axis))
+    return result
+
+
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
     context: HybridAdapterContext,
@@ -4531,12 +4563,7 @@ def adapt_hybrid_ocr_report(
         {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
         for fact in context.overall_dimension_facts
     }
-    region_overall_fact_axes = {
-        (region.region_id, fact.axis)
-        for region in context.region_views
-        for fact in context.overall_dimension_facts
-        if set(region.evidence) & set(fact.evidence)
-    }
+    region_overall_fact_axes = _region_overall_fact_axes(context)
     boundaries = derive_view_axis_boundaries(
         candidates=working_candidates,
         region_views={item.region_id: item.view_kind for item in context.region_views},

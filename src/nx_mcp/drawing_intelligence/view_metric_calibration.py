@@ -14,6 +14,7 @@ ENGINEERING_AUTHORITATIVE = False
 from typing import Any
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
+from .evidence import Axis
 
 _AXIS_BY_VIEW_ORIENTATION: dict[tuple[str, str], str] = {
     ("front", "horizontal"): "X",
@@ -112,7 +113,7 @@ def derive_view_axis_boundaries(
     region_views: dict[str, str],
     overall_dimensions: dict[str, float],
     profile_inventory: list[dict[str, Any]] | None = None,
-    region_overall_fact_axes: set[tuple[str, str]] | None = None,
+    region_overall_fact_axes: set[tuple[str, Axis]] | None = None,
     relative_tolerance: float = 1e-6,
 ) -> list[dict[str, Any]]:
     """Identify overall boundary owners without inferring mm from pixel distance.

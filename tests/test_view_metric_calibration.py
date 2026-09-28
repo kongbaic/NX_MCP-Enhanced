@@ -4,6 +4,7 @@ import pytest
 
 from nx_mcp.drawing_intelligence.view_metric_calibration import (
     derive_metric_profile_segments,
+    derive_view_axis_boundaries,
     derive_view_metric_calibrations,
     metricize_profile_edge_candidates,
 )

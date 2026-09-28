@@ -1549,24 +1549,24 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
 def test_adapter_does_not_grant_annotation_region_global_boundary_roles():
     context = HybridAdapterContext(
         region_views=[
-            HybridRegionView(
+            hybrid_adapter.HybridRegionView(
                 region_id="R1",
                 view_kind="front",
                 evidence=["structural:R1:context"],
             ),
-            HybridRegionView(
+            hybrid_adapter.HybridRegionView(
                 region_id="R3",
                 view_kind="front",
                 evidence=["structural:R3:context"],
             ),
         ],
         overall_dimension_facts=[
-            PartialOverallDimensionFact(
+            hybrid_adapter.PartialOverallDimensionFact(
                 axis="X",
                 value=300,
                 evidence=["structural:R1:context"],
             ),
-            PartialOverallDimensionFact(
+            hybrid_adapter.PartialOverallDimensionFact(
                 axis="Z",
                 value=75,
                 evidence=["structural:R1:context"],
@@ -1574,16 +1574,32 @@ def test_adapter_does_not_grant_annotation_region_global_boundary_roles():
         ],
     )
 
-    region_axes = {
-        (region.region_id, fact.axis)
-        for region in context.region_views
-        for fact in context.overall_dimension_facts
-        if set(region.evidence) & set(fact.evidence)
-    }
+    region_axes = hybrid_adapter._region_overall_fact_axes(context)
 
     assert region_axes == {("R1", "X"), ("R1", "Z")}
     assert ("R3", "X") not in region_axes
     assert ("R3", "Z") not in region_axes
+
+
+def test_unscoped_overall_fact_binds_when_only_one_region_can_own_axis():
+    context = hybrid_adapter.HybridAdapterContext(
+        region_views=[
+            hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="side",
+                evidence=["test:R2"],
+            )
+        ],
+        overall_dimension_facts=[
+            hybrid_adapter.PartialOverallDimensionFact(
+                axis="Y",
+                value=32,
+                evidence=["test:overall-y"],
+            )
+        ],
+    )
+
+    assert hybrid_adapter._region_overall_fact_axes(context) == {("R2", "Y")}
 
 
 def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():

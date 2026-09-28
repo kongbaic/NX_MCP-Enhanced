@@ -107,10 +107,7 @@ def test_structural_query_builder_only_requests_region_structure():
     assert template.answers[1].evidence == ["structural:R2:crop"]
     assert template.answers[0].rotational_symmetry is None
     assert template.answers[1].rotational_symmetry is None
-    assert all(
-        item.unresolved == ["pending_structural_visual_read"]
-        for item in template.answers
-    )
+    assert all(item.unresolved == ["pending_structural_visual_read"] for item in template.answers)
 
 
 def test_structural_query_builder_prefers_full_drawing_context_image():

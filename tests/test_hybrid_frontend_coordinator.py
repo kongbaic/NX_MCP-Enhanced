@@ -90,6 +90,11 @@ def _write_structural_answers(path: Path) -> None:
                             "evidence": ["structural:R1:crop"],
                         },
                     ],
+                    "rotational_symmetry": {
+                        "status": "not_established",
+                        "axis": None,
+                        "evidence": ["structural:R1:crop"],
+                    },
                     "unresolved": [],
                 },
                 {
@@ -108,6 +113,11 @@ def _write_structural_answers(path: Path) -> None:
                             "evidence": ["structural:R2:crop"],
                         },
                     ],
+                    "rotational_symmetry": {
+                        "status": "not_established",
+                        "axis": None,
+                        "evidence": ["structural:R2:crop"],
+                    },
                     "unresolved": [],
                 },
             ],

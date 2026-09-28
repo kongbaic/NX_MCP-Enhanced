@@ -74,8 +74,7 @@ evidence:[原样 evidence_label]。对已解析且准备继续的 answer，rotat
 `{"status":"not_established","axis":null,"evidence":[原样 evidence_label]}`。字段省略不能视为
 not_established，schema 必须拒绝；模板中的 null 只用于 pending/unresolved。视觉上无法确定时
 保持 null 并写 unresolved，本轮 fail-closed，禁止添加 unknown/uncertain 后继续。只有在完整
-工程图明确且唯一表达整件绕某一可见工程轴回转时才允许 established；**不要求图纸额外打印
-X/Y/Z 轴名**。若 query 明确显示
+工程图明确且唯一表达整件绕某一可见工程轴回转时才允许 established；**不要求图纸额外打印 X/Y/Z 轴名**。若 query 明确显示
 整件 axial/longitudinal section 或等价完整回转剖面、存在贯穿整件剖面的中心线，且中心线
 两侧由同一组同轴径向/直径轮廓共同建立 whole-part revolution，则按当前 view_kind +
 view_axis_map 唯一映射中心线方向：front horizontal→X / vertical→Z，side horizontal→Y /

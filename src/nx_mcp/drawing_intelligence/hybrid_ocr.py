@@ -166,9 +166,8 @@ def _candidate_matches_item(
     item_orientation = _item_orientation(item)
     candidate_orientation = str(candidate["orientation"])
     if (
-        item_orientation != "ambiguous"
+        _linear_text_strength(str(item.get("text") or "")) < 2
         and item_orientation != candidate_orientation
-        and _linear_text_strength(str(item.get("text") or "")) < 2
     ):
         return False
 

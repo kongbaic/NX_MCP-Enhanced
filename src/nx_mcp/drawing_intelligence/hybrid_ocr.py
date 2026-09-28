@@ -43,6 +43,8 @@ def _normalize(text: str) -> str:
         .replace("－", "-")
         .replace("–", "-")
         .replace("—", "-")
+        .replace("，", ".")
+        .replace(",", ".")
         .replace(" ", "")
     )
 
@@ -66,9 +68,10 @@ def _linear_tokens(text: str) -> set[str]:
             (f"{_canonical_number(tolerance.group(1))}±{_canonical_number(tolerance.group(2))}")
         }
 
-    plain_number = re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized)
-    if plain_number:
-        unsigned = normalized.lstrip("+").lstrip("-")
+    plain_scalar = re.fullmatch(r"([-+]?\d+(?:\.\d+)?)(?:MM)?", normalized)
+    if plain_scalar:
+        number = plain_scalar.group(1)
+        unsigned = number.lstrip("+").lstrip("-")
         if re.fullmatch(r"0\d+", unsigned):
             return set()
         return {_canonical_number(unsigned)}

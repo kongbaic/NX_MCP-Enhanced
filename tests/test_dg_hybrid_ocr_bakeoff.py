@@ -153,6 +153,9 @@ def test_linear_tokens_accept_strict_labeled_mm_scalars_without_open_text_extrac
     assert module._linear_tokens("H2 - 75 mm") == {"75"}
     assert module._linear_tokens("D1 – 250 mm") == {"250"}
     assert module._linear_tokens("K=26mm") == {"26"}
+    assert module._linear_tokens("28 mm") == {"28"}
+    assert module._linear_tokens("4.5 mm") == {"4.5"}
+    assert module._linear_tokens("A - 168,3 mm") == {"168.3"}
 
     # Existing non-linear engineering callouts stay outside the linear-DG path.
     assert module._linear_tokens("R10") == set()
@@ -162,6 +165,7 @@ def test_linear_tokens_accept_strict_labeled_mm_scalars_without_open_text_extrac
     # Do not mine arbitrary prose or long labels for embedded numbers.
     assert module._linear_tokens("NOTE - 300 mm") == set()
     assert module._linear_tokens("LENGTH - 300 mm") == set()
+    assert module._linear_tokens("NOTE 28 mm") == set()
 
 
 def test_collect_candidates_deduplicates_exact_cross_region_geometry_with_provenance():

@@ -543,6 +543,9 @@ def main() -> None:
     if "File.Delete(path)" in create_part_source:
         fail("Loader create-part must never delete an existing target file")
 
+    plan_tests = (RUNNER / "tests" / "test_plan_resolution.py").read_text(
+        encoding="utf-8"
+    )
     for token in (
         '"reason": "planned_part_exists"',
         "controlled_overwrite",

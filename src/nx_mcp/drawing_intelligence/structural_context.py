@@ -17,6 +17,11 @@ class StructuralContextError(ValueError):
     """Raised when minimal structural context cannot be assembled safely."""
 
 
+_REGION_LOCAL_DEFERRED_UNRESOLVED = {
+    "rotational_symmetry_not_visible_in_region",
+}
+
+
 class _StrictStructuralModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -254,6 +259,8 @@ def build_structural_context_queries(
             "require_paired_coaxial_profile_for_rotation": True,
             "not_established_requires_counterevidence": True,
             "insufficient_rotation_evidence_is_unresolved": True,
+            "region_local_rotation_unobservable_may_defer": True,
+            "global_rotation_closure_remains_fail_closed": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
             "feature_inventory": False,
@@ -317,7 +324,11 @@ def assemble_structural_context(
 
     for query in plan.queries:
         answer = answers_by_id[query.query_id]
-        if answer.unresolved:
+        unresolved = set(answer.unresolved)
+        deferred_local_rotation = bool(unresolved) and unresolved.issubset(
+            _REGION_LOCAL_DEFERRED_UNRESOLVED
+        )
+        if unresolved and not deferred_local_rotation:
             raise StructuralContextError(
                 f"query {query.query_id!r} remains unresolved: {answer.unresolved}"
             )
@@ -340,16 +351,17 @@ def assemble_structural_context(
         view_axes = plan.view_axis_map[answer.view_kind]
         visible_axes = {view_axes.horizontal, view_axes.vertical}
         rotation_decision = answer.rotational_symmetry
-        if rotation_decision is None:
+        if rotation_decision is None and not deferred_local_rotation:
             raise StructuralContextError(
                 f"query {query.query_id!r} has no explicit rotational symmetry decision"
             )
-        _assert_evidence(
-            rotation_decision.evidence,
-            query.evidence_label,
-            query_id=query.query_id,
-        )
-        if rotation_decision.status == "established":
+        if rotation_decision is not None:
+            _assert_evidence(
+                rotation_decision.evidence,
+                query.evidence_label,
+                query_id=query.query_id,
+            )
+        if rotation_decision is not None and rotation_decision.status == "established":
             if rotation_decision.basis == "centerline":
                 visual_axis_direction = rotation_decision.centerline_direction
             else:

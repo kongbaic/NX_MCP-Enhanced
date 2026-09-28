@@ -88,7 +88,7 @@ hint 缺失时必须 unresolved。deterministic assembler 再按当前 view_kind
 映射工程轴：front horizontal→X / vertical→Z，side horizontal→Y / vertical→Z，
 top horizontal→X / vertical→Y。该判断只允许使用工程制图拓扑语义，禁止测量像素距离或把视觉“等距”换算
 成工程值。普通镜像对称、只有中心线但无成对同轴回转轮廓、看起来像回转件、连续实线冒充
-中心线或参数名猜测均不足。not_established 不是不确定性的兜底：只有 query 明确显示整件
+中心线或参数名猜测均不足。当前 query region 只有标注/文字或局部内容、没有足够零件几何判断回转时，唯一允许的 region-local deferred code 是 `rotational_symmetry_not_visible_in_region`，同时 `rotational_symmetry=null`。它不产生 rotational fact，也不等于 not_established；assembler 只能跨 region 延期这一种 code，其他 unresolved 仍 terminal。若其它 region 未建立回转证据而全局仍缺第三轴，最终仍 fail-closed。not_established 不是不确定性的兜底：只有 query 明确显示整件
 不具备回转对称时才允许；既无足够 established 证据又无明确反证时必须保持
 rotational_symmetry=null、写 unresolved 并 fail-closed。
 **Agent 禁止手工补第三轴 overall；确定性闭合固定为 rotation X ⇒ Y=Z、rotation Y ⇒ X=Z、

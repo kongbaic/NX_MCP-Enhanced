@@ -579,6 +579,77 @@ def test_structural_rotational_symmetry_may_stay_null_only_when_unresolved():
         assemble_structural_context(plan, answers)
 
 
+def test_region_local_rotation_not_visible_defers_to_other_region():
+    reader_input = _reader_input()
+    reader_input["regions"][0]["bilateral_symmetry_hint"] = {
+        "status": "established",
+        "axis_direction": "vertical",
+        "method": "foreground_mirror_consensus_v1",
+        "vertical_score": 0.74,
+        "horizontal_score": 0.28,
+        "score_margin": 0.46,
+    }
+    plan = build_structural_context_queries(reader_input)
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "axial_section_symmetry",
+        "evidence": ["structural:R1:crop"],
+    }
+    payload["answers"][1]["view_kind"] = "front"
+    payload["answers"][1]["overall_dimension_facts"] = []
+    payload["answers"][1]["rotational_symmetry"] = None
+    payload["answers"][1]["unresolved"] = [
+        "rotational_symmetry_not_visible_in_region"
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+
+    assert len(context.rotational_symmetry_facts) == 1
+    assert context.rotational_symmetry_facts[0].axis == "Z"
+
+
+def test_region_local_rotation_not_visible_does_not_hide_other_unresolved():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = None
+    payload["answers"][0]["unresolved"] = [
+        "rotational_symmetry_not_visible_in_region",
+        "view_geometry_ambiguous",
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="remains unresolved"):
+        assemble_structural_context(plan, answers)
+
+
+def test_all_regions_rotation_not_visible_still_fail_closed_when_axis_missing():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["overall_dimension_facts"] = [
+        {
+            "axis": "X",
+            "value": 300,
+            "evidence": ["structural:R1:crop"],
+        },
+        {
+            "axis": "Z",
+            "value": 75,
+            "evidence": ["structural:R1:crop"],
+        },
+    ]
+    payload["answers"][1]["view_kind"] = "front"
+    payload["answers"][1]["overall_dimension_facts"] = []
+    for item in payload["answers"]:
+        item["rotational_symmetry"] = None
+        item["unresolved"] = ["rotational_symmetry_not_visible_in_region"]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="missing structural overall fact for axis Y"):
+        assemble_structural_context(plan, answers)
+
+
 def test_structural_answer_rejects_engineering_axis_input():
     payload = _answers().model_dump(mode="json", by_alias=True)["answers"][0]
     payload["rotational_symmetry"] = {

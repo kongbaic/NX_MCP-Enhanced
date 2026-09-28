@@ -67,7 +67,7 @@ side horizontal=>Y / vertical=>Z; top horizontal=>X / vertical=>Y. The section-s
 not pixel measurement: do not compare pixel distances or convert visual spacing into
 engineering values. Mirror symmetry alone, a centerline without paired coaxial
 revolved-profile evidence, visual resemblance, solid-profile-line-as-centerline
-interpretation, or parameter-name guessing is insufficient. `not_established` is not
+interpretation, or parameter-name guessing is insufficient. `rotational_symmetry_not_visible_in_region` is the only region-local deferred rotational unresolved code. Use it only when the current query region contains labels/annotations or partial content without enough part geometry to judge rotation; set `rotational_symmetry:null`. It does not mean `not_established`, does not create a rotational fact, and does not by itself satisfy global closure. The assembler may defer only this code across regions; any other unresolved remains terminal, and if no other region establishes rotation while a transverse overall is missing, global closure still fails. `not_established` is not
 an uncertainty fallback: use it only when the query positively shows that whole-part
 rotational symmetry does not hold. If positive establishment evidence and positive
 counterevidence are both absent or ambiguous, keep `rotational_symmetry:null`, record

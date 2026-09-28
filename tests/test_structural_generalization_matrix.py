@@ -126,7 +126,16 @@ def test_single_view_axial_section_uses_deterministic_vertical_hint_for_rotation
                 "region_id": "R1",
                 "crop_path": "C:/work/axial-section.png",
                 "bilateral_symmetry_hint": _symmetry_hint("vertical"),
-            }
+            },
+            {
+                "region_id": "R2",
+                "crop_path": "C:/work/axial-section-middle.png",
+                "bilateral_symmetry_hint": _symmetry_hint("vertical"),
+            },
+            {
+                "region_id": "R3",
+                "crop_path": "C:/work/annotation-only.png",
+            },
         ],
     }
     plan = build_structural_context_queries(reader_input)
@@ -156,6 +165,26 @@ def test_single_view_axial_section_uses_deterministic_vertical_hint_for_rotation
                         "evidence": ["structural:R1:crop"],
                     },
                     "unresolved": [],
+                },
+                {
+                    "query_id": "S002",
+                    "view_kind": "front",
+                    "evidence": ["structural:R2:crop"],
+                    "overall_dimension_facts": [],
+                    "rotational_symmetry": {
+                        "status": "established",
+                        "basis": "axial_section_symmetry",
+                        "evidence": ["structural:R2:crop"],
+                    },
+                    "unresolved": [],
+                },
+                {
+                    "query_id": "S003",
+                    "view_kind": "front",
+                    "evidence": ["structural:R3:crop"],
+                    "overall_dimension_facts": [],
+                    "rotational_symmetry": None,
+                    "unresolved": ["rotational_symmetry_not_visible_in_region"],
                 }
             ],
         }

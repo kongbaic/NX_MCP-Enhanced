@@ -33,6 +33,7 @@ def _candidate(
     witnesses: list[float],
     text_coordinate: float,
     anchors: dict[int, list[dict[str, object]]],
+    witness_lines: dict[int, list[dict[str, object]]] | None = None,
 ) -> dict[str, object]:
     if orientation == "vertical":
         bbox = [
@@ -65,6 +66,14 @@ def _candidate(
                 "witness_index": index,
                 "position_px": value,
                 "nearest_anchors": anchors.get(index, []),
+            }
+            for index, value in enumerate(witnesses)
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "position_px": value,
+                "source_lines": (witness_lines or {}).get(index, []),
             }
             for index, value in enumerate(witnesses)
         ],
@@ -119,6 +128,88 @@ def test_profile_candidate_wins_without_treating_linear_pattern_as_owner():
     assert len(first["physical_candidates"]) == 1
     assert first["physical_candidates"][0]["kind"] == "profile_edge_candidate"
     assert first["ignored_nonownership_anchors"][0]["kind"] == ("linear_pattern_axis")
+
+
+def test_exact_crossing_witness_profile_line_narrows_nearby_anchors():
+    profile = {
+        **_profile(110.0),
+        "source_orientation": "vertical",
+        "span_px": [20.0, 180.0],
+    }
+    nearby_circle = {
+        **_circle(112.0),
+        "distance_px": 2.0,
+        "distance_local_norm": 0.01,
+    }
+    distant_profile = {
+        **_profile(125.0),
+        "source_orientation": "vertical",
+        "span_px": [20.0, 180.0],
+        "distance_px": 15.0,
+        "distance_local_norm": 0.03,
+    }
+
+    result = derive_dimension_endpoint_candidates(
+        _candidate(
+            orientation="horizontal",
+            witnesses=[110.0, 200.0],
+            text_coordinate=150.0,
+            anchors={
+                0: [profile, nearby_circle, distant_profile],
+                1: [_profile(200.0)],
+            },
+            witness_lines={
+                0: [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 110.0,
+                        "span_px": [20.0, 180.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ]
+            },
+        )
+    )
+
+    first = result["endpoints"][0]
+    assert first["status"] == "unique_physical_candidate"
+    assert first["physical_candidates"] == [profile]
+    assert first["ownership_narrowing_basis"] == (
+        "exact_crossing_witness_profile_line_identity"
+    )
+
+
+def test_non_crossing_profile_line_does_not_narrow_ambiguous_candidates():
+    profile = {
+        **_profile(110.0),
+        "source_orientation": "vertical",
+        "span_px": [20.0, 180.0],
+    }
+    circle = _circle(110.0)
+
+    result = derive_dimension_endpoint_candidates(
+        _candidate(
+            orientation="horizontal",
+            witnesses=[110.0, 200.0],
+            text_coordinate=150.0,
+            anchors={0: [profile, circle], 1: [_profile(200.0)]},
+            witness_lines={
+                0: [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 110.0,
+                        "span_px": [20.0, 180.0],
+                        "crosses_dimension_axis": False,
+                    }
+                ]
+            },
+        )
+    )
+
+    first = result["endpoints"][0]
+    assert first["status"] == "ambiguous_physical_candidates"
+    assert len(first["physical_candidates"]) == 2
+    assert first["ownership_narrowing_basis"] is None
 
 
 def test_bracket_can_remain_unresolved_when_no_physical_anchor_exists():

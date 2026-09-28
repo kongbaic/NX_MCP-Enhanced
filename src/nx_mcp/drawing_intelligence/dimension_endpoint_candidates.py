@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 _PHYSICAL_ANCHOR_KINDS = {
@@ -29,6 +30,61 @@ def _assignment_axis_coordinate(
 
     coordinate_index = 0 if orientation == "horizontal" else 1
     return sum(float(point[coordinate_index]) for point in bbox) / len(bbox)
+
+
+def _witness_line_lookup(
+    candidate: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
+    output: dict[int, dict[str, Any]] = {}
+    evidence = candidate.get("witness_line_evidence", [])
+    if not isinstance(evidence, list):
+        return output
+
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("witness_index")
+        if isinstance(index, int):
+            output[index] = item
+    return output
+
+
+def _same_source_profile_line(
+    profile: dict[str, Any],
+    source_line: dict[str, Any],
+) -> bool:
+    if source_line.get("crosses_dimension_axis") is not True:
+        return False
+    if str(profile.get("source_orientation") or "") != str(
+        source_line.get("orientation") or ""
+    ):
+        return False
+
+    position = profile.get("position_px")
+    axis = source_line.get("axis_px")
+    profile_span = profile.get("span_px")
+    source_span = source_line.get("span_px")
+    if (
+        not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(axis, (int, float))
+        or isinstance(axis, bool)
+        or not isinstance(profile_span, list)
+        or len(profile_span) != 2
+        or not isinstance(source_span, list)
+        or len(source_span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in [*profile_span, *source_span]
+        )
+    ):
+        return False
+
+    return (
+        math.isclose(float(position), float(axis), abs_tol=1e-9)
+        and math.isclose(float(profile_span[0]), float(source_span[0]), abs_tol=1e-9)
+        and math.isclose(float(profile_span[1]), float(source_span[1]), abs_tol=1e-9)
+    )
 
 
 def _witness_anchor_lookup(
@@ -132,6 +188,7 @@ def derive_dimension_endpoint_candidates(
 
     first, second = brackets[0]
     anchor_lookup = _witness_anchor_lookup(candidate)
+    line_lookup = _witness_line_lookup(candidate)
 
     endpoints: list[dict[str, Any]] = []
     for endpoint_index, (witness_index, position_px) in enumerate((first, second)):
@@ -145,6 +202,23 @@ def derive_dimension_endpoint_candidates(
             for item in nearest
             if isinstance(item, dict) and item.get("kind") in _PHYSICAL_ANCHOR_KINDS
         ]
+
+        narrowing_basis = None
+        witness_lines = line_lookup.get(witness_index, {}).get("source_lines", [])
+        if isinstance(witness_lines, list):
+            exact_profile_candidates = [
+                item
+                for item in physical_candidates
+                if item.get("kind") == "profile_edge_candidate"
+                and any(
+                    isinstance(source_line, dict)
+                    and _same_source_profile_line(item, source_line)
+                    for source_line in witness_lines
+                )
+            ]
+            if len(exact_profile_candidates) == 1:
+                physical_candidates = exact_profile_candidates
+                narrowing_basis = "exact_crossing_witness_profile_line_identity"
 
         endpoint_status = (
             "unique_physical_candidate"
@@ -161,6 +235,7 @@ def derive_dimension_endpoint_candidates(
                 "position_px": position_px,
                 "status": endpoint_status,
                 "physical_candidates": physical_candidates,
+                "ownership_narrowing_basis": narrowing_basis,
                 "ignored_nonownership_anchors": [
                     item
                     for item in nearest

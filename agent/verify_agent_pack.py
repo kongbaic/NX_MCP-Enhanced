@@ -422,7 +422,7 @@ def main() -> None:
             "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
             "fresh 直接子级 prefix",
             "mode-b-runs",
-            "禁止修正路径重试",
+            "禁止“修正路径后重试”",
             "mode_b_gate_a_pass",
             "mode_b_awaiting_confirmation",
             "fallback semantic Reader",

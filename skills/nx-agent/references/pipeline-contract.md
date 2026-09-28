@@ -67,8 +67,13 @@ region→view 归属，不是尺寸读取边界：同一 query image 中位于�
 的标注禁止借用并保持 unresolved。**旧 reader-input 缺少 `structural_context_path` 时才回退到 region crop。**queries JSON 内置 schema-valid 的 `answer_template`；
 Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶层 schema 保持
 `structural-context-answers-v1`，禁止自行设计字段。每个 answer 的 query_id 与 evidence
-保持模板原值，只允许填写 view_kind、overall_dimension_facts 与 unresolved；每个 overall
-fact 固定为 axis + positive value + evidence:[原样 evidence_label]。**局部尺寸不得冒充
+保持模板原值，只允许填写 view_kind、overall_dimension_facts、可选
+`rotational_symmetry_axis` 与 unresolved；每个 overall fact 固定为 axis + positive value +
+evidence:[原样 evidence_label]。rotational_symmetry_axis 只有在完整工程图明确且唯一表达整件
+绕某一可见工程轴回转时才允许填写；普通镜像对称、看起来像回转件或参数名猜测均不足。
+**Agent 禁止手工补第三轴 overall；确定性闭合固定为 rotation X ⇒ Y=Z、rotation Y ⇒ X=Z、
+rotation Z ⇒ X=Y，由 finalizer 从一个直接 transverse overall + rotational_symmetry_axis
+推导缺失 transverse overall，并保存 derivation provenance。****局部尺寸不得冒充
 `overall_dimension_facts`：只有明确跨越当前视图完整零件外包边界/整体轮廓两端的直接
 overall 标注才允许写入；局部链尺寸、孔/圆中心距、中心到边、半径/直径、角度以及仅覆盖
 局部轮廓的线性尺寸，即使是最大的可见数字也仍是局部尺寸。缺少明确 overall 时对应 axis

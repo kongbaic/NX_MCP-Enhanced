@@ -906,6 +906,69 @@ def test_overall_dimension_fact_ledger_becomes_gate_a_source_provenance():
     ]
 
 
+def test_rotational_symmetry_overall_derivation_compiles_as_alignment_relation():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=300, width_y=300, height_z=75),
+        observations=[
+            {
+                "kind": "overall_dimension_fact_ledger",
+                "facts": [
+                    {"axis": "X", "value": 300, "evidence": ["structural:overall-x"]},
+                    {"axis": "Z", "value": 75, "evidence": ["structural:overall-z"]},
+                ],
+            },
+            {
+                "kind": "overall_dimension_derivation_ledger",
+                "facts": [
+                    {
+                        "axis": "Y",
+                        "value": 300,
+                        "basis": "rotational_symmetry_equal_transverse_extents",
+                        "source_axis": "X",
+                        "rotation_axis": "Z",
+                        "evidence": [
+                            "structural:overall-x",
+                            "structural:rotation-z",
+                        ],
+                    }
+                ],
+            },
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    direct_targets = {
+        item.target
+        for item in compiled.direct_values
+        if item.target.startswith("overall_dimensions.")
+    }
+    assert direct_targets == {
+        "overall_dimensions.length_x",
+        "overall_dimensions.height_z",
+    }
+
+    relation = next(item for item in compiled.relations if item.id.startswith("ODR_Y_"))
+    assert relation.kind == "alignment"
+    assert relation.targets == [
+        "overall_dimensions.length_x",
+        "overall_dimensions.width_y",
+    ]
+    assert relation.metadata["rotation_axis"] == "Z"
+
+    resolved = resolve_evidence_graph(compiled)
+    assert resolved.values["overall_dimensions.width_y"] == 300
+
+    draft = build_semantic_draft(compiled, resolved)
+    alignment = next(
+        item
+        for item in draft["source_ledger"]
+        if item.get("id") == relation.id
+    )
+    assert alignment["semantic"] == "alignment"
+    assert alignment["links"] == relation.targets
+
+
 def test_draft_infers_only_semantically_implied_feature_types():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),

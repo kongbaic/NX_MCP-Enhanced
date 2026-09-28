@@ -152,6 +152,95 @@ def _compile_overall_dimension_facts(
             )
 
 
+def _compile_overall_dimension_derivations(
+    graph: EvidenceGraph,
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    expected = {
+        "X": ("overall_dimensions.length_x", graph.overall_dimensions.length_x),
+        "Y": ("overall_dimensions.width_y", graph.overall_dimensions.width_y),
+        "Z": ("overall_dimensions.height_z", graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") != "overall_dimension_derivation_ledger":
+            continue
+        facts = observation.get("facts")
+        if not isinstance(facts, list):
+            continue
+
+        for fact_index, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                continue
+            axis = str(fact.get("axis") or "").upper()
+            source_axis = str(fact.get("source_axis") or "").upper()
+            rotation_axis = str(fact.get("rotation_axis") or "").upper()
+            basis = str(fact.get("basis") or "")
+            value = fact.get("value")
+            source_ids = [
+                item
+                for item in fact.get("evidence", [])
+                if isinstance(item, str) and item
+            ]
+
+            valid_axes = {"X", "Y", "Z"}
+            if (
+                axis not in valid_axes
+                or source_axis not in valid_axes
+                or rotation_axis not in valid_axes
+                or basis != "rotational_symmetry_equal_transverse_extents"
+                or axis == source_axis
+                or rotation_axis in {axis, source_axis}
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_DERIVATION_{observation_index}_{fact_index}",
+                    reason="invalid rotational-symmetry overall derivation contract",
+                    evidence=source_ids,
+                )
+                continue
+
+            target, expected_value = expected[axis]
+            source_target, expected_source_value = expected[source_axis]
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or abs(float(value) - float(expected_value)) > 1e-9
+                or abs(float(value) - float(expected_source_value)) > 1e-9
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_DERIVATION_{axis}_{observation_index}_{fact_index}",
+                    reason=(
+                        "rotational-symmetry overall derivation disagrees with "
+                        "canonical overall_dimensions"
+                    ),
+                    target=target,
+                    evidence=source_ids,
+                )
+                continue
+
+            _append_relation(
+                relations,
+                RelationEvidence(
+                    id=f"ODR_{axis}_{observation_index}_{fact_index}",
+                    kind="alignment",
+                    axis=axis,
+                    targets=[source_target, target],
+                    source_ids=source_ids,
+                    required_for_modeling=True,
+                    metadata={
+                        "basis": basis,
+                        "rotation_axis": rotation_axis,
+                        "source_axis": source_axis,
+                    },
+                ),
+            )
+
+
 def _compile_axis_evidence(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -420,6 +509,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
     _compile_overall_dimension_facts(graph, direct, unresolved)
+    _compile_overall_dimension_derivations(graph, relations, unresolved)
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)

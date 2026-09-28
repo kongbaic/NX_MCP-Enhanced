@@ -29,8 +29,13 @@ is outside the box. Never borrow an overall dimension from another view; ambiguo
 ownership stays unresolved. Legacy reader-input without `structural_context_path` may
 still point at the region crop. Then write
 `structural-context-answers-v1` containing only view_kind, directly visible overall
-X/Y/Z facts allowed by that view, the exact query evidence label, and unresolved
-reasons. Local dimensions must never be promoted to `overall_dimension_facts`.
+X/Y/Z facts allowed by that view, optional `rotational_symmetry_axis`, the exact query
+evidence label, and unresolved reasons. Set `rotational_symmetry_axis` only when the
+complete drawing explicitly and uniquely establishes whole-part revolution about one
+visible engineering axis; mirror symmetry, visual resemblance, or parameter-name
+guessing is insufficient. The Agent must never synthesize the missing overall extent.
+Deterministic closure is fixed as rotation X => Y=Z, rotation Y => X=Z, rotation Z =>
+X=Y, and the finalizer must preserve derivation provenance. Local dimensions must never be promoted to `overall_dimension_facts`.
 An overall fact requires an explicit dimension spanning the complete visible part/profile
 extent on that view axis. Chained/local lengths, hole-center spacing, center-to-edge
 dimensions, radii, diameters, angles, and dimensions that cover only a local profile

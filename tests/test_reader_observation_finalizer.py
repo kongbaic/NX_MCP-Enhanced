@@ -17,6 +17,7 @@ from nx_mcp.drawing_intelligence.reader_observations import (
 from nx_mcp.drawing_intelligence.reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
+    PartialRotationalSymmetryFact,
 )
 
 
@@ -128,6 +129,40 @@ def test_finalizer_accepts_duplicate_same_axis_fact_when_values_agree():
     full = finalize_partial_reader_observations(partial)
 
     assert full.overall_dimensions.length_x == 40
+
+
+def test_finalizer_derives_one_missing_transverse_extent_from_rotational_symmetry():
+    partial = _partial()
+    partial.overall_dimension_facts = [
+        item for item in partial.overall_dimension_facts if item.axis != "Y"
+    ]
+    partial.rotational_symmetry_facts = [
+        PartialRotationalSymmetryFact(
+            axis="Z",
+            evidence=["structural:rotation-z"],
+        )
+    ]
+
+    full = finalize_partial_reader_observations(partial)
+
+    assert full.overall_dimensions.length_x == 40
+    assert full.overall_dimensions.width_y == 40
+    assert full.overall_dimensions.height_z == 66
+    derivation = next(
+        item
+        for item in full.observations
+        if item.get("kind") == "overall_dimension_derivation_ledger"
+    )
+    assert derivation["facts"] == [
+        {
+            "axis": "Y",
+            "value": 40.0,
+            "basis": "rotational_symmetry_equal_transverse_extents",
+            "source_axis": "X",
+            "rotation_axis": "Z",
+            "evidence": ["structural:X", "structural:rotation-z"],
+        }
+    ]
 
 
 def test_finalizer_rejects_missing_overall_axis():

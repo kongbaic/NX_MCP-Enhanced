@@ -234,12 +234,20 @@ class PartialOverallDimensionFact(_StrictAnswerModel):
     _validate_evidence = field_validator("evidence")(_clean_evidence)
 
 
+class PartialRotationalSymmetryFact(_StrictAnswerModel):
+    axis: Axis
+    evidence: list[str] = Field(min_length=1)
+
+    _validate_evidence = field_validator("evidence")(_clean_evidence)
+
+
 class PartialReaderObservations(_StrictAnswerModel):
     schema_version: Literal["reader-partial-observations-v1"] = Field(
         default="reader-partial-observations-v1",
         alias="schema",
     )
     overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
+    rotational_symmetry_facts: list[PartialRotationalSymmetryFact] = Field(default_factory=list)
     views: list[ObservationView] = Field(default_factory=list)
     entities: list[ObservationEntity] = Field(default_factory=list)
     associations: list[ObservationAssociation] = Field(default_factory=list)

@@ -426,6 +426,9 @@ def main() -> None:
             "mode_b_gate_a_pass",
             "mode_b_awaiting_confirmation",
             "局部尺寸不得冒充 `overall_dimension_facts`",
+            "`rotational_symmetry_axis`",
+            "rotation Z ⇒ X=Y",
+            "Agent 禁止据此手工补第三轴 overall",
             "terminal 后禁止二次诊断",
             "重开 fresh / fallback / 修正后重试",
             "fallback semantic Reader",
@@ -444,6 +447,9 @@ def main() -> None:
             "mode_b_gate_a_pass",
             "mode_b_awaiting_confirmation",
             "局部尺寸不得冒充",
+            "`rotational_symmetry_axis`",
+            "rotation Z ⇒ X=Y",
+            "Agent 禁止手工补第三轴 overall",
             "terminal 后禁止二次诊断",
             "重开 fresh / fallback / 修正后重试",
             "fallback semantic Reader",
@@ -457,6 +463,9 @@ def main() -> None:
             "The box is only a region-to-view locator, not an annotation-reading",
             "even when its dimension line or text",
             "Local dimensions must never be promoted to `overall_dimension_facts`",
+            "`rotational_symmetry_axis`",
+            "rotation Z =>",
+            "The Agent must never synthesize the missing overall extent",
             "After a terminal/blocked result, do not inspect OCR reports or Reader inputs",
             "do not offer restart/fallback/retry as recovery",
             "Hybrid Adapter",
@@ -500,10 +509,40 @@ def main() -> None:
     for token in (
         'region.get("structural_context_path")',
         'evidence_label = f"structural:{region_id}:context"',
+        "rotational_symmetry_axis",
+        "PartialRotationalSymmetryFact",
+        "rotational_symmetry_facts=merged_rotational_facts",
         "requires crop_path or structural_context_path",
     ):
         if token not in structural_context_source:
             fail(f"Structural context implementation regression: missing {token}")
+
+    finalizer_source = (
+        ROOT
+        / "src"
+        / "nx_mcp"
+        / "drawing_intelligence"
+        / "reader_observation_finalizer.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "rotational_symmetry_equal_transverse_extents",
+        "overall_dimension_derivation_ledger",
+        "partial.rotational_symmetry_facts",
+    ):
+        if token not in finalizer_source:
+            fail(f"Reader finalizer rotational symmetry regression: missing {token}")
+
+    compiler_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "compiler.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def _compile_overall_dimension_derivations(",
+        "overall_dimension_derivation_ledger",
+        'kind="alignment"',
+        "rotation_axis",
+    ):
+        if token not in compiler_source:
+            fail(f"Compiler rotational symmetry provenance regression: missing {token}")
 
     coordinator_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "mode_b_coordinator.py"

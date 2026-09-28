@@ -7,7 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .evidence import Axis, ViewKind
 from .hybrid_capture_adapter import HybridAdapterContext, HybridRegionView
-from .reader_semantic_answers import PartialOverallDimensionFact
+from .reader_semantic_answers import (
+    PartialOverallDimensionFact,
+    PartialRotationalSymmetryFact,
+)
 
 
 class StructuralContextError(ValueError):
@@ -89,6 +92,7 @@ class StructuralRegionAnswer(_StrictStructuralModel):
     view_kind: ViewKind | None = None
     evidence: list[str] = Field(default_factory=list)
     overall_dimension_facts: list[StructuralOverallFact] = Field(default_factory=list)
+    rotational_symmetry_axis: Axis | None = None
     unresolved: list[str] = Field(default_factory=list)
 
     @field_validator("evidence")
@@ -108,6 +112,8 @@ class StructuralRegionAnswer(_StrictStructuralModel):
                 raise ValueError("missing view_kind requires structured unresolved reason")
             if self.overall_dimension_facts:
                 raise ValueError("unresolved view_kind cannot carry overall dimension facts")
+            if self.rotational_symmetry_axis is not None:
+                raise ValueError("unresolved view_kind cannot carry rotational symmetry axis")
         elif not self.evidence:
             raise ValueError("resolved view_kind requires evidence")
         return self
@@ -181,6 +187,7 @@ def build_structural_context_queries(
             "open_unlisted_images": False,
             "scan_workspace": False,
             "report_only_view_kind_and_direct_overall_dimensions": True,
+            "report_only_explicit_rotational_symmetry_axis": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
             "feature_inventory": False,
@@ -203,6 +210,7 @@ def build_structural_context_queries(
                     "view_kind": None,
                     "evidence": [query.evidence_label],
                     "overall_dimension_facts": [],
+                    "rotational_symmetry_axis": None,
                     "unresolved": ["pending_structural_visual_read"],
                 }
                 for query in queries
@@ -239,6 +247,7 @@ def assemble_structural_context(
     answers_by_id = {item.query_id: item for item in answers.answers}
     region_views: list[HybridRegionView] = []
     overall_facts: list[PartialOverallDimensionFact] = []
+    rotational_facts: list[PartialRotationalSymmetryFact] = []
 
     for query in plan.queries:
         answer = answers_by_id[query.query_id]
@@ -264,6 +273,23 @@ def assemble_structural_context(
 
         view_axes = plan.view_axis_map[answer.view_kind]
         visible_axes = {view_axes.horizontal, view_axes.vertical}
+        if (
+            answer.rotational_symmetry_axis is not None
+            and answer.rotational_symmetry_axis not in visible_axes
+        ):
+            raise StructuralContextError(
+                f"query {query.query_id!r} rotational symmetry axis "
+                f"{answer.rotational_symmetry_axis!r} is not visible "
+                f"in {answer.view_kind!r} view"
+            )
+        if answer.rotational_symmetry_axis is not None:
+            rotational_facts.append(
+                PartialRotationalSymmetryFact(
+                    axis=answer.rotational_symmetry_axis,
+                    evidence=answer.evidence,
+                )
+            )
+
         seen_axes: set[Axis] = set()
         for fact in answer.overall_dimension_facts:
             if fact.axis not in visible_axes:
@@ -293,18 +319,81 @@ def assemble_structural_context(
     for overall_fact in overall_facts:
         by_axis[overall_fact.axis].append(overall_fact.value)
 
+    direct_values: dict[Axis, float] = {}
     for axis in ("X", "Y", "Z"):
         values = by_axis[axis]
         if not values:
-            raise StructuralContextError(f"missing structural overall fact for axis {axis}")
+            continue
         reference = values[0]
         if any(not math.isclose(value, reference, abs_tol=1e-9) for value in values[1:]):
             raise StructuralContextError(
                 f"conflicting structural overall facts for axis {axis}: {values}"
             )
+        direct_values[axis] = reference
+
+    rotational_axes = {item.axis for item in rotational_facts}
+    if len(rotational_axes) > 1:
+        raise StructuralContextError(
+            f"conflicting structural rotational symmetry axes: {sorted(rotational_axes)}"
+        )
+
+    merged_rotational_facts: list[PartialRotationalSymmetryFact] = []
+    rotation_axis = next(iter(rotational_axes), None)
+    if rotation_axis is not None:
+        evidence = list(
+            dict.fromkeys(
+                label
+                for item in rotational_facts
+                for label in item.evidence
+            )
+        )
+        merged_rotational_facts.append(
+            PartialRotationalSymmetryFact(
+                axis=rotation_axis,
+                evidence=evidence,
+            )
+        )
+
+        transverse_axes = [
+            axis for axis in ("X", "Y", "Z") if axis != rotation_axis
+        ]
+        known_transverse = [
+            axis for axis in transverse_axes if axis in direct_values
+        ]
+        if len(known_transverse) == 2 and not math.isclose(
+            direct_values[known_transverse[0]],
+            direct_values[known_transverse[1]],
+            abs_tol=1e-9,
+        ):
+            raise StructuralContextError(
+                "rotational symmetry conflicts with direct transverse overall facts: "
+                f"{known_transverse[0]}={direct_values[known_transverse[0]]}, "
+                f"{known_transverse[1]}={direct_values[known_transverse[1]]}"
+            )
+
+    missing_axes = [
+        axis for axis in ("X", "Y", "Z") if axis not in direct_values
+    ]
+    if missing_axes:
+        derivable = False
+        if rotation_axis is not None and len(missing_axes) == 1:
+            missing_axis = missing_axes[0]
+            transverse_axes = [
+                axis for axis in ("X", "Y", "Z") if axis != rotation_axis
+            ]
+            if missing_axis in transverse_axes:
+                source_axis = next(
+                    axis for axis in transverse_axes if axis != missing_axis
+                )
+                derivable = source_axis in direct_values
+        if not derivable:
+            raise StructuralContextError(
+                f"missing structural overall fact for axis {missing_axes[0]}"
+            )
 
     return HybridAdapterContext(
         region_views=region_views,
         overall_dimension_facts=overall_facts,
+        rotational_symmetry_facts=merged_rotational_facts,
         confirmed_start_sides=[],
     )

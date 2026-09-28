@@ -79,6 +79,7 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.queries[0].image_path.endswith("R1.png")
     assert plan.queries[0].evidence_label == "structural:R1:crop"
     assert plan.rules["report_only_view_kind_and_direct_overall_dimensions"] is True
+    assert plan.rules["report_only_explicit_rotational_symmetry_axis"] is True
     assert plan.rules["derive_missing_dimensions"] is False
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False
@@ -93,6 +94,8 @@ def test_structural_query_builder_only_requests_region_structure():
     assert [item.query_id for item in template.answers] == ["S001", "S002"]
     assert template.answers[0].evidence == ["structural:R1:crop"]
     assert template.answers[1].evidence == ["structural:R2:crop"]
+    assert template.answers[0].rotational_symmetry_axis is None
+    assert template.answers[1].rotational_symmetry_axis is None
     assert all(
         item.unresolved == ["pending_structural_visual_read"]
         for item in template.answers
@@ -147,6 +150,37 @@ def test_structural_context_rejects_axis_not_visible_in_view():
     answers = StructuralContextAnswers.model_validate(payload)
 
     with pytest.raises(StructuralContextError, match="is not visible"):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_context_allows_one_missing_transverse_axis_with_explicit_rotation_axis():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry_axis"] = "Z"
+    payload["answers"][1]["view_kind"] = "front"
+    payload["answers"][1]["rotational_symmetry_axis"] = "Z"
+    payload["answers"][1]["overall_dimension_facts"] = []
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+
+    facts = {(item.axis, item.value) for item in context.overall_dimension_facts}
+    assert facts == {("X", 40.0), ("Z", 66.0)}
+    assert len(context.rotational_symmetry_facts) == 1
+    assert context.rotational_symmetry_facts[0].axis == "Z"
+    assert context.rotational_symmetry_facts[0].evidence == [
+        "structural:R1:crop",
+        "structural:R2:crop",
+    ]
+
+
+def test_structural_context_rejects_rotation_axis_not_visible_in_view():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry_axis"] = "Y"
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(StructuralContextError, match="rotational symmetry axis"):
         assemble_structural_context(plan, answers)
 
 

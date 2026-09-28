@@ -8,7 +8,11 @@ from typing import Any
 
 from .evidence import Axis, OverallDimensions
 from .reader_observations import ReaderObservations
-from .reader_semantic_answers import PartialOverallDimensionFact, PartialReaderObservations
+from .reader_semantic_answers import (
+    PartialOverallDimensionFact,
+    PartialReaderObservations,
+    PartialRotationalSymmetryFact,
+)
 
 
 class ReaderObservationFinalizationError(ValueError):
@@ -56,7 +60,8 @@ def _reject_pixel_derived_metric_observations(
 
 def _overall_dimensions(
     facts: list[PartialOverallDimensionFact],
-) -> OverallDimensions:
+    rotational_symmetry_facts: list[PartialRotationalSymmetryFact],
+) -> tuple[OverallDimensions, list[dict[str, Any]]]:
     by_axis: dict[Axis, list[PartialOverallDimensionFact]] = {
         "X": [],
         "Y": [],
@@ -65,13 +70,12 @@ def _overall_dimensions(
     for fact in facts:
         by_axis[fact.axis].append(fact)
 
-    values: dict[str, float] = {}
+    direct_values: dict[Axis, float] = {}
+    direct_evidence: dict[Axis, list[str]] = {}
     for axis in ("X", "Y", "Z"):
         axis_facts = by_axis[axis]
         if not axis_facts:
-            raise ReaderObservationFinalizationError(
-                f"missing overall dimension fact for axis {axis}"
-            )
+            continue
 
         reference = axis_facts[0].value
         conflicting = [
@@ -90,9 +94,80 @@ def _overall_dimensions(
                 f"conflicting overall dimension facts for axis {axis}: {all_values}"
             )
 
-        values[_OVERALL_FIELD_BY_AXIS[axis]] = reference
+        direct_values[axis] = reference
+        direct_evidence[axis] = list(
+            dict.fromkeys(
+                label
+                for fact in axis_facts
+                for label in fact.evidence
+            )
+        )
 
-    return OverallDimensions.model_validate(values)
+    symmetry_axes = {item.axis for item in rotational_symmetry_facts}
+    if len(symmetry_axes) > 1:
+        raise ReaderObservationFinalizationError(
+            f"conflicting rotational symmetry axes: {sorted(symmetry_axes)}"
+        )
+
+    derivations: list[dict[str, Any]] = []
+    rotation_axis = next(iter(symmetry_axes), None)
+    symmetry_evidence = list(
+        dict.fromkeys(
+            label
+            for item in rotational_symmetry_facts
+            for label in item.evidence
+        )
+    )
+
+    if rotation_axis is not None:
+        transverse_axes = [
+            axis for axis in ("X", "Y", "Z") if axis != rotation_axis
+        ]
+        left, right = transverse_axes
+        if left in direct_values and right in direct_values:
+            if not math.isclose(
+                direct_values[left],
+                direct_values[right],
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            ):
+                raise ReaderObservationFinalizationError(
+                    "rotational symmetry conflicts with direct transverse overall "
+                    f"facts: {left}={direct_values[left]}, "
+                    f"{right}={direct_values[right]}"
+                )
+        elif left in direct_values or right in direct_values:
+            source_axis = left if left in direct_values else right
+            target_axis = right if source_axis == left else left
+            value = direct_values[source_axis]
+            direct_values[target_axis] = value
+            evidence = list(
+                dict.fromkeys(
+                    [*direct_evidence[source_axis], *symmetry_evidence]
+                )
+            )
+            derivations.append(
+                {
+                    "axis": target_axis,
+                    "value": value,
+                    "basis": "rotational_symmetry_equal_transverse_extents",
+                    "source_axis": source_axis,
+                    "rotation_axis": rotation_axis,
+                    "evidence": evidence,
+                }
+            )
+
+    for axis in ("X", "Y", "Z"):
+        if axis not in direct_values:
+            raise ReaderObservationFinalizationError(
+                f"missing overall dimension fact for axis {axis}"
+            )
+
+    values = {
+        _OVERALL_FIELD_BY_AXIS[axis]: direct_values[axis]
+        for axis in ("X", "Y", "Z")
+    }
+    return OverallDimensions.model_validate(values), derivations
 
 
 def finalize_partial_reader_observations(
@@ -117,7 +192,21 @@ def finalize_partial_reader_observations(
         ]
     )
 
-    overall = _overall_dimensions(partial.overall_dimension_facts)
+    overall, overall_derivations = _overall_dimensions(
+        partial.overall_dimension_facts,
+        partial.rotational_symmetry_facts,
+    )
+    rotational_symmetry_ledger: dict[str, Any] = {
+        "kind": "rotational_symmetry_fact_ledger",
+        "facts": [
+            fact.model_dump(mode="json")
+            for fact in partial.rotational_symmetry_facts
+        ],
+    }
+    overall_derivation_ledger: dict[str, Any] = {
+        "kind": "overall_dimension_derivation_ledger",
+        "facts": overall_derivations,
+    }
     overall_ledger: dict[str, Any] = {
         "kind": "overall_dimension_fact_ledger",
         "facts": [fact.model_dump(mode="json") for fact in partial.overall_dimension_facts],
@@ -134,6 +223,16 @@ def finalize_partial_reader_observations(
         centerline_alignments=partial.centerline_alignments,
         observations=[
             *partial.observations,
+            *(
+                [rotational_symmetry_ledger]
+                if partial.rotational_symmetry_facts
+                else []
+            ),
+            *(
+                [overall_derivation_ledger]
+                if overall_derivations
+                else []
+            ),
             overall_ledger,
         ],
         unresolved=partial.unresolved,

@@ -28,6 +28,7 @@ from .reader_observations import (
 from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
+    PartialRotationalSymmetryFact,
 )
 from .view_metric_calibration import derive_view_axis_boundaries
 
@@ -59,6 +60,9 @@ class HybridAdapterContext(_StrictAdapterModel):
     )
     region_views: list[HybridRegionView] = Field(min_length=1)
     overall_dimension_facts: list[PartialOverallDimensionFact] = Field(default_factory=list)
+    rotational_symmetry_facts: list[PartialRotationalSymmetryFact] = Field(
+        default_factory=list
+    )
     confirmed_start_sides: list[HybridConfirmedStartSide] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -5039,6 +5043,7 @@ def adapt_hybrid_ocr_report(
 
     return PartialReaderObservations(
         overall_dimension_facts=context.overall_dimension_facts,
+        rotational_symmetry_facts=context.rotational_symmetry_facts,
         views=views,
         entities=entities,
         associations=associations,

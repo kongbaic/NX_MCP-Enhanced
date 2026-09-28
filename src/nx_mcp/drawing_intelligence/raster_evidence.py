@@ -779,6 +779,23 @@ def _witness_line_evidence(
     return output
 
 
+def _region_scoped_witnesses(
+    witnesses: list[float],
+    *,
+    orientation: str,
+    region_bbox: list[int],
+    margin: float,
+) -> list[float]:
+    x, y, width, height = (float(value) for value in region_bbox)
+    if orientation == "horizontal":
+        lower, upper = x - margin, x + width + margin
+    elif orientation == "vertical":
+        lower, upper = y - margin, y + height + margin
+    else:
+        raise ValueError("candidate orientation must be horizontal or vertical")
+    return [value for value in witnesses if lower <= float(value) <= upper]
+
+
 def _dimension_geometry(
     gray: Any,
     raw_evidence: dict[str, Any],
@@ -878,6 +895,14 @@ def _dimension_geometry(
                 continue
             if axis < y - 0.15 * region_height or axis > region_bottom + 0.15 * region_height:
                 continue
+            region_witnesses = _region_scoped_witnesses(
+                witnesses,
+                orientation="horizontal",
+                region_bbox=bbox,
+                margin=float(witness_tolerance),
+            )
+            if len(region_witnesses) < 2:
+                continue
 
             output.append(
                 {
@@ -887,12 +912,13 @@ def _dimension_geometry(
                     "axis_px": round(axis, 1),
                     "axis_local_norm": round((axis - y) / region_height, 5),
                     "line_span_px": [start, end],
-                    "witness_positions_px": witnesses,
+                    "witness_positions_px": region_witnesses,
                     "witness_positions_local_norm": [
-                        round((value - x) / region_width, 5) for value in witnesses
+                        round((value - x) / region_width, 5)
+                        for value in region_witnesses
                     ],
                     "witness_line_evidence": _witness_line_evidence(
-                        witnesses,
+                        region_witnesses,
                         vertical,
                         dimension_axis=axis,
                         witness_axis_tolerance=float(witness_dedup),
@@ -930,6 +956,14 @@ def _dimension_geometry(
                 continue
             if axis < x - 0.15 * region_width or axis > region_right + 0.15 * region_width:
                 continue
+            region_witnesses = _region_scoped_witnesses(
+                witnesses,
+                orientation="vertical",
+                region_bbox=bbox,
+                margin=float(witness_tolerance),
+            )
+            if len(region_witnesses) < 2:
+                continue
 
             output.append(
                 {
@@ -939,12 +973,13 @@ def _dimension_geometry(
                     "axis_px": round(axis, 1),
                     "axis_local_norm": round((axis - x) / region_width, 5),
                     "line_span_px": [start, end],
-                    "witness_positions_px": witnesses,
+                    "witness_positions_px": region_witnesses,
                     "witness_positions_local_norm": [
-                        round((value - y) / region_height, 5) for value in witnesses
+                        round((value - y) / region_height, 5)
+                        for value in region_witnesses
                     ],
                     "witness_line_evidence": _witness_line_evidence(
-                        witnesses,
+                        region_witnesses,
                         horizontal,
                         dimension_axis=axis,
                         witness_axis_tolerance=float(witness_dedup),

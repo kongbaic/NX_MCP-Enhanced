@@ -4,6 +4,7 @@ from nx_mcp.drawing_intelligence.raster_evidence import (
     _compact_fragments,
     _adapt_probe,
     _oblique_annotation_lines,
+    _region_scoped_witnesses,
     _witness_line_evidence,
     extract_raw_evidence,
     fragment_length_limits,
@@ -147,6 +148,15 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         all("source_lines" in witness for witness in item["witness_line_evidence"])
         for item in raw["dimension_geometry_candidates"]
     )
+
+
+def test_region_scoped_witnesses_excludes_other_region_axes():
+    assert _region_scoped_witnesses(
+        [146.0, 295.5, 371.5, 414.0],
+        orientation="vertical",
+        region_bbox=[432, 88, 592, 211],
+        margin=5.0,
+    ) == [146.0, 295.5]
 
 
 def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():

@@ -221,6 +221,69 @@ def test_collect_candidates_deduplicates_exact_cross_region_geometry_with_proven
     assert candidates[0]["source_region_ids"] == ["R2", "R3"]
 
 
+def test_structured_scalar_can_bind_vertical_candidate_with_horizontal_text():
+    module = _load_module()
+    candidate = {
+        "orientation": "vertical",
+        "axis_px": 472.0,
+        "wide": {"source_roi_bbox_px": [418, 115, 108, 200]},
+    }
+    item = {
+        "text": "S - 4.5 mm",
+        "bbox": [[416, 162], [538, 162], [538, 192], [416, 192]],
+    }
+    bare = {
+        "text": "4",
+        "bbox": [[468, 138], [486, 138], [486, 154], [468, 154]],
+    }
+
+    assert module._candidate_matches_item(candidate, item) is True
+    assert module._candidate_matches_item(candidate, bare) is False
+
+
+def test_global_proposal_prefers_structured_scalar_over_bare_glyph():
+    module = _load_module()
+    candidate = {
+        "orientation": "horizontal",
+        "wide": {"source_roi_bbox_px": [385, 101, 649, 90]},
+    }
+    proposal, reason = module._global_proposal(
+        candidate,
+        [
+            {
+                "source_item_index": 1,
+                "text": "A - 168,3 mm",
+                "token": "168.3",
+                "perpendicular_distance_px": 19.25,
+            },
+            {
+                "source_item_index": 3,
+                "text": "4",
+                "token": "4",
+                "perpendicular_distance_px": 0.0,
+            },
+            {
+                "source_item_index": 4,
+                "text": "S - 4.5 mm",
+                "token": "4.5",
+                "perpendicular_distance_px": 31.0,
+            },
+        ],
+    )
+
+    assert proposal == "168.3"
+    assert reason == "strongest_unique_global_linear_token"
+
+
+def test_hybrid_decision_accepts_decimal_split_by_local_rotation():
+    module = _load_module()
+
+    assert module._hybrid_decision("4.5", {"4", "5"}) == (
+        "4.5",
+        "global_decimal_confirmed_by_local_fragments",
+    )
+
+
 def test_hybrid_decision_fails_closed_on_disagreement():
     module = _load_module()
 

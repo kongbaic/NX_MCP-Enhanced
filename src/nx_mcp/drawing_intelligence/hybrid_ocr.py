@@ -90,6 +90,22 @@ def _linear_tokens(text: str) -> set[str]:
     return set()
 
 
+def _linear_text_strength(text: str) -> int:
+    normalized = _normalize(text)
+    if re.fullmatch(
+        r"[A-Z][A-Z0-9]{0,2}[-=:][-+]?\d+(?:\.\d+)?(?:MM)?",
+        normalized,
+    ):
+        return 3
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?MM", normalized):
+        return 2
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized):
+        return 1
+    if re.fullmatch(r"\d+(?:\.\d+)?±\d+(?:\.\d+)?", normalized):
+        return 3
+    return 0
+
+
 def _item_center(item: dict[str, Any]) -> tuple[float, float]:
     points = item.get("bbox", [])
     if not isinstance(points, list) or len(points) < 4:
@@ -149,7 +165,11 @@ def _candidate_matches_item(
 
     item_orientation = _item_orientation(item)
     candidate_orientation = str(candidate["orientation"])
-    if item_orientation != "ambiguous" and item_orientation != candidate_orientation:
+    if (
+        item_orientation != "ambiguous"
+        and item_orientation != candidate_orientation
+        and _linear_text_strength(str(item.get("text") or "")) < 2
+    ):
         return False
 
     return _inside_box(
@@ -226,17 +246,21 @@ def _global_proposal(
     ranked = sorted(
         assignments,
         key=lambda item: (
+            -_linear_text_strength(str(item.get("text") or "")),
             float(item["perpendicular_distance_px"]),
             int(item["source_item_index"]),
         ),
     )
     if len(ranked) > 1:
-        first = float(ranked[0]["perpendicular_distance_px"])
-        second = float(ranked[1]["perpendicular_distance_px"])
-        if second - first < _assignment_margin(candidate):
-            return None, "multiple_global_tokens_without_distance_margin"
+        first_strength = _linear_text_strength(str(ranked[0].get("text") or ""))
+        second_strength = _linear_text_strength(str(ranked[1].get("text") or ""))
+        if first_strength == second_strength:
+            first = float(ranked[0]["perpendicular_distance_px"])
+            second = float(ranked[1]["perpendicular_distance_px"])
+            if second - first < _assignment_margin(candidate):
+                return None, "multiple_global_tokens_without_distance_margin"
 
-    return str(ranked[0]["token"]), "nearest_unique_global_linear_token"
+    return str(ranked[0]["token"]), "strongest_unique_global_linear_token"
 
 
 def _local_linear_tokens(items: list[dict[str, Any]]) -> set[str]:
@@ -252,9 +276,17 @@ def _hybrid_decision(
 ) -> tuple[str | None, str]:
     if global_token is None:
         return None, "no_global_proposal"
-    if global_token not in local_tokens:
-        return None, "global_local_token_disagreement"
-    return global_token, "global_geometry_assignment_confirmed_by_local_roi"
+    if global_token in local_tokens:
+        return global_token, "global_geometry_assignment_confirmed_by_local_roi"
+
+    decimal = re.fullmatch(r"(\d+)\.(\d+)", global_token)
+    if decimal is not None:
+        integer_part = _canonical_number(decimal.group(1))
+        fractional_part = decimal.group(2).lstrip("0")
+        if fractional_part and local_tokens == {integer_part, fractional_part}:
+            return global_token, "global_decimal_confirmed_by_local_fragments"
+
+    return None, "global_local_token_disagreement"
 
 
 def _observation_ref(

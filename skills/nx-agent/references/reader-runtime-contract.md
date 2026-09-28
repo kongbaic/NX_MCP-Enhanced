@@ -417,7 +417,11 @@ eligible for Controlled Self-Healing. After the first coordinator terminal/block
 result, do not read schema/source code, do not rewrite `reader-observations.json`,
 do not choose a new artifact prefix to retry, and do not call the coordinator again.
 After a terminal/blocked result, do not inspect OCR reports or Reader inputs; do not offer restart/fallback/retry as recovery.
-Report only the first terminal phase/reason/errors and stop. If this task started with
+Report only the first terminal phase/reason/errors and stop. End the user-facing reply
+immediately after that failure report: do not append recommendations, next steps,
+alternative inputs, Mode A, restart instructions, or suggestions to start a new task.
+A separate fresh task may begin only when the user independently requests it in a later
+message; the Agent must not prompt or steer the user to do so. If this task started with
 an explicit raster path, the fallback semantic Reader cannot be selected as a recovery
 path. A new fresh production run is allowed only after the user explicitly starts a
 separate new task.

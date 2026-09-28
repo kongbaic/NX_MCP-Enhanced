@@ -107,7 +107,9 @@ option_id 后写出 `user-confirmations.json`，并只允许执行一次
 其它结果 BLOCKED / STOP。**terminal 后禁止二次诊断：首次 terminal/blocked 后只报告
 首次失败 phase/reason/errors 并结束，不得再读 OCR report、reader-input、structural
 queries/answers、manifest 或其它中间 artifact 来推断如何补救，不得重新解释图纸，也不得提供
-“重开 fresh / fallback / 修正后重试”选项。**
+“重开 fresh / fallback / 修正后重试”选项。失败报告写完后必须立即结束回复，禁止附加任何
+“建议”“下一步”“继续方式”“替代输入”“模式 A”“重新开始”“发起新任务”等恢复性或操作性
+内容；新的独立任务只能由用户后续主动发起，Agent 不得在 terminal 回复中建议或诱导用户发起。**
 
 只有本轮没有明确 runtime-local raster 路径或输入不是 raster 时，才使用 fallback
 semantic Reader：一次性写出 `reader-observations.json` 后立即调用

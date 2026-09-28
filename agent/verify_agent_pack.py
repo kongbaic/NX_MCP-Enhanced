@@ -431,7 +431,7 @@ def main() -> None:
             '"status":"not_established"',
             '"axis":null',
             "不要求图纸额外打印 X/Y/Z 轴名",
-            "front: horizontal→X / vertical→Z",
+            "front horizontal→X / vertical→Z",
             "无中心线轴向剖视依据",
             "连续实线的物体轮廓/边界绝不能冒充中心线",
             "not_established 不是“没看出来”的兜底值",

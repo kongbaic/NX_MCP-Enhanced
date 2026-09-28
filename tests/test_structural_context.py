@@ -91,6 +91,11 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["report_only_view_kind_and_direct_overall_dimensions"] is True
     assert plan.rules["report_only_explicit_rotational_symmetry_axis"] is True
     assert plan.rules["require_explicit_rotational_symmetry_decision"] is True
+    assert plan.rules["allow_nonsection_longitudinal_revolved_profile"] is True
+    assert plan.rules["require_whole_part_centerline_for_rotation"] is True
+    assert plan.rules["require_paired_coaxial_profile_for_rotation"] is True
+    assert plan.rules["not_established_requires_counterevidence"] is True
+    assert plan.rules["insufficient_rotation_evidence_is_unresolved"] is True
     assert plan.rules["derive_missing_dimensions"] is False
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False

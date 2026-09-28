@@ -75,11 +75,15 @@ evidence:[原样 evidence_label]。对已解析且准备继续的 answer，rotat
 not_established，schema 必须拒绝；模板中的 null 只用于 pending/unresolved。视觉上无法确定时
 保持 null 并写 unresolved，本轮 fail-closed，禁止添加 unknown/uncertain 后继续。只有在完整
 工程图明确且唯一表达整件绕某一可见工程轴回转时才允许 established；**不要求图纸额外打印 X/Y/Z 轴名**。若 query 明确显示
-整件 axial/longitudinal section 或等价完整回转剖面、存在贯穿整件剖面的中心线，且中心线
-两侧由同一组同轴径向/直径轮廓共同建立 whole-part revolution，则按当前 view_kind +
-view_axis_map 唯一映射中心线方向：front horizontal→X / vertical→Z，side horizontal→Y /
-vertical→Z，top horizontal→X / vertical→Y。普通镜像对称、只有中心线但无同轴回转轮廓、
-看起来像回转件或参数名猜测均不足。
+允许两类 established 视觉依据：①整件 axial/longitudinal section 或等价完整回转剖面；
+②非剖视的纵向正投影视图，但必须有一条贯穿主要主体的整件中心线，且各主要阶梯/圆柱主体段
+由围绕同一中心线成对出现的相对轮廓边/肩部共同表达同轴回转体。第二类是工程制图语义识别，
+禁止测量像素距离或把视觉“等距”换算成工程值。满足后按当前 view_kind + view_axis_map
+唯一映射中心线方向：front horizontal→X / vertical→Z，side horizontal→Y / vertical→Z，
+top horizontal→X / vertical→Y。普通镜像对称、只有中心线但无成对同轴回转轮廓、看起来像
+回转件或参数名猜测均不足。not_established 不是不确定性的兜底：只有 query 明确显示整件
+不具备回转对称时才允许；既无足够 established 证据又无明确反证时必须保持
+rotational_symmetry=null、写 unresolved 并 fail-closed。
 **Agent 禁止手工补第三轴 overall；确定性闭合固定为 rotation X ⇒ Y=Z、rotation Y ⇒ X=Z、
 rotation Z ⇒ X=Y，由 finalizer 从一个直接 transverse overall + established rotational_symmetry axis
 推导缺失 transverse overall，并保存 derivation provenance。****局部尺寸不得冒充

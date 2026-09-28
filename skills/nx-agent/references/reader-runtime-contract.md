@@ -29,18 +29,26 @@ is outside the box. Never borrow an overall dimension from another view; ambiguo
 ownership stays unresolved. Legacy reader-input without `structural_context_path` may
 still point at the region crop. Then write
 `structural-context-answers-v1` containing only view_kind, directly visible overall
-X/Y/Z facts allowed by that view, optional `rotational_symmetry_axis`, the exact query
-evidence label, and unresolved reasons. Set `rotational_symmetry_axis` only when the
-complete drawing explicitly and uniquely establishes whole-part revolution about one
-visible engineering axis. A printed X/Y/Z axis name is not required: an explicit
-whole-part axial/longitudinal section (or equivalent complete revolved profile), a
-centerline running through the whole section, and coaxial radial/diameter profile
-evidence on both sides of that centerline may establish the rotation axis. Map the
-visible centerline direction only through the resolved view and `view_axis_map`:
-front horizontal=>X / vertical=>Z; side horizontal=>Y / vertical=>Z; top
-horizontal=>X / vertical=>Y. Mirror symmetry alone, a centerline without coaxial
-revolved-profile evidence, visual resemblance, or parameter-name guessing is
-insufficient. The Agent must never synthesize the missing overall extent.
+X/Y/Z facts allowed by that view, the required explicit `rotational_symmetry`
+decision, the exact query evidence label, and unresolved reasons. For every resolved
+answer that is allowed to continue, `rotational_symmetry` must be either
+`{"status":"established","axis":"X|Y|Z","evidence":[exact_query_evidence]}` or
+`{"status":"not_established","axis":null,"evidence":[exact_query_evidence]}`.
+Omitting the field is not equivalent to `not_established` and must fail schema
+validation. The template may carry `rotational_symmetry:null` only while the answer
+is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
+record an unresolved reason, and fail closed; do not invent an unknown/uncertain state
+that can continue. Use `established` only when the complete drawing explicitly and
+uniquely establishes whole-part revolution about one visible engineering axis. A
+printed X/Y/Z axis name is not required: an explicit whole-part axial/longitudinal
+section (or equivalent complete revolved profile), a centerline running through the
+whole section, and coaxial radial/diameter profile evidence on both sides of that
+centerline may establish the rotation axis. Map the visible centerline direction only
+through the resolved view and `view_axis_map`: front horizontal=>X / vertical=>Z;
+side horizontal=>Y / vertical=>Z; top horizontal=>X / vertical=>Y. Mirror symmetry
+alone, a centerline without coaxial revolved-profile evidence, visual resemblance, or
+parameter-name guessing is insufficient; inability to decide must remain unresolved.
+The Agent must never synthesize the missing overall extent.
 Deterministic closure is fixed as rotation X => Y=Z, rotation Y => X=Z, rotation Z =>
 X=Y, and the finalizer must preserve derivation provenance. Local dimensions must never be promoted to `overall_dimension_facts`.
 An overall fact requires an explicit dimension spanning the complete visible part/profile

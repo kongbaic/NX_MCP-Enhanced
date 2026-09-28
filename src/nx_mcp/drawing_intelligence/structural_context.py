@@ -87,12 +87,28 @@ class StructuralOverallFact(_StrictStructuralModel):
     _validate_evidence = field_validator("evidence")(_clean_evidence)
 
 
+class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
+    status: Literal["established", "not_established"]
+    axis: Axis | None = None
+    evidence: list[str] = Field(min_length=1)
+
+    _validate_evidence = field_validator("evidence")(_clean_evidence)
+
+    @model_validator(mode="after")
+    def _shape(self) -> StructuralRotationalSymmetryDecision:
+        if self.status == "established" and self.axis is None:
+            raise ValueError("established rotational symmetry requires axis")
+        if self.status == "not_established" and self.axis is not None:
+            raise ValueError("not_established rotational symmetry requires null axis")
+        return self
+
+
 class StructuralRegionAnswer(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     view_kind: ViewKind | None = None
     evidence: list[str] = Field(default_factory=list)
     overall_dimension_facts: list[StructuralOverallFact] = Field(default_factory=list)
-    rotational_symmetry_axis: Axis | None = None
+    rotational_symmetry: StructuralRotationalSymmetryDecision | None = Field(...)
     unresolved: list[str] = Field(default_factory=list)
 
     @field_validator("evidence")
@@ -112,10 +128,14 @@ class StructuralRegionAnswer(_StrictStructuralModel):
                 raise ValueError("missing view_kind requires structured unresolved reason")
             if self.overall_dimension_facts:
                 raise ValueError("unresolved view_kind cannot carry overall dimension facts")
-            if self.rotational_symmetry_axis is not None:
-                raise ValueError("unresolved view_kind cannot carry rotational symmetry axis")
+            if self.rotational_symmetry is not None:
+                raise ValueError("unresolved view_kind cannot carry rotational symmetry decision")
         elif not self.evidence:
             raise ValueError("resolved view_kind requires evidence")
+        elif not self.unresolved and self.rotational_symmetry is None:
+            raise ValueError(
+                "resolved structural answer requires explicit rotational symmetry decision"
+            )
         return self
 
 
@@ -188,6 +208,7 @@ def build_structural_context_queries(
             "scan_workspace": False,
             "report_only_view_kind_and_direct_overall_dimensions": True,
             "report_only_explicit_rotational_symmetry_axis": True,
+            "require_explicit_rotational_symmetry_decision": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
             "feature_inventory": False,
@@ -210,7 +231,7 @@ def build_structural_context_queries(
                     "view_kind": None,
                     "evidence": [query.evidence_label],
                     "overall_dimension_facts": [],
-                    "rotational_symmetry_axis": None,
+                    "rotational_symmetry": None,
                     "unresolved": ["pending_structural_visual_read"],
                 }
                 for query in queries
@@ -273,20 +294,32 @@ def assemble_structural_context(
 
         view_axes = plan.view_axis_map[answer.view_kind]
         visible_axes = {view_axes.horizontal, view_axes.vertical}
-        if (
-            answer.rotational_symmetry_axis is not None
-            and answer.rotational_symmetry_axis not in visible_axes
-        ):
+        rotation_decision = answer.rotational_symmetry
+        if rotation_decision is None:
             raise StructuralContextError(
-                f"query {query.query_id!r} rotational symmetry axis "
-                f"{answer.rotational_symmetry_axis!r} is not visible "
-                f"in {answer.view_kind!r} view"
+                f"query {query.query_id!r} has no explicit rotational symmetry decision"
             )
-        if answer.rotational_symmetry_axis is not None:
+        _assert_evidence(
+            rotation_decision.evidence,
+            query.evidence_label,
+            query_id=query.query_id,
+        )
+        if rotation_decision.status == "established":
+            rotation_axis = rotation_decision.axis
+            if rotation_axis is None:
+                raise StructuralContextError(
+                    f"query {query.query_id!r} established rotational symmetry has no axis"
+                )
+            if rotation_axis not in visible_axes:
+                raise StructuralContextError(
+                    f"query {query.query_id!r} rotational symmetry axis "
+                    f"{rotation_axis!r} is not visible "
+                    f"in {answer.view_kind!r} view"
+                )
             rotational_facts.append(
                 PartialRotationalSymmetryFact(
-                    axis=answer.rotational_symmetry_axis,
-                    evidence=answer.evidence,
+                    axis=rotation_axis,
+                    evidence=rotation_decision.evidence,
                 )
             )
 

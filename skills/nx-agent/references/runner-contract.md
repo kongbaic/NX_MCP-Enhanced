@@ -8,7 +8,7 @@
 
 - 当前 `plan_schema.json` 的 `schema_version` = **1.1**（冻结于 2026-09-18）。
 - 两种格式：
-  - **frozen**（Planner 输出）：顶层含 `skill / mode / part / coordinate_system / notes / operations / final_validation / fallbacks`；`mode` 必填且只允许 `FAST | DIAGNOSTIC`；`operations` 必填。
+  - **frozen**（Planner 输出）：顶层含 `skill / mode / part / source_drawing / coordinate_system / notes / operations / final_validation / fallbacks`；`mode` 必填且只允许 `FAST | DIAGNOSTIC`；`operations` 必填。`source_drawing` 在文字模式可省略，但 Mode B 使用 `--drawing` 时必须存在。
   - **executable**（Runner 执行格式）= frozen + build 写入的顶层 `plan_format: "executable-v1"` + 扩展字段（`result_bindings`、`selection_binding`、`retry`、`$references`）。
 - Runner 可读/校验两种格式；只有 executable 可被 `run` 执行。即使计划无需任何 result/selection binding（例如仅 `nx_create_part → nx_save_part`），build 也必须写入 `plan_format: "executable-v1"`，run 不得再以“是否存在 binding”作为唯一 executable 判据。
 - **frozen 严禁手写 executable 扩展**：顶层 `plan_format`、`result_bindings` / `selection_binding` /
@@ -49,7 +49,7 @@
 
 ## 4. tool_args 规则
 
-Mode B 在 `plan-contracts` 返回 operation_contracts 后，Planner 对每个 contract operation 做机械映射：`tool` 原样；`fixed_args` 精确复制到 tool_args（完整 key set 且值完全相等，`false` / `0` / 空对象不得省略）；`operation_fields` 若存在，其每个 key/value 原样复制到 frozen operation **顶层**，例如 `{"operation_fields":{"thread_surrogate_use":{...}}}` 必须生成 operation 顶层 `"thread_surrogate_use": {...}`，它不是 NX tool_args；最后只补 `requires` 声明的 symbol wiring。禁止根据 optional 参数/default 语义删除 Adapter 已显式给出的任何字段。
+Mode B 在 `plan-contracts <current-drawing.json>` 成功后，Planner 必须先把结果顶层绝对路径 `drawing` 原样复制到 frozen 顶层 `source_drawing`；不得自行重写路径。随后对返回的 operation_contracts 做机械映射：`tool` 原样；`fixed_args` 精确复制到 tool_args（完整 key set 且值完全相等，`false` / `0` / 空对象不得省略）；`operation_fields` 若存在，其每个 key/value 原样复制到 frozen operation **顶层**，例如 `{"operation_fields":{"thread_surrogate_use":{...}}}` 必须生成 operation 顶层 `"thread_surrogate_use": {...}`，它不是 NX tool_args；最后只补 `requires` 声明的 symbol wiring。禁止根据 optional 参数/default 语义删除 Adapter 已显式给出的任何字段。
 
 1. `tool_args` 只能包含该 certified tool 真正支持的参数（required + optional，见 certified-tool-contract.json）。
 2. `selection_criteria` / `expectation` 及其任何内部字段（`match` / `expected_count` / `purpose` / `checks` / `expect_extent` 等）**禁止**放入 `tool_args`。
@@ -119,6 +119,10 @@ SpecifyPoint** 创建非 XY 草图；仅设置 `PlaneReference` 会发生 XZ/YZ 
 - 连续多个边操作必须：list → 定位 → 执行 → 再 list → 定位 → 执行，禁止一次 list 保存多组 index 连续使用。
 
 ## 9. build / check 输入输出约定
+
+- Mode B 的 `plan-contracts <current-drawing.json>` 返回 canonical absolute `drawing`；Planner 必须原样复制为 frozen 顶层 `source_drawing`。
+- Mode B 的 `build ... --drawing <current-drawing.json>` 与 `check ... --drawing <current-drawing.json>` 都会 fail-closed：`source_drawing` 缺失或 canonical absolute path 不一致时立即失败。
+- 纯文字模式不带 `--drawing`，因此不要求 `source_drawing`，不得影响既有文字建模链。
 
 - `runner.py check <frozen> --frozen` 必须先通过；frozen 中若出现任何 executable-only
   字段或 `$reference`，视为 Planner/格式错误。

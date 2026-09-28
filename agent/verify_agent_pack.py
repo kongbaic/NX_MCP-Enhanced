@@ -798,15 +798,40 @@ def main() -> None:
         if token not in plan_tests:
             fail(f"Runner create-new preservation regression test missing: {token}")
 
-    for token in (
+    source_drawing_tokens = (
         "def _mode_b_source_drawing_errors(",
         '"source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level"',
         "Mode B plan missing source_drawing copied from plan-contracts output",
         "Mode B source_drawing mismatch:",
-        "test_mode_b_source_drawing_binding_requires_exact_current_path",
-    ):
-        if token not in runner_source and token not in plan_tests:
+        "errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))",
+        "frozen_errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))",
+    )
+    for token in source_drawing_tokens:
+        if token not in runner_source:
             fail(f"Runner Mode B drawing-path binding regression: missing {token}")
+
+    for token in (
+        "test_mode_b_source_drawing_binding_requires_exact_current_path",
+        "test_mode_b_build_and_check_accept_matching_source_drawing",
+        "test_mode_b_build_rejects_mismatched_source_drawing",
+        "test_mode_b_check_rejects_mismatched_source_drawing",
+        "test_mode_b_build_and_check_require_source_drawing",
+        "test_text_mode_build_and_check_allow_missing_source_drawing",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner Mode B drawing-path binding test missing: {token}")
+
+    plan_schema_text = (RUNNER / "plan_schema.json").read_text(encoding="utf-8")
+    if '"name": "source_drawing"' not in plan_schema_text:
+        fail("Runner plan schema source_drawing field missing")
+    for token in (
+        "source_drawing",
+        "plan-contracts <current-drawing.json>",
+        "--drawing <current-drawing.json>",
+        "纯文字模式",
+    ):
+        if token not in runner_contract:
+            fail(f"Runner contract source_drawing regression: missing {token}")
 
     for token in (
         'out["plan_format"] = "executable-v1"',

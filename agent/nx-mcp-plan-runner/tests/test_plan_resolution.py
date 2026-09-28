@@ -2108,6 +2108,201 @@ def test_mode_b_source_drawing_binding_requires_exact_current_path(tmp_path=None
     assert any("source_drawing mismatch" in item for item in stale_errors)
 
 
+def _write_minimal_plan(path, *, source_drawing=None):
+    plan = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_status",
+                "tool_args": {},
+                "topology_changes": False,
+            }
+        ],
+    }
+    if source_drawing is not None:
+        plan["source_drawing"] = source_drawing
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(plan, handle)
+
+
+def _with_empty_mode_b_context(callback):
+    original_context = R._drawing_modeling_context
+    original_capability_errors = R.capability_plan_errors
+    try:
+        R._drawing_modeling_context = lambda path: ({}, [], [])
+        R.capability_plan_errors = lambda plan, dispatches: []
+        return callback()
+    finally:
+        R._drawing_modeling_context = original_context
+        R.capability_plan_errors = original_capability_errors
+
+
+def test_mode_b_build_and_check_accept_matching_source_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    drawing = os.path.join(directory, "current-drawing.json")
+    frozen = os.path.join(directory, "matching-frozen.json")
+    executable = os.path.join(directory, "matching-executable.json")
+    _write_minimal_plan(frozen, source_drawing=os.path.abspath(drawing))
+
+    def exercise():
+        build_code, build_result = _capture_json_command(
+            R._cmd_build,
+            SimpleNamespace(plan=frozen, out=executable, drawing=drawing),
+        )
+        assert build_code == 0, build_result
+        assert build_result["ok"] is True
+        with open(executable, encoding="utf-8") as handle:
+            built = json.load(handle)
+        assert built["source_drawing"] == os.path.abspath(drawing)
+
+        check_code, check_result = _capture_json_command(
+            R._cmd_check,
+            SimpleNamespace(plan=executable, frozen=False, drawing=drawing),
+        )
+        assert check_code == 0, check_result
+        assert check_result["ok"] is True
+
+    _with_empty_mode_b_context(exercise)
+
+
+def test_mode_b_build_rejects_mismatched_source_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    stale = os.path.join(directory, "stale-drawing.json")
+    frozen = os.path.join(directory, "mismatch-frozen.json")
+    executable = os.path.join(directory, "mismatch-executable.json")
+    _write_minimal_plan(frozen, source_drawing=os.path.abspath(stale))
+
+    def exercise():
+        build_code, build_result = _capture_json_command(
+            R._cmd_build,
+            SimpleNamespace(plan=frozen, out=executable, drawing=current),
+        )
+        assert build_code == 1
+        assert build_result["ok"] is False
+        assert build_result["built"] is None
+        assert any(
+            "source_drawing mismatch" in item
+            for item in build_result["frozen_check_errors"]
+        )
+        assert not os.path.exists(executable)
+
+    _with_empty_mode_b_context(exercise)
+
+
+def test_mode_b_check_rejects_mismatched_source_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    stale = os.path.join(directory, "stale-drawing.json")
+    executable = os.path.join(directory, "mismatch-check-executable.json")
+    plan = {
+        "mode": "FAST",
+        "source_drawing": os.path.abspath(stale),
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_status",
+                "tool_args": {},
+                "topology_changes": False,
+            }
+        ],
+    }
+    with open(executable, "w", encoding="utf-8") as handle:
+        json.dump(R.build_executable_plan(plan), handle)
+
+    def exercise():
+        check_code, check_result = _capture_json_command(
+            R._cmd_check,
+            SimpleNamespace(plan=executable, frozen=False, drawing=current),
+        )
+        assert check_code == 1
+        assert check_result["ok"] is False
+        assert any(
+            "source_drawing mismatch" in item for item in check_result["errors"]
+        )
+
+    _with_empty_mode_b_context(exercise)
+
+
+def test_mode_b_build_and_check_require_source_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    drawing = os.path.join(directory, "current-drawing.json")
+    frozen = os.path.join(directory, "missing-source-frozen.json")
+    executable = os.path.join(directory, "missing-source-executable.json")
+    _write_minimal_plan(frozen)
+
+    def exercise():
+        build_code, build_result = _capture_json_command(
+            R._cmd_build,
+            SimpleNamespace(plan=frozen, out=executable, drawing=drawing),
+        )
+        assert build_code == 1
+        assert any(
+            "missing source_drawing" in item
+            for item in build_result["frozen_check_errors"]
+        )
+
+        with open(executable, "w", encoding="utf-8") as handle:
+            plan = {
+                "mode": "FAST",
+                "operations": [
+                    {
+                        "step": 1,
+                        "tool": "nx_status",
+                        "tool_args": {},
+                        "topology_changes": False,
+                    }
+                ],
+            }
+            json.dump(R.build_executable_plan(plan), handle)
+
+        check_code, check_result = _capture_json_command(
+            R._cmd_check,
+            SimpleNamespace(plan=executable, frozen=False, drawing=drawing),
+        )
+        assert check_code == 1
+        assert any("missing source_drawing" in item for item in check_result["errors"])
+
+    _with_empty_mode_b_context(exercise)
+
+
+def test_text_mode_build_and_check_allow_missing_source_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    frozen = os.path.join(directory, "text-frozen.json")
+    executable = os.path.join(directory, "text-executable.json")
+    _write_minimal_plan(frozen)
+
+    build_code, build_result = _capture_json_command(
+        R._cmd_build,
+        SimpleNamespace(plan=frozen, out=executable, drawing=None),
+    )
+    assert build_code == 0, build_result
+    assert build_result["ok"] is True
+
+    check_code, check_result = _capture_json_command(
+        R._cmd_check,
+        SimpleNamespace(plan=executable, frozen=False, drawing=None),
+    )
+    assert check_code == 0, check_result
+    assert check_result["ok"] is True
+
+
 def test_plan_contracts_cli_fails_closed_on_drawing_context_error(tmp_path=None):
     import tempfile
     from types import SimpleNamespace

@@ -39,8 +39,7 @@ validation. The template may carry `rotational_symmetry:null` only while the ans
 is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
 record an unresolved reason, and fail closed; do not invent an unknown/uncertain state
 that can continue. Use `established` only when the complete drawing explicitly and uniquely establishes
-whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is
-not required. Two visual bases are allowed: (1) an explicit whole-part
+whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is not required. Two visual bases are allowed: (1) an explicit whole-part
 axial/longitudinal section or equivalent complete revolved section/profile; or (2) a
 non-section longitudinal orthographic profile whose whole principal body is traversed
 by one centerline and whose principal stepped/cylindrical body stages are represented

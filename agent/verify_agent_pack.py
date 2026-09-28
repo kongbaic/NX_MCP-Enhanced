@@ -562,6 +562,25 @@ def main() -> None:
     if '"displayed_parts": displayed_parts' not in loader_bridge_source:
         fail("Loader bridge displayed_parts propagation regression")
 
+    hybrid_frontend_source = (
+        ROOT
+        / "src"
+        / "nx_mcp"
+        / "drawing_intelligence"
+        / "hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        '"structural_answers": run_dir / "structural-context-answers.json"',
+        "structural answers must be the current Hybrid Frontend run artifact",
+    ):
+        if token not in hybrid_frontend_source:
+            fail(f"Hybrid Frontend structural-answer isolation regression: missing {token}")
+    hybrid_frontend_tests = (
+        ROOT / "tests" / "test_hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    if "test_resume_rejects_structural_answers_from_another_run" not in hybrid_frontend_tests:
+        fail("Hybrid Frontend cross-run structural-answer regression test missing")
+
     drawing_cli_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
     ).read_text(encoding="utf-8")

@@ -369,7 +369,7 @@ PASS 时 drawing.json 是本轮唯一正式 canonical drawing artifact。
 ### 4.1 Mode B 当前请求 artifact isolation
 
 - 新请求开始 interpretation 前，现有 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、semantic-draft.json、drawing.json 与 frozen/executable/report/PRT/STEP 一样都是 stale output，不是输入；唯一权威几何输入是当前上传工程图。
-- 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / hybrid-ocr-report / structural-context-queries / structural-context-answers 不得复用；只有本轮 fresh Hybrid Frontend 生成并在 manifest 中列出的 artifact 才属于当前 raster 前端。
+- 旧 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / hybrid-ocr-report / structural-context-queries / structural-context-answers 不得复用；只有本轮 fresh Hybrid Frontend run_dir 内的 artifact 才属于当前 raster 前端。Structural Reader answers 必须固定写入该 run_dir 的 `structural-context-answers.json`，resume 必须拒绝任何其它路径，即使其 query_id / evidence_label 表面相同。
 - raster 路径必须由本轮 Hybrid Adapter + Reader Observation Finalizer 重新生成一次性 reader-observations.json；fallback 路径才由 Reader 直接生成；旧 observations 均不得复用。
 - observations 写出后必须由本轮 fresh coordinator state 独占生成 reader-capture、drawing-evidence、semantic-draft、confirmation artifacts 与 canonical drawing；Agent 不得手动重建或覆盖这些中间 artifact。
 - coordinator Gate A PASS 后必须重新运行 Planner，只从 state 指向的本轮 canonical drawing.json 生成新的 frozen plan；已有 frozen-plan.json 或 executable 不得作为输入，也不得作为已规划完成的依据。

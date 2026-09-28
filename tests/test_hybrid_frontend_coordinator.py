@@ -202,7 +202,7 @@ def test_resume_builds_reader_observations_and_hands_off_to_mode_b(
     expected_terminal: bool,
 ):
     manifest, run_dir = _start_ready(tmp_path, monkeypatch, f"resume-{mode_b_code}")
-    answers = tmp_path / f"answers-{mode_b_code}.json"
+    answers = run_dir / "structural-context-answers.json"
     _write_structural_answers(answers)
     _install_resume_fakes(monkeypatch, mode_b_code)
 
@@ -291,8 +291,8 @@ def test_resume_is_exactly_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    manifest, _ = _start_ready(tmp_path, monkeypatch, "once")
-    answers = tmp_path / "once-answers.json"
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "once")
+    answers = run_dir / "structural-context-answers.json"
     _write_structural_answers(answers)
     _install_resume_fakes(monkeypatch, 0)
 
@@ -310,6 +310,25 @@ def test_resume_is_exactly_once(
     assert first_code == 0
     assert second_code == 3
     assert second_report["reason"] == "invalid_resume_phase"
+
+
+def test_resume_rejects_structural_answers_from_another_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest, _ = _start_ready(tmp_path, monkeypatch, "current-run")
+    stale_answers = tmp_path / "previous-run" / "structural-context-answers.json"
+    _write_structural_answers(stale_answers)
+
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest,
+        stale_answers,
+        tmp_path / "mode-b",
+    )
+
+    assert code == 2
+    assert report["phase"] == "resume_check"
+    assert "current Hybrid Frontend run artifact" in report["errors"][0]
 
 
 def test_resume_blocks_missing_answers(
@@ -332,8 +351,8 @@ def test_resume_fails_closed_on_unresolved_structural_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    manifest, _ = _start_ready(tmp_path, monkeypatch, "structural-fail")
-    answers = tmp_path / "structural-fail-answers.json"
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "structural-fail")
+    answers = run_dir / "structural-context-answers.json"
     _write_structural_answers(answers)
     payload = json.loads(answers.read_text(encoding="utf-8"))
     payload["answers"][0]["unresolved"] = ["view is ambiguous"]

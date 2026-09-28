@@ -93,6 +93,7 @@ def _run_paths(run_dir: Path) -> dict[str, Path]:
         "hybrid_report": run_dir / "hybrid-ocr-report.json",
         "ocr_artifacts": run_dir / "hybrid-ocr-artifacts",
         "structural_queries": run_dir / "structural-context-queries.json",
+        "structural_answers": run_dir / "structural-context-answers.json",
         "structural_context": run_dir / "hybrid-adapter-context.json",
         "partial_observations": run_dir / "partial-reader-observations.json",
         "reader_observations": run_dir / "reader-observations.json",
@@ -302,6 +303,11 @@ def resume_hybrid_frontend(
         paths = _run_paths(run_dir)
         if paths["manifest"].resolve() != manifest_path.resolve():
             raise HybridFrontendCoordinatorError("manifest/run directory mismatch")
+        if answers_path.resolve() != paths["structural_answers"].resolve():
+            raise HybridFrontendCoordinatorError(
+                "structural answers must be the current Hybrid Frontend run artifact: "
+                + str(paths["structural_answers"])
+            )
         for key in ("reader_input", "hybrid_report", "structural_queries"):
             if not paths[key].is_file():
                 raise HybridFrontendCoordinatorError(f"required frontend artifact missing: {key}")

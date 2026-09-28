@@ -39,9 +39,8 @@ validation. The template may carry `rotational_symmetry:null` only while the ans
 is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
 record an unresolved reason, and fail closed; do not invent an unknown/uncertain state
 that can continue. Use `established` only when the complete drawing explicitly and
-uniquely establishes whole-part revolution about one visible engineering axis. A
-printed X/Y/Z axis name is not required: an explicit whole-part axial/longitudinal
-section (or equivalent complete revolved profile), a centerline running through the
+uniquely establishes whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is not required: an explicit
+whole-part axial/longitudinal section (or equivalent complete revolved profile), a centerline running through the
 whole section, and coaxial radial/diameter profile evidence on both sides of that
 centerline may establish the rotation axis. Map the visible centerline direction only
 through the resolved view and `view_axis_map`: front horizontal=>X / vertical=>Z;

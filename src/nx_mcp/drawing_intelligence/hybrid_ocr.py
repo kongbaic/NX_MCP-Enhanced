@@ -41,6 +41,8 @@ def _normalize(text: str) -> str:
         .replace("∅", "Ø")
         .replace("＋", "+")
         .replace("－", "-")
+        .replace("–", "-")
+        .replace("—", "-")
         .replace(" ", "")
     )
 
@@ -64,13 +66,25 @@ def _linear_tokens(text: str) -> set[str]:
             (f"{_canonical_number(tolerance.group(1))}±{_canonical_number(tolerance.group(2))}")
         }
 
-    if not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized):
-        return set()
+    plain_number = re.fullmatch(r"[-+]?\d+(?:\.\d+)?", normalized)
+    if plain_number:
+        unsigned = normalized.lstrip("+").lstrip("-")
+        if re.fullmatch(r"0\d+", unsigned):
+            return set()
+        return {_canonical_number(unsigned)}
 
-    unsigned = normalized.lstrip("+").lstrip("-")
-    if re.fullmatch(r"0\d+", unsigned):
-        return set()
-    return {_canonical_number(unsigned)}
+    labeled_scalar = re.fullmatch(
+        r"[A-Z][A-Z0-9]{0,2}[-=:]([-+]?\d+(?:\.\d+)?)(?:MM)?",
+        normalized,
+    )
+    if labeled_scalar:
+        number = labeled_scalar.group(1)
+        unsigned = number.lstrip("+").lstrip("-")
+        if re.fullmatch(r"0\d+", unsigned):
+            return set()
+        return {_canonical_number(unsigned)}
+
+    return set()
 
 
 def _item_center(item: dict[str, Any]) -> tuple[float, float]:

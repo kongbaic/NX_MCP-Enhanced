@@ -74,6 +74,14 @@ overall_dimension_facts。禁止增加其它字段。
 python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>
 ~~~
 
+其中 `<fresh-mode-b-prefix>` 必须在这唯一一次调用前确定为当前
+`workspace_root` / `NX_MCP_WORKSPACE` 的 **fresh 直接子级 prefix**，例如
+`<workspace_root>\\drawing-02-radial-angular-20260928-mode-b`；禁止使用
+`<workspace_root>\\mode-b-runs\\...`、Hybrid run directory 或任何其它二级子目录。
+Hybrid Frontend 的 run directory 可以位于 workspace 内部子目录，但 Mode B artifact
+prefix 不可以。若 resume 因 prefix/path 校验失败，本轮立即 STOP；禁止修正路径重试、
+换 prefix 重试或手工继续下游阶段。
+
 resume 内部完成 structural context assembly → Hybrid Adapter → Reader Observation
 Finalizer → deterministic Mode B coordinator。若返回 `exit code=0,
 phase=mode_b_gate_a_pass`，其 mode_b 子报告/state 中的 canonical drawing 是唯一允许交给

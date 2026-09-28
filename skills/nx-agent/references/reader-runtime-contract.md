@@ -30,6 +30,15 @@ Resume exactly once with:
 python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>
 ~~~
 
+Before that one call, choose `<fresh-mode-b-prefix>` as a fresh **direct child prefix**
+of the current `workspace_root` / `NX_MCP_WORKSPACE`. For example,
+`<workspace_root>\\drawing-02-radial-angular-20260928-mode-b` is valid, while
+`<workspace_root>\\mode-b-runs\\drawing-02-radial-angular-20260928-mode-b` is
+invalid. The Hybrid Frontend run directory may be nested anywhere inside the workspace;
+the Mode B artifact prefix may not. A prefix/path validation failure is terminal for
+that production attempt: do not fix the path and retry, and do not choose another
+prefix.
+
 The resume path owns Structural Context assembly → Hybrid Adapter → Reader Observation
 Finalizer → deterministic Mode B coordinator. Do not hand-write
 `partial-reader-observations.json` or `reader-observations.json` on this raster path.

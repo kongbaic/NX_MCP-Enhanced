@@ -211,8 +211,8 @@ def build_structural_context_queries(
             )
 
         symmetry_hint = region.get("bilateral_symmetry_hint")
-        deterministic_axis = None
-        deterministic_method = None
+        deterministic_axis: Literal["horizontal", "vertical"] | None = None
+        deterministic_method: Literal["foreground_mirror_consensus_v1"] | None = None
         if isinstance(symmetry_hint, dict) and symmetry_hint.get("status") == "established":
             axis_direction = symmetry_hint.get("axis_direction")
             method = symmetry_hint.get("method")

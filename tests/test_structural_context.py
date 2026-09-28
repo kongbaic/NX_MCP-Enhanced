@@ -99,6 +99,22 @@ def test_structural_query_builder_only_requests_region_structure():
     )
 
 
+def test_structural_query_builder_prefers_full_drawing_context_image():
+    reader_input = _reader_input()
+    reader_input["regions"][0]["structural_context_path"] = "C:/work/R1-structural-context.png"
+
+    plan = build_structural_context_queries(reader_input)
+
+    assert plan.queries[0].image_path.endswith("R1-structural-context.png")
+    assert plan.queries[0].evidence_label == "structural:R1:context"
+    assert plan.queries[1].image_path.endswith("R2.png")
+    assert plan.queries[1].evidence_label == "structural:R2:crop"
+
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    assert template.answers[0].evidence == ["structural:R1:context"]
+    assert template.answers[1].evidence == ["structural:R2:crop"]
+
+
 def test_structural_context_builds_independent_overall_facts():
     plan = build_structural_context_queries(_reader_input())
     context = assemble_structural_context(plan, _answers())

@@ -140,6 +140,42 @@ def _clamp_local(value: float, limit: int) -> int:
     return max(0, min(limit - 1, int(round(value))))
 
 
+def _write_structural_context_image(
+    image: Any,
+    path: Path,
+    source_bbox: list[int],
+    cv2: Any,
+) -> None:
+    image_height, image_width = image.shape[:2]
+    x, y, width, height = (int(value) for value in source_bbox)
+    clipped = _clip_box(
+        x,
+        y,
+        x + width,
+        y + height,
+        image_width,
+        image_height,
+    )
+    left, top, box_width, box_height = clipped
+    right = left + box_width - 1
+    bottom = top + box_height - 1
+
+    canvas = image.copy()
+    thickness = max(2, int(round(min(image_width, image_height) * 0.004)))
+    cv2.rectangle(
+        canvas,
+        (left, top),
+        (right, bottom),
+        (0, 0, 220),
+        thickness,
+        cv2.LINE_AA,
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), canvas):
+        raise ValueError(f"failed to write structural context image: {path}")
+
+
 def _write_candidate_overlay(
     image: Any,
     path: Path,
@@ -435,7 +471,15 @@ def prepare_reader_input(
         )
         crop_path = crops_dir / f"{region_id}.png"
         overlay_path = crops_dir / f"{region_id}-candidates.png"
+        structural_context_path = crops_dir / f"{region_id}-structural-context.png"
+        source_bbox = list(region["bbox_px"])
         _write_crop(image, crop_path, bbox, cv2)
+        _write_structural_context_image(
+            image,
+            structural_context_path,
+            source_bbox,
+            cv2,
+        )
         overlay_candidates = _region_candidate_geometry(aid, region_id)
         _write_candidate_overlay(
             image,
@@ -448,10 +492,11 @@ def prepare_reader_input(
             {
                 "region_id": region_id,
                 "crop_path": str(crop_path),
+                "structural_context_path": str(structural_context_path),
                 "candidate_overlay_path": str(overlay_path),
                 "candidate_overlay_count": len(overlay_candidates),
                 "crop_bbox_px": bbox,
-                "source_bbox_px": region.get("bbox_px"),
+                "source_bbox_px": source_bbox,
                 "circle_group_count": len(region.get("circle_groups", [])),
                 "linear_pattern_candidate_count": len(region.get("linear_pattern_candidates", [])),
             }
@@ -539,8 +584,9 @@ def prepare_reader_input(
                 (int(item.get("candidate_count", 0)) for item in bucket_entries),
                 default=0,
             ),
-            "crop_count": 1 + 2 * len(region_entries) + len(bucket_entries),
+            "crop_count": 1 + 3 * len(region_entries) + len(bucket_entries),
             "candidate_overlay_count": len(region_entries),
+            "structural_context_image_count": len(region_entries),
         },
         "timing_ms": {
             "raw_evidence": raw_elapsed_ms,

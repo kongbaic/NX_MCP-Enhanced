@@ -146,21 +146,31 @@ def build_structural_context_queries(
         if not isinstance(region, dict):
             raise StructuralContextError("reader input region must be an object")
         region_id = region.get("region_id")
-        image_path = region.get("crop_path")
+        structural_context_path = region.get("structural_context_path")
+        crop_path = region.get("crop_path")
         if not isinstance(region_id, str) or not region_id:
             raise StructuralContextError("reader input region requires region_id")
         if region_id in seen_regions:
             raise StructuralContextError(f"duplicate reader region {region_id!r}")
         seen_regions.add(region_id)
-        if not isinstance(image_path, str) or not image_path:
-            raise StructuralContextError(f"reader region {region_id!r} requires crop_path")
+
+        if isinstance(structural_context_path, str) and structural_context_path:
+            image_path = structural_context_path
+            evidence_label = f"structural:{region_id}:context"
+        elif isinstance(crop_path, str) and crop_path:
+            image_path = crop_path
+            evidence_label = f"structural:{region_id}:crop"
+        else:
+            raise StructuralContextError(
+                f"reader region {region_id!r} requires structural_context_path or crop_path"
+            )
 
         queries.append(
             StructuralRegionQuery(
                 query_id=f"S{index:03d}",
                 region_id=region_id,
                 image_path=image_path,
-                evidence_label=f"structural:{region_id}:crop",
+                evidence_label=evidence_label,
             )
         )
 

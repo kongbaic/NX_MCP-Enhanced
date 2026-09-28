@@ -79,8 +79,9 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert payload["summary"]["region_count"] >= 1
     assert payload["summary"]["bucket_count"] >= 1
     assert payload["summary"]["candidate_overlay_count"] == payload["summary"]["region_count"]
+    assert payload["summary"]["structural_context_image_count"] == payload["summary"]["region_count"]
     assert payload["summary"]["crop_count"] == (
-        1 + 2 * payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
+        1 + 3 * payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
     )
 
     assert payload["reader_contract"] == {
@@ -102,11 +103,22 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
         "overflow_requires_source_drawing": True,
     }
 
+    source_image = cv2.imread(str(image_path))
+    assert source_image is not None
+
     for region in payload["regions"]:
         crop_path = Path(region["crop_path"])
+        context_path = Path(region["structural_context_path"])
         overlay_path = Path(region["candidate_overlay_path"])
         assert crop_path.is_file()
+        assert context_path.is_file()
         assert overlay_path.is_file()
+
+        context_image = cv2.imread(str(context_path))
+        assert context_image is not None
+        assert context_image.shape == source_image.shape
+        assert int(cv2.absdiff(context_image, source_image).sum()) > 0
+
         assert region["candidate_overlay_count"] >= 0
         if region["candidate_overlay_count"] > 0:
             crop = cv2.imread(str(crop_path))

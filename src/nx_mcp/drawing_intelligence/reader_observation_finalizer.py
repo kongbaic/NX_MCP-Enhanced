@@ -25,6 +25,8 @@ _OVERALL_FIELD_BY_AXIS: dict[Axis, str] = {
     "Z": "height_z",
 }
 
+_AXES: tuple[Axis, Axis, Axis] = ("X", "Y", "Z")
+
 
 _PIXEL_DERIVED_METRIC_OBSERVATION_KINDS = frozenset(
     {
@@ -72,7 +74,7 @@ def _overall_dimensions(
 
     direct_values: dict[Axis, float] = {}
     direct_evidence: dict[Axis, list[str]] = {}
-    for axis in ("X", "Y", "Z"):
+    for axis in _AXES:
         axis_facts = by_axis[axis]
         if not axis_facts:
             continue
@@ -120,9 +122,7 @@ def _overall_dimensions(
     )
 
     if rotation_axis is not None:
-        transverse_axes = [
-            axis for axis in ("X", "Y", "Z") if axis != rotation_axis
-        ]
+        transverse_axes = [axis for axis in _AXES if axis != rotation_axis]
         left, right = transverse_axes
         if left in direct_values and right in direct_values:
             if not math.isclose(
@@ -157,7 +157,7 @@ def _overall_dimensions(
                 }
             )
 
-    for axis in ("X", "Y", "Z"):
+    for axis in _AXES:
         if axis not in direct_values:
             raise ReaderObservationFinalizationError(
                 f"missing overall dimension fact for axis {axis}"
@@ -165,7 +165,7 @@ def _overall_dimensions(
 
     values = {
         _OVERALL_FIELD_BY_AXIS[axis]: direct_values[axis]
-        for axis in ("X", "Y", "Z")
+        for axis in _AXES
     }
     return OverallDimensions.model_validate(values), derivations
 

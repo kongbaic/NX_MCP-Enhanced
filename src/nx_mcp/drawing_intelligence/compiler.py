@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from .evidence import (
+    Axis,
     DatumAlignmentEvidence,
     DimensionObservation,
     DirectValueEvidence,
@@ -164,8 +165,6 @@ def _compile_overall_dimension_derivations(
     }
 
     for observation_index, observation in enumerate(graph.observations):
-        if not isinstance(observation, dict):
-            continue
         if observation.get("kind") != "overall_dimension_derivation_ledger":
             continue
         facts = observation.get("facts")
@@ -203,8 +202,12 @@ def _compile_overall_dimension_derivations(
                 )
                 continue
 
-            target, expected_value = expected[axis]
-            source_target, expected_source_value = expected[source_axis]
+            axis_typed = cast(Axis, axis)
+            source_axis_typed = cast(Axis, source_axis)
+            rotation_axis_typed = cast(Axis, rotation_axis)
+
+            target, expected_value = expected[axis_typed]
+            source_target, expected_source_value = expected[source_axis_typed]
             if (
                 not isinstance(value, (int, float))
                 or isinstance(value, bool)
@@ -228,14 +231,14 @@ def _compile_overall_dimension_derivations(
                 RelationEvidence(
                     id=f"ODR_{axis}_{observation_index}_{fact_index}",
                     kind="alignment",
-                    axis=axis,
+                    axis=axis_typed,
                     targets=[source_target, target],
                     source_ids=source_ids,
                     required_for_modeling=True,
                     metadata={
                         "basis": basis,
-                        "rotation_axis": rotation_axis,
-                        "source_axis": source_axis,
+                        "rotation_axis": rotation_axis_typed,
+                        "source_axis": source_axis_typed,
                     },
                 ),
             )

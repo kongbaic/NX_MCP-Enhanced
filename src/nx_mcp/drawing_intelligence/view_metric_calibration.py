@@ -112,6 +112,7 @@ def derive_view_axis_boundaries(
     region_views: dict[str, str],
     overall_dimensions: dict[str, float],
     profile_inventory: list[dict[str, Any]] | None = None,
+    region_overall_fact_axes: set[tuple[str, str]] | None = None,
     relative_tolerance: float = 1e-6,
 ) -> list[dict[str, Any]]:
     """Identify overall boundary owners without inferring mm from pixel distance.
@@ -222,9 +223,15 @@ def derive_view_axis_boundaries(
 
     if profile_inventory:
         resolved_keys = set(resolved_by_axis)
+        scoped_overall_axes = region_overall_fact_axes
         for region_id, view_kind in region_views.items():
             for axis in ("X", "Y", "Z"):
                 if (region_id, axis) in resolved_keys:
+                    continue
+                if (
+                    scoped_overall_axes is not None
+                    and (region_id, axis) not in scoped_overall_axes
+                ):
                     continue
                 overall_value = _overall_value(overall_dimensions, axis)
                 expected_orientation = _PROFILE_ORIENTATION_BY_VIEW_AXIS.get(
@@ -285,6 +292,11 @@ def derive_view_axis_boundaries(
                         ],
                         "basis": (
                             "independent_overall_dimension_plus_unique_profile_extremes"
+                        ),
+                        "overall_fact_scope": (
+                            "same_region_structural_evidence"
+                            if scoped_overall_axes is not None
+                            else "legacy_unscoped"
                         ),
                         "engineering_coordinate_inferred_from_pixels": False,
                     }

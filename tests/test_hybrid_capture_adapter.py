@@ -1546,6 +1546,46 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     assert endpoints[0].basis == "centerline"
     assert endpoints[1].role == "overall_max"
 
+def test_adapter_does_not_grant_annotation_region_global_boundary_roles():
+    context = HybridAdapterContext(
+        region_views=[
+            HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            ),
+            HybridRegionView(
+                region_id="R3",
+                view_kind="front",
+                evidence=["structural:R3:context"],
+            ),
+        ],
+        overall_dimension_facts=[
+            PartialOverallDimensionFact(
+                axis="X",
+                value=300,
+                evidence=["structural:R1:context"],
+            ),
+            PartialOverallDimensionFact(
+                axis="Z",
+                value=75,
+                evidence=["structural:R1:context"],
+            ),
+        ],
+    )
+
+    region_axes = {
+        (region.region_id, fact.axis)
+        for region in context.region_views
+        for fact in context.overall_dimension_facts
+        if set(region.evidence) & set(fact.evidence)
+    }
+
+    assert region_axes == {("R1", "X"), ("R1", "Z")}
+    assert ("R3", "X") not in region_axes
+    assert ("R3", "Z") not in region_axes
+
+
 def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():
     candidate = {
         "candidate_id": "DG_PAIR",

@@ -390,6 +390,86 @@ def test_metric_profile_segments_fail_closed_without_explicit_gap_tolerance():
     assert tolerant["segments"][0]["length_mm"] == pytest.approx(40.0)
 
 
+def test_profile_extreme_fallback_requires_same_region_overall_fact_scope():
+    profile_inventory = [
+        {
+            "region_id": region_id,
+            "kind": "profile_edge_candidate",
+            "ref": f"{region_id}.LEFT",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "min",
+        }
+        for region_id in ("R1", "R2")
+    ] + [
+        {
+            "region_id": region_id,
+            "kind": "profile_edge_candidate",
+            "ref": f"{region_id}.RIGHT",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "max",
+        }
+        for region_id in ("R1", "R2")
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R1": "front", "R2": "front"},
+        overall_dimensions={"length_x": 40.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "X")},
+    )
+
+    assert [(item["region_id"], item["axis"]) for item in items] == [("R1", "X")]
+    assert items[0]["overall_fact_scope"] == "same_region_structural_evidence"
+
+
+def test_profile_extreme_fallback_rejects_annotation_only_region_without_overall_fact():
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R3": "front"},
+        overall_dimensions={"length_x": 300.0, "height_z": 75.0},
+        profile_inventory=[
+            {
+                "region_id": "R3",
+                "kind": "profile_edge_candidate",
+                "ref": "R3.LEFT",
+                "position_px": 100.0,
+                "source_orientation": "vertical",
+                "relative_extreme_side": "min",
+            },
+            {
+                "region_id": "R3",
+                "kind": "profile_edge_candidate",
+                "ref": "R3.RIGHT",
+                "position_px": 300.0,
+                "source_orientation": "vertical",
+                "relative_extreme_side": "max",
+            },
+            {
+                "region_id": "R3",
+                "kind": "profile_edge_candidate",
+                "ref": "R3.TOP",
+                "position_px": 50.0,
+                "source_orientation": "horizontal",
+                "relative_extreme_side": "min",
+            },
+            {
+                "region_id": "R3",
+                "kind": "profile_edge_candidate",
+                "ref": "R3.BOTTOM",
+                "position_px": 250.0,
+                "source_orientation": "horizontal",
+                "relative_extreme_side": "max",
+            },
+        ],
+        region_overall_fact_axes=set(),
+    )
+
+    assert items == []
+
+
 def test_metricize_profile_inventory_includes_edges_not_referenced_by_dimensions():
     candidate = _candidate()
     calibrations = derive_view_metric_calibrations(

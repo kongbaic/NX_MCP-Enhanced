@@ -4531,11 +4531,18 @@ def adapt_hybrid_ocr_report(
         {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value
         for fact in context.overall_dimension_facts
     }
+    region_overall_fact_axes = {
+        (region.region_id, fact.axis)
+        for region in context.region_views
+        for fact in context.overall_dimension_facts
+        if set(region.evidence) & set(fact.evidence)
+    }
     boundaries = derive_view_axis_boundaries(
         candidates=working_candidates,
         region_views={item.region_id: item.view_kind for item in context.region_views},
         overall_dimensions=overall_dimensions,
         profile_inventory=profile_inventory,
+        region_overall_fact_axes=region_overall_fact_axes,
     )
     boundary_roles = _boundary_role_lookup(boundaries)
 

@@ -75,13 +75,17 @@ evidence:[原样 evidence_label]。对已解析且准备继续的 answer，rotat
 not_established，schema 必须拒绝；模板中的 null 只用于 pending/unresolved。视觉上无法确定时
 保持 null 并写 unresolved，本轮 fail-closed，禁止添加 unknown/uncertain 后继续。只有在完整
 工程图明确且唯一表达整件绕某一可见工程轴回转时才允许 established；**不要求图纸额外打印 X/Y/Z 轴名**。若 query 明确显示
-允许两类 established 视觉依据：①整件 axial/longitudinal section 或等价完整回转剖面；
-②非剖视的纵向正投影视图，但必须有一条贯穿主要主体的整件中心线，且各主要阶梯/圆柱主体段
-由围绕同一中心线成对出现的相对轮廓边/肩部共同表达同轴回转体。第二类是工程制图语义识别，
-禁止测量像素距离或把视觉“等距”换算成工程值。满足后按当前 view_kind + view_axis_map
-唯一映射中心线方向：front horizontal→X / vertical→Z，side horizontal→Y / vertical→Z，
-top horizontal→X / vertical→Y。普通镜像对称、只有中心线但无成对同轴回转轮廓、看起来像
-回转件或参数名猜测均不足。not_established 不是不确定性的兜底：只有 query 明确显示整件
+允许两类 established 视觉依据：①**中心线依据**：纵向正投影或 axial/longitudinal section
+中存在贯穿主要主体的明确整件中心线，且主要阶梯/圆柱主体段由围绕该中心线成对出现的相对
+同轴轮廓边/肩部表达回转体；②**无中心线轴向剖视依据**：query 通过剖面线/剖切语义明确属于
+axial/diametral section，主要材料轮廓与各阶梯/圆柱主体段围绕一条唯一剖面对称轴成对出现，
+可唯一确定回转轴方向，即使图中没有画出中心线也允许 established。第二类只适用于明确剖视，
+不适用于普通非剖视镜像轮廓；连续实线的物体轮廓/边界绝不能冒充中心线。两类依据都只按
+轴方向 + 当前 view_kind + view_axis_map 映射工程轴：front horizontal→X / vertical→Z，
+side horizontal→Y / vertical→Z，top horizontal→X / vertical→Y；无中心线剖视分支使用唯一
+剖面对称轴方向。该判断只允许使用工程制图拓扑语义，禁止测量像素距离或把视觉“等距”换算
+成工程值。普通镜像对称、只有中心线但无成对同轴回转轮廓、看起来像回转件、连续实线冒充
+中心线或参数名猜测均不足。not_established 不是不确定性的兜底：只有 query 明确显示整件
 不具备回转对称时才允许；既无足够 established 证据又无明确反证时必须保持
 rotational_symmetry=null、写 unresolved 并 fail-closed。
 **Agent 禁止手工补第三轴 overall；确定性闭合固定为 rotation X ⇒ Y=Z、rotation Y ⇒ X=Z、

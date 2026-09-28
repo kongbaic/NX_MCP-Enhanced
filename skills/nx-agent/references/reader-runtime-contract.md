@@ -39,20 +39,33 @@ validation. The template may carry `rotational_symmetry:null` only while the ans
 is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
 record an unresolved reason, and fail closed; do not invent an unknown/uncertain state
 that can continue. Use `established` only when the complete drawing explicitly and uniquely establishes
-whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is not required. Two visual bases are allowed: (1) an explicit whole-part
-axial/longitudinal section or equivalent complete revolved section/profile; or (2) a
-non-section longitudinal orthographic profile whose whole principal body is traversed
-by one centerline and whose principal stepped/cylindrical body stages are represented
-by paired opposite coaxial profile boundaries/shoulders about that same centerline.
-This second basis is drafting semantics for a revolved body, not a pixel-distance or
-equal-distance calculation. Map the visible centerline direction only through the
-resolved view and `view_axis_map`: front horizontal=>X / vertical=>Z; side
-horizontal=>Y / vertical=>Z; top horizontal=>X / vertical=>Y. Mirror symmetry alone,
-a centerline without paired coaxial revolved-profile evidence, visual resemblance, or
-parameter-name guessing is insufficient. `not_established` is not an uncertainty fallback: use it only when the query positively shows that whole-part rotational
-symmetry does not hold. If positive establishment evidence and positive counterevidence
-are both absent or ambiguous, keep `rotational_symmetry:null`, record unresolved, and
-fail closed.
+whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is
+not required. Two visual bases are allowed.
+
+(1) Centerline basis: a longitudinal orthographic or axial/longitudinal section has an
+explicit whole-part centerline, and the principal stepped/cylindrical body stages are
+represented by paired opposite coaxial profile boundaries/shoulders about that
+centerline.
+
+(2) Centerline-omitted axial-section basis: the query is clearly an axial/diametral
+section by section/hatching/cut semantics, the principal material/profile stages occur
+as paired opposite coaxial boundaries/shoulders about one unique bilateral section
+symmetry axis, and that unique axis direction is sufficient to establish the revolution
+axis even though no centerline is drawn. This basis is unavailable for an ordinary
+non-section mirror-symmetric profile. A solid continuous object/profile boundary is
+never a centerline.
+
+For either basis, map only the established axis direction through the resolved view and
+`view_axis_map`: front horizontal=>X / vertical=>Z; side horizontal=>Y / vertical=>Z;
+top horizontal=>X / vertical=>Y. The section-symmetry basis is visual drafting topology,
+not pixel measurement: do not compare pixel distances or convert visual spacing into
+engineering values. Mirror symmetry alone, a centerline without paired coaxial
+revolved-profile evidence, visual resemblance, solid-profile-line-as-centerline
+interpretation, or parameter-name guessing is insufficient. `not_established` is not
+an uncertainty fallback: use it only when the query positively shows that whole-part
+rotational symmetry does not hold. If positive establishment evidence and positive
+counterevidence are both absent or ambiguous, keep `rotational_symmetry:null`, record
+unresolved, and fail closed.
 The Agent must never synthesize the missing overall extent.
 Deterministic closure is fixed as rotation X => Y=Z, rotation Y => X=Z, rotation Z =>
 X=Y, and the finalizer must preserve derivation provenance. Local dimensions must never be promoted to `overall_dimension_facts`.

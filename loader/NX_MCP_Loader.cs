@@ -431,7 +431,8 @@ public static class NX_MCP_Loader
         var lw = _session.ListingWindow;
         try { lw.Open(); } catch { }
 
-        if (File.Exists(path)) { try { File.Delete(path); } catch { } }
+        if (File.Exists(path))
+            return ErrJson("part file already exists; overwrite must be authorized by Runner preflight: " + path);
 
         // Preserve every part the user already has displayed. NewDisplay
         // replaces the active display in this resident-loader environment even

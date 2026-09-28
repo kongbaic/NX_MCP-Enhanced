@@ -755,6 +755,121 @@ def test_run_preflight_create_new_does_not_close_unrelated_part():
     assert [tool for tool, _ in transport.calls] == ["nx_status"]
 
 
+def test_run_preflight_create_new_blocks_existing_disk_target_without_repair():
+    import asyncio
+    import os
+    import tempfile
+
+    directory = tempfile.mkdtemp()
+    planned = os.path.join(directory, "existing.prt")
+    with open(planned, "wb") as handle:
+        handle.write(b"do-not-delete")
+
+    class History:
+        def most_recent(self, path):
+            return None
+
+        def paths(self):
+            return ()
+
+    class Transport:
+        def resolve_path(self, path):
+            return path
+
+        async def call(self, tool, args):
+            raise AssertionError("disk target gate must block before NX calls")
+
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": planned},
+            }
+        ]
+    }
+
+    blocked, info = asyncio.run(
+        R.run_preflight(
+            Transport(),
+            plan,
+            "normal",
+            False,
+            History(),
+            repair_authorized=False,
+        )
+    )
+
+    assert info is None
+    assert blocked["reason"] == "planned_part_exists"
+    with open(planned, "rb") as handle:
+        assert handle.read() == b"do-not-delete"
+
+
+def test_run_preflight_controlled_repair_removes_only_planned_disk_target():
+    import asyncio
+    import os
+    import tempfile
+
+    directory = tempfile.mkdtemp()
+    planned = os.path.join(directory, "failed.prt")
+    unrelated = os.path.join(directory, "keep.prt")
+    for path, payload in ((planned, b"failed"), (unrelated, b"keep")):
+        with open(path, "wb") as handle:
+            handle.write(payload)
+
+    class History:
+        def most_recent(self, path):
+            return {"save_ok": False}
+
+        def paths(self):
+            return (planned,)
+
+    class Transport:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_path(self, path):
+            return path
+
+        async def call(self, tool, args):
+            self.calls.append((tool, args))
+            if tool == "nx_status":
+                return {"active_part": ObjectRef(planned)}
+            if tool == "nx_close_part":
+                return {"status": "success"}
+            raise AssertionError(f"unexpected tool {tool}")
+
+    transport = Transport()
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_part",
+                "tool_args": {"path": planned},
+            }
+        ]
+    }
+
+    blocked, info = asyncio.run(
+        R.run_preflight(
+            transport,
+            plan,
+            "benchmark",
+            True,
+            History(),
+            repair_authorized=True,
+        )
+    )
+
+    assert blocked is None
+    assert info["controlled_overwrite"] is True
+    assert not os.path.exists(planned)
+    with open(unrelated, "rb") as handle:
+        assert handle.read() == b"keep"
+    assert [tool for tool, _ in transport.calls] == ["nx_status", "nx_close_part"]
+
+
 def test_create_part_verifies_real_work_part_before_continuing():
     import asyncio
 

@@ -1135,6 +1135,26 @@ async def run_preflight(transport, plan: dict, mode: str, overwrite_allowed: boo
     """
     planned = derive_planned_part(plan, transport)
     part_entry_tool = derive_part_entry_tool(plan)
+    planned_exists = bool(
+        part_entry_tool == "nx_create_part"
+        and planned
+        and os.path.exists(planned)
+    )
+    controlled_overwrite = bool(
+        planned_exists
+        and repair_authorized
+        and mode == "benchmark"
+        and overwrite_allowed
+    )
+    if planned_exists and not controlled_overwrite:
+        return {
+            "status": "precheck_blocked",
+            "reason": "planned_part_exists",
+            "planned_part": planned,
+            "mode": mode,
+            "overwrite_allowed": overwrite_allowed,
+        }, None
+
     resp = await transport.call("nx_status", {})
     active = resp.get("active_part")
     active_path = str(_item_id(active)) if active else ""
@@ -1149,9 +1169,20 @@ async def run_preflight(transport, plan: dict, mode: str, overwrite_allowed: boo
     if active_path and not preserve_active:
         # allowed close: planned part (clean / benchmark overwrite) or own test part
         await transport.call("nx_close_part", {"save": False})
+
+    if controlled_overwrite:
+        try:
+            os.remove(planned)
+        except OSError as exc:
+            raise PlanError(
+                "authorized repair could not remove existing planned part: "
+                f"{planned!r}: {exc}"
+            ) from exc
+
     return None, {"planned_part": planned, "active_part": active_path,
                   "part_entry_tool": part_entry_tool,
-                  "state": payload.get("state")}
+                  "state": payload.get("state"),
+                  "controlled_overwrite": controlled_overwrite}
 
 
 async def verify_created_work_part(

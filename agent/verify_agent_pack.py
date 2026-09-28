@@ -530,6 +530,7 @@ def main() -> None:
         "_session.Parts.SetWork(part)",
         "GetDisplayedParts()",
         '\\"displayed_parts\\"',
+        "part file already exists; overwrite must be authorized by Runner preflight",
         "new part replaced a pre-existing displayed part",
     ):
         if token not in loader_source:
@@ -539,6 +540,18 @@ def main() -> None:
     )[1].split("private static void ResetTaskState()", 1)[0]
     if "_session.Parts.NewDisplay(" in create_part_source:
         fail("Loader create-part must not use NewDisplay")
+    if "File.Delete(path)" in create_part_source:
+        fail("Loader create-part must never delete an existing target file")
+
+    for token in (
+        '"reason": "planned_part_exists"',
+        "controlled_overwrite",
+        "os.remove(planned)",
+        "test_run_preflight_create_new_blocks_existing_disk_target_without_repair",
+        "test_run_preflight_controlled_repair_removes_only_planned_disk_target",
+    ):
+        if token not in runner_source and token not in plan_tests:
+            fail(f"Runner planned-part overwrite safety regression: missing {token}")
 
     loader_bridge_source = (
         ROOT / "src" / "nx_mcp" / "loader_bridge.py"

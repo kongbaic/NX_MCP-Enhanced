@@ -485,14 +485,23 @@ def main() -> None:
         '"mode_b_awaiting_confirmation"',
         "run_hybrid_ocr(",
         "build_structural_context_queries(",
-        'region.get("structural_context_path")',
-        'evidence_label = f"structural:{region_id}:context"',
         "adapt_hybrid_ocr_report(",
         "finalize_partial_reader_observations(",
         "run_mode_b_coordinator(",
     ):
         if token not in hybrid_frontend_source:
             fail(f"Hybrid Frontend implementation regression: missing {token}")
+
+    structural_context_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "structural_context.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'region.get("structural_context_path")',
+        'evidence_label = f"structural:{region_id}:context"',
+        "requires crop_path or structural_context_path",
+    ):
+        if token not in structural_context_source:
+            fail(f"Structural context implementation regression: missing {token}")
 
     coordinator_source = (
         ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "mode_b_coordinator.py"

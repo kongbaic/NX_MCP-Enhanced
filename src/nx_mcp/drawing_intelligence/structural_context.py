@@ -162,7 +162,7 @@ def build_structural_context_queries(
             evidence_label = f"structural:{region_id}:crop"
         else:
             raise StructuralContextError(
-                f"reader region {region_id!r} requires structural_context_path or crop_path"
+                f"reader region {region_id!r} requires crop_path or structural_context_path"
             )
 
         queries.append(

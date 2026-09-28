@@ -97,7 +97,10 @@ operator documents, previous Agent results, or downstream outputs.
 On the Hybrid raster path, `prepare-reader-input` is an internal implementation
 stage owned by `run-hybrid-frontend`; the Agent must not invoke it separately.
 The first Hybrid Frontend failure is terminal for the production run; report it and
-STOP. On the fallback semantic path, no raster path may be scanned or guessed.
+STOP. Machine stop fields are authoritative: when a Hybrid Frontend report has
+`terminal=true` or `must_stop=true`, especially with `may_retry=false` and
+`may_edit_structural_answers=false`, do not rewrite structural answers and do not issue
+a second resume. On the fallback semantic path, no raster path may be scanned or guessed.
 
 The current engineering drawing remains the sole authoritative geometry source.
 

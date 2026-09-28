@@ -319,6 +319,10 @@ def test_resume_is_exactly_once(
 
     assert first_code == 0
     assert second_code == 3
+    assert second_report["terminal"] is True
+    assert second_report["must_stop"] is True
+    assert second_report["may_retry"] is False
+    assert second_report["may_edit_structural_answers"] is False
     assert second_report["reason"] == "invalid_resume_phase"
 
 
@@ -376,4 +380,20 @@ def test_resume_fails_closed_on_unresolved_structural_context(
 
     assert code == 1
     assert report["phase"] == "terminal_failed"
+    assert report["terminal"] is True
+    assert report["must_stop"] is True
+    assert report["may_retry"] is False
+    assert report["may_edit_structural_answers"] is False
     assert report["errors"][-1]["stage"] == "structural_context"
+
+    second_code, second_report = coordinator.resume_hybrid_frontend(
+        manifest,
+        answers,
+        tmp_path / "mode-b-second-attempt",
+    )
+    assert second_code == 3
+    assert second_report["terminal"] is True
+    assert second_report["must_stop"] is True
+    assert second_report["may_retry"] is False
+    assert second_report["may_edit_structural_answers"] is False
+    assert second_report["reason"] == "invalid_resume_phase"

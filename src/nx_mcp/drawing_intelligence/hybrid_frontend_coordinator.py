@@ -107,6 +107,9 @@ def _report(manifest: dict[str, Any], manifest_path: Path) -> dict[str, Any]:
         "status": manifest.get("status"),
         "phase": manifest.get("phase"),
         "terminal": manifest.get("terminal"),
+        "must_stop": manifest.get("must_stop"),
+        "may_retry": manifest.get("may_retry"),
+        "may_edit_structural_answers": manifest.get("may_edit_structural_answers"),
         "timing_seconds": manifest.get("timing_seconds", {}),
         "summary": manifest.get("summary", {}),
         "artifacts": manifest.get("artifacts", {}),
@@ -137,7 +140,14 @@ def _fail(
     manifest.setdefault("errors", []).append(
         {"stage": stage, "message": f"{type(exc).__name__}: {exc}"}
     )
-    manifest.update(phase="terminal_failed", status="failed", terminal=True)
+    manifest.update(
+        phase="terminal_failed",
+        status="failed",
+        terminal=True,
+        must_stop=True,
+        may_retry=False,
+        may_edit_structural_answers=False,
+    )
     _write_json(manifest_path, manifest)
     return 1, _report(manifest, manifest_path)
 
@@ -167,6 +177,9 @@ def start_hybrid_frontend(
             "status": "blocked",
             "phase": "start_check",
             "terminal": True,
+            "must_stop": True,
+            "may_retry": False,
+            "may_edit_structural_answers": False,
             "errors": [f"{type(exc).__name__}: {exc}"],
         }
 
@@ -243,6 +256,9 @@ def start_hybrid_frontend(
         phase="awaiting_structural_context",
         status="awaiting_structural_context",
         terminal=False,
+        must_stop=False,
+        may_retry=None,
+        may_edit_structural_answers=None,
     )
     _write_json(paths["manifest"], manifest)
     return 4, _report(manifest, paths["manifest"])
@@ -290,7 +306,10 @@ def resume_hybrid_frontend(
                 "schema": MANIFEST_SCHEMA,
                 "status": "blocked",
                 "phase": manifest.get("phase"),
-                "terminal": manifest.get("terminal"),
+                "terminal": True,
+                "must_stop": True,
+                "may_retry": False,
+                "may_edit_structural_answers": False,
                 "reason": "invalid_resume_phase",
                 "errors": ["resume is allowed exactly once from awaiting_structural_context"],
             }
@@ -322,6 +341,9 @@ def resume_hybrid_frontend(
             "status": "blocked",
             "phase": "resume_check",
             "terminal": True,
+            "must_stop": True,
+            "may_retry": False,
+            "may_edit_structural_answers": False,
             "errors": [f"{type(exc).__name__}: {exc}"],
         }
 
@@ -411,6 +433,9 @@ def resume_hybrid_frontend(
             phase="mode_b_awaiting_confirmation",
             status="awaiting_confirmation",
             terminal=False,
+            must_stop=False,
+            may_retry=None,
+            may_edit_structural_answers=None,
         )
         _write_json(manifest_path, manifest)
         return 4, _report(manifest, manifest_path)
@@ -421,7 +446,14 @@ def resume_hybrid_frontend(
             "message": f"Mode B coordinator returned exit code {mode_b_code}",
         }
     )
-    manifest.update(phase="terminal_failed", status="failed", terminal=True)
+    manifest.update(
+        phase="terminal_failed",
+        status="failed",
+        terminal=True,
+        must_stop=True,
+        may_retry=False,
+        may_edit_structural_answers=False,
+    )
     _write_json(manifest_path, manifest)
     return 1, _report(manifest, manifest_path)
 

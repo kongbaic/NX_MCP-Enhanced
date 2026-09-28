@@ -110,14 +110,15 @@ class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
 
         if self.basis is None:
             raise ValueError("established rotational symmetry requires visual basis")
-        if self.basis == "centerline":
-            if self.centerline_direction is None:
-                raise ValueError("centerline basis requires centerline_direction")
-        elif self.basis == "axial_section_symmetry":
-            if self.centerline_direction is not None:
-                raise ValueError(
-                    "axial_section_symmetry basis forbids centerline_direction"
-                )
+        if self.basis == "centerline" and self.centerline_direction is None:
+            raise ValueError("centerline basis requires centerline_direction")
+        if (
+            self.basis == "axial_section_symmetry"
+            and self.centerline_direction is not None
+        ):
+            raise ValueError(
+                "axial_section_symmetry basis forbids centerline_direction"
+            )
         return self
 
 
@@ -218,7 +219,7 @@ def build_structural_context_queries(
             if axis_direction in {"horizontal", "vertical"}:
                 deterministic_axis = axis_direction
             if method == "foreground_mirror_consensus_v1":
-                deterministic_method = method
+                deterministic_method = "foreground_mirror_consensus_v1"
 
         queries.append(
             StructuralRegionQuery(

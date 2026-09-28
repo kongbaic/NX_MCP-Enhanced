@@ -295,7 +295,6 @@ def test_structural_answer_schema_forbids_feature_or_endpoint_fields():
                 "overall_dimension_facts": [],
                 "rotational_symmetry": {
                     "status": "not_established",
-                    "axis": None,
                     "evidence": ["structural:R1:crop"],
                 },
                 "entities": [{"key": "main_bore"}],
@@ -441,7 +440,6 @@ def test_structural_models_fail_closed_on_invalid_evidence_and_answer_shape():
                 "overall_dimension_facts": [],
                 "rotational_symmetry": {
                     "status": "not_established",
-                    "axis": None,
                     "evidence": ["structural:R1:crop"],
                 },
                 "unresolved": [],

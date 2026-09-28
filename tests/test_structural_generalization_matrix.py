@@ -12,7 +12,6 @@ from nx_mcp.drawing_intelligence.structural_context import (
     build_structural_context_queries,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SHKSS_CONTEXT = ROOT / "benchmarks" / "hybrid_integration" / "shkss20-40-adapter-context.json"
 

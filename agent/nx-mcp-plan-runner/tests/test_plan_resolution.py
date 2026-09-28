@@ -590,6 +590,165 @@ def test_cmd_run_early_failure_writes_requested_report(tmp_path=None):
     assert any("not in executable format" in item for item in payload["errors"])
 
 
+def _capture_async_runner(coro):
+    import asyncio
+    import contextlib
+    import io
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        exit_code = asyncio.run(coro)
+    marker = "===REPORT===\n"
+    payload_text = output.getvalue().split(marker, 1)[1]
+    return exit_code, json.loads(payload_text)
+
+
+def _write_executable_for_run(path, *, source_drawing=None):
+    frozen = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_status",
+                "tool_args": {},
+                "topology_changes": False,
+            }
+        ],
+    }
+    if source_drawing is not None:
+        frozen["source_drawing"] = source_drawing
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(R.build_executable_plan(frozen), handle)
+
+
+def _run_args(plan_path, directory, *, drawing):
+    import argparse
+
+    return argparse.Namespace(
+        plan=plan_path,
+        workspace=directory,
+        report=None,
+        drawing=drawing,
+        mode="normal",
+        allow_overwrite=False,
+        history=None,
+        repair_attempt=0,
+        repair_report=None,
+    )
+
+
+def test_mode_b_run_rejects_mismatched_source_drawing_before_loader(tmp_path=None):
+    import asyncio
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    stale = os.path.join(directory, "stale-drawing.json")
+    executable = os.path.join(directory, "stale-executable.json")
+    _write_executable_for_run(executable, source_drawing=os.path.abspath(stale))
+
+    original_transport = R.NXTransport
+    try:
+        R.NXTransport = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Loader must not be touched on source_drawing mismatch")
+        )
+        exit_code, result = _capture_async_runner(
+            R._cmd_run(_run_args(executable, directory, drawing=current))
+        )
+    finally:
+        R.NXTransport = original_transport
+
+    assert exit_code == 1
+    assert result["status"] == "failed"
+    assert any("source_drawing mismatch" in item for item in result["errors"])
+
+
+def test_mode_b_run_requires_source_drawing_before_loader(tmp_path=None):
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    executable = os.path.join(directory, "missing-source-executable.json")
+    _write_executable_for_run(executable)
+
+    original_transport = R.NXTransport
+    try:
+        R.NXTransport = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Loader must not be touched when source_drawing is missing")
+        )
+        exit_code, result = _capture_async_runner(
+            R._cmd_run(_run_args(executable, directory, drawing=current))
+        )
+    finally:
+        R.NXTransport = original_transport
+
+    assert exit_code == 1
+    assert any("missing source_drawing" in item for item in result["errors"])
+
+
+def test_mode_b_run_matching_source_drawing_reaches_loader(tmp_path=None):
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    current = os.path.join(directory, "current-drawing.json")
+    executable = os.path.join(directory, "matching-source-executable.json")
+    _write_executable_for_run(executable, source_drawing=os.path.abspath(current))
+
+    class OfflineTransport:
+        def __init__(self, workspace_root=None):
+            self.workspace_root = workspace_root
+
+        def ping(self):
+            return False
+
+        def ping_error(self):
+            return "expected offline test transport"
+
+    original_transport = R.NXTransport
+    try:
+        R.NXTransport = OfflineTransport
+        exit_code, result = _capture_async_runner(
+            R._cmd_run(_run_args(executable, directory, drawing=current))
+        )
+    finally:
+        R.NXTransport = original_transport
+
+    assert exit_code == 1
+    assert any("loader health check failed" in item for item in result["errors"])
+    assert not any("source_drawing" in item for item in result["errors"])
+
+
+def test_text_mode_run_allows_missing_source_drawing(tmp_path=None):
+    import tempfile
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    executable = os.path.join(directory, "text-executable.json")
+    _write_executable_for_run(executable)
+
+    class OfflineTransport:
+        def __init__(self, workspace_root=None):
+            self.workspace_root = workspace_root
+
+        def ping(self):
+            return False
+
+        def ping_error(self):
+            return "expected offline test transport"
+
+    original_transport = R.NXTransport
+    try:
+        R.NXTransport = OfflineTransport
+        exit_code, result = _capture_async_runner(
+            R._cmd_run(_run_args(executable, directory, drawing=None))
+        )
+    finally:
+        R.NXTransport = original_transport
+
+    assert exit_code == 1
+    assert any("loader health check failed" in item for item in result["errors"])
+    assert not any("source_drawing" in item for item in result["errors"])
+
+
 def test_frozen_check_rejects_dollar_references():
     plan = {"mode": "FAST", "operations": [{
         "step": 1,

@@ -7127,6 +7127,9 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                                      "(no result_bindings / selection_binding); run `build` first"]}
         return finish(result, 1)
     errs = check_plan(plan, executable=True)
+    drawing_path = getattr(args, "drawing", None)
+    if drawing_path:
+        errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
     if errs:
         result = {"status": "failed", "failed_step": None,
                   "errors": errs[:20], "error_count": len(errs)}
@@ -7396,6 +7399,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("plan")
     pr.add_argument("--workspace", default=None)
     pr.add_argument("--report", default=None)
+    pr.add_argument("--drawing", default=None,
+                    help="optional Mode B drawing path binding; must match plan source_drawing")
     pr.add_argument("--mode", choices=("normal", "benchmark"), default="normal",
                     help="normal: never discard an unsaved part; "
                          "benchmark: allow overwriting the plan's own test part only")

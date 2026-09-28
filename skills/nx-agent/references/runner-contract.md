@@ -205,13 +205,14 @@ Runner 安装目录包含 `runtime-config.json`，正常执行优先使用其中
 
 ~~~text
 python_exe runner.py run <current-executable.json>
+  --drawing <current-drawing.json>
   --workspace <workspace_root>
   --report <attempt1-report.json>
   --mode normal
   --repair-attempt 0
 ~~~
 
-正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；这两个参数只属于受控 repair/benchmark 语义，不能用于首次正常执行。
+正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；这两个参数只属于受控 repair/benchmark 语义，不能用于首次正常执行。Mode B 必须同时传 `--drawing <current-drawing.json>`，并在 Loader 健康检查前把它与 executable 顶层 `source_drawing` 做 canonical absolute-path 匹配；文字模式可不传 `--drawing`。
 
 Loader 的 `nx_status` 必须以 NX 当前 `Session.Parts.Work` 为权威来源，不能直接
 读取可能已经失效的缓存 `_part`；用户在 NX 中关闭/切换零件后，resident Loader
@@ -223,6 +224,7 @@ Loader 日志固定写入 `NX_MCP_WORKSPACE\nx_mcp_loader.log`；安装器会持
 
 `run` 额外支持：
 
+- `--drawing <current-drawing.json>`（Mode B 当前 drawing 路径绑定）
 - `--repair-attempt 0|1`
 - `--repair-report <attempt1-report.json>`
 

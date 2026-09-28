@@ -834,6 +834,23 @@ def main() -> None:
             fail(f"Runner contract source_drawing regression: missing {token}")
 
     for token in (
+        'pr.add_argument("--drawing", default=None,',
+        'drawing_path = getattr(args, "drawing", None)',
+        'errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))',
+    ):
+        if token not in runner_source:
+            fail(f"Runner Mode B Stage C drawing binding regression: missing {token}")
+
+    for token in (
+        "test_mode_b_run_rejects_mismatched_source_drawing_before_loader",
+        "test_mode_b_run_requires_source_drawing_before_loader",
+        "test_mode_b_run_matching_source_drawing_reaches_loader",
+        "test_text_mode_run_allows_missing_source_drawing",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner Mode B Stage C drawing binding test missing: {token}")
+
+    for token in (
         'out["plan_format"] = "executable-v1"',
         'plan.get("plan_format") == "executable-v1"',
         "frozen plan must not contain executable top-level field 'plan_format'",

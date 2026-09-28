@@ -393,13 +393,14 @@ B 阶段只有在 plan-contracts / build / check 全部 PASS 后，才允许执�
 
 ~~~text
 python_exe runner.py run <current-executable.json>
+  --drawing <current-drawing.json>
   --workspace <workspace_root>
   --report <attempt1-report.json>
   --mode normal
   --repair-attempt 0
 ~~~
 
-正常 attempt 1 禁止 `--allow-overwrite`、`--repair-report`，不得改用 benchmark 模式，也不得手工逐步调用 NX_MCP 绕过 Runner。阶段 C 成败只以该次 Runner report 为权威。
+正常 attempt 1 禁止 `--allow-overwrite`、`--repair-report`，不得改用 benchmark 模式，也不得手工逐步调用 NX_MCP 绕过 Runner。Mode B 的 `run --drawing` 必须继续绑定同一本轮 canonical drawing；缺失/不一致在连接 Loader 前 fail-closed。文字模式不带 `--drawing`。阶段 C 成败只以该次 Runner report 为权威。
 
 ### 5.1 Preflight
 只允许：
@@ -469,6 +470,7 @@ Runner 正式开始建模后，任一 operation 失败：
 
 ~~~text
 python_exe runner.py run <repair-executable.json>
+  --drawing <current-drawing.json>
   --workspace <workspace_root>
   --report <attempt2-report.json>
   --mode benchmark

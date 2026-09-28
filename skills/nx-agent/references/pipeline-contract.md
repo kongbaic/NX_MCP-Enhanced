@@ -62,7 +62,11 @@ query.image_path 一次。queries JSON 内置 schema-valid 的 `answer_template`
 Agent 必须原样复制该模板作为 `structural-context-answers.json`，顶层 schema 保持
 `structural-context-answers-v1`，禁止自行设计字段。每个 answer 的 query_id 与 evidence
 保持模板原值，只允许填写 view_kind、overall_dimension_facts 与 unresolved；每个 overall
-fact 固定为 axis + positive value + evidence:[原样 evidence_label]。overall fact 的 axis
+fact 固定为 axis + positive value + evidence:[原样 evidence_label]。**局部尺寸不得冒充
+`overall_dimension_facts`：只有明确跨越当前视图完整零件外包边界/整体轮廓两端的直接
+overall 标注才允许写入；局部链尺寸、孔/圆中心距、中心到边、半径/直径、角度以及仅覆盖
+局部轮廓的线性尺寸，即使是最大的可见数字也仍是局部尺寸。缺少明确 overall 时对应 axis
+保持 unresolved，禁止为了通过 Adapter 而补值、算术推导或 pixel→mm。**overall fact 的 axis
 不得由 Agent 自行推断，必须读取 queries JSON 的 `view_axis_map`：front horizontal=X /
 vertical=Z，side horizontal=Y / vertical=Z，top horizontal=X / vertical=Y。view_kind 已确定时必须
 清空 `pending_structural_visual_read`；无法唯一判断时保留 structured unresolved 且不得写
@@ -89,11 +93,16 @@ Planner 的语义 artifact；若返回 `exit code=4, phase=mode_b_awaiting_confi
 只展示 mode_b 子报告生成的 1..3 个结构化 confirmation questions，用户选择现有
 option_id 后写出 `user-confirmations.json`，并只允许执行一次
 `mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>`。
-其它结果 BLOCKED / STOP。
+其它结果 BLOCKED / STOP。**terminal 后禁止二次诊断：首次 terminal/blocked 后只报告
+首次失败 phase/reason/errors 并结束，不得再读 OCR report、reader-input、structural
+queries/answers、manifest 或其它中间 artifact 来推断如何补救，不得重新解释图纸，也不得提供
+“重开 fresh / fallback / 修正后重试”选项。**
 
 只有本轮没有明确 runtime-local raster 路径或输入不是 raster 时，才使用 fallback
 semantic Reader：一次性写出 `reader-observations.json` 后立即调用
 `python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator <reader-observations.json> <fresh-artifact-prefix>`。
+若本轮开始时已有明确 raster path，则 fallback 永远不能作为 Hybrid Frontend / Mode B
+失败后的恢复路径；只有用户之后明确发起新的独立任务，才允许新建另一轮 fresh production run。
 
 正常 Mode B 中，A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述
 deterministic coordinator 的内部阶段与开发审计语义，**不得由 Agent 逐条手动执行**。

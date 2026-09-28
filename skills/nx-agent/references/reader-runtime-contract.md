@@ -21,7 +21,14 @@ Wide-Local Hybrid OCR, and the structural query plan. It intentionally stops at
 Structural Reader: inspect each listed `query.image_path` once and write
 `structural-context-answers-v1` containing only view_kind, directly visible overall
 X/Y/Z facts allowed by that view, the exact query evidence label, and unresolved
-reasons. Do not answer feature inventory, cross-view identity, local feature values,
+reasons. Local dimensions must never be promoted to `overall_dimension_facts`.
+An overall fact requires an explicit dimension spanning the complete visible part/profile
+extent on that view axis. Chained/local lengths, hole-center spacing, center-to-edge
+dimensions, radii, diameters, angles, and dimensions that cover only a local profile
+segment remain local even when they are the largest visible numbers. If no explicit
+overall dimension is shown for an allowed axis, omit that fact and keep it unresolved;
+never invent it to satisfy the Adapter, derive it arithmetically, or estimate it from
+pixels. Do not answer feature inventory, cross-view identity, local feature values,
 dimension endpoint ownership, start side, termination, or pixel-derived coordinates.
 
 Resume exactly once with:
@@ -395,6 +402,11 @@ A Mode B front-end failure from Reader input preparation through Gate A is never
 eligible for Controlled Self-Healing. After the first coordinator terminal/blocked
 result, do not read schema/source code, do not rewrite `reader-observations.json`,
 do not choose a new artifact prefix to retry, and do not call the coordinator again.
+After a terminal/blocked result, do not inspect OCR reports or Reader inputs; do not offer restart/fallback/retry as recovery.
+Report only the first terminal phase/reason/errors and stop. If this task started with
+an explicit raster path, the fallback semantic Reader cannot be selected as a recovery
+path. A new fresh production run is allowed only after the user explicitly starts a
+separate new task.
 Report the first state/phase/errors and STOP.
 
 Standalone `assemble-reader-capture`, `check-capture`, `link-capture`,

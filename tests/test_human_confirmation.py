@@ -209,61 +209,33 @@ def test_confirmation_request_skips_unresolved_endpoint_without_evidence_candida
     assert request["unconfirmable_blocking_ids"] == ["U_DIM_D1"]
 
 
-def test_start_side_confirmation_request_is_bounded_to_min_max():
+def test_start_side_is_not_a_production_human_confirmation_question():
     request = build_confirmation_request(_start_side_graph())
 
-    assert request["question_count"] == 1
-    assert request["eligible_for_user_confirmation"] is True
-    question = request["questions"][0]
-    assert question["kind"] == "start_side"
-    assert question["feature_id"] == "F_THREAD"
-    assert question["axis"] == "X"
-    assert {
-        (item["role"], item.get("value"))
-        for item in question["options"]
-    } == {
-        ("start_side", "min"),
-        ("start_side", "max"),
-        ("keep_unresolved", None),
-    }
+    assert request["question_count"] == 0
+    assert request["eligible_for_user_confirmation"] is False
+    assert request["unconfirmable_blocking_ids"] == ["U_THREAD_SIDE"]
 
 
-def test_apply_start_side_confirmation_adds_direct_semantic_value():
+def test_legacy_start_side_answer_cannot_create_new_production_truth():
     graph = _start_side_graph()
-    request = build_confirmation_request(graph)
-    question = request["questions"][0]
-    option = next(
-        item
-        for item in question["options"]
-        if item.get("value") == "min"
-    )
 
-    confirmed = apply_confirmation_answers(
-        graph,
-        {
-            "schema_version": "1.0",
-            "answers": [
-                {
-                    "confirmation_id": question["confirmation_id"],
-                    "selected_option_ids": [option["option_id"]],
-                }
-            ],
-        },
-    )
-
-    assert confirmed.unresolved_evidence == []
-    direct = next(
-        item
-        for item in confirmed.direct_values
-        if item.target == "feature:F_THREAD.start_side"
-    )
-    assert direct.value == "min"
-    assert direct.semantic == "start_side"
-    assert any(
-        source.startswith("human-confirmation:")
-        for source in direct.source_ids
-    )
-    assert resolve_evidence_graph(compile_evidence_graph(confirmed)).ok is True
+    with pytest.raises(
+        ConfirmationError,
+        match="evidence is not eligible for bounded user confirmation",
+    ):
+        apply_confirmation_answers(
+            graph,
+            {
+                "schema_version": "1.0",
+                "answers": [
+                    {
+                        "confirmation_id": "CONF_U_THREAD_SIDE",
+                        "selected_option_ids": ["START_SIDE_MIN"],
+                    }
+                ],
+            },
+        )
 
 
 def test_apply_confirmation_closes_edge_offset_through_existing_resolver():

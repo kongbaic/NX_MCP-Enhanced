@@ -132,6 +132,9 @@ def test_structural_query_builder_carries_deterministic_profile_symmetry_axis():
         "horizontal_score": 0.31,
         "score_margin": 0.41,
     }
+    reader_input["regions"][0]["structural_context_path"] = (
+        "C:/work/R1-structural-context.png"
+    )
 
     plan = build_structural_context_queries(reader_input)
 

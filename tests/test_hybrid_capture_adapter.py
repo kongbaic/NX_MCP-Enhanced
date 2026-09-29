@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import nx_mcp.drawing_intelligence.compiler as compiler_module
 import nx_mcp.drawing_intelligence.hybrid_capture_adapter as hybrid_adapter
 
 from nx_mcp.drawing_intelligence.compiler import compile_evidence_graph
@@ -12,6 +13,7 @@ from nx_mcp.drawing_intelligence.evidence import (
     DimensionObservation,
     EvidenceGraph,
     OverallDimensions,
+    RelationEvidence,
 )
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
@@ -19,6 +21,49 @@ from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     adapt_hybrid_ocr_report,
 )
 from nx_mcp.drawing_intelligence.resolver import resolve_evidence_graph
+
+
+def test_coordinate_distance_compiler_rejects_non_coordinate_endpoint_sets():
+    relations = []
+    mixed_with_overall = DimensionObservation(
+        id="D_OVERALL_EDGE",
+        value=20,
+        axis="X",
+        endpoints=[
+            DimensionEndpoint(role="overall_min"),
+            DimensionEndpoint(role="profile_boundary", target="feature:F1.boundary.x"),
+        ],
+    )
+    centers_only = DimensionObservation(
+        id="D_CENTERS",
+        value=20,
+        axis="X",
+        endpoints=[
+            DimensionEndpoint(role="feature_center", target="feature:F1.centerline.x"),
+            DimensionEndpoint(role="feature_center", target="feature:F2.centerline.x"),
+        ],
+    )
+
+    assert not compiler_module._compile_coordinate_distance(
+        mixed_with_overall,
+        relations,
+    )
+    assert not compiler_module._compile_coordinate_distance(
+        centers_only,
+        relations,
+    )
+    assert relations == []
+
+
+def test_coordinate_distance_relation_requires_two_targets():
+    with pytest.raises(ValueError, match="requires value and exactly two targets"):
+        RelationEvidence(
+            id="R_COORD",
+            kind="coordinate_distance",
+            axis="X",
+            value=26,
+            targets=["feature:F1.boundary.x"],
+        )
 
 
 def test_profile_boundary_span_compiles_to_resolvable_coordinate_distance():

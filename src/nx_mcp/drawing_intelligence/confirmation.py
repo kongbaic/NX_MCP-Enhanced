@@ -13,6 +13,9 @@ from .evidence import (
 )
 
 
+_MAX_CONFIRMATION_QUESTIONS = 3
+
+
 class ConfirmationError(ValueError):
     """Human confirmation payload is invalid for the current evidence graph."""
 
@@ -304,13 +307,18 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
         for item in blocking_ids
         if item not in confirmable_ids
     ]
-    eligible = bool(questions) and not unconfirmable_ids
+    eligible = (
+        bool(questions)
+        and not unconfirmable_ids
+        and len(questions) <= _MAX_CONFIRMATION_QUESTIONS
+    )
 
     return {
         "schema_version": "1.0",
         "question_count": len(questions),
         "blocking_unresolved_count": len(blocking_ids),
         "unconfirmable_blocking_ids": unconfirmable_ids,
+        "max_confirmation_questions": _MAX_CONFIRMATION_QUESTIONS,
         "eligible_for_user_confirmation": eligible,
         "questions": questions,
     }

@@ -14,6 +14,7 @@ from nx_mcp.drawing_intelligence.evidence import (
 from nx_mcp.drawing_intelligence.mode_b_coordinator import (
     STATE_SCHEMA,
     _classify_resolution,
+    _public_report,
     _run_gate_a,
     resume_mode_b_coordinator,
     run_mode_b_coordinator,
@@ -80,6 +81,23 @@ def test_resolution_route_conflict_is_terminal():
         )
         == "terminal_failed"
     )
+
+
+def test_public_report_marks_awaiting_confirmation_as_hard_user_boundary(tmp_path: Path):
+    state_path = tmp_path / "mode-b-state.json"
+    report = _public_report(
+        {
+            "status": "awaiting_confirmation",
+            "phase": "awaiting_confirmation",
+            "terminal": False,
+        },
+        state_path,
+    )
+
+    assert report["human_input_required"] is True
+    assert report["must_stop_for_user_input"] is True
+    assert report["may_auto_select_confirmations"] is False
+    assert report["resume_requires_new_user_turn"] is True
 
 
 def test_resolution_route_accepts_only_bounded_confirmation():

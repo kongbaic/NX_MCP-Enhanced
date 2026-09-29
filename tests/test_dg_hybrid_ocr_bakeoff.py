@@ -221,6 +221,115 @@ def test_collect_candidates_deduplicates_exact_cross_region_geometry_with_proven
     assert candidates[0]["source_region_ids"] == ["R2", "R3"]
 
 
+
+def test_collect_candidates_preserves_cross_region_witness_evidence():
+    module = _load_module()
+
+    shared_geometry = {
+        "orientation": "horizontal",
+        "axis_px": 146.0,
+        "line_span_px": [470.0, 974.0],
+        "witness_positions_px": [472.1, 984.0],
+    }
+    visual_aid = {
+        "candidate_buckets": [
+            {
+                "status": "bounded",
+                "candidates": [
+                    {
+                        **shared_geometry,
+                        "candidate_id": "DG3",
+                        "region_id": "R2",
+                        "witness_anchor_evidence": [
+                            {
+                                "witness_index": 0,
+                                "position_px": 472.1,
+                                "axis": "x",
+                                "nearest_anchors": [
+                                    {
+                                        "kind": "linear_pattern_axis",
+                                        "ref": "R2.linear_pattern.001",
+                                    }
+                                ],
+                            }
+                        ],
+                        "witness_line_evidence": [
+                            {
+                                "witness_index": 0,
+                                "position_px": 472.1,
+                                "source_lines": [
+                                    {
+                                        "orientation": "vertical",
+                                        "axis_px": 472.1,
+                                        "span_px": [140, 454],
+                                        "crosses_dimension_axis": True,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "status": "bounded",
+                "candidates": [
+                    {
+                        **shared_geometry,
+                        "candidate_id": "DG4",
+                        "region_id": "R3",
+                        "witness_anchor_evidence": [
+                            {
+                                "witness_index": 0,
+                                "position_px": 472.1,
+                                "axis": "x",
+                                "nearest_anchors": [
+                                    {
+                                        "kind": "profile_edge_candidate",
+                                        "ref": "R3.structural.vertical.001",
+                                    }
+                                ],
+                            }
+                        ],
+                        "witness_line_evidence": [
+                            {
+                                "witness_index": 0,
+                                "position_px": 472.1,
+                                "source_lines": [
+                                    {
+                                        "orientation": "vertical",
+                                        "axis_px": 472.1,
+                                        "span_px": [140, 296],
+                                        "crosses_dimension_axis": True,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+
+    candidates = module._collect_candidates(visual_aid)
+
+    assert len(candidates) == 1
+    assert candidates[0]["source_candidate_ids"] == ["DG3", "DG4"]
+    assert candidates[0]["source_region_ids"] == ["R2", "R3"]
+
+    anchors = candidates[0]["witness_anchor_evidence"][0]["nearest_anchors"]
+    assert {item["ref"] for item in anchors} == {
+        "R2.linear_pattern.001",
+        "R3.structural.vertical.001",
+    }
+
+    source_lines = candidates[0]["witness_line_evidence"][0]["source_lines"]
+    assert len(source_lines) == 2
+    assert {tuple(item["span_px"]) for item in source_lines} == {
+        (140, 454),
+        (140, 296),
+    }
+
+
 def test_structured_scalar_can_bind_vertical_candidate_with_horizontal_text():
     module = _load_module()
     candidate = {

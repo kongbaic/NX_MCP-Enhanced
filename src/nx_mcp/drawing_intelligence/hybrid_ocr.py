@@ -471,6 +471,80 @@ def _candidate_geometry_key(candidate: dict[str, Any]) -> tuple[Any, ...] | None
     )
 
 
+
+def _merge_indexed_candidate_evidence(
+    canonical: dict[str, Any],
+    duplicate: dict[str, Any],
+    *,
+    field: str,
+    nested_field: str,
+) -> None:
+    """Preserve witness evidence when exact-geometry candidates are deduplicated.
+
+    Exact cross-region geometry deduplication is allowed to collapse duplicate
+    candidate shells, but it must not silently discard region-specific witness
+    anchors or source-line evidence.  Region-local normalized coordinates remain
+    canonical-region diagnostics and are intentionally not merged.
+    """
+
+    canonical_items = canonical.get(field, [])
+    duplicate_items = duplicate.get(field, [])
+    if not isinstance(canonical_items, list) or not isinstance(duplicate_items, list):
+        return
+
+    merged: dict[int, dict[str, Any]] = {}
+    for item in [*canonical_items, *duplicate_items]:
+        if not isinstance(item, dict):
+            continue
+        witness_index = item.get("witness_index")
+        if not isinstance(witness_index, int):
+            continue
+
+        existing = merged.get(witness_index)
+        nested = item.get(nested_field, [])
+        nested_items = nested if isinstance(nested, list) else []
+
+        if existing is None:
+            existing = {
+                key: value
+                for key, value in item.items()
+                if key != nested_field
+            }
+            existing[nested_field] = list(nested_items)
+            merged[witness_index] = existing
+            continue
+
+        target_nested = existing.get(nested_field)
+        if not isinstance(target_nested, list):
+            target_nested = []
+            existing[nested_field] = target_nested
+        for value in nested_items:
+            if value not in target_nested:
+                target_nested.append(value)
+
+    canonical[field] = [
+        merged[index]
+        for index in sorted(merged)
+    ]
+
+
+def _merge_cross_region_candidate_evidence(
+    canonical: dict[str, Any],
+    duplicate: dict[str, Any],
+) -> None:
+    _merge_indexed_candidate_evidence(
+        canonical,
+        duplicate,
+        field="witness_anchor_evidence",
+        nested_field="nearest_anchors",
+    )
+    _merge_indexed_candidate_evidence(
+        canonical,
+        duplicate,
+        field="witness_line_evidence",
+        nested_field="source_lines",
+    )
+
 def _collect_candidates(
     visual_aid: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -513,6 +587,7 @@ def _collect_candidates(
             candidates.append(canonical)
             continue
 
+        _merge_cross_region_candidate_evidence(canonical, candidate)
         canonical["source_candidate_ids"].append(candidate_id)
         if region_id and region_id not in canonical["source_region_ids"]:
             canonical["source_region_ids"].append(region_id)

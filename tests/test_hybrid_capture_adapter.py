@@ -5,6 +5,7 @@ import pytest
 import nx_mcp.drawing_intelligence.hybrid_capture_adapter as hybrid_adapter
 
 from nx_mcp.drawing_intelligence.compiler import compile_evidence_graph
+from nx_mcp.drawing_intelligence.draft import build_semantic_draft
 from nx_mcp.drawing_intelligence.evidence import (
     CoordinateFact,
     DimensionEndpoint,
@@ -67,6 +68,17 @@ def test_profile_boundary_span_compiles_to_resolvable_coordinate_distance():
     assert resolved.values[right] == 51
     assert resolved.unresolved == []
     assert resolved.conflicts == []
+
+    draft = build_semantic_draft(compiled, resolved)
+    relation_sources = [
+        item
+        for item in draft["source_ledger"]
+        if item.get("semantic") == "coordinate_distance"
+    ]
+    assert len(relation_sources) == 1
+    assert relation_sources[0]["value"] == 26
+    assert relation_sources[0]["axis"] == "X"
+    assert relation_sources[0]["between"] == [left, right]
 
 
 def _report() -> dict:

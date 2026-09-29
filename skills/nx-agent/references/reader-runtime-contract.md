@@ -61,7 +61,17 @@ direction at all. The query must carry a non-null
 `deterministic_profile_symmetry_axis=horizontal|vertical` produced by Reader prep's
 multi-threshold bilateral raster-topology classifier; that classifier never converts
 pixels into engineering dimensions or coordinates. If the deterministic hint is absent,
-the axial-section answer must remain unresolved. The assembler maps the deterministic
+the axial-section answer must remain unresolved. When the query also reports
+`deterministic_profile_symmetry_overlay=blue_dashed_topology_axis`, the listed
+structural-context image contains a blue dashed `TOPOLOGY SYM AXIS` visual aid at that
+deterministic mirror axis. This overlay is not an original drawing centerline and may
+never be used as `basis=centerline` or as proof of revolution by itself. Use it only
+to stabilize the visual check that principal profile boundaries/shoulders occur in
+paired opposite form around the deterministic candidate axis. If axial/diametral
+section semantics are visually established and those principal profile stages are
+paired around the overlay, absence of an original centerline alone is not a reason to
+defer rotational symmetry; report `basis=axial_section_symmetry`. Ordinary
+non-section mirror symmetry still remains insufficient. The assembler maps the deterministic
 visual direction through the resolved `view_axis_map`: front horizontal=>X / vertical=>Z;
 side horizontal=>Y / vertical=>Z; top horizontal=>X / vertical=>Y. The section-symmetry basis is visual drafting topology,
 not pixel measurement: do not compare pixel distances or convert visual spacing into

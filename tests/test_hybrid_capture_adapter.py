@@ -298,6 +298,40 @@ def test_adapter_emits_accepted_dimensions_with_unresolved_endpoints():
     assert all(endpoint.role == "unresolved" for endpoint in by_key["R1.DG12"].endpoints)
 
 
+
+def test_unresolved_dimension_matching_independent_same_region_overall_is_advisory():
+    context = HybridAdapterContext.model_validate(
+        {
+            "schema": "hybrid-adapter-context-v1",
+            "region_views": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "evidence": ["structural:R1"],
+                },
+                {
+                    "region_id": "R2",
+                    "view_kind": "side",
+                    "evidence": ["structural:R2"],
+                },
+            ],
+            "overall_dimension_facts": [
+                {
+                    "axis": "X",
+                    "value": 24,
+                    "evidence": ["structural:R1"],
+                }
+            ],
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(_report(), context)
+    by_key = {item.key: item for item in partial.dimensions}
+
+    assert by_key["R1.DG12"].unresolved_reason is not None
+    assert by_key["R1.DG12"].required_for_modeling is False
+    assert by_key["R2.DG13"].required_for_modeling is True
+
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 

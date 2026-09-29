@@ -205,6 +205,59 @@ def test_hidden_pair_midline_is_not_promoted_to_physical_profile_edge():
     assert 100.0 not in positions
 
 
+def test_weak_fragment_pair_cannot_suppress_physical_profile():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1200, "height": 700},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 1000, 500],
+                "circle_groups": [],
+                "linear_pattern_candidates": [
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 100.0,
+                        "span_px": [100, 500],
+                        "dash_score": 0.52,
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 106.0,
+                        "span_px": [100, 500],
+                        "dash_score": 0.63,
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                ],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_WEAK_FRAGMENT_PAIR",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 103.0,
+                        "source_lines": [
+                            _source("horizontal", 103.0, 100, 500),
+                            _source("vertical", 100.0, 80, 125),
+                            _source("vertical", 500.0, 80, 125),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(raw, "R1", "vertical")
+
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+    assert 103.0 in positions
+
+
 def test_profile_line_near_hidden_pair_member_but_off_midpoint_survives():
     raw = {
         "schema": "raw-evidence-v1",

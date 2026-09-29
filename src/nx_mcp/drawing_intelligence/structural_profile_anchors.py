@@ -331,6 +331,11 @@ def _is_hidden_pair_midline(
         and isinstance(item.get("axis_px"), (int, float))
         and isinstance(item.get("span_px"), list)
         and len(item["span_px"]) == 2
+        and (
+            not isinstance(item.get("dash_score"), (int, float))
+            or isinstance(item.get("dash_score"), bool)
+            or float(item["dash_score"]) >= 0.60
+        )
     ]
 
     for left_index in range(len(eligible)):

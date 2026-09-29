@@ -1516,6 +1516,40 @@ def test_off_region_callout_with_multiple_pattern_targets_stays_unresolved(monke
     ]
     assert len(blockers) == 1
 
+def test_full_extent_roles_reject_mismatched_local_dimension_value():
+    endpoints = [
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="overall_min",
+            evidence=["test"],
+        ),
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="overall_max",
+            evidence=["test"],
+        ),
+    ]
+
+    assert hybrid_adapter._full_extent_roles_disagree_with_declared_overall(
+        endpoints,
+        axis="Z",
+        value=4.5,
+        overall_dimensions={
+            "length_x": 300.0,
+            "width_y": 300.0,
+            "height_z": 75.0,
+        },
+    )
+    assert not hybrid_adapter._full_extent_roles_disagree_with_declared_overall(
+        endpoints,
+        axis="Z",
+        value=75.0,
+        overall_dimensions={
+            "length_x": 300.0,
+            "width_y": 300.0,
+            "height_z": 75.0,
+        },
+    )
+
+
 def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     candidate = {
         "candidate_id": "DG_CENTER",

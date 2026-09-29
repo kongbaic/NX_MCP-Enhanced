@@ -172,31 +172,41 @@ def test_identity_linker_preserves_unresolved_endpoint_candidates():
     assert item["endpoint_specs"][1]["role"] == "overall_max"
 
 
-def test_confirmation_request_is_bounded_to_known_features_and_boundaries():
+def test_confirmation_request_exposes_only_evidence_backed_candidates():
     request = build_confirmation_request(_graph())
 
     assert request["question_count"] == 1
     assert request["eligible_for_user_confirmation"] is True
     question = request["questions"][0]
     endpoint = question["endpoints"][0]
-    option_roles = {item["role"] for item in endpoint["options"]}
 
     assert question["confirmation_id"] == "CONF_U_DIM_D1"
-    assert option_roles == {
-        "overall_min",
-        "overall_max",
+    assert [item["role"] for item in endpoint["options"]] == [
         "feature_center",
         "keep_unresolved",
-    }
-    feature_options = [
-        item
-        for item in endpoint["options"]
-        if item["role"] == "feature_center"
     ]
-    assert [item["target"] for item in feature_options] == [
-        "feature:F1.centerline.y"
-    ]
-    assert feature_options[0]["evidence_candidate"] is True
+    assert endpoint["options"][0]["target"] == "feature:F1.centerline.y"
+    assert endpoint["options"][0]["evidence_candidate"] is True
+    assert "F1" not in endpoint["options"][0]["label_zh"]
+
+
+def test_confirmation_request_skips_unresolved_endpoint_without_evidence_candidate():
+    graph = _graph().model_copy(deep=True)
+    unresolved = dict(graph.unresolved_evidence[0])
+    endpoint_specs = [dict(item) for item in unresolved["endpoint_specs"]]
+    endpoint_specs[0]["candidate_targets"] = []
+    endpoint_specs[0]["unresolved_kind"] = "intermediate_surface"
+    unresolved["endpoint_specs"] = endpoint_specs
+    graph = graph.model_copy(
+        deep=True,
+        update={"unresolved_evidence": [unresolved]},
+    )
+
+    request = build_confirmation_request(graph)
+
+    assert request["question_count"] == 0
+    assert request["eligible_for_user_confirmation"] is False
+    assert request["unconfirmable_blocking_ids"] == ["U_DIM_D1"]
 
 
 def test_start_side_confirmation_request_is_bounded_to_min_max():

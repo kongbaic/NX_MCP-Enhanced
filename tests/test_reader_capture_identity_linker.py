@@ -495,6 +495,48 @@ def test_identity_collision_placeholders_keep_disconnected_components_distinct()
     assert spacing.targets[0] != spacing.targets[1]
 
 
+
+def test_identity_collision_is_advisory_when_all_colliding_projections_are_noncritical():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="circle",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="circle",
+                required_for_modeling=False,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    left = result.entity_to_feature["E_LEFT"]
+    right = result.entity_to_feature["E_RIGHT"]
+    collision = next(
+        item
+        for item in result.evidence.unresolved_evidence
+        if item["id"].startswith("U_IDENTITY_COLLISION_")
+    )
+
+    assert left != right
+    assert left.endswith("_AMB_01")
+    assert right.endswith("_AMB_02")
+    assert collision["required_for_modeling"] is False
+    assert result.report["identity_collisions"] == 1
+    assert result.report["blocking_unresolved"] == 0
+
 def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_path: Path):
     capture = ReaderCapture.model_validate(
         {

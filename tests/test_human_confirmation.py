@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import sys
@@ -170,6 +171,28 @@ def test_identity_linker_preserves_unresolved_endpoint_candidates():
     assert item["endpoint_specs"][0]["role"] == "unresolved"
     assert item["endpoint_specs"][0]["candidate_targets"]
     assert item["endpoint_specs"][1]["role"] == "overall_max"
+
+
+def test_confirmation_request_does_not_fail_closed_only_because_question_count_exceeds_three():
+    graph = _graph().model_copy(deep=True)
+    base = graph.unresolved_evidence[0]
+    unresolved = []
+    for index in range(4):
+        item = copy.deepcopy(base)
+        item["id"] = f"U_DIM_D{index + 1}"
+        item["capture_dimension_id"] = f"D{index + 1}"
+        unresolved.append(item)
+    graph = graph.model_copy(
+        deep=True,
+        update={"unresolved_evidence": unresolved},
+    )
+
+    request = build_confirmation_request(graph)
+
+    assert request["question_count"] == 4
+    assert request["blocking_unresolved_count"] == 4
+    assert request["unconfirmable_blocking_ids"] == []
+    assert request["eligible_for_user_confirmation"] is True
 
 
 def test_confirmation_request_exposes_only_evidence_backed_candidates():

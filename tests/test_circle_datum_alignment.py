@@ -114,6 +114,161 @@ def test_circle_center_alignment_fails_closed_with_multiple_axis_lines():
 
     assert items == []
 
+def test_front_view_z_center_can_become_overall_center_datum_alignment():
+    boundary = {
+        "status": "resolved",
+        "region_id": "R1",
+        "view_kind": "front",
+        "axis": "Z",
+        "candidate_id": "DG_HEIGHT",
+        "overall_dimension_value": 80.0,
+        "anchors": [
+            {
+                "ref": "R1.structural.horizontal.BOTTOM",
+                "pixel_extreme_side": "min",
+                "role": "overall_min",
+                "position_px": 20.0,
+            },
+            {
+                "ref": "R1.structural.horizontal.TOP",
+                "pixel_extreme_side": "max",
+                "role": "overall_max",
+                "position_px": 180.0,
+            },
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 200],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [150.0, 100.0],
+                    "rings": [{"radius_px": 24}],
+                }
+            ],
+        }
+    ]
+    axis_line = {
+        "region_id": "R1",
+        "kind": "profile_edge_candidate",
+        "ref": "R1.structural.horizontal.CENTER_AXIS",
+        "position_px": 100.0,
+        "source_orientation": "horizontal",
+        "span_px": [90, 210],
+    }
+
+    items = derive_circle_overall_center_alignments(
+        regions=regions,
+        region_views={"R1": "front"},
+        boundaries=[boundary],
+        profile_inventory=[axis_line],
+    )
+
+    assert len(items) == 1
+    assert items[0]["entity_key"] == "R1.C1"
+    assert items[0]["axis"] == "Z"
+    assert items[0]["datum"] == "overall_center"
+    assert items[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert "coordinate_mm" not in items[0]
+
+
+def test_side_view_z_center_can_become_overall_center_datum_alignment():
+    boundary = {
+        "status": "resolved",
+        "region_id": "R1",
+        "view_kind": "side",
+        "axis": "Z",
+        "candidate_id": "DG_HEIGHT",
+        "overall_dimension_value": 80.0,
+        "anchors": [
+            {"ref": "BOTTOM", "position_px": 40.0},
+            {"ref": "TOP", "position_px": 200.0},
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 240],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C2",
+                    "center_px": [150.0, 120.0],
+                    "rings": [{"radius_px": 20}],
+                }
+            ],
+        }
+    ]
+    axis_line = {
+        "region_id": "R1",
+        "kind": "profile_edge_candidate",
+        "ref": "R1.structural.horizontal.CENTER_AXIS",
+        "position_px": 120.0,
+        "source_orientation": "horizontal",
+        "span_px": [100, 200],
+    }
+
+    items = derive_circle_overall_center_alignments(
+        regions=regions,
+        region_views={"R1": "side"},
+        boundaries=[boundary],
+        profile_inventory=[axis_line],
+    )
+
+    assert len(items) == 1
+    assert items[0]["entity_key"] == "R1.C2"
+    assert items[0]["axis"] == "Z"
+
+
+def test_front_view_z_center_still_fails_closed_when_circle_is_off_center():
+    boundary = {
+        "status": "resolved",
+        "region_id": "R1",
+        "view_kind": "front",
+        "axis": "Z",
+        "candidate_id": "DG_HEIGHT",
+        "overall_dimension_value": 80.0,
+        "anchors": [
+            {"ref": "BOTTOM", "position_px": 20.0},
+            {"ref": "TOP", "position_px": 180.0},
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    regions = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 300, 200],
+            "circle_groups": [
+                {
+                    "circle_group_id": "C1",
+                    "center_px": [150.0, 118.0],
+                    "rings": [{"radius_px": 24}],
+                }
+            ],
+        }
+    ]
+    axis_line = {
+        "region_id": "R1",
+        "kind": "profile_edge_candidate",
+        "ref": "R1.structural.horizontal.CENTER_AXIS",
+        "position_px": 100.0,
+        "source_orientation": "horizontal",
+        "span_px": [90, 210],
+    }
+
+    items = derive_circle_overall_center_alignments(
+        regions=regions,
+        region_views={"R1": "front"},
+        boundaries=[boundary],
+        profile_inventory=[axis_line],
+    )
+
+    assert items == []
+
+
 def test_circle_center_alignment_accepts_unique_circle_center_witness_axis():
     candidates = [
         {

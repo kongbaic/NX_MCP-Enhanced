@@ -461,11 +461,19 @@ Therefore a failed first submission is terminal for that prefix: do not rewrite
 observations, do not perform a second interpretation, and do not retry by
 manually invoking downstream CLI stages.
 
-If the coordinator returns `phase=awaiting_confirmation`, present only the
-generated confirmation request. After the user selects existing option IDs,
-write `user-confirmations.json` using exactly the runtime schema below; write one
-answer for every generated confirmation question, even when the selected option is
-`KEEP_UNRESOLVED`:
+If the coordinator returns `phase=awaiting_confirmation`, or its public report
+sets `human_input_required=true` / `must_stop_for_user_input=true`, this is a hard
+human-interaction boundary. In the current assistant/tool turn, read only the generated
+confirmation request, present the existing options to the user, and then STOP. The
+Agent must not infer, rank, or auto-select an option from drawing geometry, dimension
+ordering, `evidence_candidate`, candidate count, or any other internal reasoning.
+It must not create `user-confirmations.json` or call coordinator `resume` in that
+same turn. Resume is allowed only after a subsequent new user message explicitly
+selects one of the presented options (or explicitly chooses `KEEP_UNRESOLVED`).
+
+After that later user selection, write `user-confirmations.json` using exactly the
+runtime schema below; write one answer for every generated confirmation question, even
+when the selected option is `KEEP_UNRESOLVED`:
 
 ~~~json
 {

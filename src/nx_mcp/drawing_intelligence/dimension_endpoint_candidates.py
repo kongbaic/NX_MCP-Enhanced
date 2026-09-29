@@ -127,7 +127,7 @@ def _profile_source_identity(
 def _profile_connects_to_witness_terminal(
     profile: dict[str, Any],
     *,
-    witness_lines: list[dict[str, Any]],
+    witness_lines: list[Any],
     dimension_axis_px: float | None,
 ) -> bool | None:
     """Check whether a profile edge is physically connected to the witness terminal."""

@@ -126,6 +126,27 @@ def test_resolution_route_accepts_only_bounded_confirmation():
     )
 
 
+def test_resolution_route_blocks_human_gate_until_machine_blockers_close():
+    request = {
+        "eligible_for_user_confirmation": True,
+        "question_count": 2,
+        "blocking_unresolved_count": 2,
+        "unconfirmable_blocking_ids": [],
+    }
+    assert _classify_resolution(
+        resolution_ok=False,
+        conflicts=0,
+        blocking_unresolved=7,
+        confirmation_request=request,
+    ) == "terminal_failed"
+    assert _classify_resolution(
+        resolution_ok=False,
+        conflicts=0,
+        blocking_unresolved=2,
+        confirmation_request=request,
+    ) == "awaiting_confirmation"
+
+
 def test_resolution_route_passes_directly_to_gate_a():
     assert (
         _classify_resolution(

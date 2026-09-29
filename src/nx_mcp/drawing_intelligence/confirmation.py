@@ -11,7 +11,6 @@ from .evidence import (
     EvidenceGraph,
 )
 
-
 _MAX_CONFIRMATION_QUESTIONS = 3
 
 

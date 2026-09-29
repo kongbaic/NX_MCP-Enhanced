@@ -4,11 +4,69 @@ import pytest
 
 import nx_mcp.drawing_intelligence.hybrid_capture_adapter as hybrid_adapter
 
+from nx_mcp.drawing_intelligence.compiler import compile_evidence_graph
+from nx_mcp.drawing_intelligence.evidence import (
+    CoordinateFact,
+    DimensionEndpoint,
+    DimensionObservation,
+    EvidenceGraph,
+    OverallDimensions,
+)
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     HybridAdapterContext,
     HybridCaptureAdapterError,
     adapt_hybrid_ocr_report,
 )
+from nx_mcp.drawing_intelligence.resolver import resolve_evidence_graph
+
+
+def test_profile_boundary_span_compiles_to_resolvable_coordinate_distance():
+    left = "feature:F_LEFT.boundary.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        direct_facts=[
+            CoordinateFact(
+                target=left,
+                axis="X",
+                value=25,
+                source_ids=["test:left"],
+            )
+        ],
+        dimensions=[
+            DimensionObservation(
+                id="D_PROFILE",
+                value=26,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    DimensionEndpoint(role="profile_boundary", target=left),
+                    DimensionEndpoint(role="profile_boundary", target=right),
+                ],
+                source_ids=["test:dimension"],
+            )
+        ],
+        required_targets=[left, right],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    assert [item.kind for item in compiled.relations] == ["coordinate_distance"]
+    assert not any(
+        item.get("id") == "U_D_PROFILE"
+        for item in compiled.unresolved_evidence
+    )
+
+    resolved = resolve_evidence_graph(compiled)
+
+    assert resolved.values[left] == 25
+    assert resolved.values[right] == 51
+    assert resolved.unresolved == []
+    assert resolved.conflicts == []
 
 
 def _report() -> dict:

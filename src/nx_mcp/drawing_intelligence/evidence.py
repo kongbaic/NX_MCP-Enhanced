@@ -10,6 +10,7 @@ RelationKind = Literal[
     "alignment",
     "center_spacing",
     "center_distance",
+    "coordinate_distance",
     "upper_tangent",
     "lower_tangent",
 ]
@@ -174,7 +175,7 @@ class RelationEvidence(BaseModel):
         if self.kind == "edge_offset":
             if self.value is None or self.from_side is None:
                 raise ValueError("edge_offset requires value and from_side")
-        elif self.kind in {"center_spacing", "center_distance"}:
+        elif self.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
             if self.value is None or len(self.targets) != 2:
                 raise ValueError(f"{self.kind} requires value and exactly two targets")
         elif self.kind == "alignment":

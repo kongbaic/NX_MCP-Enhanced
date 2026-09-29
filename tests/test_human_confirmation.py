@@ -403,6 +403,60 @@ def test_advisory_unresolved_does_not_consume_confirmation_budget():
         "U_DIM_D1"
     ]
 
+def test_confirmation_answers_rejects_legacy_agent_shape():
+    with pytest.raises(ValueError):
+        ConfirmationAnswers.model_validate(
+            {
+                "schema": "user-confirmations-v1",
+                "confirmations": [
+                    {
+                        "confirmation_id": "CONF_U_DIM_D1",
+                        "selected_option_id": "E0_OVERALL_MIN",
+                    }
+                ],
+            }
+        )
+
+
+def test_apply_confirmation_answers_requires_every_generated_question():
+    graph = _graph().model_copy(deep=True)
+    second = dict(graph.unresolved_evidence[0])
+    second["id"] = "U_DIM_D2"
+    second["capture_dimension_id"] = "D2"
+    graph = graph.model_copy(
+        deep=True,
+        update={
+            "unresolved_evidence": [
+                *graph.unresolved_evidence,
+                second,
+            ]
+        },
+    )
+
+    request = build_confirmation_request(graph)
+    first = request["questions"][0]
+    endpoint = next(
+        item for item in first["endpoints"] if item["requires_confirmation"]
+    )
+    option = next(
+        item for item in endpoint["options"] if item.get("evidence_candidate") is True
+    )
+
+    with pytest.raises(ConfirmationError, match="missing confirmation ids"):
+        apply_confirmation_answers(
+            graph,
+            {
+                "schema_version": "1.0",
+                "answers": [
+                    {
+                        "confirmation_id": first["confirmation_id"],
+                        "selected_option_ids": [option["option_id"]],
+                    }
+                ],
+            },
+        )
+
+
 def test_confirmation_cli_e2e_closes_dimension(tmp_path: Path):
     evidence_path = tmp_path / "drawing-evidence.json"
     request_path = tmp_path / "confirmation-request.json"

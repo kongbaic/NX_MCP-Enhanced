@@ -51,7 +51,7 @@ def derive_circle_overall_center_alignments(
         region_id = str(boundary.get("region_id") or "")
         axis = str(boundary.get("axis") or "")
         view_kind = region_views.get(region_id)
-        if axis not in {"X", "Y"} or view_kind is None:
+        if axis not in {"X", "Y", "Z"} or view_kind is None:
             continue
 
         pixel_index = _PIXEL_INDEX_BY_VIEW_AXIS.get((view_kind, axis))

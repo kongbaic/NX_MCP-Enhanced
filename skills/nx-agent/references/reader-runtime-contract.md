@@ -463,7 +463,24 @@ manually invoking downstream CLI stages.
 
 If the coordinator returns `phase=awaiting_confirmation`, present only the
 generated confirmation request. After the user selects existing option IDs,
-write `user-confirmations.json` and resume exactly once:
+write `user-confirmations.json` using exactly the runtime schema below; write one
+answer for every generated confirmation question, even when the selected option is
+`KEEP_UNRESOLVED`:
+
+~~~json
+{
+  "schema_version": "1.0",
+  "answers": [
+    {
+      "confirmation_id": "CONF_...",
+      "selected_option_ids": ["E0_..."]
+    }
+  ]
+}
+~~~
+
+Do not write `schema=user-confirmations-v1`, `confirmations`, or singular
+`selected_option_id`; those are not accepted runtime fields. Then resume exactly once:
 
 ~~~text
 python_exe -m nx_mcp.drawing_intelligence.mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .evidence import (
     DimensionEndpoint,
@@ -20,6 +20,8 @@ class ConfirmationError(ValueError):
 
 
 class ConfirmationAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     confirmation_id: str = Field(min_length=1)
     selected_option_ids: list[str] = Field(default_factory=list)
 
@@ -32,6 +34,8 @@ class ConfirmationAnswer(BaseModel):
 
 
 class ConfirmationAnswers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema_version: Literal["1.0"] = "1.0"
     answers: list[ConfirmationAnswer] = Field(default_factory=list)
 
@@ -385,6 +389,10 @@ def apply_confirmation_answers(
     unknown = sorted(set(answer_map) - set(questions))
     if unknown:
         raise ConfirmationError(f"unknown confirmation ids: {unknown}")
+
+    missing = sorted(set(questions) - set(answer_map))
+    if missing:
+        raise ConfirmationError(f"missing confirmation ids: {missing}")
 
     dimensions = [item.model_copy(deep=True) for item in graph.dimensions]
     direct_values = [item.model_copy(deep=True) for item in graph.direct_values]

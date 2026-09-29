@@ -248,7 +248,7 @@ def _classify_resolution(
     if (
         eligible
         and isinstance(question_count, int)
-        and 1 <= question_count <= 3
+        and question_count >= 1
         and isinstance(unconfirmable, list)
         and not unconfirmable
     ):

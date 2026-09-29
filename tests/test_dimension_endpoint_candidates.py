@@ -212,6 +212,92 @@ def test_non_crossing_profile_line_does_not_narrow_ambiguous_candidates():
     assert first["ownership_narrowing_basis"] is None
 
 
+def test_nearest_profile_without_witness_terminal_contact_is_not_owner():
+    far_profile = {
+        **_profile(100.0),
+        "source_orientation": "vertical",
+        "span_px": [200.0, 280.0],
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+    }
+    connected_profile = {
+        **_profile(200.0),
+        "source_orientation": "vertical",
+        "span_px": [115.0, 180.0],
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [far_profile], 1: [connected_profile]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [40.0, 120.0],
+                    "crosses_dimension_axis": True,
+                }
+            ],
+            1: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 200.0,
+                    "span_px": [40.0, 120.0],
+                    "crosses_dimension_axis": True,
+                }
+            ],
+        },
+    )
+    candidate["axis_px"] = 50.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first, second = result["endpoints"]
+    assert first["status"] == "no_physical_candidate"
+    assert first["physical_candidates"] == []
+    assert first["ignored_nonownership_anchors"][0][
+        "ownership_rejection_reason"
+    ] == "profile_not_connected_to_witness_terminal"
+    assert second["status"] == "unique_physical_candidate"
+    assert second["physical_candidates"] == [connected_profile]
+
+
+def test_profile_with_small_terminal_gap_remains_candidate():
+    profile = {
+        **_profile(100.0),
+        "source_orientation": "vertical",
+        "span_px": [124.0, 180.0],
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [profile], 1: [_profile(200.0)]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [40.0, 120.0],
+                    "crosses_dimension_axis": True,
+                }
+            ]
+        },
+    )
+    candidate["axis_px"] = 50.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first = result["endpoints"][0]
+    assert first["status"] == "unique_physical_candidate"
+    assert first["physical_candidates"] == [profile]
+
+
 def test_bracket_can_remain_unresolved_when_no_physical_anchor_exists():
     result = derive_dimension_endpoint_candidates(
         _candidate(

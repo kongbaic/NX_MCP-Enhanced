@@ -514,6 +514,8 @@ def derive_structural_profile_anchors(
             "junction_count": int(line["junction_count"]),
             "endpoint_junction_count": int(line["endpoint_junction_count"]),
             "merged_source_line_count": int(line["merged_source_line_count"]),
+            "axis_tolerance_px": float(axis_tolerance),
+            "junction_tolerance_px": float(junction_tolerance),
             "dimension_crossing_source_count": int(
                 line.get("dimension_crossing_source_count", 0)
             ),

@@ -124,6 +124,82 @@ def _profile_source_identity(
     )
 
 
+def _profile_connects_to_witness_terminal(
+    profile: dict[str, Any],
+    *,
+    witness_lines: list[dict[str, Any]],
+    dimension_axis_px: float | None,
+) -> bool | None:
+    """Check whether a profile edge is physically connected to the witness terminal."""
+
+    if profile.get("kind") != "profile_edge_candidate":
+        return None
+
+    orientation = str(profile.get("source_orientation") or "")
+    position = profile.get("position_px")
+    profile_span = profile.get("span_px")
+    axis_tolerance = profile.get("axis_tolerance_px")
+    junction_tolerance = profile.get("junction_tolerance_px")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(profile_span, list)
+        or len(profile_span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in profile_span
+        )
+        or not isinstance(axis_tolerance, (int, float))
+        or isinstance(axis_tolerance, bool)
+        or not isinstance(junction_tolerance, (int, float))
+        or isinstance(junction_tolerance, bool)
+        or not isinstance(dimension_axis_px, (int, float))
+        or isinstance(dimension_axis_px, bool)
+    ):
+        return None
+
+    profile_low, profile_high = sorted(float(value) for value in profile_span)
+    for source_line in witness_lines:
+        if not isinstance(source_line, dict):
+            continue
+        if source_line.get("crosses_dimension_axis") is not True:
+            continue
+        if str(source_line.get("orientation") or "") != orientation:
+            continue
+
+        source_axis = source_line.get("axis_px")
+        source_span = source_line.get("span_px")
+        if (
+            not isinstance(source_axis, (int, float))
+            or isinstance(source_axis, bool)
+            or not isinstance(source_span, list)
+            or len(source_span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in source_span
+            )
+        ):
+            continue
+        if abs(float(source_axis) - float(position)) > float(axis_tolerance):
+            continue
+
+        source_low, source_high = sorted(float(value) for value in source_span)
+        terminal = max(
+            (source_low, source_high),
+            key=lambda value: abs(value - float(dimension_axis_px)),
+        )
+        if profile_low <= terminal <= profile_high:
+            return True
+        if min(
+            abs(terminal - profile_low),
+            abs(terminal - profile_high),
+        ) <= float(junction_tolerance):
+            return True
+
+    return False
+
+
 def _witness_anchor_lookup(
     candidate: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
@@ -240,8 +316,33 @@ def derive_dimension_endpoint_candidates(
             if isinstance(item, dict) and item.get("kind") in _PHYSICAL_ANCHOR_KINDS
         ]
 
-        narrowing_basis = None
         witness_lines = line_lookup.get(witness_index, {}).get("source_lines", [])
+        if not isinstance(witness_lines, list):
+            witness_lines = []
+        dimension_axis_px = candidate.get("axis_px")
+        disconnected_profiles: list[dict[str, Any]] = []
+        connected_candidates: list[dict[str, Any]] = []
+        for item in physical_candidates:
+            if item.get("kind") != "profile_edge_candidate":
+                connected_candidates.append(item)
+                continue
+            connectivity = _profile_connects_to_witness_terminal(
+                item,
+                witness_lines=witness_lines,
+                dimension_axis_px=(
+                    float(dimension_axis_px)
+                    if isinstance(dimension_axis_px, (int, float))
+                    and not isinstance(dimension_axis_px, bool)
+                    else None
+                ),
+            )
+            if connectivity is False:
+                disconnected_profiles.append(item)
+                continue
+            connected_candidates.append(item)
+        physical_candidates = connected_candidates
+
+        narrowing_basis = None
         if isinstance(witness_lines, list):
             exact_profile_candidates = [
                 item
@@ -286,9 +387,21 @@ def derive_dimension_endpoint_candidates(
                 "physical_candidates": physical_candidates,
                 "ownership_narrowing_basis": narrowing_basis,
                 "ignored_nonownership_anchors": [
-                    item
-                    for item in nearest
-                    if isinstance(item, dict) and item.get("kind") not in _PHYSICAL_ANCHOR_KINDS
+                    *[
+                        {
+                            **item,
+                            "ownership_rejection_reason": (
+                                "profile_not_connected_to_witness_terminal"
+                            ),
+                        }
+                        for item in disconnected_profiles
+                    ],
+                    *[
+                        item
+                        for item in nearest
+                        if isinstance(item, dict)
+                        and item.get("kind") not in _PHYSICAL_ANCHOR_KINDS
+                    ],
                 ],
             }
         )

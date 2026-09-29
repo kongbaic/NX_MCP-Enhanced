@@ -477,6 +477,38 @@ def _compile_center_distance(
     return True
 
 
+
+def _compile_coordinate_distance(
+    observation: DimensionObservation,
+    relations: list[RelationEvidence],
+) -> bool:
+    roles = {endpoint.role for endpoint in observation.endpoints}
+    if not roles.issubset({"feature_center", "profile_boundary"}):
+        return False
+    if roles == {"feature_center"}:
+        return False
+    targets = [
+        endpoint.target
+        for endpoint in observation.endpoints
+        if isinstance(endpoint.target, str) and endpoint.target
+    ]
+    if len(targets) != 2:
+        return False
+    _append_relation(
+        relations,
+        RelationEvidence(
+            id=observation.id,
+            kind="coordinate_distance",
+            axis=observation.axis,
+            value=observation.value,
+            direction=observation.direction,
+            targets=targets,
+            source_ids=observation.source_ids,
+            required_for_modeling=observation.required_for_modeling,
+        ),
+    )
+    return True
+
 def _compile_dimensions(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -489,6 +521,8 @@ def _compile_dimensions(
         if _compile_edge_offset(observation, relations):
             continue
         if _compile_center_distance(observation, relations):
+            continue
+        if _compile_coordinate_distance(observation, relations):
             continue
         _append_unresolved(
             unresolved,

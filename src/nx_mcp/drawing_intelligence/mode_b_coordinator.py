@@ -198,7 +198,7 @@ def _fail(
 
 
 def _public_report(state: dict[str, Any], state_path: Path) -> dict[str, Any]:
-    return {
+    report = {
         "schema": STATE_SCHEMA,
         "state": str(state_path),
         "status": state.get("status"),
@@ -210,6 +210,16 @@ def _public_report(state: dict[str, Any], state_path: Path) -> dict[str, Any]:
         "errors": state.get("errors", []),
         "total_elapsed_seconds": state.get("total_elapsed_seconds", 0.0),
     }
+    if state.get("phase") == "awaiting_confirmation":
+        report.update(
+            {
+                "human_input_required": True,
+                "must_stop_for_user_input": True,
+                "may_auto_select_confirmations": False,
+                "resume_requires_new_user_turn": True,
+            }
+        )
+    return report
 
 
 def _classify_resolution(

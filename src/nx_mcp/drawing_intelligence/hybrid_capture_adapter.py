@@ -71,9 +71,11 @@ class HybridAdapterContext(_StrictAdapterModel):
         region_ids = [item.region_id for item in self.region_views]
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("hybrid adapter region_ids must be unique")
-        confirmed_entities = [item.entity_key for item in self.confirmed_start_sides]
-        if len(confirmed_entities) != len(set(confirmed_entities)):
-            raise ValueError("confirmed_start_sides entity_key values must be unique")
+        if self.confirmed_start_sides:
+            raise ValueError(
+                "confirmed_start_sides is legacy-only and cannot inject "
+                "production start_side truth"
+            )
         return self
 
 

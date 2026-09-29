@@ -229,6 +229,7 @@ def _write_structural_context_image(
     path: Path,
     source_bbox: list[int],
     cv2: Any,
+    symmetry_hint: dict[str, Any] | None = None,
 ) -> None:
     image_height, image_width = image.shape[:2]
     x, y, width, height = (int(value) for value in source_bbox)
@@ -254,6 +255,69 @@ def _write_structural_context_image(
         thickness,
         cv2.LINE_AA,
     )
+
+    if (
+        isinstance(symmetry_hint, dict)
+        and symmetry_hint.get("status") == "established"
+        and symmetry_hint.get("axis_direction") in {"horizontal", "vertical"}
+    ):
+        # The blue dashed line is a deterministic topology aid, not a drawing
+        # centerline and not an engineering-axis claim.  It makes the already
+        # computed mirror-axis candidate visible to the bounded structural
+        # reader so that paired profile geometry can be judged consistently.
+        axis_direction = str(symmetry_hint["axis_direction"])
+        marker_color = (220, 90, 0)
+        marker_thickness = max(1, thickness - 1)
+        dash_length = max(10, int(round(min(box_width, box_height) * 0.04)))
+        gap_length = max(6, dash_length // 2)
+
+        if axis_direction == "vertical":
+            axis_x = left + box_width // 2
+            cursor = top
+            while cursor <= bottom:
+                segment_end = min(bottom, cursor + dash_length)
+                cv2.line(
+                    canvas,
+                    (axis_x, cursor),
+                    (axis_x, segment_end),
+                    marker_color,
+                    marker_thickness,
+                    cv2.LINE_AA,
+                )
+                cursor = segment_end + gap_length
+            label_origin = (
+                min(right - 140, axis_x + 8),
+                max(18, top - 8),
+            )
+        else:
+            axis_y = top + box_height // 2
+            cursor = left
+            while cursor <= right:
+                segment_end = min(right, cursor + dash_length)
+                cv2.line(
+                    canvas,
+                    (cursor, axis_y),
+                    (segment_end, axis_y),
+                    marker_color,
+                    marker_thickness,
+                    cv2.LINE_AA,
+                )
+                cursor = segment_end + gap_length
+            label_origin = (
+                min(right - 140, left + 8),
+                max(18, axis_y - 8),
+            )
+
+        cv2.putText(
+            canvas,
+            "TOPOLOGY SYM AXIS",
+            label_origin,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            marker_color,
+            1,
+            cv2.LINE_AA,
+        )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(path), canvas):
@@ -569,6 +633,7 @@ def prepare_reader_input(
             structural_context_path,
             source_bbox,
             cv2,
+            bilateral_symmetry_hint,
         )
         overlay_candidates = _region_candidate_geometry(aid, region_id)
         _write_candidate_overlay(

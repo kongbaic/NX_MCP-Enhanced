@@ -454,7 +454,11 @@ The artifact prefix must be a fresh direct child prefix of the current
 interpretation: ReaderObservations validation → ReaderCapture assembly and
 contract check → identity linker / Gate 0 → Resolver → bounded Human
 Confirmation when eligible → second resolve at most once → canonicalizer /
-Gate A.
+Gate A. Production Human Confirmation is limited to 1–3 evidence-backed
+dimension-endpoint ownership questions. A standalone transverse-thread
+`start_side` is not confirmable production truth: post-SHKSSR canonical
+semantics use `material_side + entry_endpoint`, which must be established by
+deterministic topology/association or remain fail-closed.
 
 The coordinator writes a persistent `*-mode-b-state.json` before assembly.
 Therefore a failed first submission is terminal for that prefix: do not rewrite

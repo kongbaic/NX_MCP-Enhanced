@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,6 +15,19 @@ from nx_mcp.drawing_intelligence.structural_context import (
     assemble_structural_context,
     build_structural_context_queries,
 )
+
+
+def test_nx_agent_skill_keeps_structural_topology_axis_contract():
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "nx-agent"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert 'deterministic_profile_symmetry_overlay="blue_dashed_topology_axis"' in skill
+    assert "TOPOLOGY SYM AXIS" in skill
+    assert 'basis:"axial_section_symmetry"' in skill
 
 
 def _reader_input() -> dict:

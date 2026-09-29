@@ -477,7 +477,6 @@ def _compile_center_distance(
     return True
 
 
-
 def _compile_coordinate_distance(
     observation: DimensionObservation,
     relations: list[RelationEvidence],
@@ -508,6 +507,7 @@ def _compile_coordinate_distance(
         ),
     )
     return True
+
 
 def _compile_dimensions(
     graph: EvidenceGraph,

@@ -10,6 +10,7 @@ import numpy as np
 
 from nx_mcp.drawing_intelligence.reader_input_prep import (
     _structural_bilateral_symmetry_hint,
+    _write_structural_context_image,
     prepare_reader_input,
 )
 
@@ -91,6 +92,57 @@ def test_structural_bilateral_symmetry_hint_fails_closed_when_axes_tie():
     assert hint["status"] == "unresolved"
     assert hint["axis_direction"] is None
 
+
+
+def test_structural_context_image_marks_established_topology_axis(tmp_path: Path):
+    image = np.full((180, 260, 3), 255, np.uint8)
+    output = tmp_path / "structural-context.png"
+    hint = {
+        "status": "established",
+        "axis_direction": "vertical",
+        "method": "foreground_mirror_consensus_v1",
+    }
+
+    _write_structural_context_image(
+        image,
+        output,
+        [40, 30, 180, 120],
+        cv2,
+        hint,
+    )
+
+    rendered = cv2.imread(str(output))
+    assert rendered is not None
+    axis_x = 40 + 180 // 2
+    axis_strip = rendered[30:150, axis_x - 2 : axis_x + 3]
+    assert int(cv2.absdiff(axis_strip, image[30:150, axis_x - 2 : axis_x + 3]).sum()) > 0
+
+
+def test_structural_context_image_does_not_mark_unresolved_topology_axis(tmp_path: Path):
+    image = np.full((180, 260, 3), 255, np.uint8)
+    output = tmp_path / "structural-context.png"
+    hint = {
+        "status": "unresolved",
+        "axis_direction": None,
+        "method": "foreground_mirror_consensus_v1",
+    }
+
+    _write_structural_context_image(
+        image,
+        output,
+        [40, 30, 180, 120],
+        cv2,
+        hint,
+    )
+
+    rendered = cv2.imread(str(output))
+    assert rendered is not None
+    axis_x = 40 + 180 // 2
+    axis_strip = rendered[45:135, axis_x - 2 : axis_x + 3]
+    assert np.array_equal(
+        axis_strip,
+        image[45:135, axis_x - 2 : axis_x + 3],
+    )
 
 def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     image_path = tmp_path / "drawing.png"

@@ -1712,6 +1712,124 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     assert endpoints[0].basis == "centerline"
     assert endpoints[1].role == "overall_max"
 
+def test_ambiguous_internal_profile_candidates_are_preserved_for_confirmation(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "endpoints": [
+                {
+                    "status": "ambiguous_physical_candidates",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.internal.001",
+                        },
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.internal.002",
+                        },
+                    ],
+                },
+                {
+                    "status": "unique_physical_candidate",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.outer.max",
+                        }
+                    ],
+                },
+            ]
+        },
+    )
+
+    endpoints, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        {"candidate_id": "DG_PROFILE_AMBIG"},
+        entity_keys={
+            "R1.PROFILE_BOUNDARY.INTERNAL_1",
+            "R1.PROFILE_BOUNDARY.INTERNAL_2",
+            "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        boundary_roles={"R1.outer.max": "overall_max"},
+        profile_entity_by_ref={
+            "R1.internal.001": "R1.PROFILE_BOUNDARY.INTERNAL_1",
+            "R1.internal.002": "R1.PROFILE_BOUNDARY.INTERNAL_2",
+            "R1.outer.max": "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        evidence=["test:profile-ambiguity"],
+    )
+
+    assert reason is not None
+    assert endpoints[0].role == "unresolved"
+    assert endpoints[0].unresolved_kind == "ambiguous_owner"
+    assert endpoints[0].candidate_entity_keys == [
+        "R1.PROFILE_BOUNDARY.INTERNAL_1",
+        "R1.PROFILE_BOUNDARY.INTERNAL_2",
+    ]
+    assert endpoints[1].role == "overall_max"
+
+
+def test_ambiguous_profile_candidates_with_overall_boundary_stay_unconfirmable(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "endpoints": [
+                {
+                    "status": "ambiguous_physical_candidates",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.internal.001",
+                        },
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.outer.min",
+                        },
+                    ],
+                },
+                {
+                    "status": "unique_physical_candidate",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.outer.max",
+                        }
+                    ],
+                },
+            ]
+        },
+    )
+
+    endpoints, _ = hybrid_adapter._dimension_endpoints_from_candidates(
+        {"candidate_id": "DG_PROFILE_OVERALL_AMBIG"},
+        entity_keys={
+            "R1.PROFILE_BOUNDARY.INTERNAL_1",
+            "R1.PROFILE_BOUNDARY.OUTER_MIN",
+            "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        boundary_roles={
+            "R1.outer.min": "overall_min",
+            "R1.outer.max": "overall_max",
+        },
+        profile_entity_by_ref={
+            "R1.internal.001": "R1.PROFILE_BOUNDARY.INTERNAL_1",
+            "R1.outer.min": "R1.PROFILE_BOUNDARY.OUTER_MIN",
+            "R1.outer.max": "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        evidence=["test:profile-overall-ambiguity"],
+    )
+
+    assert endpoints[0].role == "unresolved"
+    assert endpoints[0].candidate_entity_keys == []
+    assert endpoints[0].unresolved_kind == "intermediate_surface"
+
+
 def test_exact_crossing_profile_identity_supersedes_overlapping_callout_pattern_axis():
     candidate = {
         "candidate_id": "DG_PROFILE",

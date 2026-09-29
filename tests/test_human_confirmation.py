@@ -172,6 +172,84 @@ def test_identity_linker_preserves_unresolved_endpoint_candidates():
     assert item["endpoint_specs"][1]["role"] == "overall_max"
 
 
+def test_profile_boundary_candidates_reach_human_confirmation_as_boundaries():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(
+                id="V1",
+                kind="front",
+                source_ids=["OBS_V1"],
+            )
+        ],
+        entities=[
+            CaptureEntity(
+                id="EP1",
+                view_id="V1",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.internal.001"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="EP2",
+                view_id="V1",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.internal.002"],
+                required_for_modeling=False,
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_PROFILE",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="unresolved",
+                        candidate_entity_ids=["EP1", "EP2"],
+                        unresolved_kind="ambiguous_owner",
+                        source_ids=["OBS_D_PROFILE_A"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["OBS_D_PROFILE_B"],
+                    ),
+                ],
+                unresolved_reason="profile endpoint owner is ambiguous",
+                source_ids=["OBS_D_PROFILE"],
+            )
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    unresolved = next(
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("id") == "U_DIM_D_PROFILE"
+    )
+    candidate_targets = unresolved["endpoint_specs"][0]["candidate_targets"]
+
+    assert len(candidate_targets) == 2
+    assert all(".boundary.y" in target for target in candidate_targets)
+
+    request = build_confirmation_request(linked.evidence)
+    assert request["eligible_for_user_confirmation"] is True
+    endpoint = request["questions"][0]["endpoints"][0]
+    evidence_options = [
+        item for item in endpoint["options"]
+        if item["role"] != "keep_unresolved"
+    ]
+    assert len(evidence_options) == 2
+    assert all(item["role"] == "profile_boundary" for item in evidence_options)
+    assert all(".boundary.y" in item["target"] for item in evidence_options)
+
+
 def test_confirmation_request_exposes_only_evidence_backed_candidates():
     request = build_confirmation_request(_graph())
 

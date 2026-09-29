@@ -921,16 +921,26 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                         )
                         spec["target"] = f"feature:{feature_id}.{suffix}"
                 if endpoint.role == "unresolved":
-                    spec["candidate_targets"] = sorted(
-                        {
-                            (
-                                f"feature:{entity_to_feature[entity_id]}"
-                                f".centerline.{axis_leaf}"
-                            )
-                            for entity_id in endpoint.candidate_entity_ids
-                            if entity_id in entity_to_feature
-                        }
-                    )
+                    candidate_targets: set[str] = set()
+                    for entity_id in endpoint.candidate_entity_ids:
+                        feature_id = entity_to_feature.get(entity_id)
+                        component = component_by_entity.get(entity_id)
+                        if feature_id is None or component is None:
+                            continue
+                        shape = _canonical_projection_shape(
+                            capture,
+                            entity_id,
+                            component,
+                        )
+                        suffix = (
+                            f"boundary.{axis_leaf}"
+                            if shape == "profile"
+                            else f"centerline.{axis_leaf}"
+                        )
+                        candidate_targets.add(
+                            f"feature:{feature_id}.{suffix}"
+                        )
+                    spec["candidate_targets"] = sorted(candidate_targets)
                 endpoint_specs.append(spec)
 
             unresolved.append(

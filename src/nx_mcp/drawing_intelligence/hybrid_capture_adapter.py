@@ -1605,19 +1605,41 @@ def _dimension_endpoints_from_candidates(
                     )
                     continue
 
-        candidate_entity_keys = sorted(
-            {
-                center_candidate[0]
-                for physical_candidate in physical_candidates
-                if isinstance(physical_candidate, dict)
-                for center_candidate in [
-                    _center_entity_candidate(
-                        physical_candidate,
-                        entity_keys,
-                    )
-                ]
-                if center_candidate is not None
-            }
+        representable_candidate_keys: list[str] = []
+        all_candidates_representable = bool(physical_candidates)
+        for physical_candidate in physical_candidates:
+            if not isinstance(physical_candidate, dict):
+                all_candidates_representable = False
+                break
+
+            center_candidate = _center_entity_candidate(
+                physical_candidate,
+                entity_keys,
+            )
+            if center_candidate is not None:
+                representable_candidate_keys.append(center_candidate[0])
+                continue
+
+            if physical_candidate.get("kind") == "profile_edge_candidate":
+                ref = str(physical_candidate.get("ref") or "")
+                if ref in boundary_roles:
+                    all_candidates_representable = False
+                    break
+                profile_entity_key = profile_entity_by_ref.get(ref)
+                if (
+                    profile_entity_key is not None
+                    and profile_entity_key in entity_keys
+                ):
+                    representable_candidate_keys.append(profile_entity_key)
+                    continue
+
+            all_candidates_representable = False
+            break
+
+        candidate_entity_keys = (
+            sorted(set(representable_candidate_keys))
+            if all_candidates_representable
+            else []
         )
         output.append(
             ObservationDimensionEndpoint(

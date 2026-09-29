@@ -125,6 +125,7 @@ def test_finalizer_preserves_structured_pattern_symmetry_into_capture():
             key="R1.PAIR",
             view_key="view.R1",
             shape="hidden_parallel",
+            cross_view_disposition="single_view",
             evidence=["hybrid:pair"],
         )
     )

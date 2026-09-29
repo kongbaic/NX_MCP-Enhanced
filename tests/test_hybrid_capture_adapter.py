@@ -2205,6 +2205,156 @@ def test_unscoped_overall_fact_binds_when_only_one_region_can_own_axis():
     assert hybrid_adapter._region_overall_fact_axes(context) == {("R2", "Y")}
 
 
+def _cross_region_variant(
+    *,
+    candidate_id: str,
+    region_id: str,
+    first_anchor: dict[str, object],
+    second_anchor: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "region_id": region_id,
+        "orientation": "horizontal",
+        "axis_px": 100.0,
+        "line_span_px": [100.0, 200.0],
+        "witness_positions_px": [100.0, 200.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 100.0,
+                "axis": "x",
+                "nearest_anchors": [first_anchor],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 200.0,
+                "axis": "x",
+                "nearest_anchors": [second_anchor],
+            },
+        ],
+        "witness_line_evidence": [],
+    }
+
+
+def _accepted_cross_region_group(
+    canonical: dict[str, object],
+    alternate: dict[str, object],
+) -> dict[str, object]:
+    return {
+        **canonical,
+        "accepted_token": "40",
+        "global_assignments": [
+            {
+                "token": "40",
+                "bbox": [[140, 90], [160, 90], [160, 110], [140, 110]],
+            }
+        ],
+        "source_candidate_ids": [
+            str(canonical["candidate_id"]),
+            str(alternate["candidate_id"]),
+        ],
+        "source_region_ids": [
+            str(canonical["region_id"]),
+            str(alternate["region_id"]),
+        ],
+        "source_candidate_variants": [canonical, alternate],
+    }
+
+
+def test_cross_region_variant_selection_uses_strict_endpoint_evidence_dominance():
+    weak = _cross_region_variant(
+        candidate_id="DG1",
+        region_id="R1",
+        first_anchor={"kind": "linear_pattern_axis", "ref": "R1.pattern.001"},
+        second_anchor={"kind": "profile_edge_candidate", "ref": "R1.profile.right"},
+    )
+    strong = _cross_region_variant(
+        candidate_id="DG2",
+        region_id="R2",
+        first_anchor={"kind": "profile_edge_candidate", "ref": "R2.profile.left"},
+        second_anchor={"kind": "profile_edge_candidate", "ref": "R2.profile.right"},
+    )
+
+    selected = hybrid_adapter._select_cross_region_candidate_variant(
+        _accepted_cross_region_group(weak, strong)
+    )
+
+    assert selected["candidate_id"] == "DG1"
+    assert selected["region_id"] == "R2"
+    assert selected["selected_source_candidate_id"] == "DG2"
+    assert (
+        selected["cross_region_variant_selection_basis"]
+        == "strict_selected_endpoint_evidence_dominance"
+    )
+
+
+def test_cross_region_variant_selection_fails_closed_on_crossed_advantages():
+    first_strong = _cross_region_variant(
+        candidate_id="DG1",
+        region_id="R1",
+        first_anchor={"kind": "profile_edge_candidate", "ref": "R1.profile.left"},
+        second_anchor={"kind": "linear_pattern_axis", "ref": "R1.pattern.002"},
+    )
+    second_strong = _cross_region_variant(
+        candidate_id="DG2",
+        region_id="R2",
+        first_anchor={"kind": "linear_pattern_axis", "ref": "R2.pattern.001"},
+        second_anchor={"kind": "profile_edge_candidate", "ref": "R2.profile.right"},
+    )
+
+    selected = hybrid_adapter._select_cross_region_candidate_variant(
+        _accepted_cross_region_group(first_strong, second_strong)
+    )
+
+    assert selected["region_id"] == "R1"
+    assert "selected_source_candidate_id" not in selected
+
+
+def test_cross_region_variant_selection_preserves_selected_region_boundary_roles():
+    weak = _cross_region_variant(
+        candidate_id="DG1",
+        region_id="R1",
+        first_anchor={"kind": "linear_pattern_axis", "ref": "R1.pattern.001"},
+        second_anchor={"kind": "profile_edge_candidate", "ref": "R1.profile.right"},
+    )
+    strong = _cross_region_variant(
+        candidate_id="DG2",
+        region_id="R2",
+        first_anchor={"kind": "profile_edge_candidate", "ref": "R2.profile.left"},
+        second_anchor={"kind": "profile_edge_candidate", "ref": "R2.profile.right"},
+    )
+    selected = hybrid_adapter._select_cross_region_candidate_variant(
+        _accepted_cross_region_group(weak, strong)
+    )
+
+    endpoints, unresolved = hybrid_adapter._dimension_endpoints_from_candidates(
+        selected,
+        entity_keys={
+            "R2.PROFILE_BOUNDARY.LEFT",
+            "R2.PROFILE_BOUNDARY.RIGHT",
+        },
+        boundary_roles={
+            "R2.profile.left": "overall_min",
+            "R2.profile.right": "overall_max",
+        },
+        profile_entity_by_ref={
+            "R2.profile.left": "R2.PROFILE_BOUNDARY.LEFT",
+            "R2.profile.right": "R2.PROFILE_BOUNDARY.RIGHT",
+        },
+        evidence=["test:cross-region"],
+    )
+
+    assert unresolved is None
+    assert {item.role for item in endpoints} == {"overall_min", "overall_max"}
+    assert hybrid_adapter._full_extent_roles_disagree_with_declared_overall(
+        endpoints,
+        axis="X",
+        value=40.0,
+        overall_dimensions={"length_x": 100.0},
+    ) is True
+
+
 def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():
     candidate = {
         "candidate_id": "DG_PAIR",

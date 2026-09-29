@@ -196,6 +196,53 @@ def _fit_into_cell(image: Any, cv2: Any, np: Any) -> Any:
     return cell
 
 
+def _candidate_region_bbox(
+    candidate: dict[str, Any],
+    region_lookup: dict[str, list[int]],
+) -> list[int]:
+    """Return a conservative region extent for one deduplicated geometry group.
+
+    Region-local ownership evidence remains separate.  This helper only widens
+    the OCR crop enough to satisfy the largest source region, so a later
+    representative choice never reuses a crop narrower than that source.
+    """
+
+    source_region_ids = candidate.get("source_region_ids")
+    region_ids = (
+        [
+            str(region_id)
+            for region_id in source_region_ids
+            if isinstance(region_id, str) and region_id
+        ]
+        if isinstance(source_region_ids, list)
+        else []
+    )
+    canonical_region_id = str(candidate.get("region_id") or "")
+    if canonical_region_id and canonical_region_id not in region_ids:
+        region_ids.insert(0, canonical_region_id)
+    if not region_ids:
+        region_ids = [canonical_region_id]
+
+    boxes = [
+        region_lookup[region_id]
+        for region_id in region_ids
+        if region_id in region_lookup
+    ]
+    if not boxes:
+        raise ValueError(
+            f"missing region bbox for candidate {candidate.get('candidate_id')!r}"
+        )
+    if len(boxes) == 1:
+        return list(boxes[0])
+
+    return [
+        0,
+        0,
+        max(int(box[2]) for box in boxes),
+        max(int(box[3]) for box in boxes),
+    ]
+
+
 def build_sheet(
     image: Any,
     candidates: list[dict[str, Any]],
@@ -221,9 +268,7 @@ def build_sheet(
         candidate_id = str(candidate["candidate_id"])
         region_id = str(candidate["region_id"])
         orientation = str(candidate["orientation"])
-        region_bbox = region_lookup.get(region_id)
-        if region_bbox is None:
-            raise ValueError(f"missing region bbox for {region_id}")
+        region_bbox = _candidate_region_bbox(candidate, region_lookup)
 
         roi_bbox = _candidate_roi_box(
             candidate,

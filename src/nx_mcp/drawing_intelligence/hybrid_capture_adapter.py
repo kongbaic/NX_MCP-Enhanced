@@ -4347,6 +4347,123 @@ def _region_overall_fact_axes(
     return result
 
 
+_CROSS_REGION_ENDPOINT_STATUS_RANK = {
+    "no_physical_candidate": 0,
+    "ambiguous_physical_candidates": 1,
+    "unique_physical_candidate": 2,
+}
+
+
+def _cross_region_variant_endpoint_rank(
+    candidate: dict[str, Any],
+) -> tuple[int, int] | None:
+    accepted_token = candidate.get("accepted_token")
+    assignments = candidate.get("global_assignments")
+    if not isinstance(accepted_token, str) or not isinstance(assignments, list):
+        return None
+
+    evidence = derive_dimension_endpoint_candidates(candidate)
+    endpoints = evidence.get("endpoints")
+    if evidence.get("status") != "bracketed" or not (
+        isinstance(endpoints, list) and len(endpoints) == 2
+    ):
+        return None
+
+    ranks: list[int] = []
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            return None
+        rank = _CROSS_REGION_ENDPOINT_STATUS_RANK.get(
+            str(endpoint.get("status") or "")
+        )
+        if rank is None:
+            return None
+        ranks.append(rank)
+    return (ranks[0], ranks[1])
+
+
+def _select_cross_region_candidate_variant(
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Choose a region-scoped duplicate only under strict evidence dominance.
+
+    Exact-geometry deduplication is an OCR optimization, not permission to mix
+    ownership anchors from different deterministic regions.  A non-canonical
+    source region may replace the representative only when its two selected
+    endpoint statuses are component-wise no worse than every alternative and
+    strictly better than at least one.  Ties or crossed advantages retain the
+    canonical representative and therefore fail closed downstream.
+    """
+
+    variants = candidate.get("source_candidate_variants")
+    if not isinstance(variants, list) or len(variants) <= 1:
+        return candidate
+
+    evaluated: list[tuple[dict[str, Any], tuple[int, int]]] = []
+    for raw_variant in variants:
+        if not isinstance(raw_variant, dict):
+            continue
+        variant = {
+            **raw_variant,
+            "accepted_token": candidate.get("accepted_token"),
+            "global_assignments": candidate.get("global_assignments", []),
+        }
+        rank = _cross_region_variant_endpoint_rank(variant)
+        if rank is not None:
+            evaluated.append((variant, rank))
+
+    if len(evaluated) <= 1:
+        return candidate
+
+    winners: list[tuple[dict[str, Any], tuple[int, int]]] = []
+    for index, (variant, rank) in enumerate(evaluated):
+        others = [
+            other_rank
+            for other_index, (_, other_rank) in enumerate(evaluated)
+            if other_index != index
+        ]
+        if not others:
+            continue
+        no_worse_than_all = all(
+            rank[0] >= other[0] and rank[1] >= other[1]
+            for other in others
+        )
+        strictly_better_than_one = any(
+            rank[0] > other[0] or rank[1] > other[1]
+            for other in others
+        )
+        if no_worse_than_all and strictly_better_than_one:
+            winners.append((variant, rank))
+
+    if len(winners) != 1:
+        return candidate
+
+    selected, selected_rank = winners[0]
+    selected_source_candidate_id = str(selected.get("candidate_id") or "")
+    selected_source_region_id = str(selected.get("region_id") or "")
+    if not selected_source_candidate_id or not selected_source_region_id:
+        return candidate
+
+    return {
+        **candidate,
+        "region_id": selected_source_region_id,
+        "witness_anchor_evidence": selected.get(
+            "witness_anchor_evidence",
+            [],
+        ),
+        "witness_line_evidence": selected.get(
+            "witness_line_evidence",
+            [],
+        ),
+        "selected_source_candidate_id": selected_source_candidate_id,
+        "selected_source_region_id": selected_source_region_id,
+        "cross_region_variant_selection_basis": (
+            "strict_selected_endpoint_evidence_dominance"
+        ),
+        "cross_region_variant_endpoint_rank": list(selected_rank),
+    }
+
+
 def adapt_hybrid_ocr_report(
     report: dict[str, Any],
     context: HybridAdapterContext,
@@ -4367,14 +4484,18 @@ def adapt_hybrid_ocr_report(
         if isinstance(raw_profile_inventory, list)
         else []
     )
+    selected_candidates = [
+        _select_cross_region_candidate_variant(item)
+        for item in candidates
+        if isinstance(item, dict)
+    ]
     working_candidates = [
         _enrich_candidate_from_profile_inventory(
             item,
             report=report,
             profile_inventory=profile_inventory,
         )
-        for item in candidates
-        if isinstance(item, dict)
+        for item in selected_candidates
     ]
     overall_dimensions = {
         {"X": "length_x", "Y": "width_y", "Z": "height_z"}[fact.axis]: fact.value

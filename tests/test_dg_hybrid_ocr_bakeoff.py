@@ -219,10 +219,14 @@ def test_collect_candidates_deduplicates_exact_cross_region_geometry_with_proven
     assert [item["candidate_id"] for item in candidates] == ["DG1", "DG3"]
     assert candidates[0]["source_candidate_ids"] == ["DG1", "DG2"]
     assert candidates[0]["source_region_ids"] == ["R2", "R3"]
+    assert [
+        item["candidate_id"]
+        for item in candidates[0]["source_candidate_variants"]
+    ] == ["DG1", "DG2"]
 
 
 
-def test_collect_candidates_preserves_cross_region_witness_evidence():
+def test_collect_candidates_keeps_cross_region_witness_evidence_separate():
     module = _load_module()
 
     shared_geometry = {
@@ -253,20 +257,7 @@ def test_collect_candidates_preserves_cross_region_witness_evidence():
                                 ],
                             }
                         ],
-                        "witness_line_evidence": [
-                            {
-                                "witness_index": 0,
-                                "position_px": 472.1,
-                                "source_lines": [
-                                    {
-                                        "orientation": "vertical",
-                                        "axis_px": 472.1,
-                                        "span_px": [140, 454],
-                                        "crosses_dimension_axis": True,
-                                    }
-                                ],
-                            }
-                        ],
+                        "witness_line_evidence": [],
                     }
                 ],
             },
@@ -290,20 +281,7 @@ def test_collect_candidates_preserves_cross_region_witness_evidence():
                                 ],
                             }
                         ],
-                        "witness_line_evidence": [
-                            {
-                                "witness_index": 0,
-                                "position_px": 472.1,
-                                "source_lines": [
-                                    {
-                                        "orientation": "vertical",
-                                        "axis_px": 472.1,
-                                        "span_px": [140, 296],
-                                        "crosses_dimension_axis": True,
-                                    }
-                                ],
-                            }
-                        ],
+                        "witness_line_evidence": [],
                     }
                 ],
             },
@@ -313,21 +291,51 @@ def test_collect_candidates_preserves_cross_region_witness_evidence():
     candidates = module._collect_candidates(visual_aid)
 
     assert len(candidates) == 1
-    assert candidates[0]["source_candidate_ids"] == ["DG3", "DG4"]
-    assert candidates[0]["source_region_ids"] == ["R2", "R3"]
+    candidate = candidates[0]
+    assert candidate["source_candidate_ids"] == ["DG3", "DG4"]
+    assert candidate["source_region_ids"] == ["R2", "R3"]
+    assert [
+        item["candidate_id"]
+        for item in candidate["source_candidate_variants"]
+    ] == ["DG3", "DG4"]
 
-    anchors = candidates[0]["witness_anchor_evidence"][0]["nearest_anchors"]
-    assert {item["ref"] for item in anchors} == {
-        "R2.linear_pattern.001",
-        "R3.structural.vertical.001",
+    canonical_refs = {
+        item["ref"]
+        for record in candidate["witness_anchor_evidence"]
+        for item in record["nearest_anchors"]
+    }
+    assert canonical_refs == {"R2.linear_pattern.001"}
+
+    variant_refs = [
+        {
+            item["ref"]
+            for record in variant["witness_anchor_evidence"]
+            for item in record["nearest_anchors"]
+        }
+        for variant in candidate["source_candidate_variants"]
+    ]
+    assert variant_refs == [
+        {"R2.linear_pattern.001"},
+        {"R3.structural.vertical.001"},
+    ]
+
+
+def test_dedup_group_ocr_extent_covers_largest_source_region():
+    from nx_mcp.drawing_intelligence import ocr_runtime
+
+    candidate = {
+        "candidate_id": "DG1",
+        "region_id": "R2",
+        "source_region_ids": ["R2", "R3"],
+    }
+    region_lookup = {
+        "R2": [100, 50, 800, 500],
+        "R3": [400, 80, 600, 240],
     }
 
-    source_lines = candidates[0]["witness_line_evidence"][0]["source_lines"]
-    assert len(source_lines) == 2
-    assert {tuple(item["span_px"]) for item in source_lines} == {
-        (140, 454),
-        (140, 296),
-    }
+    bbox = ocr_runtime._candidate_region_bbox(candidate, region_lookup)
+
+    assert bbox[2:] == [800, 500]
 
 
 def test_structured_scalar_can_bind_vertical_candidate_with_horizontal_text():

@@ -2245,10 +2245,16 @@ def test_transverse_recess_start_side_uses_unique_boundary_contact():
     assert ledger[0]["pixel_geometry_used_for_topology_only"] is True
 
 
-def test_paired_transverse_thread_entry_splits_material_side_from_entry_endpoint():
+def test_coaxial_recess_does_not_infer_thread_material_or_entry_side():
     thread = "R1.HIDDEN_PAIR.horizontal.001.002"
-    recess = "R2.C1"
-    callout_values = [
+    values = [
+        hybrid_adapter.ObservationValue(
+            entity_key=thread,
+            field="axis",
+            value="X",
+            semantic="axis",
+            evidence=["axis"],
+        ),
         hybrid_adapter.ObservationValue(
             entity_key=thread,
             field="thread_spec",
@@ -2261,121 +2267,18 @@ def test_paired_transverse_thread_entry_splits_material_side_from_entry_endpoint
             value=12.0,
             evidence=["depth"],
         ),
-        hybrid_adapter.ObservationValue(
-            entity_key=recess,
-            field="recessed_hole",
-            value=True,
-            evidence=["recess"],
-        ),
     ]
-    alignments = [
-        hybrid_adapter.ObservationCenterlineAlignment(
-            entity_keys=[thread, recess],
-            feature_axis="X",
-            evidence=["centerline"],
-        )
-    ]
-    recess_sides = [
-        hybrid_adapter.ObservationValue(
-            entity_key=recess,
-            field="start_side",
-            value="max",
-            semantic="start_side",
-            evidence=["recess-side:max"],
-        )
-    ]
-
-    values, ledger = hybrid_adapter._paired_transverse_thread_entry_values(
-        callout_values=callout_values,
-        centerline_alignments=alignments,
-        recess_start_side_values=recess_sides,
-    )
-
-    assert len(values) == 2
-    by_field = {item.field: item for item in values}
-    assert by_field["material_side"].entity_key == thread
-    assert by_field["material_side"].value == "min"
-    assert by_field["material_side"].semantic == "material_side"
-    assert by_field["entry_endpoint"].entity_key == thread
-    assert by_field["entry_endpoint"].value == "max"
-    assert by_field["entry_endpoint"].semantic == "entry_endpoint"
-    assert ledger[0]["paired_recess_entity"] == recess
-    assert ledger[0]["paired_recess_start_side"] == "max"
-    assert ledger[0]["material_side"] == "min"
-    assert ledger[0]["entry_endpoint"] == "max"
-    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
 
     unresolved = hybrid_adapter._missing_transverse_thread_start_side_unresolved(
-        values=[
-            hybrid_adapter.ObservationValue(
-                entity_key=thread,
-                field="axis",
-                value="X",
-                semantic="axis",
-                evidence=["axis"],
-            ),
-            *callout_values,
-            *values,
-        ]
-    )
-    assert unresolved == []
-
-
-def test_paired_transverse_thread_entry_fails_closed_when_pairing_not_unique():
-    thread = "R1.HIDDEN_PAIR.horizontal.001.002"
-    recess_a = "R2.C1"
-    recess_b = "R3.C1"
-    callout_values = [
-        hybrid_adapter.ObservationValue(
-            entity_key=thread,
-            field="thread_spec",
-            value="M6",
-            evidence=["thread"],
-        ),
-        hybrid_adapter.ObservationValue(
-            entity_key=thread,
-            field="thread_depth",
-            value=12.0,
-            evidence=["depth"],
-        ),
-    ]
-    alignments = [
-        hybrid_adapter.ObservationCenterlineAlignment(
-            entity_keys=[thread, recess_a],
-            feature_axis="X",
-            evidence=["centerline-a"],
-        ),
-        hybrid_adapter.ObservationCenterlineAlignment(
-            entity_keys=[thread, recess_b],
-            feature_axis="X",
-            evidence=["centerline-b"],
-        ),
-    ]
-    recess_sides = [
-        hybrid_adapter.ObservationValue(
-            entity_key=recess_a,
-            field="start_side",
-            value="max",
-            semantic="start_side",
-            evidence=["recess-a:max"],
-        ),
-        hybrid_adapter.ObservationValue(
-            entity_key=recess_b,
-            field="start_side",
-            value="max",
-            semantic="start_side",
-            evidence=["recess-b:max"],
-        ),
-    ]
-
-    values, ledger = hybrid_adapter._paired_transverse_thread_entry_values(
-        callout_values=callout_values,
-        centerline_alignments=alignments,
-        recess_start_side_values=recess_sides,
+        values=values
     )
 
-    assert values == []
-    assert ledger == []
+    assert len(unresolved) == 1
+    assert unresolved[0].entity_keys == [thread]
+    assert unresolved[0].field == "start_side"
+    assert unresolved[0].required_for_modeling is True
+    assert "material_side + entry_endpoint" in unresolved[0].reason
+
 
 
 def test_transverse_recess_start_side_fails_closed_when_both_boundaries_touch():

@@ -4090,166 +4090,6 @@ def _transverse_recess_start_side_values(
     return output, ledger
 
 
-def _paired_transverse_thread_entry_values(
-    *,
-    callout_values: list[ObservationValue],
-    centerline_alignments: list[ObservationCenterlineAlignment],
-    recess_start_side_values: list[ObservationValue],
-) -> tuple[list[ObservationValue], list[dict[str, Any]]]:
-    """Resolve paired thread material side separately from its entry endpoint.
-
-    A unique threaded/recessed continuation plus an automatically resolved
-    recess outer entry identifies the opposite material side for the thread.
-    The thread enters that opposite material segment from the endpoint facing
-    the recess, so entry_endpoint retains the recess side label while
-    material_side is its complement. The Runner must still prove that canonical
-    material topology is actually interrupted when those two labels differ.
-    Pixels are used only for identity/topology; no pixel distance becomes an
-    engineering coordinate.
-    """
-
-    fields_by_entity: dict[str, dict[str, ObservationValue]] = {}
-    for item in callout_values:
-        fields_by_entity.setdefault(item.entity_key, {})[item.field] = item
-
-    recess_side_records: dict[str, list[ObservationValue]] = {}
-    for item in recess_start_side_values:
-        if item.field != "start_side" or item.value not in {"min", "max"}:
-            continue
-        recess_side_records.setdefault(item.entity_key, []).append(item)
-
-    candidates: list[
-        tuple[
-            str,
-            str,
-            Axis,
-            ObservationCenterlineAlignment,
-            ObservationValue,
-        ]
-    ] = []
-    for alignment in centerline_alignments:
-        feature_axis = alignment.feature_axis
-        if feature_axis not in {"X", "Y"}:
-            continue
-
-        thread_entities: list[str] = []
-        recess_entities: list[str] = []
-        for entity_key in alignment.entity_keys:
-            fields = fields_by_entity.get(entity_key, {})
-            spec_item = fields.get("thread_spec")
-            depth_item = fields.get("thread_depth")
-            existing_side = fields.get("start_side")
-            existing_material_side = fields.get("material_side")
-            existing_entry_endpoint = fields.get("entry_endpoint")
-            depth = depth_item.value if depth_item is not None else None
-            if (
-                spec_item is not None
-                and isinstance(spec_item.value, str)
-                and spec_item.value.strip()
-                and isinstance(depth, (int, float))
-                and not isinstance(depth, bool)
-                and float(depth) > 0
-                and not (
-                    existing_side is not None
-                    and existing_side.value in {"min", "max"}
-                )
-                and existing_material_side is None
-                and existing_entry_endpoint is None
-            ):
-                thread_entities.append(entity_key)
-
-            side_records = recess_side_records.get(entity_key, [])
-            unique_sides = {item.value for item in side_records}
-            if len(side_records) == 1 and len(unique_sides) == 1:
-                recess_entities.append(entity_key)
-
-        if len(thread_entities) != 1 or len(recess_entities) != 1:
-            continue
-        thread_entity = thread_entities[0]
-        recess_entity = recess_entities[0]
-        if thread_entity == recess_entity:
-            continue
-
-        recess_item = recess_side_records[recess_entity][0]
-        candidates.append(
-            (
-                thread_entity,
-                recess_entity,
-                feature_axis,
-                alignment,
-                recess_item,
-            )
-        )
-
-    thread_pair_count: dict[str, int] = {}
-    recess_pair_count: dict[str, int] = {}
-    for thread_entity, recess_entity, _, _, _ in candidates:
-        thread_pair_count[thread_entity] = thread_pair_count.get(thread_entity, 0) + 1
-        recess_pair_count[recess_entity] = recess_pair_count.get(recess_entity, 0) + 1
-
-    output: list[ObservationValue] = []
-    ledger: list[dict[str, Any]] = []
-    for thread_entity, recess_entity, feature_axis, alignment, recess_item in candidates:
-        if (
-            thread_pair_count.get(thread_entity) != 1
-            or recess_pair_count.get(recess_entity) != 1
-        ):
-            continue
-
-        recess_side = str(recess_item.value)
-        material_side = "max" if recess_side == "min" else "min"
-        entry_endpoint = recess_side
-        evidence = list(
-            dict.fromkeys(
-                [
-                    *alignment.evidence,
-                    *recess_item.evidence,
-                    (
-                        "hybrid:paired-thread-material-entry:"
-                        f"{thread_entity}:{material_side}:{entry_endpoint}"
-                    ),
-                ]
-            )
-        )
-        output.extend(
-            [
-                ObservationValue(
-                    entity_key=thread_entity,
-                    field="material_side",
-                    value=material_side,
-                    semantic="material_side",
-                    evidence=evidence,
-                ),
-                ObservationValue(
-                    entity_key=thread_entity,
-                    field="entry_endpoint",
-                    value=entry_endpoint,
-                    semantic="entry_endpoint",
-                    evidence=evidence,
-                ),
-            ]
-        )
-        ledger.append(
-            {
-                "entity_key": thread_entity,
-                "paired_recess_entity": recess_entity,
-                "feature_axis": feature_axis,
-                "paired_recess_start_side": recess_side,
-                "material_side": material_side,
-                "entry_endpoint": entry_endpoint,
-                "basis": (
-                    "unique_thread_recess_centerline_plus_resolved_recess_"
-                    "outer_entry_implies_opposite_material_and_facing_entry"
-                ),
-                "evidence": evidence,
-                "engineering_coordinate_inferred_from_pixels": False,
-                "pixel_geometry_used_for_identity_or_topology_only": True,
-            }
-        )
-
-    return output, ledger
-
-
 def _unique_orthographic_associations(
     *,
     report: dict[str, Any],
@@ -4627,13 +4467,6 @@ def adapt_hybrid_ocr_report(
             centerline_alignments=centerline_alignments,
         )
     )
-    paired_thread_entry_values, paired_thread_entry_ledger = (
-        _paired_transverse_thread_entry_values(
-            callout_values=callout_values,
-            centerline_alignments=centerline_alignments,
-            recess_start_side_values=recess_start_side_values,
-        )
-    )
     confirmed_start_side_values, confirmed_start_side_ledger = (
         _confirmed_start_side_values(
             context,
@@ -4641,7 +4474,6 @@ def adapt_hybrid_ocr_report(
             existing_values=[
                 *callout_values,
                 *recess_start_side_values,
-                *paired_thread_entry_values,
             ],
         )
     )
@@ -4651,7 +4483,6 @@ def adapt_hybrid_ocr_report(
                 *geometry_values,
                 *callout_values,
                 *recess_start_side_values,
-                *paired_thread_entry_values,
                 *confirmed_start_side_values,
             ],
         )
@@ -4981,13 +4812,6 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_topology_only": True,
         },
         {
-            "kind": "hybrid_paired_thread_entry_ledger",
-            "schema": "1.0",
-            "items": paired_thread_entry_ledger,
-            "engineering_coordinate_inferred_from_pixels": False,
-            "pixel_geometry_used_for_identity_or_topology_only": True,
-        },
-        {
             "kind": "human_confirmed_start_side_ledger",
             "schema": "1.0",
             "items": confirmed_start_side_ledger,
@@ -5056,7 +4880,6 @@ def adapt_hybrid_ocr_report(
             *geometry_values,
             *callout_values,
             *recess_start_side_values,
-            *paired_thread_entry_values,
             *confirmed_start_side_values,
             *slot_values,
         ],

@@ -205,6 +205,61 @@ def test_hidden_pair_midline_is_not_promoted_to_physical_profile_edge():
     assert 100.0 not in positions
 
 
+def test_profile_line_near_hidden_pair_member_but_off_midpoint_survives():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1200, "height": 700},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 1000, 500],
+                "circle_groups": [],
+                "linear_pattern_candidates": [
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 100.0,
+                        "span_px": [100, 500],
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 110.0,
+                        "span_px": [100, 500],
+                        "kind": "dashed_or_centerline_candidate",
+                    },
+                ],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_PROFILE_NEAR_PAIR",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 107.8,
+                        "source_lines": [
+                            _source("horizontal", 107.8, 100, 500),
+                            _source("vertical", 100.0, 80, 130),
+                            _source("vertical", 500.0, 80, 130),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "vertical",
+    )
+
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+    assert 107.8 in positions
+
+
 def test_realistic_upper_hidden_pair_midline_is_suppressed_but_outer_profiles_survive():
     raw = {
         "schema": "raw-evidence-v1",

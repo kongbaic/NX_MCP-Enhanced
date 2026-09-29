@@ -349,7 +349,11 @@ def _is_hidden_pair_midline(
                 continue
 
             midpoint = (first_axis + second_axis) / 2.0
-            if abs(midpoint - line_axis) > axis_tolerance:
+            midpoint_tolerance = min(
+                axis_tolerance,
+                max(1.0, separation * 0.25),
+            )
+            if abs(midpoint - line_axis) > midpoint_tolerance:
                 continue
             if _overlap_ratio(line, first) < 0.40:
                 continue

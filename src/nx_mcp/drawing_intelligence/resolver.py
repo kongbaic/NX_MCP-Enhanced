@@ -229,7 +229,7 @@ def _apply_relation(
         return _apply_edge_offset(graph, relation, state)
     if relation.kind == "alignment":
         return _apply_alignment(relation, state)
-    if relation.kind in {"center_spacing", "center_distance"}:
+    if relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
         return _apply_spacing(relation, state)
     if relation.kind in {"upper_tangent", "lower_tangent"}:
         return _apply_tangent(relation, state)
@@ -277,7 +277,7 @@ def resolve_evidence_graph(graph: EvidenceGraph) -> ResolutionResult:
         missing = [target for target in required if target not in state.values]
         if not missing:
             continue
-        if relation.kind in {"center_spacing", "center_distance"}:
+        if relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
             reason = (
                 "center distance has no unique signed solution"
                 if relation.direction is None

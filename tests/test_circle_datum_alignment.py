@@ -368,4 +368,3 @@ def test_circle_center_witness_axis_fails_closed_when_line_misses_circle_center(
     )
 
     assert items == []
-

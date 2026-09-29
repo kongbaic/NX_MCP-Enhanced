@@ -266,7 +266,6 @@ def build_sheet(
 
     for index, candidate in enumerate(candidates):
         candidate_id = str(candidate["candidate_id"])
-        region_id = str(candidate["region_id"])
         orientation = str(candidate["orientation"])
         region_bbox = _candidate_region_bbox(candidate, region_lookup)
 

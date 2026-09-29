@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .evidence import (
     DimensionEndpoint,
     DimensionObservation,
-    DirectValueEvidence,
     EvidenceGraph,
 )
 
@@ -140,28 +139,6 @@ def _unresolved_options(
     return options
 
 
-def _start_side_options() -> list[dict[str, Any]]:
-    return [
-        {
-            "option_id": "START_SIDE_MIN",
-            "role": "start_side",
-            "value": "min",
-            "label_zh": "从整体最小边界侧进入",
-        },
-        {
-            "option_id": "START_SIDE_MAX",
-            "role": "start_side",
-            "value": "max",
-            "label_zh": "从整体最大边界侧进入",
-        },
-        {
-            "option_id": "START_SIDE_KEEP_UNRESOLVED",
-            "role": "keep_unresolved",
-            "label_zh": "无法确认，保持未解决",
-        },
-    ]
-
-
 def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
     """Build bounded user questions from dimension endpoint unresolved evidence."""
 
@@ -178,37 +155,11 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
             continue
 
         if item.get("kind") == "start_side":
-            feature_ids = [
-                value
-                for value in item.get("feature_ids", [])
-                if isinstance(value, str) and value
-            ]
-            axis = item.get("axis")
-            if (
-                len(feature_ids) == 1
-                and item.get("field") == "start_side"
-                and axis in {"X", "Y", "Z"}
-            ):
-                feature_id = feature_ids[0]
-                questions.append(
-                    {
-                        "confirmation_id": f"CONF_{item['id']}",
-                        "unresolved_id": item["id"],
-                        "kind": "start_side",
-                        "feature_id": feature_id,
-                        "field": "start_side",
-                        "axis": axis,
-                        "prompt_zh": (
-                            f"特征 {feature_id} 的 {axis} 轴加工起始侧需要确认"
-                        ),
-                        "options": _start_side_options(),
-                        "source_ids": [
-                            source
-                            for source in item.get("source_ids", [])
-                            if isinstance(source, str) and source
-                        ],
-                    }
-                )
+            # Post-SHKSSR canonical semantics split transverse thread entry
+            # into material_side + entry_endpoint. A standalone start_side
+            # human choice is therefore not a valid production truth source.
+            # Keep it blocking/unconfirmable and let deterministic topology
+            # derive the split fields or fail closed.
             continue
 
         if item.get("kind") != "dimension_endpoint":
@@ -436,54 +387,6 @@ def apply_confirmation_answers(
             raise ConfirmationError(
                 f"{confirmation_id}: source unresolved record is missing"
             )
-
-        if question.get("kind") == "start_side":
-            option = _selected_single_option(question, answer)
-            if option.get("role") == "keep_unresolved":
-                continue
-            side = option.get("value")
-            if side not in {"min", "max"}:
-                raise ConfirmationError(
-                    f"{confirmation_id}: invalid start_side option"
-                )
-            feature_id = str(question.get("feature_id") or "")
-            if not feature_id:
-                raise ConfirmationError(
-                    f"{confirmation_id}: start_side feature_id is missing"
-                )
-            start_side_target = f"feature:{feature_id}.start_side"
-            if any(item.target == start_side_target for item in direct_values):
-                raise ConfirmationError(
-                    f"{confirmation_id}: {start_side_target!r} already has direct evidence"
-                )
-            direct_values.append(
-                DirectValueEvidence(
-                    id=f"HC_{unresolved_id}_START_SIDE",
-                    target=start_side_target,
-                    value=side,
-                    semantic="start_side",
-                    source_ids=list(
-                        dict.fromkeys(
-                            [
-                                *[
-                                    item
-                                    for item in source.get("source_ids", [])
-                                    if isinstance(item, str) and item
-                                ],
-                                f"human-confirmation:{confirmation_id}:{side}",
-                            ]
-                        )
-                    ),
-                )
-            )
-            unresolved = [
-                item
-                for item in unresolved
-                if str(item.get("id")) != unresolved_id
-            ]
-            unresolved_by_id.pop(unresolved_id, None)
-            applied.append(confirmation_id)
-            continue
 
         selected = _selected_by_endpoint(question, answer)
 

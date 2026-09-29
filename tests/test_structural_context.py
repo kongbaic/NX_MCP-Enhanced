@@ -140,7 +140,14 @@ def test_structural_query_builder_carries_deterministic_profile_symmetry_axis():
         plan.queries[0].deterministic_profile_symmetry_method
         == "foreground_mirror_consensus_v1"
     )
+    assert (
+        plan.queries[0].deterministic_profile_symmetry_overlay
+        == "blue_dashed_topology_axis"
+    )
+    assert plan.rules["topology_axis_overlay_is_visual_aid_not_centerline"] is True
+    assert plan.rules["centerline_absence_alone_is_not_rotation_counterevidence"] is True
     assert plan.queries[1].deterministic_profile_symmetry_axis is None
+    assert plan.queries[1].deterministic_profile_symmetry_overlay is None
 
 
 def test_structural_query_builder_prefers_full_drawing_context_image():

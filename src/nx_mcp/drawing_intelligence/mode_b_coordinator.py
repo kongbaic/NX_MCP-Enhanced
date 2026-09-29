@@ -226,6 +226,7 @@ def _classify_resolution(
     *,
     resolution_ok: bool,
     conflicts: int,
+    blocking_unresolved: int | None = None,
     confirmation_request: dict[str, Any] | None = None,
 ) -> str:
     if resolution_ok:
@@ -236,8 +237,14 @@ def _classify_resolution(
         return "terminal_failed"
 
     question_count = confirmation_request.get("question_count")
+    confirmable_blocking = confirmation_request.get("blocking_unresolved_count")
     eligible = confirmation_request.get("eligible_for_user_confirmation") is True
     unconfirmable = confirmation_request.get("unconfirmable_blocking_ids")
+    if (
+        blocking_unresolved is not None
+        and blocking_unresolved != confirmable_blocking
+    ):
+        return "terminal_failed"
     if (
         eligible
         and isinstance(question_count, int)
@@ -500,6 +507,7 @@ def run_mode_b_coordinator(
     route = _classify_resolution(
         resolution_ok=resolution.ok,
         conflicts=conflicts,
+        blocking_unresolved=blocking_unresolved,
         confirmation_request=confirmation_request,
     )
 

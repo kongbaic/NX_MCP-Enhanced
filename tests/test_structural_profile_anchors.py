@@ -210,6 +210,46 @@ def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
 
 
 
+def test_dimension_extension_only_single_corner_is_not_profile():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1000, "height": 600},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 1000, 500],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_EXTENSION_ONLY",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 200.0,
+                        "source_lines": [
+                            {
+                                **_source("horizontal", 200.0, 100, 400),
+                                "crosses_dimension_axis": True,
+                            },
+                            _source("vertical", 400.0, 200, 260),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(raw, "R1", "vertical")
+
+    positions = {round(float(item["position_px"]), 1) for item in anchors}
+    assert 200.0 not in positions
+
+
 def test_hidden_pair_midline_is_not_promoted_to_physical_profile_edge():
     raw = _raw()
     raw["regions"][0]["linear_pattern_candidates"] = [

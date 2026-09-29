@@ -68,12 +68,21 @@ def _collect_source_lines(
                     start,
                     end,
                 )
-                lines[key] = {
-                    "orientation": orientation,
-                    "axis_px": float(axis),
-                    "span_px": [start, end],
-                    "span_length_px": end - start,
-                }
+                record = lines.setdefault(
+                    key,
+                    {
+                        "orientation": orientation,
+                        "axis_px": float(axis),
+                        "span_px": [start, end],
+                        "span_length_px": end - start,
+                        "dimension_crossing_source_count": 0,
+                        "non_dimension_crossing_source_count": 0,
+                    },
+                )
+                if source.get("crosses_dimension_axis") is True:
+                    record["dimension_crossing_source_count"] += 1
+                elif source.get("crosses_dimension_axis") is False:
+                    record["non_dimension_crossing_source_count"] += 1
 
     return sorted(
         lines.values(),
@@ -155,6 +164,14 @@ def _merge_near_duplicate_lines(
                 "span_px": [start, end],
                 "span_length_px": end - start,
                 "merged_source_line_count": len(group),
+                "dimension_crossing_source_count": sum(
+                    int(item.get("dimension_crossing_source_count", 0))
+                    for item in group
+                ),
+                "non_dimension_crossing_source_count": sum(
+                    int(item.get("non_dimension_crossing_source_count", 0))
+                    for item in group
+                ),
             }
         )
 
@@ -453,8 +470,14 @@ def derive_structural_profile_anchors(
             and junction_count >= 2
             and endpoint_junction_count >= 2
         )
+        independent_profile_source = (
+            int(line.get("non_dimension_crossing_source_count", 0)) > 0
+        )
         long_single_corner = (
-            span_local_norm >= 0.25 and junction_count >= 1 and endpoint_junction_count >= 1
+            span_local_norm >= 0.25
+            and junction_count >= 1
+            and endpoint_junction_count >= 1
+            and independent_profile_source
         )
         if not (strong_topology or short_closed_edge or long_single_corner):
             continue
@@ -491,6 +514,12 @@ def derive_structural_profile_anchors(
             "junction_count": int(line["junction_count"]),
             "endpoint_junction_count": int(line["endpoint_junction_count"]),
             "merged_source_line_count": int(line["merged_source_line_count"]),
+            "dimension_crossing_source_count": int(
+                line.get("dimension_crossing_source_count", 0)
+            ),
+            "non_dimension_crossing_source_count": int(
+                line.get("non_dimension_crossing_source_count", 0)
+            ),
             "candidate_only": True,
             "ownership_claimed": False,
         }

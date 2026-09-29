@@ -27,7 +27,7 @@ def test_nx_agent_skill_keeps_structural_topology_axis_contract():
 
     assert 'deterministic_profile_symmetry_overlay="blue_dashed_topology_axis"' in skill
     assert "TOPOLOGY SYM AXIS" in skill
-    assert 'basis:"axial_section_symmetry"' in skill
+    assert '"basis":"axial_section_symmetry"' in skill
 
 
 def _reader_input() -> dict:

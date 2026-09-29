@@ -464,12 +464,17 @@ manually invoking downstream CLI stages.
 If the coordinator returns `phase=awaiting_confirmation`, or its public report
 sets `human_input_required=true` / `must_stop_for_user_input=true`, this is a hard
 human-interaction boundary. In the current assistant/tool turn, read only the generated
-confirmation request, present the existing options to the user, and then STOP. The
-Agent must not infer, rank, or auto-select an option from drawing geometry, dimension
-ordering, `evidence_candidate`, candidate count, or any other internal reasoning.
-It must not create `user-confirmations.json` or call coordinator `resume` in that
-same turn. Resume is allowed only after a subsequent new user message explicitly
-selects one of the presented options (or explicitly chooses `KEEP_UNRESOLVED`).
+confirmation request, present the existing options to the user, and then STOP. Present
+only each option's `option_id` and `label_zh`; do not expose internal `target`
+strings, `feature:F_...` identities, `F_*_AMB_*` IDs, or Capture E/V/D IDs. Do not
+invent extra feature-center/overall-boundary choices beyond the generated request. An
+unresolved endpoint with no evidence-backed candidate is unconfirmable and must remain
+fail-closed rather than being converted into a broad guessing menu. The Agent must not
+infer, rank, or auto-select an option from drawing geometry, dimension ordering,
+`evidence_candidate`, candidate count, or any other internal reasoning. It must not
+create `user-confirmations.json` or call coordinator `resume` in that same turn.
+Resume is allowed only after a subsequent new user message explicitly selects one of
+the presented options (or explicitly chooses `KEEP_UNRESOLVED`).
 
 After that later user selection, write `user-confirmations.json` using exactly the
 runtime schema below; write one answer for every generated confirmation question, even

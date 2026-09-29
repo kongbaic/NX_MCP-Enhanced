@@ -335,7 +335,7 @@ def test_build_semantic_draft_auto_derives_metric_profile_from_topology_and_reso
     assert "D_BASE_8" in metric_sources[0]["evidence"]
 
 
-def test_build_semantic_draft_reuses_unique_cross_view_profile_boundary_coordinate() -> None:
+def test_build_semantic_draft_does_not_reuse_unassociated_cross_view_profile_boundary_coordinate() -> None:
     from nx_mcp.drawing_intelligence.draft import build_semantic_draft
     from nx_mcp.drawing_intelligence.evidence import (
         EvidenceGraph,
@@ -423,17 +423,7 @@ def test_build_semantic_draft_reuses_unique_cross_view_profile_boundary_coordina
 
     draft = build_semantic_draft(graph, resolution)
 
-    assert draft["profile"]["plane"] == "YZ"
-    assert draft["profile"]["topology"] == "L"
-    assert draft["profile"]["segments"] == [
-        {"type": "line", "y1": -16.0, "z1": 0.0, "y2": 16.0, "z2": 0.0},
-        {"type": "line", "y1": 16.0, "z1": 0.0, "y2": 16.0, "z2": 66.0},
-        {"type": "line", "y1": 16.0, "z1": 66.0, "y2": 0.0, "z2": 66.0},
-        {"type": "line", "y1": 0.0, "z1": 66.0, "y2": 0.0, "z2": 8.0},
-        {"type": "line", "y1": 0.0, "z1": 8.0, "y2": -16.0, "z2": 8.0},
-        {"type": "line", "y1": -16.0, "z1": 8.0, "y2": -16.0, "z2": 0.0},
-    ]
-
+    assert "profile" not in draft
 
 def test_build_semantic_draft_rejects_ambiguous_cross_view_profile_boundary_coordinates() -> None:
     from nx_mcp.drawing_intelligence.draft import build_semantic_draft

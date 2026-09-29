@@ -675,54 +675,21 @@ def _auto_metric_profile_spec(
         axis: str,
         entity_id: str,
     ) -> tuple[float, list[str]] | None:
+        # Cross-view coordinate reuse is valid only after Identity Linker has
+        # proven that this topology entity belongs to the same physical feature.
+        # Numeric uniqueness on an engineering axis is not identity evidence.
         feature_id = entity_to_feature.get(entity_id)
-        if feature_id is not None:
-            direct_target = f"feature:{feature_id}.boundary.{axis}"
-            if direct_target in resolution.values:
-                return (
-                    float(resolution.values[direct_target]),
-                    list(resolution.traces.get(direct_target, [])),
-                )
-
-        # Orthographic views may materialize the same engineering boundary in
-        # only one view. Reuse it only when the resolved profile-boundary
-        # coordinate on this engineering axis is numerically unique.
-        candidates: list[tuple[float, str]] = []
-        for relation in graph.relations:
-            if relation.kind != "edge_offset" or relation.axis != axis.upper():
-                continue
-            if len(relation.targets) != 1:
-                continue
-            target = relation.targets[0]
-            if (
-                not target.startswith("feature:")
-                or not target.endswith(f".boundary.{axis}")
-                or target not in resolution.values
-            ):
-                continue
-            if not any(
-                "unassigned-profile-offset-recovery" in source_id
-                for source_id in relation.source_ids
-            ):
-                continue
-            candidates.append((float(resolution.values[target]), target))
-
-        if not candidates:
+        if feature_id is None:
             return None
 
-        unique_values: list[float] = []
-        for value, _ in candidates:
-            if not any(abs(value - existing) <= 1e-9 for existing in unique_values):
-                unique_values.append(value)
-        if len(unique_values) != 1:
+        direct_target = f"feature:{feature_id}.boundary.{axis}"
+        if direct_target not in resolution.values:
             return None
 
-        value = unique_values[0]
-        traces: list[str] = []
-        for candidate_value, target in candidates:
-            if abs(candidate_value - value) <= 1e-9:
-                traces.extend(resolution.traces.get(target, []))
-        return value, list(dict.fromkeys(traces))
+        return (
+            float(resolution.values[direct_target]),
+            list(resolution.traces.get(direct_target, [])),
+        )
 
     complete: list[MetricProfileSpec] = []
     for item in topology_items:

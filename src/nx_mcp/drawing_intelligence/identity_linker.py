@@ -924,13 +924,13 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                     candidate_targets: set[str] = set()
                     for entity_id in endpoint.candidate_entity_ids:
                         feature_id = entity_to_feature.get(entity_id)
-                        component = component_by_entity.get(entity_id)
-                        if feature_id is None or component is None:
+                        component_entity_ids = component_by_entity.get(entity_id)
+                        if feature_id is None or component_entity_ids is None:
                             continue
                         shape = _canonical_projection_shape(
                             capture,
                             entity_id,
-                            component,
+                            component_entity_ids,
                         )
                         suffix = (
                             f"boundary.{axis_leaf}"

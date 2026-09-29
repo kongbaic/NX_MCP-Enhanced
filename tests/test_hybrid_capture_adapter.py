@@ -1726,10 +1726,16 @@ def test_ambiguous_internal_profile_candidates_are_preserved_for_confirmation(
                         {
                             "kind": "profile_edge_candidate",
                             "ref": "R1.internal.001",
+                            "span_local_norm": 0.3,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 1,
                         },
                         {
                             "kind": "profile_edge_candidate",
                             "ref": "R1.internal.002",
+                            "span_local_norm": 0.3,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 1,
                         },
                     ],
                 },
@@ -1786,6 +1792,9 @@ def test_ambiguous_profile_candidates_with_overall_boundary_stay_unconfirmable(
                         {
                             "kind": "profile_edge_candidate",
                             "ref": "R1.internal.001",
+                            "span_local_norm": 0.3,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 1,
                         },
                         {
                             "kind": "profile_edge_candidate",

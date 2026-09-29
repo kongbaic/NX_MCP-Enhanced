@@ -1622,7 +1622,31 @@ def _dimension_endpoints_from_candidates(
 
             if physical_candidate.get("kind") == "profile_edge_candidate":
                 ref = str(physical_candidate.get("ref") or "")
-                if ref in boundary_roles:
+                span_local_norm = physical_candidate.get("span_local_norm")
+                junction_count = physical_candidate.get("junction_count")
+                endpoint_junction_count = physical_candidate.get(
+                    "endpoint_junction_count"
+                )
+                structurally_qualified = (
+                    isinstance(span_local_norm, (int, float))
+                    and not isinstance(span_local_norm, bool)
+                    and isinstance(junction_count, int)
+                    and not isinstance(junction_count, bool)
+                    and isinstance(endpoint_junction_count, int)
+                    and not isinstance(endpoint_junction_count, bool)
+                    and (
+                        (
+                            float(span_local_norm) >= 0.15
+                            and junction_count >= 2
+                        )
+                        or (
+                            float(span_local_norm) >= 0.25
+                            and junction_count >= 1
+                            and endpoint_junction_count >= 1
+                        )
+                    )
+                )
+                if ref in boundary_roles or not structurally_qualified:
                     all_candidates_representable = False
                     break
                 profile_entity_key = profile_entity_by_ref.get(ref)

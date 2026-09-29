@@ -43,6 +43,9 @@ class StructuralRegionQuery(_StrictStructuralModel):
     deterministic_profile_symmetry_method: Literal[
         "foreground_mirror_consensus_v1"
     ] | None = None
+    deterministic_profile_symmetry_overlay: Literal[
+        "blue_dashed_topology_axis"
+    ] | None = None
     instruction_key: Literal["structural-context-v1"] = "structural-context-v1"
 
 
@@ -234,6 +237,12 @@ def build_structural_context_queries(
                 evidence_label=evidence_label,
                 deterministic_profile_symmetry_axis=deterministic_axis,
                 deterministic_profile_symmetry_method=deterministic_method,
+                deterministic_profile_symmetry_overlay=(
+                    "blue_dashed_topology_axis"
+                    if deterministic_axis is not None
+                    and deterministic_method == "foreground_mirror_consensus_v1"
+                    else None
+                ),
             )
         )
 
@@ -248,6 +257,8 @@ def build_structural_context_queries(
             "agent_must_not_report_engineering_rotation_axis": True,
             "agent_must_not_report_axial_section_symmetry_direction": True,
             "axial_section_axis_from_deterministic_profile_symmetry": True,
+            "topology_axis_overlay_is_visual_aid_not_centerline": True,
+            "centerline_absence_alone_is_not_rotation_counterevidence": True,
             "require_explicit_rotational_symmetry_decision": True,
             "allow_nonsection_longitudinal_revolved_profile": True,
             "allow_axial_section_without_drawn_centerline": True,

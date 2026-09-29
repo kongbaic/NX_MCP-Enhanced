@@ -124,6 +124,47 @@ def test_structural_profile_anchors_flow_into_witness_evidence():
     assert result["anchor_schema_version"] == "1.1"
 
 
+def test_short_closed_edge_stays_profile_candidate():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1000, "height": 600},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 1000, 500],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_SHORT_CLOSED",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 200.0,
+                        "source_lines": [
+                            _source("horizontal", 200.0, 100, 240),
+                            _source("vertical", 100.0, 160, 240),
+                            _source("vertical", 240.0, 160, 240),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    anchors = derive_structural_profile_anchors(raw, "R1", "vertical")
+
+    assert len(anchors) == 1
+    assert anchors[0]["position_px"] == 200.0
+    assert anchors[0]["span_local_norm"] == 0.14
+    assert anchors[0]["junction_count"] >= 2
+    assert anchors[0]["endpoint_junction_count"] >= 2
+
+
 def test_long_single_corner_stays_profile_candidate_without_claiming_shoulder():
     raw = {
         "schema": "raw-evidence-v1",

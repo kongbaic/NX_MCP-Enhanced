@@ -756,7 +756,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         if len(grouped) > 1
     }
     if collision_ids:
+        entity_required = {
+            item.id: item.required_for_modeling
+            for item in capture.entities
+        }
         for fid in sorted(collision_ids):
+            collision_required = any(
+                entity_required.get(entity_id, True)
+                for component in by_feature_id[fid]
+                for entity_id in component
+            )
             unresolved.append(
                 {
                     "id": f"U_IDENTITY_COLLISION_{fid}",
@@ -765,7 +774,12 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                         "semantic signature; deterministic physical identity is "
                         "not unique"
                     ),
-                    "required_for_modeling": True,
+                    # A collision is modeling-blocking only when one of the
+                    # colliding projections is itself modeling-critical.  The
+                    # linker still assigns distinct deterministic AMB
+                    # placeholders either way; required dimensions/unresolved
+                    # endpoint records carry their own blocking semantics.
+                    "required_for_modeling": collision_required,
                     "components": by_feature_id[fid],
                 }
             )

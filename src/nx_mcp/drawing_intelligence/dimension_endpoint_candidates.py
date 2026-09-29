@@ -87,6 +87,43 @@ def _same_source_profile_line(
     )
 
 
+def _profile_source_identity(
+    profile: dict[str, Any],
+) -> tuple[str, float, float, float] | None:
+    """Return raster-source identity for one physical profile line.
+
+    Region IDs are crop provenance, not physical line identity.  Two profile
+    anchors from overlapping crops may therefore refer to the same source line.
+    This key is used only to collapse exact duplicate ownership candidates; it
+    never converts pixel geometry into engineering coordinates.
+    """
+
+    if profile.get("kind") != "profile_edge_candidate":
+        return None
+    orientation = str(profile.get("source_orientation") or "")
+    position = profile.get("position_px")
+    span = profile.get("span_px")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(span, list)
+        or len(span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in span
+        )
+    ):
+        return None
+    low, high = sorted(float(value) for value in span)
+    return (
+        orientation,
+        round(float(position), 9),
+        round(low, 9),
+        round(high, 9),
+    )
+
+
 def _witness_anchor_lookup(
     candidate: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
@@ -216,9 +253,21 @@ def derive_dimension_endpoint_candidates(
                     for source_line in witness_lines
                 )
             ]
-            if len(exact_profile_candidates) == 1:
-                physical_candidates = exact_profile_candidates
-                narrowing_basis = "exact_crossing_witness_profile_line_identity"
+            if exact_profile_candidates:
+                physical_identities = {
+                    identity
+                    for item in exact_profile_candidates
+                    for identity in [_profile_source_identity(item)]
+                    if identity is not None
+                }
+                if len(physical_identities) == 1:
+                    physical_candidates = [
+                        min(
+                            exact_profile_candidates,
+                            key=lambda item: str(item.get("ref") or ""),
+                        )
+                    ]
+                    narrowing_basis = "exact_crossing_witness_profile_line_identity"
 
         endpoint_status = (
             "unique_physical_candidate"

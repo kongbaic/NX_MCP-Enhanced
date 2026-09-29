@@ -1898,6 +1898,177 @@ def test_ambiguous_profile_candidates_with_overall_boundary_stay_unconfirmable(
     assert endpoints[0].unresolved_kind == "intermediate_surface"
 
 
+def test_exact_crossing_duplicate_region_profile_refs_collapse_to_one_source_line():
+    candidate = {
+        "candidate_id": "DG_DUPLICATE_PROFILE",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[40, 20], [60, 20], [60, 40], [40, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.001",
+                        "position_px": 10.0,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    },
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R3.structural.vertical.004",
+                        "position_px": 10.0,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.009",
+                        "position_px": 90.0,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    }
+                ],
+            },
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 10.0,
+                        "span_px": [0.0, 100.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 90.0,
+                        "span_px": [0.0, 100.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            },
+        ],
+    }
+
+    evidence = hybrid_adapter.derive_dimension_endpoint_candidates(candidate)
+
+    assert evidence["endpoints"][0]["status"] == "unique_physical_candidate"
+    assert evidence["endpoints"][0]["ownership_narrowing_basis"] == (
+        "exact_crossing_witness_profile_line_identity"
+    )
+    assert [
+        item["ref"] for item in evidence["endpoints"][0]["physical_candidates"]
+    ] == ["R2.structural.vertical.001"]
+
+
+def test_exact_crossing_distinct_profile_source_lines_remain_ambiguous():
+    candidate = {
+        "candidate_id": "DG_DISTINCT_PROFILE",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[40, 20], [60, 20], [60, 40], [40, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.001",
+                        "position_px": 10.0,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    },
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R3.structural.vertical.004",
+                        "position_px": 10.0,
+                        "source_orientation": "vertical",
+                        "span_px": [10.0, 90.0],
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.009",
+                        "position_px": 90.0,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    }
+                ],
+            },
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 10.0,
+                        "span_px": [0.0, 100.0],
+                        "crosses_dimension_axis": True,
+                    },
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 10.0,
+                        "span_px": [10.0, 90.0],
+                        "crosses_dimension_axis": True,
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 90.0,
+                        "span_px": [0.0, 100.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            },
+        ],
+    }
+
+    evidence = hybrid_adapter.derive_dimension_endpoint_candidates(candidate)
+
+    assert evidence["endpoints"][0]["status"] == "ambiguous_physical_candidates"
+    assert len(evidence["endpoints"][0]["physical_candidates"]) == 2
+
+
 def test_exact_crossing_profile_identity_supersedes_overlapping_callout_pattern_axis():
     candidate = {
         "candidate_id": "DG_PROFILE",

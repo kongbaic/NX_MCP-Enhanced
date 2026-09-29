@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _compact_fragments,
+    _radial_gradient_alignment,
     _adapt_probe,
     _oblique_annotation_lines,
     _region_scoped_witnesses,
@@ -9,6 +10,53 @@ from nx_mcp.drawing_intelligence.raster_evidence import (
     extract_raw_evidence,
     fragment_length_limits,
 )
+
+
+def test_radial_gradient_alignment_accepts_true_circle():
+    import cv2
+    import numpy as np
+
+    image = np.full((240, 240), 255, np.uint8)
+    cv2.circle(image, (120, 120), 60, 0, 3)
+    edges = cv2.Canny(image, 50, 150, apertureSize=3)
+    gradient_x = cv2.Sobel(image, cv2.CV_32F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(image, cv2.CV_32F, 0, 1, ksize=3)
+
+    mean_alignment, aligned_fraction = _radial_gradient_alignment(
+        edges,
+        gradient_x,
+        gradient_y,
+        120,
+        120,
+        62,
+    )
+
+    assert mean_alignment >= 0.82
+    assert aligned_fraction >= 0.65
+
+
+def test_radial_gradient_alignment_rejects_dense_parallel_edge_clutter():
+    import cv2
+    import numpy as np
+
+    image = np.full((240, 240), 255, np.uint8)
+    for y in range(20, 221, 4):
+        cv2.line(image, (20, y), (220, y), 0, 1)
+    edges = cv2.Canny(image, 50, 150, apertureSize=3)
+    gradient_x = cv2.Sobel(image, cv2.CV_32F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(image, cv2.CV_32F, 0, 1, ksize=3)
+
+    mean_alignment, aligned_fraction = _radial_gradient_alignment(
+        edges,
+        gradient_x,
+        gradient_y,
+        120,
+        120,
+        60,
+    )
+
+    assert mean_alignment < 0.82
+    assert aligned_fraction < 0.65
 
 
 def test_fragment_length_limits_preserve_reference_scale():

@@ -65,6 +65,59 @@ def _edge_support(
     return hits / samples
 
 
+def _radial_gradient_alignment(
+    edges: Any,
+    gradient_x: Any,
+    gradient_y: Any,
+    cx: int,
+    cy: int,
+    radius: int,
+    *,
+    tol: int = 1,
+    samples: int = 180,
+    aligned_cosine_threshold: float = 0.85,
+) -> tuple[float, float]:
+    """Measure whether nearby edge normals consistently point toward circle center."""
+
+    h, w = edges.shape
+    alignment_sum = 0.0
+    hit_count = 0
+    aligned_count = 0
+
+    for index in range(samples):
+        theta = 2.0 * math.pi * index / samples
+        radial_x = math.cos(theta)
+        radial_y = math.sin(theta)
+        x = int(round(cx + radius * radial_x))
+        y = int(round(cy + radius * radial_y))
+
+        best_alignment: float | None = None
+        for dy in range(-tol, tol + 1):
+            for dx in range(-tol, tol + 1):
+                xx, yy = x + dx, y + dy
+                if not (0 <= xx < w and 0 <= yy < h) or edges[yy, xx] == 0:
+                    continue
+                gx = float(gradient_x[yy, xx])
+                gy = float(gradient_y[yy, xx])
+                magnitude = math.hypot(gx, gy)
+                if magnitude <= 1e-9:
+                    continue
+                alignment = abs((gx * radial_x + gy * radial_y) / magnitude)
+                if best_alignment is None or alignment > best_alignment:
+                    best_alignment = alignment
+
+        if best_alignment is None:
+            continue
+        hit_count += 1
+        alignment_sum += best_alignment
+        if best_alignment >= aligned_cosine_threshold:
+            aligned_count += 1
+
+    if hit_count == 0:
+        return 0.0, 0.0
+    return alignment_sum / hit_count, aligned_count / samples
+
+
 def _axis_lines(edges: Any, cv2: Any, np: Any) -> list[dict[str, Any]]:
     raw = cv2.HoughLinesP(
         edges,
@@ -239,6 +292,8 @@ def _circle_candidates(
     height = region["height"]
     roi = gray[y : y + height, x : x + width]
     max_radius = max(12, min(120, min(width, height) // 2))
+    gradient_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
 
     circles = cv2.HoughCircles(
         roi,
@@ -259,6 +314,16 @@ def _circle_candidates(
         global_x, global_y = x + cx, y + cy
         support = _edge_support(edges, global_x, global_y, radius)
         if support < 0.82:
+            continue
+        radial_alignment, radial_aligned_fraction = _radial_gradient_alignment(
+            edges,
+            gradient_x,
+            gradient_y,
+            global_x,
+            global_y,
+            radius,
+        )
+        if radial_alignment < 0.82 or radial_aligned_fraction < 0.65:
             continue
         scored.append(
             {
@@ -292,8 +357,19 @@ def _circle_candidates(
         radial: list[tuple[float, int]] = []
         for radius in range(8, max_radius + 1):
             support = _edge_support(edges, cx, cy, radius, tol=1)
-            if support >= 0.90:
-                radial.append((support, radius))
+            if support < 0.90:
+                continue
+            radial_alignment, radial_aligned_fraction = _radial_gradient_alignment(
+                edges,
+                gradient_x,
+                gradient_y,
+                cx,
+                cy,
+                radius,
+            )
+            if radial_alignment < 0.82 or radial_aligned_fraction < 0.65:
+                continue
+            radial.append((support, radius))
 
         peaks: list[tuple[float, int]] = []
         for support, radius in sorted(radial, key=lambda pair: pair[1]):

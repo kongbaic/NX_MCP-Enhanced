@@ -1454,6 +1454,34 @@ def _symmetric_count_two_pattern_owner(
     }
 
 
+def _full_extent_roles_disagree_with_declared_overall(
+    endpoints: list[ObservationDimensionEndpoint],
+    *,
+    axis: Axis,
+    value: float,
+    overall_dimensions: dict[str, float],
+) -> bool:
+    roles = {item.role for item in endpoints}
+    if roles != {"overall_min", "overall_max"}:
+        return False
+    overall_key = {
+        "X": "length_x",
+        "Y": "width_y",
+        "Z": "height_z",
+    }[axis]
+    declared = overall_dimensions.get(overall_key)
+    if (
+        not isinstance(declared, (int, float))
+        or isinstance(declared, bool)
+    ):
+        return False
+    return not math.isclose(
+        value,
+        float(declared),
+        abs_tol=max(abs(value) * 1e-6, 1e-9),
+    )
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
@@ -4870,6 +4898,28 @@ def adapt_hybrid_ocr_report(
                 pattern_entity_by_ref=pattern_entity_by_ref,
                 evidence=evidence,
             )
+            if _full_extent_roles_disagree_with_declared_overall(
+                dimension_endpoints,
+                axis=axis,
+                value=value,
+                overall_dimensions=overall_dimensions,
+            ):
+                # A local dimension cannot legitimately span both declared
+                # overall boundaries while carrying a different engineering
+                # value.  Keep the same witness/candidate evidence but remove
+                # global-boundary ownership and fall back to profile ownership
+                # (or unresolved) instead of manufacturing contradictory
+                # overall evidence.
+                dimension_endpoints, unresolved_reason = (
+                    _dimension_endpoints_from_candidates(
+                        raw_candidate,
+                        entity_keys={item.key for item in entities},
+                        boundary_roles={},
+                        profile_entity_by_ref=profile_entity_by_ref,
+                        pattern_entity_by_ref=pattern_entity_by_ref,
+                        evidence=evidence,
+                    )
+                )
 
         dimension_required_for_modeling = True
         if (

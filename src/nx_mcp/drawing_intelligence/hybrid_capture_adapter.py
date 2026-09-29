@@ -561,10 +561,15 @@ def _coverage_unresolved(
             candidate=candidate,
             candidate_lookup=candidate_lookup,
         )
+        rejected_dimension_role = (
+            candidate.get("decision_reason")
+            == "candidate_line_is_extension_witness_of_accepted_dimension"
+        )
         required = (
             candidate.get("accepted_token") is None
             and candidate_id not in conflicting_candidate_ids
             and not redundant
+            and not rejected_dimension_role
         )
         reason = (
             "Wide local OCR found a linear token without a matching "
@@ -576,6 +581,13 @@ def _coverage_unresolved(
                 "same raw witness source-line topology and carries this value; "
                 "the local-only observation is preserved as advisory duplicate "
                 "coverage."
+            )
+        elif rejected_dimension_role:
+            reason += (
+                " The parent candidate was deterministically rejected as an "
+                "extension/witness line of another accepted dimension; the "
+                "local-only token is preserved as advisory OCR coverage rather "
+                "than an independent modeling blocker."
             )
         unresolved.append(
             ObservationUnresolved(

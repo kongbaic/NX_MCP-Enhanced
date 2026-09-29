@@ -851,6 +851,39 @@ def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidat
     ]
 
 
+def test_local_only_token_from_rejected_dimension_role_is_advisory():
+    report = _report()
+    report["candidates"].append(
+        {
+            "candidate_id": "DG10",
+            "region_id": "R1",
+            "orientation": "horizontal",
+            "accepted_token": None,
+            "decision_reason": (
+                "candidate_line_is_extension_witness_of_accepted_dimension"
+            ),
+        }
+    )
+    report["coverage"]["local_only_linear_observations"].append(
+        {
+            "candidate_id": "DG10",
+            "token": "24",
+        }
+    )
+
+    partial = adapt_hybrid_ocr_report(report, _context())
+
+    item = next(
+        entry
+        for entry in partial.unresolved
+        if entry.field == "local_only_linear_text"
+        and entry.evidence == ["hybrid:DG10:whole", "hybrid:DG10:wide"]
+    )
+    assert item.required_for_modeling is False
+    assert "extension/witness line" in item.reason
+    assert "advisory OCR coverage" in item.reason
+
+
 def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
     report = _report()
     report["regions"] = [

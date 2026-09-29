@@ -1729,6 +1729,86 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     assert endpoints[0].basis == "centerline"
     assert endpoints[1].role == "overall_max"
 
+def test_exact_crossing_profile_identity_supersedes_overlapping_callout_pattern_axis():
+    candidate = {
+        "candidate_id": "DG_PROFILE",
+        "region_id": "R2",
+        "orientation": "horizontal",
+        "accepted_token": "24",
+        "global_assignments": [
+            {
+                "token": "24",
+                "bbox": [[40, 20], [60, 20], [60, 40], [40, 40]],
+            }
+        ],
+        "witness_positions_px": [10.0, 90.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "position_px": 10.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "linear_pattern_axis",
+                        "ref": "R2.linear_pattern.005",
+                        "position_px": 10.5,
+                    },
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.002",
+                        "position_px": 10.4,
+                        "source_orientation": "vertical",
+                        "span_px": [0.0, 100.0],
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "position_px": 90.0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R2.structural.vertical.004",
+                        "position_px": 90.0,
+                    }
+                ],
+            },
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 10.4,
+                        "span_px": [0.0, 100.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+    }
+
+    endpoints, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        candidate,
+        entity_keys={"R2.LINEAR_PATTERN.005", "R2.PROFILE_BOUNDARY.INNER"},
+        boundary_roles={"R2.structural.vertical.004": "overall_max"},
+        profile_entity_by_ref={
+            "R2.structural.vertical.002": "R2.PROFILE_BOUNDARY.INNER",
+            "R2.structural.vertical.004": "R2.PROFILE_BOUNDARY.OUTER",
+        },
+        pattern_entity_by_ref={
+            "R2.linear_pattern.005": "R2.LINEAR_PATTERN.005",
+        },
+        evidence=["test:DG_PROFILE"],
+    )
+
+    assert reason is None
+    assert endpoints[0].role == "profile_boundary"
+    assert endpoints[0].entity_key == "R2.PROFILE_BOUNDARY.INNER"
+    assert endpoints[0].basis == "profile_edge"
+    assert endpoints[1].role == "overall_max"
+
+
 def test_adapter_does_not_grant_annotation_region_global_boundary_roles():
     context = HybridAdapterContext(
         region_views=[

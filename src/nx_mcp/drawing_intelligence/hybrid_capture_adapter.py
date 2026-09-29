@@ -1529,6 +1529,10 @@ def _dimension_endpoints_from_candidates(
         if not isinstance(physical_candidates, list):
             physical_candidates = []
 
+        exact_profile_identity = (
+            raw_endpoint.get("ownership_narrowing_basis")
+            == "exact_crossing_witness_profile_line_identity"
+        )
         owned_pattern_entities = sorted(
             {
                 pattern_entity_by_ref[ref]
@@ -1541,7 +1545,7 @@ def _dimension_endpoints_from_candidates(
                 and pattern_entity_by_ref[ref] in entity_keys
             }
         )
-        if len(owned_pattern_entities) == 1:
+        if len(owned_pattern_entities) == 1 and not exact_profile_identity:
             output.append(
                 ObservationDimensionEndpoint(
                     role="entity_center",

@@ -1712,6 +1712,65 @@ def test_callout_owned_linear_pattern_overrides_overlapping_profile_endpoint():
     assert endpoints[0].basis == "centerline"
     assert endpoints[1].role == "overall_max"
 
+def test_unqualified_profile_candidate_does_not_suppress_valid_center_candidate(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "endpoints": [
+                {
+                    "status": "ambiguous_physical_candidates",
+                    "physical_candidates": [
+                        {
+                            "kind": "hidden_projection_center_axis",
+                            "entity_key": "R1.HIDDEN_PAIR.horizontal.001.002",
+                            "ref": "R1.HIDDEN_PAIR.horizontal.001.002.center",
+                        },
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.centerlike.001",
+                        },
+                    ],
+                },
+                {
+                    "status": "unique_physical_candidate",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.outer.max",
+                        }
+                    ],
+                },
+            ]
+        },
+    )
+
+    endpoints, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        {"candidate_id": "DG_CENTER_WITH_WEAK_PROFILE"},
+        entity_keys={
+            "R1.HIDDEN_PAIR.horizontal.001.002",
+            "R1.PROFILE_BOUNDARY.CENTERLIKE",
+            "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        boundary_roles={"R1.outer.max": "overall_max"},
+        profile_entity_by_ref={
+            "R1.centerlike.001": "R1.PROFILE_BOUNDARY.CENTERLIKE",
+            "R1.outer.max": "R1.PROFILE_BOUNDARY.OUTER_MAX",
+        },
+        evidence=["test:center-with-weak-profile"],
+    )
+
+    assert reason is not None
+    assert endpoints[0].role == "unresolved"
+    assert endpoints[0].unresolved_kind == "ambiguous_owner"
+    assert endpoints[0].candidate_entity_keys == [
+        "R1.HIDDEN_PAIR.horizontal.001.002"
+    ]
+    assert endpoints[1].role == "overall_max"
+
+
 def test_ambiguous_internal_profile_candidates_are_preserved_for_confirmation(
     monkeypatch,
 ):

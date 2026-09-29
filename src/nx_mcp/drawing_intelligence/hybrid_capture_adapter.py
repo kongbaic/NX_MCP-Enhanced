@@ -1606,10 +1606,10 @@ def _dimension_endpoints_from_candidates(
                     continue
 
         representable_candidate_keys: list[str] = []
-        all_candidates_representable = bool(physical_candidates)
+        candidate_set_blocked = False
         for physical_candidate in physical_candidates:
             if not isinstance(physical_candidate, dict):
-                all_candidates_representable = False
+                candidate_set_blocked = True
                 break
 
             center_candidate = _center_entity_candidate(
@@ -1622,6 +1622,13 @@ def _dimension_endpoints_from_candidates(
 
             if physical_candidate.get("kind") == "profile_edge_candidate":
                 ref = str(physical_candidate.get("ref") or "")
+                if ref in boundary_roles:
+                    # An overall boundary is a real engineering alternative,
+                    # but Human Confirmation must not choose overall roles from
+                    # this candidate channel. Do not expose a partial option set.
+                    candidate_set_blocked = True
+                    break
+
                 span_local_norm = physical_candidate.get("span_local_norm")
                 junction_count = physical_candidate.get("junction_count")
                 endpoint_junction_count = physical_candidate.get(
@@ -1646,9 +1653,13 @@ def _dimension_endpoints_from_candidates(
                         )
                     )
                 )
-                if ref in boundary_roles or not structurally_qualified:
-                    all_candidates_representable = False
-                    break
+                if not structurally_qualified:
+                    # A candidate-only visual profile without independent
+                    # structural topology is not a human-selectable physical
+                    # owner. Ignore it rather than letting it suppress a
+                    # stronger center candidate.
+                    continue
+
                 profile_entity_key = profile_entity_by_ref.get(ref)
                 if (
                     profile_entity_key is not None
@@ -1657,13 +1668,13 @@ def _dimension_endpoints_from_candidates(
                     representable_candidate_keys.append(profile_entity_key)
                     continue
 
-            all_candidates_representable = False
+            candidate_set_blocked = True
             break
 
         candidate_entity_keys = (
-            sorted(set(representable_candidate_keys))
-            if all_candidates_representable
-            else []
+            []
+            if candidate_set_blocked
+            else sorted(set(representable_candidate_keys))
         )
         output.append(
             ObservationDimensionEndpoint(

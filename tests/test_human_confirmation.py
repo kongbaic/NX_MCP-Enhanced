@@ -373,6 +373,36 @@ def test_unconfirmable_blocker_disables_human_gate():
         )
 
 
+
+def test_advisory_unresolved_does_not_consume_confirmation_budget():
+    base = _graph()
+    advisory_items = [
+        {
+            **base.unresolved_evidence[0],
+            "id": f"U_ADVISORY_{index}",
+            "required_for_modeling": False,
+        }
+        for index in range(1, 5)
+    ]
+    graph = base.model_copy(
+        deep=True,
+        update={
+            "unresolved_evidence": [
+                *base.unresolved_evidence,
+                *advisory_items,
+            ]
+        },
+    )
+
+    request = build_confirmation_request(graph)
+
+    assert request["blocking_unresolved_count"] == 1
+    assert request["question_count"] == 1
+    assert request["eligible_for_user_confirmation"] is True
+    assert [item["unresolved_id"] for item in request["questions"]] == [
+        "U_DIM_D1"
+    ]
+
 def test_confirmation_cli_e2e_closes_dimension(tmp_path: Path):
     evidence_path = tmp_path / "drawing-evidence.json"
     request_path = tmp_path / "confirmation-request.json"

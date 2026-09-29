@@ -155,8 +155,8 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
             continue
 
         if item.get("kind") == "start_side":
-            # Post-SHKSSR canonical semantics split transverse thread entry
-            # into material_side + entry_endpoint. A standalone start_side
+            # Canonical transverse-thread entry semantics split machining material
+            # selection from the physical entry endpoint. A standalone start_side
             # human choice is therefore not a valid production truth source.
             # Keep it blocking/unconfirmable and let deterministic topology
             # derive the split fields or fail closed.

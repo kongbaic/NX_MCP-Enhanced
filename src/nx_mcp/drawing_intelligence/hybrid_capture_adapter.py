@@ -4871,6 +4871,34 @@ def adapt_hybrid_ocr_report(
                 evidence=evidence,
             )
 
+        dimension_required_for_modeling = True
+        if (
+            unresolved_reason is not None
+            and (region_id, axis) in region_overall_fact_axes
+        ):
+            overall_key = {
+                "X": "length_x",
+                "Y": "width_y",
+                "Z": "height_z",
+            }[axis]
+            independent_overall = overall_dimensions.get(overall_key)
+            if (
+                isinstance(independent_overall, (int, float))
+                and not isinstance(independent_overall, bool)
+                and math.isclose(
+                    value,
+                    float(independent_overall),
+                    abs_tol=max(abs(value) * 1e-6, 1e-9),
+                )
+            ):
+                # The local endpoint identity is still unresolved, but it
+                # carries no additional modeling requirement: an independent
+                # same-region structural fact already closes this full overall
+                # extent. Preserve the OCR dimension as advisory evidence
+                # instead of turning redundant endpoint ownership into a hard
+                # stop.
+                dimension_required_for_modeling = False
+
         dimensions.append(
             ObservationDimension(
                 key=dimension_key,
@@ -4883,7 +4911,7 @@ def adapt_hybrid_ocr_report(
                     orientation,
                 ),
                 evidence=dimension_evidence,
-                required_for_modeling=True,
+                required_for_modeling=dimension_required_for_modeling,
             )
         )
 

@@ -21,6 +21,7 @@ from .reader_observations import (
     ObservationDimensionEndpoint,
     ObservationDatumAlignment,
     ObservationEntity,
+    ObservationPatternSymmetry,
     ObservationUnresolved,
     ObservationValue,
     ObservationView,
@@ -4890,6 +4891,7 @@ def adapt_hybrid_ocr_report(
             symmetric_pair_records.append(
                 {
                     "dimension_key": dimension_key,
+                    "evidence": list(dimension_evidence),
                     **symmetric_pair,
                 }
             )
@@ -5173,6 +5175,24 @@ def adapt_hybrid_ocr_report(
         ],
         dimensions=dimensions,
         datum_alignments=datum_alignments,
+        pattern_symmetries=[
+            ObservationPatternSymmetry(
+                entity_key=str(record["entity_key"]),
+                axis=record["dimension_axis"],
+                evidence=[
+                    item
+                    for item in record.get("evidence", [])
+                    if isinstance(item, str) and item
+                ],
+                required_for_modeling=True,
+            )
+            for record in symmetric_pair_records
+            if (
+                isinstance(record, dict)
+                and str(record.get("entity_key") or "")
+                and record.get("dimension_axis") in {"X", "Y", "Z"}
+            )
+        ],
         centerline_alignments=centerline_alignments,
         observations=observations,
         unresolved=unresolved,

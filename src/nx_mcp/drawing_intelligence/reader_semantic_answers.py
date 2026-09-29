@@ -17,6 +17,7 @@ from .reader_observations import (
     ObservationDimension,
     ObservationDimensionEndpoint,
     ObservationEntity,
+    ObservationPatternSymmetry,
     ObservationUnresolved,
     ObservationValue,
     ObservationView,
@@ -254,6 +255,7 @@ class PartialReaderObservations(_StrictAnswerModel):
     values: list[ObservationValue] = Field(default_factory=list)
     dimensions: list[ObservationDimension] = Field(default_factory=list)
     datum_alignments: list[ObservationDatumAlignment] = Field(default_factory=list)
+    pattern_symmetries: list[ObservationPatternSymmetry] = Field(default_factory=list)
     centerline_alignments: list[ObservationCenterlineAlignment] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
     unresolved: list[ObservationUnresolved] = Field(default_factory=list)

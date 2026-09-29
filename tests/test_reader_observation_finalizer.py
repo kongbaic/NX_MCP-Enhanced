@@ -10,6 +10,8 @@ from nx_mcp.drawing_intelligence.reader_observation_finalizer import (
 from nx_mcp.drawing_intelligence.reader_observations import (
     ObservationDimension,
     ObservationDimensionEndpoint,
+    ObservationEntity,
+    ObservationPatternSymmetry,
     ObservationUnresolved,
     ObservationView,
     assemble_reader_capture,
@@ -114,6 +116,35 @@ def test_finalized_observations_assemble_to_contract_valid_capture():
     assert capture.dimensions[0].endpoints[0].role == "unresolved"
     assert capture.unresolved_evidence[0].kind == "unsupported_representation"
     assert validate_reader_capture_contract(capture) == []
+
+
+def test_finalizer_preserves_structured_pattern_symmetry_into_capture():
+    partial = _partial()
+    partial.entities.append(
+        ObservationEntity(
+            key="R1.PAIR",
+            view_key="view.R1",
+            shape="hidden_parallel",
+            evidence=["hybrid:pair"],
+        )
+    )
+    partial.pattern_symmetries.append(
+        ObservationPatternSymmetry(
+            entity_key="R1.PAIR",
+            axis="X",
+            evidence=["hybrid:pair:symmetry"],
+        )
+    )
+
+    full = finalize_partial_reader_observations(partial)
+    capture = assemble_reader_capture(full)
+
+    assert len(full.pattern_symmetries) == 1
+    assert any(
+        item.get("kind") == "symmetric_count_two_overall_center"
+        and item.get("axis") == "X"
+        for item in capture.observations
+    )
 
 
 def test_finalizer_accepts_duplicate_same_axis_fact_when_values_agree():

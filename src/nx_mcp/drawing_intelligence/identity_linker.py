@@ -1073,8 +1073,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 else {}
             )
             coordinate_index = center_indexes.get(item.axis)
-            marker_present = _SYMMETRIC_COUNT_TWO_MARKER in base_source_ids
-            symmetry_proven = marker_present or bool(structured_symmetry_sources)
+            symmetry_proven = bool(structured_symmetry_sources)
             count_is_two = (
                 not isinstance(count_value, bool)
                 and isinstance(count_value, (int, float))

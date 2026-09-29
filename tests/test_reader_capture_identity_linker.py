@@ -2988,7 +2988,7 @@ def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_m
     assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
 
 
-def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explicit_centers():
+def test_identity_linker_rejects_marker_only_symmetric_count_two_without_structured_observation():
     marker = "hybrid:symmetric-count2-overall-center"
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(
@@ -3050,25 +3050,16 @@ def test_identity_linker_expands_proven_symmetric_count_two_spacing_into_explici
     )
 
     linked = link_reader_capture(capture)
-    feature_id = linked.entity_to_feature["E_PAIR"]
-    compiled = compile_evidence_graph(linked.evidence)
-    resolution = resolve_evidence_graph(compiled)
-    draft = build_semantic_draft(compiled, resolution)
 
-    reader_x0 = f"feature:{feature_id}.explicit_centers.0.0"
-    reader_x1 = f"feature:{feature_id}.explicit_centers.1.0"
-    reader_y0 = f"feature:{feature_id}.explicit_centers.0.1"
-    reader_y1 = f"feature:{feature_id}.explicit_centers.1.1"
-
-    assert resolution.values[reader_x0] == 8.0
-    assert resolution.values[reader_x1] == 32.0
-    assert resolution.values[reader_y0] == 8.0
-    assert resolution.values[reader_y1] == 8.0
-    assert resolution.ok
-
-    feature = next(item for item in draft["features"] if item["id"] == feature_id)
-    assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
-    assert draft["dimension_closure"] == {"status": "closed"}
+    assert any(
+        item.get("id") == "U_DIM_COLLAPSE_D_X24"
+        and item.get("required_for_modeling") is True
+        for item in linked.evidence.unresolved_evidence
+    )
+    assert not any(
+        target.startswith("feature:") and ".explicit_centers." in target
+        for target in linked.evidence.required_targets
+    )
 
 def test_centerline_alignment_propagates_transverse_coordinates_without_merging_features():
     capture = ReaderCapture(

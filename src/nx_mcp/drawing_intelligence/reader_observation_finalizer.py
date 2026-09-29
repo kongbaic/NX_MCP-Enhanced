@@ -220,6 +220,7 @@ def finalize_partial_reader_observations(
         values=partial.values,
         dimensions=partial.dimensions,
         datum_alignments=partial.datum_alignments,
+        pattern_symmetries=partial.pattern_symmetries,
         centerline_alignments=partial.centerline_alignments,
         observations=[
             *partial.observations,

@@ -151,6 +151,13 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
         graph.unresolved_evidence,
         key=lambda entry: str(entry.get("id") or ""),
     ):
+        # Human confirmation is only a recovery path for modeling blockers.
+        # Advisory unresolved evidence must remain visible in the graph, but it
+        # must not consume the bounded confirmation-question budget or make an
+        # otherwise eligible request terminal.
+        if item.get("required_for_modeling", True) is not True:
+            continue
+
         if item.get("kind") == "start_side":
             feature_ids = [
                 value

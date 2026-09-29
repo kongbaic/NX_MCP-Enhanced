@@ -56,7 +56,7 @@ def _base_observations() -> dict:
                 "entity_keys": ["front_bore", "side_bore"],
                 "basis": [
                     "projection_alignment",
-                    "matching_specification",
+                    "unique_orthographic_counterpart",
                 ],
                 "evidence": ["overview"],
             }
@@ -171,7 +171,7 @@ def test_overlapping_observation_associations_are_rejected_before_assembly():
     payload["associations"].append(
         {
             "entity_keys": ["front_bore", "side_bore"],
-            "basis": ["projection_alignment", "matching_specification"],
+            "basis": ["projection_alignment", "unique_orthographic_counterpart"],
             "evidence": ["overview-duplicate"],
         }
     )
@@ -194,7 +194,7 @@ def test_observation_association_cannot_contain_two_entities_from_same_view():
     payload["associations"] = [
         {
             "entity_keys": ["front_bore", "front_bore_2"],
-            "basis": ["projection_alignment", "matching_specification"],
+            "basis": ["projection_alignment", "unique_orthographic_counterpart"],
             "evidence": ["overview"],
         }
     ]

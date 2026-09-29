@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from .capture import AssociationClaim, ReaderCapture
+from .capture import AssociationClaim, ReaderCapture, _association_basis_sufficient
 from .evidence import (
     Axis,
     DatumAlignmentEvidence,
@@ -288,23 +288,6 @@ def _feature_id(signature: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return "F_" + hashlib.sha256(payload).hexdigest()[:16].upper()
-
-
-def _association_basis_sufficient(basis: list[str]) -> bool:
-    kinds = set(basis)
-
-    if "explicit_section_correspondence" in kinds:
-        return True
-
-    supporting = {
-        "matching_specification",
-        "leader_correspondence",
-        "unique_orthographic_counterpart",
-    }
-    return (
-        "projection_alignment" in kinds
-        and bool(kinds & supporting)
-    )
 
 
 def _association_components(

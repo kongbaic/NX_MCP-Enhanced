@@ -55,7 +55,6 @@ def _association_basis_sufficient(basis: list[AssociationEvidenceKind]) -> bool:
     if "explicit_section_correspondence" in kinds:
         return True
     identity_support = {
-        "matching_specification",
         "leader_correspondence",
         "unique_orthographic_counterpart",
     }

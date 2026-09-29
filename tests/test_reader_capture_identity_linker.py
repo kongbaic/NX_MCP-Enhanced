@@ -81,7 +81,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
             AssociationClaim(
                 id=f"{prefix}_ASSOC",
                 entity_ids=association_entities,
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=[f"{prefix}_SRC_ASSOC"],
             )
         ],
@@ -771,7 +771,7 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EFC", "ESA"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -792,7 +792,7 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             AssociationClaim(
                 id="A2",
                 entity_ids=["EFC2", "ESB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1334,17 +1334,21 @@ def test_production_capture_rejects_alignment_only_association_basis():
         ],
     )
 
-    with pytest.raises(ValidationError, match="identity-sufficient visual basis"):
-        ReaderCapture(
-            **common,
-            associations=[
-                AssociationClaim(
-                    id="A_ALIGN_ONLY",
-                    entity_ids=["EF", "ES"],
-                    basis=["projection_alignment", "shared_centerline"],
-                )
-            ],
-        )
+    for insufficient_basis in (
+        ["projection_alignment", "shared_centerline"],
+        ["projection_alignment", "matching_specification"],
+    ):
+        with pytest.raises(ValidationError, match="identity-sufficient visual basis"):
+            ReaderCapture(
+                **common,
+                associations=[
+                    AssociationClaim(
+                        id="A_INSUFFICIENT",
+                        entity_ids=["EF", "ES"],
+                        basis=insufficient_basis,
+                    )
+                ],
+            )
 
     strong = ReaderCapture(
         **common,
@@ -1352,7 +1356,7 @@ def test_production_capture_rejects_alignment_only_association_basis():
             AssociationClaim(
                 id="A_STRONG",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
     )
@@ -1411,7 +1415,7 @@ def test_identity_linker_collapses_equivalent_cross_view_direct_writers():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1474,7 +1478,7 @@ def test_identity_linker_does_not_collapse_conflicting_direct_values():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1539,7 +1543,7 @@ def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1601,7 +1605,7 @@ def test_stability_detects_different_direct_conflict_candidates():
                 AssociationClaim(
                     id="A1",
                     entity_ids=["EF", "ES"],
-                    basis=["projection_alignment", "matching_specification"],
+                    basis=["projection_alignment", "unique_orthographic_counterpart"],
                 )
             ],
             values=[
@@ -1705,7 +1709,7 @@ def test_contract_accepts_consistent_cross_view_dispositions():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_A1"],
             )
         ],
@@ -1753,7 +1757,7 @@ def test_contract_rejects_inconsistent_cross_view_disposition():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
     )
@@ -1882,7 +1886,7 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_A1"],
             )
         ],
@@ -1939,12 +1943,12 @@ def test_production_capture_rejects_overlapping_association_claims():
         AssociationClaim(
             id="A_LEFT",
             entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
         AssociationClaim(
             id="A_RIGHT",
             entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
     ]
     with pytest.raises(ValidationError, match="appears in multiple associations"):
@@ -2007,12 +2011,12 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
         AssociationClaim(
             id="A_LEFT",
             entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
         AssociationClaim(
             id="A_RIGHT",
             entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
     ]
     capture = ReaderCapture.model_construct(
@@ -2435,7 +2439,7 @@ def test_production_multiview_contract_requires_traceable_sources():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -2505,7 +2509,7 @@ def test_cross_view_identity_unique_sufficient_pair_must_be_association():
                 kind="cross_view_identity",
                 reason="only one candidate pair remains",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_PAIR"],
                 required_for_modeling=True,
             )
@@ -2884,7 +2888,7 @@ def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_m
             AssociationClaim(
                 id="A_PAIR",
                 entity_ids=["E_FRONT_PAIR", "E_SIDE_PAIR"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["SRC_PAIR_SPEC"],
             )
         ],

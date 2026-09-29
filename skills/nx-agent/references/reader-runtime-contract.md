@@ -101,13 +101,21 @@ python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-fronten
 ~~~
 
 Before that one call, choose `<fresh-mode-b-prefix>` as a fresh **direct child prefix**
-of the current `workspace_root` / `NX_MCP_WORKSPACE`. For example,
-`<workspace_root>\\drawing-02-radial-angular-20260928-mode-b` is valid, while
-`<workspace_root>\\mode-b-runs\\drawing-02-radial-angular-20260928-mode-b` is
-invalid. The Hybrid Frontend run directory may be nested anywhere inside the workspace;
-the Mode B artifact prefix may not. A prefix/path validation failure is terminal for
-that production attempt: do not fix the path and retry, and do not choose another
-prefix.
+of the current `workspace_root` / `NX_MCP_WORKSPACE`. The prefix is a filename stem,
+not a path that will itself exist. Therefore **never use only `Test-Path <prefix>` as
+the freshness check**. A prefix is fresh only when none of the coordinator outputs
+derived from it already exist, especially `<prefix>-mode-b-state.json`; also reject
+pre-existing `-reader-capture.json`, `-drawing-evidence.json`,
+`-semantic-draft.json`, `-confirmation-request.json`,
+`-drawing-evidence-confirmed.json`, `-semantic-draft-confirmed.json`, or
+`-drawing.json`. Derive the prefix from the current fresh Hybrid Frontend run name
+(e.g. `<workspace_root>\\<fresh-run-directory-name>-mode-b`) rather than reusing a
+drawing/date-only prefix from an earlier attempt. For example,
+`<workspace_root>\\hybrid-run-20260929-140233-mode-b` is valid, while
+`<workspace_root>\\mode-b-runs\\hybrid-run-20260929-140233-mode-b` is invalid.
+The Hybrid Frontend run directory may be nested anywhere inside the workspace; the
+Mode B artifact prefix may not. If any derived artifact already exists, STOP before
+the single resume call; do not switch to another prefix after resume has started.
 
 The resume path owns Structural Context assembly → Hybrid Adapter → Reader Observation
 Finalizer → deterministic Mode B coordinator. Do not hand-write

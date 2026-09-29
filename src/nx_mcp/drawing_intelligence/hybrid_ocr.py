@@ -472,6 +472,148 @@ def _candidate_geometry_key(candidate: dict[str, Any]) -> tuple[Any, ...] | None
 
 
 
+def _candidate_line_identity(
+    candidate: dict[str, Any],
+) -> tuple[str, float, float, float] | None:
+    orientation = candidate.get("orientation")
+    axis = candidate.get("axis_px")
+    span = candidate.get("line_span_px")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(axis, (int, float))
+        or isinstance(axis, bool)
+        or not isinstance(span, list)
+        or len(span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in span
+        )
+    ):
+        return None
+    low, high = sorted(float(value) for value in span)
+    return (
+        str(orientation),
+        round(float(axis), 3),
+        round(low, 3),
+        round(high, 3),
+    )
+
+
+def _witness_envelope_covers_majority(
+    candidate: dict[str, Any],
+) -> bool | None:
+    span = candidate.get("line_span_px")
+    witnesses = candidate.get("witness_positions_px")
+    if not (
+        isinstance(span, list)
+        and len(span) == 2
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in span
+        )
+        and isinstance(witnesses, list)
+        and len(witnesses) >= 2
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in witnesses
+        )
+    ):
+        return None
+
+    line_low, line_high = sorted(float(value) for value in span)
+    witness_low = min(float(value) for value in witnesses)
+    witness_high = max(float(value) for value in witnesses)
+    line_length = line_high - line_low
+    if line_length <= 0:
+        return None
+
+    overlap = max(
+        0.0,
+        min(line_high, witness_high) - max(line_low, witness_low),
+    )
+    return overlap * 2.0 >= line_length
+
+
+def _accepted_witness_line_owners(
+    results: list[dict[str, Any]],
+) -> dict[tuple[str, float, float, float], set[str]]:
+    owners: dict[tuple[str, float, float, float], set[str]] = {}
+    for result in results:
+        if result.get("accepted_token") is None:
+            continue
+        owner_id = str(result.get("candidate_id") or "")
+        if not owner_id:
+            continue
+        evidence = result.get("witness_line_evidence", [])
+        if not isinstance(evidence, list):
+            continue
+        for record in evidence:
+            if not isinstance(record, dict):
+                continue
+            source_lines = record.get("source_lines", [])
+            if not isinstance(source_lines, list):
+                continue
+            for source_line in source_lines:
+                if not isinstance(source_line, dict):
+                    continue
+                if source_line.get("crosses_dimension_axis") is not True:
+                    continue
+                key = _candidate_line_identity(
+                    {
+                        "orientation": source_line.get("orientation"),
+                        "axis_px": source_line.get("axis_px"),
+                        "line_span_px": source_line.get("span_px"),
+                    }
+                )
+                if key is not None:
+                    owners.setdefault(key, set()).add(owner_id)
+    return owners
+
+
+def _apply_dimension_role_conflict_gate(
+    results: list[dict[str, Any]],
+) -> None:
+    """Fail closed when an accepted candidate is structurally an extension line.
+
+    Candidate generation is intentionally high-recall.  A line may therefore be
+    proposed both as a dimension line and as an orthogonal witness/extension line.
+    Do not accept an engineering dimension solely from nearby OCR text when the
+    same exact source line is already witness evidence for another accepted
+    dimension and less than half of its own line is bounded by its witnesses.
+    """
+
+    witness_owners = _accepted_witness_line_owners(results)
+    for result in results:
+        if result.get("accepted_token") is None:
+            continue
+        candidate_id = str(result.get("candidate_id") or "")
+        line_key = _candidate_line_identity(result)
+        if not candidate_id or line_key is None:
+            continue
+
+        other_owners = sorted(
+            owner_id
+            for owner_id in witness_owners.get(line_key, set())
+            if owner_id != candidate_id
+        )
+        if not other_owners:
+            continue
+
+        majority_bounded = _witness_envelope_covers_majority(result)
+        if majority_bounded is not False:
+            continue
+
+        result["accepted_token"] = None
+        result["decision_reason"] = (
+            "candidate_line_is_extension_witness_of_accepted_dimension"
+        )
+        result["dimension_role_conflict"] = {
+            "witness_owner_candidate_ids": other_owners,
+            "own_witness_envelope_covers_majority": False,
+            "pixel_geometry_used_for_role_disambiguation_only": True,
+        }
+
+
 def _collect_candidates(
     visual_aid: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -687,6 +829,7 @@ def run_hybrid_ocr(
             }
         )
 
+    _apply_dimension_role_conflict_gate(results)
     accepted_count = sum(1 for result in results if result["accepted_token"] is not None)
     coverage = _coverage_ledger(full_items, results)
     total_ocr_elapsed = full_elapsed + wide_elapsed

@@ -392,6 +392,108 @@ def test_global_proposal_prefers_structured_scalar_over_bare_glyph():
     assert reason == "strongest_unique_global_linear_token"
 
 
+def test_dimension_role_conflict_gate_rejects_extension_line_candidate():
+    module = _load_module()
+    strong = {
+        "candidate_id": "DG_STRONG",
+        "accepted_token": "168.3",
+        "orientation": "horizontal",
+        "axis_px": 50.0,
+        "line_span_px": [20.0, 200.0],
+        "witness_positions_px": [10.0, 210.0],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [0.0, 300.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+        "decision_reason": "accepted",
+    }
+    weak = {
+        "candidate_id": "DG_WEAK",
+        "accepted_token": "4.5",
+        "orientation": "vertical",
+        "axis_px": 100.0,
+        "line_span_px": [0.0, 300.0],
+        "witness_positions_px": [10.0, 120.0],
+        "witness_line_evidence": [],
+        "decision_reason": "accepted",
+    }
+
+    results = [strong, weak]
+    module._apply_dimension_role_conflict_gate(results)
+
+    assert strong["accepted_token"] == "168.3"
+    assert weak["accepted_token"] is None
+    assert weak["decision_reason"] == (
+        "candidate_line_is_extension_witness_of_accepted_dimension"
+    )
+    assert weak["dimension_role_conflict"]["witness_owner_candidate_ids"] == [
+        "DG_STRONG"
+    ]
+
+
+def test_dimension_role_conflict_gate_keeps_bounded_crossing_dimension():
+    module = _load_module()
+    first = {
+        "candidate_id": "DG_FIRST",
+        "accepted_token": "100",
+        "orientation": "horizontal",
+        "axis_px": 50.0,
+        "line_span_px": [20.0, 200.0],
+        "witness_positions_px": [10.0, 210.0],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [20.0, 180.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+        "decision_reason": "accepted",
+    }
+    second = {
+        "candidate_id": "DG_SECOND",
+        "accepted_token": "80",
+        "orientation": "vertical",
+        "axis_px": 100.0,
+        "line_span_px": [20.0, 180.0],
+        "witness_positions_px": [10.0, 190.0],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "horizontal",
+                        "axis_px": 50.0,
+                        "span_px": [20.0, 200.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+        "decision_reason": "accepted",
+    }
+
+    results = [first, second]
+    module._apply_dimension_role_conflict_gate(results)
+
+    assert first["accepted_token"] == "100"
+    assert second["accepted_token"] == "80"
+
+
 def test_hybrid_decision_accepts_decimal_split_by_local_rotation():
     module = _load_module()
 

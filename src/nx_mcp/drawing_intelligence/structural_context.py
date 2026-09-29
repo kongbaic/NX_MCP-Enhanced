@@ -335,6 +335,7 @@ def assemble_structural_context(
     region_views: list[HybridRegionView] = []
     overall_facts: list[PartialOverallDimensionFact] = []
     rotational_facts: list[PartialRotationalSymmetryFact] = []
+    rotational_counterevidence: list[str] = []
 
     for query in plan.queries:
         answer = answers_by_id[query.query_id]
@@ -375,6 +376,8 @@ def assemble_structural_context(
                 query.evidence_label,
                 query_id=query.query_id,
             )
+        if rotation_decision is not None and rotation_decision.status == "not_established":
+            rotational_counterevidence.extend(rotation_decision.evidence)
         if rotation_decision is not None and rotation_decision.status == "established":
             if rotation_decision.basis == "centerline":
                 visual_axis_direction = rotation_decision.centerline_direction
@@ -439,6 +442,12 @@ def assemble_structural_context(
         direct_values[axis] = reference
 
     rotational_axes = {item.axis for item in rotational_facts}
+    if rotational_axes and rotational_counterevidence:
+        raise StructuralContextError(
+            "conflicting structural rotational symmetry evidence: "
+            "established rotation conflicts with explicit not_established "
+            "counterevidence"
+        )
     if len(rotational_axes) > 1:
         raise StructuralContextError(
             f"conflicting structural rotational symmetry axes: {sorted(rotational_axes)}"

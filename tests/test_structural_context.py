@@ -250,6 +250,28 @@ def test_structural_context_allows_one_missing_transverse_axis_with_explicit_rot
     ]
 
 
+def test_structural_context_rejects_established_rotation_with_explicit_counterevidence():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "centerline_direction": "vertical",
+        "evidence": ["structural:R1:crop"],
+    }
+    payload["answers"][1]["rotational_symmetry"] = {
+        "status": "not_established",
+        "evidence": ["structural:R2:crop"],
+    }
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(
+        StructuralContextError,
+        match="established rotation conflicts with explicit not_established",
+    ):
+        assemble_structural_context(plan, answers)
+
+
 def test_structural_context_derives_axis_from_deterministic_profile_symmetry():
     reader_input = _reader_input()
     for region in reader_input["regions"]:

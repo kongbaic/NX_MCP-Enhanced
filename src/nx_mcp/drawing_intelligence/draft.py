@@ -487,8 +487,14 @@ def _relation_source(relation: RelationEvidence) -> dict[str, Any]:
                 "targets": list(relation.targets),
             }
         )
-    elif relation.kind in {"center_spacing", "center_distance"}:
-        source.update({"value": relation.value, "between": list(relation.targets)})
+    elif relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
+        source.update(
+            {
+                "value": relation.value,
+                "axis": relation.axis,
+                "between": list(relation.targets),
+            }
+        )
     elif relation.kind == "alignment":
         source["links"] = list(relation.targets)
     elif relation.kind in {"upper_tangent", "lower_tangent"}:
@@ -539,7 +545,7 @@ def _derived_entry(
             "relation_refs": [relation_id],
         }
 
-    if kind in {"center_spacing", "center_distance"}:
+    if kind in {"center_spacing", "center_distance", "coordinate_distance"}:
         op = derivation.get("op")
         if len(dependencies) != 1 or op not in {"add", "sub"} or not relation_id:
             raise DraftAssemblyError(f"spacing derivation for {target!r} is incomplete")

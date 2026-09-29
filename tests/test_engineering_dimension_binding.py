@@ -685,7 +685,7 @@ def test_exact_dimension_carrier_beats_incidental_circle_leader_binding():
 
 
 
-def test_multiline_hole_note_uses_one_shared_leader_binding():
+def test_multiline_compound_hole_preserves_recess_subtype_unresolved():
     report = {
         "schema": "dg-hybrid-ocr-bakeoff-v2",
         "coverage": {
@@ -799,15 +799,10 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
             "bound_hole_geometry_plus_explicit_through_or_recess_semantics"
         ),
     }
-    recess_classification = next(
-        item.get("geometry_backed_recess_classification")
+    assert all(
+        "geometry_backed_recess_classification" not in item
         for item in ledger["items"]
-        if item["source_item_index"] == 5
     )
-    assert recess_classification["subtype"] == "counterbore"
-    assert recess_classification["entity_key"] == "R2.C1"
-    assert recess_classification["engineering_coordinate_inferred_from_pixels"] is False
-    assert recess_classification["pixel_geometry_used_for_identity_only"] is True
 
     values = {
         (item.entity_key, item.field): item.value
@@ -815,13 +810,15 @@ def test_multiline_hole_note_uses_one_shared_leader_binding():
     }
     assert values[("R2.C1", "diameter")] == 6.6
     assert values[("R2.C1", "through")] is True
-    assert values[("R2.C1", "counterbore_diameter")] == 11.0
-    assert values[("R2.C1", "counterbore_depth")] == 6.5
+    assert values[("R2.C1", "recess_diameter")] == 11.0
+    assert values[("R2.C1", "recess_depth")] == 6.5
     assert values[("R2.C1", "recessed_hole")] is True
+    assert ("R2.C1", "counterbore_diameter") not in values
+    assert ("R2.C1", "counterbore_depth") not in values
 
     unresolved_fields = {
         item.field
         for item in partial.unresolved
         if item.entity_keys == ["R2.C1"]
     }
-    assert unresolved_fields == set()
+    assert unresolved_fields == {"recessed_hole_subtype"}

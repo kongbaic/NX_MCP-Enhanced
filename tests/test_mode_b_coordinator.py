@@ -100,7 +100,7 @@ def test_public_report_marks_awaiting_confirmation_as_hard_user_boundary(tmp_pat
     assert report["resume_requires_new_user_turn"] is True
 
 
-def test_resolution_route_accepts_any_positive_last_mile_confirmation_count():
+def test_resolution_route_accepts_only_bounded_confirmation():
     request = {
         "eligible_for_user_confirmation": True,
         "question_count": 2,
@@ -116,16 +116,6 @@ def test_resolution_route_accepts_any_positive_last_mile_confirmation_count():
     )
 
     request["question_count"] = 4
-    assert (
-        _classify_resolution(
-            resolution_ok=False,
-            conflicts=0,
-            confirmation_request=request,
-        )
-        == "awaiting_confirmation"
-    )
-
-    request["question_count"] = 0
     assert (
         _classify_resolution(
             resolution_ok=False,

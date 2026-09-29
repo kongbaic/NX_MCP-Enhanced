@@ -50,13 +50,32 @@ class ConfirmationAnswers(BaseModel):
         return value
 
 
-def _known_feature_targets(graph: EvidenceGraph, axis: str) -> list[str]:
-    suffix = axis.lower()
-    feature_ids = sorted({item.feature_id for item in graph.projections})
-    return [
-        f"feature:{feature_id}.centerline.{suffix}"
-        for feature_id in feature_ids
+def _human_candidate_label(
+    graph: EvidenceGraph,
+    target: str,
+    *,
+    ordinal: int,
+) -> str:
+    feature_id = target[len("feature:") :].partition(".")[0]
+    projection_sources = [
+        source
+        for projection in graph.projections
+        if projection.feature_id == feature_id
+        for source in projection.source_ids
+        if isinstance(source, str) and source
     ]
+
+    for source in projection_sources:
+        if source.startswith("hybrid:geometry:"):
+            ref = source[len("hybrid:geometry:") :]
+            region, sep, circle = ref.partition(":C")
+            if sep and region and circle.isdigit():
+                return f"候选{ordinal}：{region} 区域第 {int(circle)} 个圆心"
+        if source.startswith("hybrid:profile-edge:"):
+            ref = source[len("hybrid:profile-edge:") :]
+            return f"候选{ordinal}：{ref} 对应轮廓边界"
+
+    return f"候选{ordinal}：系统证据支持的几何端点"
 
 
 def _option(
@@ -85,33 +104,28 @@ def _unresolved_options(
     axis: str,
     endpoint_spec: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    options = [
-        _option(
-            f"E{endpoint_index}_OVERALL_MIN",
-            role="overall_min",
-            label_zh="整体最小边界",
-        ),
-        _option(
-            f"E{endpoint_index}_OVERALL_MAX",
-            role="overall_max",
-            label_zh="整体最大边界",
-        ),
-    ]
+    del axis  # Candidate targets already encode the measured coordinate axis.
 
-    evidence_candidates = {
+    evidence_candidates = [
         item
         for item in endpoint_spec.get("candidate_targets", [])
         if isinstance(item, str) and item
-    }
-    for number, target in enumerate(_known_feature_targets(graph, axis), start=1):
-        feature_id = target[len("feature:") :].partition(".")[0]
+    ]
+    options: list[dict[str, Any]] = []
+
+    for number, target in enumerate(dict.fromkeys(evidence_candidates), start=1):
+        role = "profile_boundary" if ".boundary." in target else "feature_center"
         options.append(
             _option(
-                f"E{endpoint_index}_FEATURE_{number:03d}",
-                role="feature_center",
+                f"E{endpoint_index}_EVIDENCE_{number:03d}",
+                role=role,
                 target=target,
-                label_zh=f"特征 {feature_id} 中心",
-                evidence_candidate=target in evidence_candidates,
+                label_zh=_human_candidate_label(
+                    graph,
+                    target,
+                    ordinal=number,
+                ),
+                evidence_candidate=True,
             )
         )
 
@@ -119,7 +133,7 @@ def _unresolved_options(
         _option(
             f"E{endpoint_index}_KEEP_UNRESOLVED",
             role="keep_unresolved",
-            label_zh="以上都不是，保持未解决",
+            label_zh="无法从当前证据确认，保持未解决",
         )
     )
     return options
@@ -213,6 +227,7 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
 
         endpoints: list[dict[str, Any]] = []
         unresolved_count = 0
+        confirmable = True
         for index, spec in enumerate(endpoint_specs):
             if not isinstance(spec, dict):
                 break
@@ -236,6 +251,11 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
                     axis=axis,
                     endpoint_spec=spec,
                 )
+                if not any(
+                    option.get("role") != "keep_unresolved"
+                    for option in record["options"]
+                ):
+                    confirmable = False
             elif role in {"overall_min", "overall_max"}:
                 record["requires_confirmation"] = False
                 record["fixed"] = {"role": role}
@@ -251,7 +271,7 @@ def build_confirmation_request(graph: EvidenceGraph) -> dict[str, Any]:
                 break
             endpoints.append(record)
         else:
-            if unresolved_count:
+            if unresolved_count and confirmable:
                 questions.append(
                     {
                         "confirmation_id": f"CONF_{item['id']}",

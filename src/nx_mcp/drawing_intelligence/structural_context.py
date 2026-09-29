@@ -207,9 +207,11 @@ def build_structural_context_queries(
             raise StructuralContextError(f"duplicate reader region {region_id!r}")
         seen_regions.add(region_id)
 
+        using_structural_context_image = False
         if isinstance(structural_context_path, str) and structural_context_path:
             image_path = structural_context_path
             evidence_label = f"structural:{region_id}:context"
+            using_structural_context_image = True
         elif isinstance(crop_path, str) and crop_path:
             image_path = crop_path
             evidence_label = f"structural:{region_id}:crop"
@@ -239,7 +241,8 @@ def build_structural_context_queries(
                 deterministic_profile_symmetry_method=deterministic_method,
                 deterministic_profile_symmetry_overlay=(
                     "blue_dashed_topology_axis"
-                    if deterministic_axis is not None
+                    if using_structural_context_image
+                    and deterministic_axis is not None
                     and deterministic_method == "foreground_mirror_consensus_v1"
                     else None
                 ),

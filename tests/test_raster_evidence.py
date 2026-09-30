@@ -287,7 +287,33 @@ def test_one_sided_boundary_evidence_rejects_interior_line():
     assert boundary["one_sided_boundary_candidate"] is True
     assert max(boundary["side_background_fraction"]) >= 0.70
     assert min(boundary["side_background_fraction"]) <= 0.25
+    assert max(boundary["near_side_background_fraction"]) >= 0.60
     assert interior["one_sided_boundary_candidate"] is False
+
+
+def test_one_sided_boundary_evidence_rejects_nearby_interior_line():
+    import cv2
+    import numpy as np
+
+    image = np.full((220, 220), 255, np.uint8)
+    polygon = np.array(
+        [[20, 190], [20, 30], [100, 30], [180, 110], [180, 190]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(image, [polygon], 128)
+
+    # This line sits just inside the true sloped outline. A far sample can
+    # already reach white background, but the immediate neighborhood remains
+    # filled on both sides and must therefore fail closed as an interior line.
+    interior_near_boundary = _one_sided_boundary_evidence(
+        image,
+        (103, 36),
+        (173, 106),
+    )
+
+    assert max(interior_near_boundary["side_background_fraction"]) >= 0.70
+    assert max(interior_near_boundary["near_side_background_fraction"]) < 0.60
+    assert interior_near_boundary["one_sided_boundary_candidate"] is False
 
 
 def test_compact_fragments_does_not_silently_drop_ninth_valid_pattern():

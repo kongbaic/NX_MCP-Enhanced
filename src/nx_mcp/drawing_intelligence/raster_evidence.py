@@ -169,17 +169,21 @@ def _one_sided_boundary_evidence(
         return {
             "one_sided_boundary_candidate": False,
             "sample_offset_px": 0,
+            "near_sample_offset_px": 0,
             "sample_count": 0,
             "side_mean_gray": [],
             "side_background_fraction": [],
+            "near_side_background_fraction": [],
             "mean_gray_delta": 0.0,
         }
 
     normal_x = -dy / length
     normal_y = dx / length
     sample_offset = max(4, int(round(min(image_width, image_height) * 0.01)))
+    near_sample_offset = max(2, min(sample_offset - 1, int(round(sample_offset * 0.25))))
     sample_count = max(12, min(24, int(round(length / 3.0))))
     side_samples: list[list[float]] = [[], []]
+    near_side_samples: list[list[float]] = [[], []]
 
     for index in range(2, sample_count - 2):
         ratio = index / float(sample_count - 1)
@@ -191,13 +195,26 @@ def _one_sided_boundary_evidence(
             if 0 <= sample_x < image_width and 0 <= sample_y < image_height:
                 side_samples[side_index].append(float(gray[sample_y, sample_x]))
 
-    if min(len(values) for values in side_samples) < 6:
+            near_x = int(round(x + sign * near_sample_offset * normal_x))
+            near_y = int(round(y + sign * near_sample_offset * normal_y))
+            if 0 <= near_x < image_width and 0 <= near_y < image_height:
+                near_side_samples[side_index].append(float(gray[near_y, near_x]))
+
+    if (
+        min(len(values) for values in side_samples) < 6
+        or min(len(values) for values in near_side_samples) < 6
+    ):
         return {
             "one_sided_boundary_candidate": False,
             "sample_offset_px": sample_offset,
-            "sample_count": min(len(values) for values in side_samples),
+            "near_sample_offset_px": near_sample_offset,
+            "sample_count": min(
+                min(len(values) for values in side_samples),
+                min(len(values) for values in near_side_samples),
+            ),
             "side_mean_gray": [],
             "side_background_fraction": [],
+            "near_side_background_fraction": [],
             "mean_gray_delta": 0.0,
         }
 
@@ -209,20 +226,34 @@ def _one_sided_boundary_evidence(
         sum(value >= 245.0 for value in values) / len(values)
         for values in side_samples
     ]
+    near_background_fractions = [
+        sum(value >= 245.0 for value in values) / len(values)
+        for values in near_side_samples
+    ]
     mean_delta = abs(side_means[0] - side_means[1])
     one_sided = (
         max(background_fractions) >= 0.70
         and min(background_fractions) <= 0.25
+        and max(near_background_fractions) >= 0.60
+        and min(near_background_fractions) <= 0.25
         and mean_delta >= 30.0
     )
     return {
         "one_sided_boundary_candidate": one_sided,
         "sample_offset_px": sample_offset,
-        "sample_count": min(len(values) for values in side_samples),
+        "near_sample_offset_px": near_sample_offset,
+        "sample_count": min(
+            min(len(values) for values in side_samples),
+            min(len(values) for values in near_side_samples),
+        ),
         "side_mean_gray": [round(value, 3) for value in side_means],
         "side_background_fraction": [
             round(value, 3)
             for value in background_fractions
+        ],
+        "near_side_background_fraction": [
+            round(value, 3)
+            for value in near_background_fractions
         ],
         "mean_gray_delta": round(mean_delta, 3),
     }

@@ -3137,6 +3137,153 @@ def test_span_center_bridge_never_overrides_ambiguous_owner():
     assert unresolved[0]["endpoint_unresolved_kinds"] == ["ambiguous_owner"]
 
 
+def _symmetric_center_distance_bridge_capture(
+    *,
+    endpoint_kind="intermediate_surface",
+    include_symmetric_pair=True,
+    duplicate_pair=False,
+):
+    capture = _span_center_bridge_capture(
+        endpoint_kind=endpoint_kind,
+        two_unresolved=True,
+    )
+    distance = next(item for item in capture.dimensions if item.id == "D_DISTANCE")
+    distance.value = 60
+    distance.source_ids = [
+        "SRC_DISTANCE",
+        "hybrid:DG_DISTANCE:whole",
+    ]
+
+    if include_symmetric_pair:
+        record = {
+            "dimension_id": "D_DISTANCE",
+            "candidate_id": "DG_DISTANCE",
+            "axis": "X",
+            "datum": "overall_center",
+            "dimension_value": 60,
+            "overall_dimension_value": 100,
+            "selected_witness_positions_px": [20.0, 80.0],
+            "overall_candidate_id": "DG_OVERALL",
+            "overall_region_id": "R1",
+            "overall_witness_positions_px": [0.0, 100.0],
+            "midpoint_residual_px": 0.0,
+            "midpoint_tolerance_px": 2.0,
+            "basis": (
+                "rotational_symmetry_plus_structurally_shared_raster_view"
+                "_plus_overall_witness_midpoint"
+            ),
+            "source_ids": ["SRC_SYMMETRIC_DISTANCE"],
+        }
+        items = [record, dict(record)] if duplicate_pair else [record]
+        capture.observations.append(
+            {
+                "kind": "hybrid_symmetric_dimension_pair_ledger",
+                "schema": "1.0",
+                "items": items,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+    return capture
+
+
+def test_symmetric_center_distance_bridge_anchors_span_center_and_mirror():
+    capture = _symmetric_center_distance_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert distance.kind == "center_distance"
+    assert distance.value == 60
+    assert distance.direction == 1
+    assert distance.targets[0].startswith("constraints.span_centers.C_")
+    assert distance.targets[1].startswith("constraints.symmetric_centers.C_")
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_center_distance"
+    )
+    assert distance.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+    anchors = [
+        item
+        for item in linked.evidence.relations
+        if item.id.startswith("R_SYMMETRIC_CENTER_PAIR_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert resolution.ok
+
+
+def test_symmetric_center_distance_bridge_requires_structured_pair_topology():
+    capture = _symmetric_center_distance_bridge_capture(
+        include_symmetric_pair=False
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_symmetric_center_distance_bridge_rejects_duplicate_pair_topology():
+    capture = _symmetric_center_distance_bridge_capture(
+        duplicate_pair=True
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_symmetric_center_distance_bridge_never_overrides_ambiguous_owner():
+    capture = _symmetric_center_distance_bridge_capture(
+        endpoint_kind="ambiguous_owner"
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        and item.get("endpoint_unresolved_kinds") == ["ambiguous_owner"]
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
 def test_identity_linker_anchors_structured_symmetric_profile_span():
     capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
     linked = link_reader_capture(capture)

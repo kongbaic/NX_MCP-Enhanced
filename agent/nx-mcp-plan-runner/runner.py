@@ -5802,6 +5802,7 @@ def _drawing_is_center_target(target: str) -> bool:
     leaf = target.split(".")[-1].lower()
     return (
         target.startswith("constraints.span_centers.")
+        or target.startswith("constraints.symmetric_centers.")
         or ".centerline." in target
         or ".position.center" in target
         or ".explicit_centers." in target

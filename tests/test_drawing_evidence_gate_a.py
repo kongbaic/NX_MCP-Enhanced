@@ -595,3 +595,60 @@ def test_center_distance_accepts_profile_span_constraint_center():
     assert result.values[span_center] == 30.0
     assert result.values[feature_center] == 50.0
     assert R.check_drawing_json(draft) == []
+
+
+def test_symmetric_center_constraint_round_trips_through_gate_a():
+    span_center = "constraints.span_centers.C_LEFT.x"
+    mirror_center = "constraints.symmetric_centers.C_RIGHT.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_LEFT",
+                kind="edge_offset",
+                axis="X",
+                value=20,
+                from_side="min",
+                targets=[span_center],
+                source_ids=["LEFT_CENTER"],
+                required_for_modeling=False,
+            ),
+            RelationEvidence(
+                id="R_RIGHT",
+                kind="edge_offset",
+                axis="X",
+                value=20,
+                from_side="max",
+                targets=[mirror_center],
+                source_ids=["RIGHT_CENTER"],
+                required_for_modeling=False,
+            ),
+            RelationEvidence(
+                id="R_DISTANCE",
+                kind="center_distance",
+                axis="X",
+                value=60,
+                direction=1,
+                targets=[span_center, mirror_center],
+                source_ids=["CENTER_DISTANCE"],
+                required_for_modeling=True,
+            ),
+        ],
+        required_targets=[span_center, mirror_center],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.values[span_center] == 20.0
+    assert result.values[mirror_center] == 80.0
+    assert draft["constraints"]["span_centers"]["C_LEFT"]["x"] == -30.0
+    assert draft["constraints"]["symmetric_centers"]["C_RIGHT"]["x"] == 30.0
+    assert R.check_drawing_json(draft) == []

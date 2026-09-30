@@ -92,6 +92,7 @@ _PROFILE_SPAN_CENTER_KIND = "hybrid_profile_span_center_ledger"
 _DIMENSION_SPAN_CENTER_IDENTITY_KIND = (
     "hybrid_dimension_span_center_identity_ledger"
 )
+_SYMMETRIC_DIMENSION_PAIR_KIND = "hybrid_symmetric_dimension_pair_ledger"
 
 _TRANSVERSE_CENTER_INDEX: dict[Axis, dict[Axis, int]] = {
     "X": {"Y": 0, "Z": 1},
@@ -402,28 +403,26 @@ def _validated_profile_span_centers(
     }
 
 
-def _dimension_span_center_endpoint_matches(
+def _span_center_identity_matches_by_endpoint(
     capture: ReaderCapture,
     *,
     dimension: CaptureDimension,
     span_centers: dict[str, dict[str, Any]],
-) -> dict[int, dict[str, Any]] | None:
-    """Resolve every intermediate-surface endpoint through unique span identity."""
+) -> dict[int, list[dict[str, Any]]]:
+    """Collect evidence-backed span-center matches for intermediate endpoints."""
 
-    unresolved_indices = [
+    unresolved_indices = {
         index
         for index, endpoint in enumerate(dimension.endpoints)
-        if endpoint.role == "unresolved"
-    ]
-    if not unresolved_indices:
-        return None
-    if any(
-        dimension.endpoints[index].unresolved_kind != "intermediate_surface"
-        for index in unresolved_indices
-    ):
-        return None
-
+        if (
+            endpoint.role == "unresolved"
+            and endpoint.unresolved_kind == "intermediate_surface"
+        )
+    }
     matches_by_index: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    if not unresolved_indices:
+        return matches_by_index
+
     for observation in capture.observations:
         if observation.get("kind") != _DIMENSION_SPAN_CENTER_IDENTITY_KIND:
             continue
@@ -463,11 +462,15 @@ def _dimension_span_center_endpoint_matches(
             if span_center is None:
                 continue
             raw_sources = record.get("source_ids")
-            source_ids = [
-                item
-                for item in raw_sources
-                if isinstance(item, str) and item
-            ] if isinstance(raw_sources, list) else []
+            source_ids = (
+                [
+                    item
+                    for item in raw_sources
+                    if isinstance(item, str) and item
+                ]
+                if isinstance(raw_sources, list)
+                else []
+            )
             matches_by_index[endpoint_index].append(
                 {
                     "target": span_center["target"],
@@ -481,6 +484,295 @@ def _dimension_span_center_endpoint_matches(
                     ),
                 }
             )
+    return matches_by_index
+
+
+def _validated_symmetric_dimension_pairs(
+    capture: ReaderCapture,
+) -> dict[str, dict[str, Any]]:
+    """Return unique centered-dimension topology records tied to capture dimensions."""
+
+    dimension_by_id = {item.id: item for item in capture.dimensions}
+    by_dimension: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for observation in capture.observations:
+        if observation.get("kind") != _SYMMETRIC_DIMENSION_PAIR_KIND:
+            continue
+        if observation.get("engineering_coordinate_inferred_from_pixels") is not False:
+            continue
+        if observation.get("pixel_geometry_used_for_identity_only") is not True:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            dimension_id = record.get("dimension_id")
+            if not isinstance(dimension_id, str) or not dimension_id:
+                continue
+            dimension = dimension_by_id.get(dimension_id)
+            if dimension is None:
+                continue
+            if record.get("axis") != dimension.axis:
+                continue
+            if record.get("datum") != "overall_center":
+                continue
+            if record.get("basis") != (
+                "rotational_symmetry_plus_structurally_shared_raster_view"
+                "_plus_overall_witness_midpoint"
+            ):
+                continue
+            raw_dimension_value = record.get("dimension_value")
+            raw_overall_value = record.get("overall_dimension_value")
+            if (
+                isinstance(raw_dimension_value, bool)
+                or not isinstance(raw_dimension_value, (int, float))
+                or isinstance(raw_overall_value, bool)
+                or not isinstance(raw_overall_value, (int, float))
+            ):
+                continue
+            overall_value = {
+                "X": capture.overall_dimensions.length_x,
+                "Y": capture.overall_dimensions.width_y,
+                "Z": capture.overall_dimensions.height_z,
+            }[dimension.axis]
+            if (
+                abs(float(raw_dimension_value) - float(dimension.value)) > 1e-9
+                or abs(float(raw_overall_value) - float(overall_value)) > 1e-9
+                or float(dimension.value) <= 0
+                or float(dimension.value) >= float(overall_value)
+            ):
+                continue
+
+            selected_pair = record.get("selected_witness_positions_px")
+            overall_pair = record.get("overall_witness_positions_px")
+            if not (
+                isinstance(selected_pair, list)
+                and len(selected_pair) == 2
+                and isinstance(overall_pair, list)
+                and len(overall_pair) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in [*selected_pair, *overall_pair]
+                )
+            ):
+                continue
+            selected_low, selected_high = sorted(float(v) for v in selected_pair)
+            overall_low, overall_high = sorted(float(v) for v in overall_pair)
+            overall_span = overall_high - overall_low
+            if (
+                selected_high <= selected_low
+                or overall_span <= 0
+                or selected_low < overall_low
+                or selected_high > overall_high
+            ):
+                continue
+            tolerance = max(2.0, overall_span * 0.015)
+            residual = abs(
+                (selected_low + selected_high) / 2.0
+                - (overall_low + overall_high) / 2.0
+            )
+            if residual > tolerance:
+                continue
+
+            candidate_id = str(record.get("candidate_id") or "")
+            if not candidate_id:
+                continue
+            if not {
+                f"hybrid:{candidate_id}:whole",
+                f"hybrid:{candidate_id}:wide",
+            }.intersection(dimension.source_ids):
+                continue
+
+            raw_sources = record.get("source_ids")
+            source_ids = (
+                [
+                    item
+                    for item in raw_sources
+                    if isinstance(item, str) and item
+                ]
+                if isinstance(raw_sources, list)
+                else []
+            )
+            by_dimension[dimension_id].append(
+                {
+                    "overall_value": float(overall_value),
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *dimension.source_ids,
+                                *source_ids,
+                            ]
+                        )
+                    ),
+                }
+            )
+
+    return {
+        dimension_id: records[0]
+        for dimension_id, records in by_dimension.items()
+        if len(records) == 1
+    }
+
+
+def _symmetric_center_distance_bridge(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    span_centers: dict[str, dict[str, Any]],
+    symmetric_pairs: dict[str, dict[str, Any]],
+) -> list[RelationEvidence] | None:
+    """Anchor one identified center and its mirror from engineering dimensions."""
+
+    pair = symmetric_pairs.get(dimension.id)
+    if pair is None or dimension.direction not in {-1, 1}:
+        return None
+    if len(dimension.endpoints) != 2:
+        return None
+    if any(
+        endpoint.role != "unresolved"
+        or endpoint.unresolved_kind != "intermediate_surface"
+        for endpoint in dimension.endpoints
+    ):
+        return None
+
+    matches = _span_center_identity_matches_by_endpoint(
+        capture,
+        dimension=dimension,
+        span_centers=span_centers,
+    )
+    if any(len(items) > 1 for items in matches.values()):
+        return None
+    unique_matches = {
+        index: items[0]
+        for index, items in matches.items()
+        if len(items) == 1
+    }
+    if len(unique_matches) != 1:
+        return None
+
+    matched_index, match = next(iter(unique_matches.items()))
+    overall_value = float(pair["overall_value"])
+    distance = float(dimension.value)
+    offset = (overall_value - distance) / 2.0
+    if offset < 0:
+        return None
+
+    if dimension.direction == 1:
+        matched_side: Literal["min", "max"] = (
+            "min" if matched_index == 0 else "max"
+        )
+    else:
+        matched_side = "max" if matched_index == 0 else "min"
+
+    known_target = str(match["target"])
+    identity_payload = json.dumps(
+        {
+            "axis": dimension.axis,
+            "known_target": known_target,
+            "distance": distance,
+            "overall": overall_value,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
+    mirror_target = (
+        f"constraints.symmetric_centers.C_{digest}.{dimension.axis.lower()}"
+    )
+
+    if matched_side == "min":
+        min_target, max_target = known_target, mirror_target
+    else:
+        min_target, max_target = mirror_target, known_target
+
+    source_ids = list(
+        dict.fromkeys(
+            [
+                *dimension.source_ids,
+                *[
+                    source_id
+                    for endpoint in dimension.endpoints
+                    for source_id in endpoint.source_ids
+                ],
+                *match["source_ids"],
+                *pair["source_ids"],
+            ]
+        )
+    )
+    metadata = {
+        "basis": "overall_center_symmetric_center_distance",
+        "matched_span_center_endpoint_index": matched_index,
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+    return [
+        RelationEvidence(
+            id=f"R_SYMMETRIC_CENTER_PAIR_{digest}_MIN",
+            kind="edge_offset",
+            axis=dimension.axis,
+            value=offset,
+            from_side="min",
+            targets=[min_target],
+            source_ids=source_ids,
+            required_for_modeling=False,
+            metadata=metadata,
+        ),
+        RelationEvidence(
+            id=f"R_SYMMETRIC_CENTER_PAIR_{digest}_MAX",
+            kind="edge_offset",
+            axis=dimension.axis,
+            value=offset,
+            from_side="max",
+            targets=[max_target],
+            source_ids=source_ids,
+            required_for_modeling=False,
+            metadata=metadata,
+        ),
+        RelationEvidence(
+            id=dimension.id,
+            kind="center_distance",
+            axis=dimension.axis,
+            value=distance,
+            direction=1,
+            targets=[min_target, max_target],
+            source_ids=source_ids,
+            required_for_modeling=dimension.required_for_modeling,
+            metadata=metadata,
+        ),
+    ]
+
+
+def _dimension_span_center_endpoint_matches(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    span_centers: dict[str, dict[str, Any]],
+) -> dict[int, dict[str, Any]] | None:
+    """Resolve every intermediate-surface endpoint through unique span identity."""
+
+    unresolved_indices = [
+        index
+        for index, endpoint in enumerate(dimension.endpoints)
+        if endpoint.role == "unresolved"
+    ]
+    if not unresolved_indices:
+        return None
+    if any(
+        dimension.endpoints[index].unresolved_kind != "intermediate_surface"
+        for index in unresolved_indices
+    ):
+        return None
+
+    matches_by_index = _span_center_identity_matches_by_endpoint(
+        capture,
+        dimension=dimension,
+        span_centers=span_centers,
+    )
 
     if any(len(matches_by_index.get(index, [])) != 1 for index in unresolved_indices):
         return None
@@ -1365,6 +1657,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         capture,
         entity_to_feature,
     )
+    symmetric_dimension_pairs = _validated_symmetric_dimension_pairs(capture)
     for item in capture.dimensions:
         if any(endpoint.role == "unresolved" for endpoint in item.endpoints):
             endpoint_matches = _dimension_span_center_endpoint_matches(
@@ -1381,6 +1674,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 if bridged_relation is not None:
                     synthetic_relations.append(bridged_relation)
                     continue
+
+            symmetric_bridge = _symmetric_center_distance_bridge(
+                capture,
+                dimension=item,
+                span_centers=profile_span_centers,
+                symmetric_pairs=symmetric_dimension_pairs,
+            )
+            if symmetric_bridge is not None:
+                synthetic_relations.extend(symmetric_bridge)
+                continue
 
             related_entity_ids = sorted(
                 {

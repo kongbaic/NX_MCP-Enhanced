@@ -3646,3 +3646,309 @@ def test_centerline_alignment_propagates_transverse_coordinates_without_merging_
     assert resolution.values[f"feature:{thread_feature}.centerline.z"] == 18
     assert resolution.values[f"feature:{recess_feature}.centerline.z"] == 18
 
+
+
+
+def _projected_profile_bridge_capture(
+    *,
+    symmetric=False,
+    ambiguous_profile_target=False,
+    endpoint_kind="intermediate_surface",
+) -> ReaderCapture:
+    entities = [
+        CaptureEntity(
+            id="E_BOTTOM",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.BOTTOM"],
+            required_for_modeling=False,
+        ),
+        CaptureEntity(
+            id="E_LEFT",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.LEFT"],
+            required_for_modeling=False,
+        ),
+        CaptureEntity(
+            id="E_RIGHT",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.RIGHT"],
+            required_for_modeling=False,
+        ),
+    ]
+    if ambiguous_profile_target:
+        entities.append(
+            CaptureEntity(
+                id="E_LEFT_ALT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.LEFT_ALT"],
+                required_for_modeling=False,
+            )
+        )
+
+    if symmetric:
+        dimension = CaptureDimension(
+            id="D_PROJECTED",
+            value=60,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    candidate_entity_ids=(
+                        ["E_LEFT", "E_LEFT_ALT"]
+                        if endpoint_kind == "ambiguous_owner"
+                        else []
+                    ),
+                    source_ids=["SRC_LEFT_WITNESS"],
+                ),
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    source_ids=["SRC_RIGHT_WITNESS"],
+                ),
+            ],
+            unresolved_reason="projected profile ownership unresolved",
+            source_ids=["hybrid:DG_PROJECTED:whole"],
+        )
+        projected_items = [
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 0,
+                "axis": "X",
+                "profile_refs": (
+                    ["R1.LEFT", "R1.LEFT_ALT"]
+                    if ambiguous_profile_target
+                    else ["R1.LEFT"]
+                ),
+                "profile_entity_ids": (
+                    ["E_LEFT", "E_LEFT_ALT"]
+                    if ambiguous_profile_target
+                    else ["E_LEFT"]
+                ),
+                "overall_role": None,
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_LEFT_PROJECTED"],
+            },
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 1,
+                "axis": "X",
+                "profile_refs": ["R1.RIGHT"],
+                "profile_entity_ids": ["E_RIGHT"],
+                "overall_role": None,
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_RIGHT_PROJECTED"],
+            },
+        ]
+    else:
+        dimension = CaptureDimension(
+            id="D_PROJECTED",
+            value=28,
+            axis="Z",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    candidate_entity_ids=(
+                        ["E_BOTTOM"]
+                        if endpoint_kind == "ambiguous_owner"
+                        else []
+                    ),
+                    source_ids=["SRC_BOTTOM_WITNESS"],
+                ),
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    source_ids=["SRC_STEP_WITNESS"],
+                ),
+            ],
+            unresolved_reason="projected profile ownership unresolved",
+            source_ids=["hybrid:DG_PROJECTED:whole"],
+        )
+        projected_items = [
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 0,
+                "axis": "Z",
+                "profile_refs": ["R1.BOTTOM"],
+                "profile_entity_ids": ["E_BOTTOM"],
+                "overall_role": "overall_min",
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_BOTTOM_PROJECTED"],
+            },
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 1,
+                "axis": "Z",
+                "profile_refs": ["R1.LEFT"],
+                "profile_entity_ids": ["E_LEFT"],
+                "overall_role": None,
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_STEP_PROJECTED"],
+            },
+        ]
+
+    observations = [
+        {
+            "kind": "hybrid_projected_profile_level_ledger",
+            "schema": "1.0",
+            "items": projected_items,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+    if symmetric:
+        observations.append(
+            {
+                "kind": "hybrid_symmetric_dimension_pair_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_PROJECTED",
+                        "candidate_id": "DG_PROJECTED",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "dimension_value": 60,
+                        "overall_dimension_value": 100,
+                        "selected_witness_positions_px": [20.0, 80.0],
+                        "overall_candidate_id": "DG_OVERALL",
+                        "overall_region_id": "R1",
+                        "overall_witness_positions_px": [0.0, 100.0],
+                        "midpoint_residual_px": 0.0,
+                        "midpoint_tolerance_px": 2.0,
+                        "basis": (
+                            "rotational_symmetry_plus_structurally_shared_raster_view"
+                            "_plus_overall_witness_midpoint"
+                        ),
+                        "source_ids": ["SRC_SYMMETRIC_PROJECTED"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=entities,
+        dimensions=[dimension],
+        observations=observations,
+    )
+
+
+def test_projected_profile_bridge_resolves_overall_to_profile_level():
+    capture = _projected_profile_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    relation = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert relation.kind == "edge_offset"
+    assert relation.from_side == "min"
+    assert relation.value == 28
+    assert relation.targets[0].endswith(".boundary.z")
+    assert relation.metadata["basis"] == (
+        "dimension_endpoint_resolved_by_projected_profile_level"
+    )
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[relation.targets[0]] == 28.0
+    draft = build_semantic_draft(compiled, resolution)
+    reference = next(
+        item for item in draft["features"]
+        if item.get("boundary", {}).get("z") == -12.0
+    )
+    assert reference["type"] == "reference_boundary"
+
+
+def test_projected_profile_bridge_resolves_symmetric_profile_pair():
+    capture = _projected_profile_bridge_capture(symmetric=True)
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    distance = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.direction == 1
+    assert distance.value == 60
+    assert all(target.endswith(".boundary.x") for target in distance.targets)
+
+    anchors = [
+        item for item in linked.evidence.relations
+        if item.id.startswith("R_PROJECTED_PROFILE_SYMMETRY_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert resolution.ok
+
+
+def test_projected_profile_bridge_rejects_multiple_physical_boundary_targets():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        ambiguous_profile_target=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_projected_profile_bridge_never_overrides_ambiguous_owner():
+    capture = _projected_profile_bridge_capture(
+        endpoint_kind="ambiguous_owner",
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        and "ambiguous_owner" in item.get("endpoint_unresolved_kinds", [])
+        for item in linked.evidence.unresolved_evidence
+    )

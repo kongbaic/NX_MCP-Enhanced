@@ -93,6 +93,7 @@ _DIMENSION_SPAN_CENTER_IDENTITY_KIND = (
     "hybrid_dimension_span_center_identity_ledger"
 )
 _SYMMETRIC_DIMENSION_PAIR_KIND = "hybrid_symmetric_dimension_pair_ledger"
+_PROJECTED_PROFILE_LEVEL_KIND = "hybrid_projected_profile_level_ledger"
 
 _TRANSVERSE_CENTER_INDEX: dict[Axis, dict[Axis, int]] = {
     "X": {"Y": 0, "Z": 1},
@@ -747,6 +748,345 @@ def _symmetric_center_distance_bridge(
     ]
 
 
+def _projected_profile_endpoint_matches(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    entity_to_feature: dict[str, str],
+) -> dict[int, list[dict[str, Any]]]:
+    """Collect unique physical profile-level projections per unresolved endpoint."""
+
+    unresolved_indices = {
+        index
+        for index, endpoint in enumerate(dimension.endpoints)
+        if (
+            endpoint.role == "unresolved"
+            and endpoint.unresolved_kind == "intermediate_surface"
+        )
+    }
+    matches: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    if not unresolved_indices:
+        return matches
+
+    entity_by_id = {item.id: item for item in capture.entities}
+    for observation in capture.observations:
+        if observation.get("kind") != _PROJECTED_PROFILE_LEVEL_KIND:
+            continue
+        if observation.get("engineering_coordinate_inferred_from_pixels") is not False:
+            continue
+        if observation.get("pixel_geometry_used_for_identity_only") is not True:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            if record.get("dimension_id") != dimension.id:
+                continue
+            if record.get("axis") != dimension.axis:
+                continue
+            if record.get("basis") != (
+                "extension_line_projection_to_structural_profile_level"
+            ):
+                continue
+            endpoint_index = record.get("endpoint_index")
+            if (
+                not isinstance(endpoint_index, int)
+                or isinstance(endpoint_index, bool)
+                or endpoint_index not in unresolved_indices
+            ):
+                continue
+
+            candidate_id = str(record.get("candidate_id") or "")
+            if not candidate_id:
+                continue
+            if not {
+                f"hybrid:{candidate_id}:whole",
+                f"hybrid:{candidate_id}:wide",
+            }.intersection(dimension.source_ids):
+                continue
+
+            raw_entity_ids = record.get("profile_entity_ids")
+            raw_refs = record.get("profile_refs")
+            if not (
+                isinstance(raw_entity_ids, list)
+                and raw_entity_ids
+                and len(set(raw_entity_ids)) == len(raw_entity_ids)
+                and all(
+                    isinstance(entity_id, str) and entity_id
+                    for entity_id in raw_entity_ids
+                )
+                and isinstance(raw_refs, list)
+                and raw_refs
+                and all(isinstance(ref, str) and ref for ref in raw_refs)
+            ):
+                continue
+
+            entities = [
+                entity_by_id.get(entity_id)
+                for entity_id in raw_entity_ids
+            ]
+            if any(
+                entity is None or entity.shape != "profile"
+                for entity in entities
+            ):
+                continue
+            if any(
+                not any(
+                    f"hybrid:profile-edge:{ref}" in entity.source_ids
+                    for entity in entities
+                    if entity is not None
+                )
+                for ref in raw_refs
+            ):
+                continue
+
+            raw_sources = record.get("source_ids")
+            record_sources = (
+                [
+                    source_id
+                    for source_id in raw_sources
+                    if isinstance(source_id, str) and source_id
+                ]
+                if isinstance(raw_sources, list)
+                else []
+            )
+            entity_sources = [
+                source_id
+                for entity in entities
+                if entity is not None
+                for source_id in entity.source_ids
+            ]
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        *dimension.source_ids,
+                        *record_sources,
+                        *entity_sources,
+                    ]
+                )
+            )
+
+            overall_role = record.get("overall_role")
+            if overall_role in {"overall_min", "overall_max"}:
+                matches[endpoint_index].append(
+                    {
+                        "role": overall_role,
+                        "target": None,
+                        "source_ids": source_ids,
+                    }
+                )
+                continue
+            if overall_role is not None:
+                continue
+            if any(
+                entity_id not in entity_to_feature
+                for entity_id in raw_entity_ids
+            ):
+                continue
+
+            targets = {
+                (
+                    f"feature:{entity_to_feature[entity_id]}"
+                    f".boundary.{dimension.axis.lower()}"
+                )
+                for entity_id in raw_entity_ids
+            }
+            if len(targets) != 1:
+                continue
+            matches[endpoint_index].append(
+                {
+                    "role": "profile",
+                    "target": next(iter(targets)),
+                    "source_ids": source_ids,
+                }
+            )
+
+    return matches
+
+
+def _projected_profile_dimension_bridge(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    entity_to_feature: dict[str, str],
+    symmetric_pairs: dict[str, dict[str, Any]],
+) -> list[RelationEvidence] | None:
+    """Promote fully proven projected profile levels to engineering relations."""
+
+    unresolved_indices = [
+        index
+        for index, endpoint in enumerate(dimension.endpoints)
+        if endpoint.role == "unresolved"
+    ]
+    if not unresolved_indices:
+        return None
+    if any(
+        dimension.endpoints[index].unresolved_kind != "intermediate_surface"
+        for index in unresolved_indices
+    ):
+        return None
+
+    matches = _projected_profile_endpoint_matches(
+        capture,
+        dimension=dimension,
+        entity_to_feature=entity_to_feature,
+    )
+    if any(len(matches.get(index, [])) != 1 for index in unresolved_indices):
+        return None
+
+    axis_leaf = dimension.axis.lower()
+    specs: list[tuple[str, str | None]] = []
+    source_ids = list(dimension.source_ids)
+    projected_indices: list[int] = []
+
+    for index, endpoint in enumerate(dimension.endpoints):
+        source_ids.extend(endpoint.source_ids)
+        if endpoint.role == "unresolved":
+            match = matches[index][0]
+            specs.append((str(match["role"]), match.get("target")))
+            source_ids.extend(match["source_ids"])
+            projected_indices.append(index)
+            continue
+
+        known = _known_dimension_endpoint_target(
+            endpoint,
+            axis_leaf=axis_leaf,
+            entity_to_feature=entity_to_feature,
+        )
+        if known is None:
+            return None
+        specs.append(known)
+
+    source_ids = list(dict.fromkeys(source_ids))
+    metadata = {
+        "basis": "dimension_endpoint_resolved_by_projected_profile_level",
+        "projected_profile_endpoint_indices": projected_indices,
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+    overall = [
+        (index, role)
+        for index, (role, _target) in enumerate(specs)
+        if role in {"overall_min", "overall_max"}
+    ]
+    if overall:
+        if len(overall) != 1:
+            return None
+        other_index = 1 - overall[0][0]
+        other_target = specs[other_index][1]
+        if other_target is None:
+            return None
+        from_side: Literal["min", "max"] = (
+            "min" if overall[0][1] == "overall_min" else "max"
+        )
+        return [
+            RelationEvidence(
+                id=dimension.id,
+                kind="edge_offset",
+                axis=dimension.axis,
+                value=dimension.value,
+                from_side=from_side,
+                targets=[other_target],
+                source_ids=source_ids,
+                required_for_modeling=dimension.required_for_modeling,
+                metadata=metadata,
+            )
+        ]
+
+    targets = [target for _role, target in specs if target is not None]
+    if len(targets) != 2 or len(set(targets)) != 2:
+        return None
+
+    pair = symmetric_pairs.get(dimension.id)
+    if (
+        pair is not None
+        and [role for role, _target in specs] == ["profile", "profile"]
+        and dimension.direction in {-1, 1}
+    ):
+        overall_value = float(pair["overall_value"])
+        offset = (overall_value - float(dimension.value)) / 2.0
+        if offset < 0:
+            return None
+        if dimension.direction == 1:
+            min_target, max_target = targets
+        else:
+            max_target, min_target = targets
+
+        symmetric_sources = list(
+            dict.fromkeys([*source_ids, *pair["source_ids"]])
+        )
+        symmetric_metadata = {
+            **metadata,
+            "basis": "overall_center_symmetric_projected_profile_levels",
+        }
+        digest_payload = json.dumps(
+            {
+                "axis": dimension.axis,
+                "min_target": min_target,
+                "max_target": max_target,
+                "distance": dimension.value,
+                "overall": overall_value,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(digest_payload).hexdigest()[:16].upper()
+        return [
+            RelationEvidence(
+                id=f"R_PROJECTED_PROFILE_SYMMETRY_{digest}_MIN",
+                kind="edge_offset",
+                axis=dimension.axis,
+                value=offset,
+                from_side="min",
+                targets=[min_target],
+                source_ids=symmetric_sources,
+                required_for_modeling=False,
+                metadata=symmetric_metadata,
+            ),
+            RelationEvidence(
+                id=f"R_PROJECTED_PROFILE_SYMMETRY_{digest}_MAX",
+                kind="edge_offset",
+                axis=dimension.axis,
+                value=offset,
+                from_side="max",
+                targets=[max_target],
+                source_ids=symmetric_sources,
+                required_for_modeling=False,
+                metadata=symmetric_metadata,
+            ),
+            RelationEvidence(
+                id=dimension.id,
+                kind="coordinate_distance",
+                axis=dimension.axis,
+                value=dimension.value,
+                direction=1,
+                targets=[min_target, max_target],
+                source_ids=symmetric_sources,
+                required_for_modeling=dimension.required_for_modeling,
+                metadata=symmetric_metadata,
+            ),
+        ]
+
+    return [
+        RelationEvidence(
+            id=dimension.id,
+            kind="coordinate_distance",
+            axis=dimension.axis,
+            value=dimension.value,
+            direction=dimension.direction,
+            targets=targets,
+            source_ids=source_ids,
+            required_for_modeling=dimension.required_for_modeling,
+            metadata=metadata,
+        )
+    ]
+
+
 def _dimension_span_center_endpoint_matches(
     capture: ReaderCapture,
     *,
@@ -980,6 +1320,26 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
 
     for item in capture.unresolved_evidence:
         referenced.update(item.entity_ids)
+
+    for observation in capture.observations:
+        if observation.get("kind") != _PROJECTED_PROFILE_LEVEL_KIND:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            if record.get("overall_role") in {"overall_min", "overall_max"}:
+                continue
+            raw_entity_ids = record.get("profile_entity_ids")
+            if not isinstance(raw_entity_ids, list):
+                continue
+            referenced.update(
+                entity_id
+                for entity_id in raw_entity_ids
+                if isinstance(entity_id, str) and entity_id
+            )
 
     return referenced
 
@@ -1683,6 +2043,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             )
             if symmetric_bridge is not None:
                 synthetic_relations.extend(symmetric_bridge)
+                continue
+
+            projected_profile_bridge = _projected_profile_dimension_bridge(
+                capture,
+                dimension=item,
+                entity_to_feature=entity_to_feature,
+                symmetric_pairs=symmetric_dimension_pairs,
+            )
+            if projected_profile_bridge is not None:
+                synthetic_relations.extend(projected_profile_bridge)
                 continue
 
             related_entity_ids = sorted(

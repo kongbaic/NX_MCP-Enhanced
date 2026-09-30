@@ -106,6 +106,85 @@ def _profile_extreme(
     return side, float(position_px), ref
 
 
+def _accepted_overall_witness_pairs(
+    *,
+    candidates: list[dict[str, Any]],
+    region_id: str,
+    axis: str,
+    region_views: dict[str, str],
+    overall_dimensions: dict[str, float],
+    relative_tolerance: float,
+) -> list[tuple[float, float]]:
+    """Return selected witness pairs for accepted same-region overall dimensions.
+
+    These raster positions are used only to validate boundary identity.  They
+    never define engineering coordinates or a pixel-to-mm scale.
+    """
+
+    output: list[tuple[float, float]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if str(candidate.get("region_id") or "") != region_id:
+            continue
+        orientation = str(candidate.get("orientation") or "")
+        view_kind = region_views.get(region_id)
+        candidate_axis = (
+            _AXIS_BY_VIEW_ORIENTATION.get((view_kind, orientation))
+            if view_kind is not None
+            else None
+        )
+        if candidate_axis != axis:
+            continue
+
+        overall_value = _overall_value(overall_dimensions, axis)
+        dimension_value = _linear_value(candidate.get("accepted_token"))
+        if overall_value is None or dimension_value is None:
+            continue
+        tolerance = max(abs(overall_value) * relative_tolerance, 1e-9)
+        if abs(dimension_value - overall_value) > tolerance:
+            continue
+
+        endpoint_evidence = derive_dimension_endpoint_candidates(candidate)
+        selected = endpoint_evidence.get("selected_witness_positions_px")
+        if not (
+            isinstance(selected, list)
+            and len(selected) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in selected
+            )
+        ):
+            continue
+        low, high = sorted(float(value) for value in selected)
+        output.append((low, high))
+
+    return output
+
+
+def _profile_extremes_agree_with_overall_witnesses(
+    *,
+    min_edge: dict[str, Any],
+    max_edge: dict[str, Any],
+    witness_pairs: list[tuple[float, float]],
+) -> bool:
+    if not witness_pairs:
+        return True
+
+    min_position = float(min_edge["position_px"])
+    max_position = float(max_edge["position_px"])
+    min_tolerance = float(min_edge.get("axis_tolerance_px", 0.0) or 0.0)
+    max_tolerance = float(max_edge.get("axis_tolerance_px", 0.0) or 0.0)
+
+    for witness_min, witness_max in witness_pairs:
+        if (
+            abs(witness_min - min_position) > min_tolerance
+            or abs(witness_max - max_position) > max_tolerance
+        ):
+            return False
+    return True
+
+
 def derive_view_axis_boundaries(
     *,
     candidates: list[dict[str, Any]],
@@ -261,6 +340,21 @@ def derive_view_axis_boundaries(
                 min_edge = minimum[0]
                 max_edge = maximum[0]
                 if str(min_edge.get("ref") or "") == str(max_edge.get("ref") or ""):
+                    continue
+
+                overall_witness_pairs = _accepted_overall_witness_pairs(
+                    candidates=candidates,
+                    region_id=region_id,
+                    axis=axis,
+                    region_views=region_views,
+                    overall_dimensions=overall_dimensions,
+                    relative_tolerance=relative_tolerance,
+                )
+                if not _profile_extremes_agree_with_overall_witnesses(
+                    min_edge=min_edge,
+                    max_edge=max_edge,
+                    witness_pairs=overall_witness_pairs,
+                ):
                     continue
 
                 role_by_side = (

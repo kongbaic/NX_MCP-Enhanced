@@ -391,6 +391,127 @@ def test_metric_profile_segments_fail_closed_without_explicit_gap_tolerance():
     assert tolerant["segments"][0]["length_mm"] == pytest.approx(40.0)
 
 
+def _overall_candidate_with_witness_pair(
+    *,
+    region_id: str = "R1",
+    value: str = "40",
+    witnesses: list[float],
+) -> dict[str, object]:
+    midpoint = sum(witnesses) / len(witnesses)
+    return {
+        "candidate_id": "DG_OVERALL",
+        "region_id": region_id,
+        "orientation": "horizontal",
+        "axis_px": 50.0,
+        "accepted_token": value,
+        "global_assignments": [
+            {
+                "token": value,
+                "bbox": [
+                    [midpoint - 10.0, 40.0],
+                    [midpoint + 10.0, 40.0],
+                    [midpoint + 10.0, 60.0],
+                    [midpoint - 10.0, 60.0],
+                ],
+            }
+        ],
+        "witness_positions_px": witnesses,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": index,
+                "position_px": witness,
+                "nearest_anchors": [],
+            }
+            for index, witness in enumerate(witnesses)
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "position_px": witness,
+                "source_lines": [],
+            }
+            for index, witness in enumerate(witnesses)
+        ],
+    }
+
+
+def test_profile_extreme_fallback_allows_matching_overall_witness_pair():
+    profile_inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.LEFT",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "min",
+            "axis_tolerance_px": 3.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.RIGHT",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "max",
+            "axis_tolerance_px": 3.0,
+        },
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[
+            _overall_candidate_with_witness_pair(
+                witnesses=[101.0, 299.0],
+            )
+        ],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "X")},
+    )
+
+    assert [(item["region_id"], item["axis"]) for item in items] == [("R1", "X")]
+    assert items[0]["basis"] == (
+        "independent_overall_dimension_plus_unique_profile_extremes"
+    )
+
+
+def test_profile_extreme_fallback_rejects_conflicting_overall_witness_pair():
+    profile_inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.LEFT",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "min",
+            "axis_tolerance_px": 3.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.LOCAL_RIGHT",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "max",
+            "axis_tolerance_px": 3.0,
+        },
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[
+            _overall_candidate_with_witness_pair(
+                witnesses=[101.0, 420.0],
+            )
+        ],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "X")},
+    )
+
+    assert items == []
+
+
 def test_profile_extreme_fallback_requires_same_region_overall_fact_scope():
     profile_inventory = [
         {

@@ -1069,10 +1069,14 @@ def _rotational_oblique_profile_hints(
                     str(item.get("ref") or "")
                     for item in supports
                     if (
-                        _point_to_axis_profile_segment_distance(point, item)
+                        (
+                            distance := _point_to_axis_profile_segment_distance(
+                                point,
+                                item,
+                            )
+                        )
                         is not None
-                        and _point_to_axis_profile_segment_distance(point, item)
-                        <= tolerance
+                        and distance <= tolerance
                     )
                 )
                 endpoint_matches.append(list(dict.fromkeys(matches)))

@@ -6,7 +6,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from .capture import AssociationClaim, ReaderCapture, _association_basis_sufficient
+from .capture import (
+    AssociationClaim,
+    CaptureDimension,
+    ReaderCapture,
+    _association_basis_sufficient,
+)
 from .evidence import (
     Axis,
     DatumAlignmentEvidence,

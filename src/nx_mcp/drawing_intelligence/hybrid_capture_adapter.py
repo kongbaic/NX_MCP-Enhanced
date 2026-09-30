@@ -4447,23 +4447,29 @@ def _regions_share_structural_raster_view(
         return False
 
     def independent_edges(region_id: str) -> list[dict[str, Any]]:
-        return [
-            item
-            for item in profile_inventory
-            if isinstance(item, dict)
-            and item.get("kind") == "profile_edge_candidate"
-            and str(item.get("region_id") or "") == region_id
-            and isinstance(item.get("position_px"), (int, float))
-            and not isinstance(item.get("position_px"), bool)
-            and isinstance(item.get("span_px"), list)
-            and len(item.get("span_px")) == 2
-            and all(
-                isinstance(value, (int, float)) and not isinstance(value, bool)
-                for value in item.get("span_px")
-            )
-            and isinstance(item.get("non_dimension_crossing_source_count"), int)
-            and item.get("non_dimension_crossing_source_count", 0) > 0
-        ]
+        output: list[dict[str, Any]] = []
+        for item in profile_inventory:
+            span = item.get("span_px")
+            if (
+                item.get("kind") != "profile_edge_candidate"
+                or str(item.get("region_id") or "") != region_id
+                or not isinstance(item.get("position_px"), (int, float))
+                or isinstance(item.get("position_px"), bool)
+                or not isinstance(span, list)
+                or len(span) != 2
+                or not all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in span
+                )
+                or not isinstance(
+                    item.get("non_dimension_crossing_source_count"),
+                    int,
+                )
+                or item.get("non_dimension_crossing_source_count", 0) <= 0
+            ):
+                continue
+            output.append(item)
+        return output
 
     first_edges = independent_edges(first_region_id)
     second_edges = independent_edges(second_region_id)
@@ -4571,8 +4577,6 @@ def _symmetric_profile_span_record(
 
     anchors: list[dict[str, Any]] = []
     for overall_candidate in candidates:
-        if not isinstance(overall_candidate, dict):
-            continue
         accepted_token = overall_candidate.get("accepted_token")
         anchor_region_id = str(overall_candidate.get("region_id") or "")
         if not isinstance(accepted_token, str) or not anchor_region_id:

@@ -2893,6 +2893,7 @@ def _symmetric_profile_span_capture(*, include_symmetry_observation):
                 shape="profile",
                 cross_view_disposition="single_view",
                 source_ids=["SRC_LEFT"],
+                required_for_modeling=False,
             ),
             CaptureEntity(
                 id="E_RIGHT",
@@ -2900,6 +2901,7 @@ def _symmetric_profile_span_capture(*, include_symmetry_observation):
                 shape="profile",
                 cross_view_disposition="single_view",
                 source_ids=["SRC_RIGHT"],
+                required_for_modeling=False,
             ),
         ],
         dimensions=[

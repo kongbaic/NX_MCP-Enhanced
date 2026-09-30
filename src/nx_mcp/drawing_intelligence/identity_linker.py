@@ -166,9 +166,14 @@ def _valid_view_axis_boundary_items(
             ):
                 continue
             raw_axis = str(item.get("axis") or "").upper()
-            if raw_axis not in {"X", "Y", "Z"}:
+            if raw_axis == "X":
+                axis: Axis = "X"
+            elif raw_axis == "Y":
+                axis = "Y"
+            elif raw_axis == "Z":
+                axis = "Z"
+            else:
                 continue
-            axis: Axis = raw_axis
             raw_value = item.get("overall_dimension_value")
             if (
                 isinstance(raw_value, bool)
@@ -208,7 +213,15 @@ def _view_axis_boundary_relations(
     seen: set[tuple[str, str, str]] = set()
 
     for item in _valid_view_axis_boundary_items(capture):
-        axis: Axis = str(item["axis"]).upper()
+        raw_axis = str(item["axis"]).upper()
+        if raw_axis == "X":
+            axis: Axis = "X"
+        elif raw_axis == "Y":
+            axis = "Y"
+        elif raw_axis == "Z":
+            axis = "Z"
+        else:
+            continue
         for anchor in item.get("anchors", []):
             if not isinstance(anchor, dict):
                 continue
@@ -1651,10 +1664,10 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
         kind = observation.get("kind")
         if kind == _VIEW_AXIS_BOUNDARY_KIND:
             valid_items = _valid_view_axis_boundary_items(capture)
-            for item in valid_items:
-                if item not in observation.get("items", []):
+            for boundary_item in valid_items:
+                if boundary_item not in observation.get("items", []):
                     continue
-                for anchor in item.get("anchors", []):
+                for anchor in boundary_item.get("anchors", []):
                     if not isinstance(anchor, dict):
                         continue
                     ref = str(anchor.get("ref") or "")

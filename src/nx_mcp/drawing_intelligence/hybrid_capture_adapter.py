@@ -933,6 +933,169 @@ def _profile_lines_touch(
     )
 
 
+
+def _rotational_profile_topology_hints(
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    context: HybridAdapterContext,
+    profile_entity_by_ref: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Record structural profile connectivity in views with proven rotation.
+
+    This is an evidence-only topology ledger. Raster geometry is used only to
+    prove orthogonal edge connectivity. It never converts pixel positions or
+    spans into engineering coordinates, radii, diameters, or axial distances.
+    """
+
+    hints: list[dict[str, Any]] = []
+    for region_id, region_view in sorted(view_lookup.items()):
+        plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
+        if plane is None:
+            continue
+
+        region_evidence = set(region_view.evidence)
+        rotation_axes = {
+            fact.axis
+            for fact in context.rotational_symmetry_facts
+            if fact.axis in set(plane)
+            and region_evidence.intersection(fact.evidence)
+        }
+        if len(rotation_axes) != 1:
+            continue
+        rotation_axis = next(iter(rotation_axes))
+
+        edges: dict[str, dict[str, Any]] = {}
+        for item in profile_inventory:
+            if (
+                not isinstance(item, dict)
+                or item.get("kind") != "profile_edge_candidate"
+                or str(item.get("region_id") or "") != region_id
+            ):
+                continue
+            ref = str(item.get("ref") or "")
+            if not ref or ref not in profile_entity_by_ref:
+                continue
+            if _profile_line_segment_px(item) is None:
+                continue
+            edges[ref] = item
+
+        if len(edges) < 2:
+            continue
+
+        tolerance = max(
+            5.0,
+            _region_profile_match_tolerance(report, region_id) * 2.0,
+        )
+        adjacency: dict[str, set[str]] = {ref: set() for ref in edges}
+        refs = sorted(edges)
+        for index, left_ref in enumerate(refs):
+            for right_ref in refs[index + 1 :]:
+                if _profile_lines_touch(
+                    edges[left_ref],
+                    edges[right_ref],
+                    tolerance=tolerance,
+                ):
+                    adjacency[left_ref].add(right_ref)
+                    adjacency[right_ref].add(left_ref)
+
+        visited: set[str] = set()
+        components: list[list[str]] = []
+        for seed in refs:
+            if seed in visited or not adjacency[seed]:
+                continue
+            stack = [seed]
+            component: list[str] = []
+            while stack:
+                ref = stack.pop()
+                if ref in visited:
+                    continue
+                visited.add(ref)
+                component.append(ref)
+                stack.extend(sorted(adjacency[ref] - visited, reverse=True))
+            if len(component) >= 2:
+                components.append(sorted(component))
+
+        components.sort(key=lambda item: tuple(item))
+        for component_index, component in enumerate(components):
+            component_set = set(component)
+            junctions = [
+                [left_ref, right_ref]
+                for left_ref in component
+                for right_ref in sorted(adjacency[left_ref])
+                if right_ref in component_set and left_ref < right_ref
+            ]
+            if not junctions:
+                continue
+
+            edge_records: list[dict[str, Any]] = []
+            for ref in component:
+                item = edges[ref]
+                orientation = str(item.get("source_orientation") or "")
+                pixel_index = 0 if orientation == "vertical" else 1
+                constant_axes = [
+                    axis
+                    for axis in plane
+                    if _PIXEL_INDEX_BY_VIEW_AXIS.get(
+                        (region_view.view_kind, axis)
+                    )
+                    == pixel_index
+                ]
+                if len(constant_axes) != 1:
+                    edge_records = []
+                    break
+                edge_records.append(
+                    {
+                        "ref": ref,
+                        "profile_entity_key": profile_entity_by_ref[ref],
+                        "source_orientation": orientation,
+                        "constant_axis": constant_axes[0],
+                    }
+                )
+            if not edge_records:
+                continue
+
+            fact_evidence = [
+                evidence
+                for fact in context.rotational_symmetry_facts
+                if fact.axis == rotation_axis
+                and region_evidence.intersection(fact.evidence)
+                for evidence in fact.evidence
+            ]
+            hints.append(
+                {
+                    "region_id": region_id,
+                    "view_kind": region_view.view_kind,
+                    "plane": plane,
+                    "rotation_axis": rotation_axis,
+                    "component_index": component_index,
+                    "edges": edge_records,
+                    "junctions": junctions,
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *region_view.evidence,
+                                *fact_evidence,
+                                *[
+                                    f"hybrid:profile-edge:{ref}"
+                                    for ref in component
+                                ],
+                            ]
+                        )
+                    ),
+                    "basis": (
+                        "established_rotational_symmetry_plus_"
+                        "structural_profile_connectivity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            )
+
+    return hints
+
+
 def _metric_profile_topology_hints(
     *,
     report: dict[str, Any],
@@ -5416,6 +5579,14 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
 
+    rotational_profile_topology_hints = _rotational_profile_topology_hints(
+        report=report,
+        profile_inventory=profile_inventory,
+        view_lookup=view_lookup,
+        context=context,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
         entity_key = str(record.get("entity_key") or "")
@@ -6001,6 +6172,13 @@ def adapt_hybrid_ocr_report(
             "items": profile_offset_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "schema": "1.0",
+            "items": rotational_profile_topology_hints,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
         },
         {
             "kind": "hybrid_profile_topology_ledger",

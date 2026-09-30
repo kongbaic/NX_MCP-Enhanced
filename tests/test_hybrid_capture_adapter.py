@@ -4118,6 +4118,164 @@ def test_open_slot_fails_closed_when_two_tokens_compete():
     assert claimed == set()
 
 
+
+def _rotational_profile_context(*, include_rotation=True, ambiguous_axes=False):
+    facts = []
+    if include_rotation:
+        facts.append(
+            hybrid_adapter.PartialRotationalSymmetryFact(
+                axis="Z",
+                evidence=["test:R1"],
+            )
+        )
+    if ambiguous_axes:
+        facts.append(
+            hybrid_adapter.PartialRotationalSymmetryFact(
+                axis="X",
+                evidence=["test:R1"],
+            )
+        )
+    return hybrid_adapter.HybridAdapterContext(
+        region_views=[
+            hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        ],
+        rotational_symmetry_facts=facts,
+    )
+
+
+def _rotational_profile_inventory():
+    return [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "LEFT",
+            "source_orientation": "vertical",
+            "position_px": 20.0,
+            "span_px": [20.0, 80.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "SHOULDER",
+            "source_orientation": "horizontal",
+            "position_px": 20.0,
+            "span_px": [20.0, 50.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "STEP",
+            "source_orientation": "vertical",
+            "position_px": 50.0,
+            "span_px": [20.0, 60.0],
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "ISOLATED",
+            "source_orientation": "vertical",
+            "position_px": 90.0,
+            "span_px": [5.0, 10.0],
+        },
+    ]
+
+
+def test_rotational_profile_topology_records_connectivity_without_pixel_metric():
+    inventory = _rotational_profile_inventory()
+    hints = hybrid_adapter._rotational_profile_topology_hints(
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            "LEFT": "R1.PROFILE.LEFT",
+            "SHOULDER": "R1.PROFILE.SHOULDER",
+            "STEP": "R1.PROFILE.STEP",
+            "ISOLATED": "R1.PROFILE.ISOLATED",
+        },
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["rotation_axis"] == "Z"
+    assert hint["plane"] == "XZ"
+    assert [item["ref"] for item in hint["edges"]] == [
+        "LEFT",
+        "SHOULDER",
+        "STEP",
+    ]
+    assert {
+        item["ref"]: item["constant_axis"]
+        for item in hint["edges"]
+    } == {
+        "LEFT": "X",
+        "SHOULDER": "Z",
+        "STEP": "X",
+    }
+    assert hint["junctions"] == [
+        ["LEFT", "SHOULDER"],
+        ["SHOULDER", "STEP"],
+    ]
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
+    assert "position_px" not in repr(hint)
+    assert "span_px" not in repr(hint)
+
+
+def test_rotational_profile_topology_requires_established_rotation():
+    inventory = _rotational_profile_inventory()
+    hints = hybrid_adapter._rotational_profile_topology_hints(
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(include_rotation=False),
+        profile_entity_by_ref={
+            item["ref"]: f"R1.PROFILE.{item['ref']}"
+            for item in inventory
+        },
+    )
+
+    assert hints == []
+
+
+def test_rotational_profile_topology_rejects_ambiguous_rotation_axis():
+    inventory = _rotational_profile_inventory()
+    hints = hybrid_adapter._rotational_profile_topology_hints(
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(ambiguous_axes=True),
+        profile_entity_by_ref={
+            item["ref"]: f"R1.PROFILE.{item['ref']}"
+            for item in inventory
+        },
+    )
+
+    assert hints == []
+
+
 def test_metric_profile_topology_hint_finds_unique_l_cycle_without_pixel_metric():
     inventory = [
         {

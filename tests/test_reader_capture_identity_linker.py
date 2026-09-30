@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import nx_mcp.drawing_intelligence.identity_linker as identity_linker_module
 from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence import (
@@ -4073,6 +4074,196 @@ def test_view_axis_boundary_ledger_fails_closed_on_metric_or_provenance_mismatch
             if item.metadata.get("basis")
             == "independent_overall_dimension_plus_unique_profile_extremes"
         ]
+
+
+
+def test_rotational_topology_merges_crop_items_after_physical_identity_link():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(id="V_R1", kind="front"),
+            CaptureView(id="V_R2", kind="front"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_R1_SHARED",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="associated",
+                source_ids=["hybrid:profile-edge:R1.SHARED"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R2_SHARED",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="associated",
+                source_ids=["hybrid:profile-edge:R2.SHARED"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R1_LOCAL",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R2_LOCAL",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R2.LOCAL"],
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_SHARED",
+                entity_ids=["E_R1_SHARED", "E_R2_SHARED"],
+                basis=["shared_raster_profile_identity"],
+                source_ids=["SRC_SHARED"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.SHARED",
+                                "profile_entity_id": "E_R1_SHARED",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            },
+                            {
+                                "ref": "R1.LOCAL",
+                                "profile_entity_id": "E_R1_LOCAL",
+                                "source_orientation": "horizontal",
+                                "constant_axis": "Z",
+                            },
+                        ],
+                        "junctions": [["R1.SHARED", "R1.LOCAL"]],
+                        "source_ids": ["SRC_R1"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R2.SHARED",
+                                "profile_entity_id": "E_R2_SHARED",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            },
+                            {
+                                "ref": "R2.LOCAL",
+                                "profile_entity_id": "E_R2_LOCAL",
+                                "source_orientation": "horizontal",
+                                "constant_axis": "Z",
+                            },
+                        ],
+                        "junctions": [["R2.SHARED", "R2.LOCAL"]],
+                        "source_ids": ["SRC_R2"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    assert len(ledger["items"]) == 1
+    item = ledger["items"][0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["region_id"].startswith("PHYSICAL_")
+    assert item["basis"] == "identity_linked_physical_rotational_profile_topology"
+
+    shared_feature = linked.entity_to_feature["E_R1_SHARED"]
+    assert shared_feature == linked.entity_to_feature["E_R2_SHARED"]
+    physical_edges = {
+        (edge["physical_feature_id"], edge["constant_axis"])
+        for edge in item["edges"]
+    }
+    assert len(physical_edges) == 3
+    assert (shared_feature, "X") in physical_edges
+    assert len(item["junctions"]) == 2
+
+
+def test_rotational_topology_keeps_disjoint_physical_items_separate():
+    items = [
+        {
+            "region_id": "R1",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [
+                {
+                    "ref": "R1.A",
+                    "physical_feature_id": "F_A",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_A.boundary.x",
+                }
+            ],
+            "junctions": [],
+        },
+        {
+            "region_id": "R2",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [
+                {
+                    "ref": "R2.B",
+                    "physical_feature_id": "F_B",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_B.boundary.x",
+                }
+            ],
+            "junctions": [],
+        },
+    ]
+
+    merged = identity_linker_module._merge_physical_rotational_topology_items(items)
+
+    assert [item["region_id"] for item in merged] == ["R1", "R2"]
 
 
 def test_rotational_profile_topology_materializes_otherwise_orphan_profile_edge():

@@ -230,8 +230,6 @@ def _overlapping_profile_region_groups(
 
     signatures: dict[str, set[tuple[str, float, float, float]]] = {}
     for item in profile_inventory:
-        if not isinstance(item, dict):
-            continue
         region_id = str(item.get("region_id") or "")
         if region_id not in region_views:
             continue
@@ -283,15 +281,17 @@ def _boundary_record_pixel_pair(
         for anchor in anchors
         if isinstance(anchor, dict)
     ]
+    if len(positions) != 2:
+        return None
+    first, second = positions
     if (
-        len(positions) != 2
-        or any(
-            isinstance(value, bool) or not isinstance(value, (int, float))
-            for value in positions
-        )
+        isinstance(first, bool)
+        or not isinstance(first, (int, float))
+        or isinstance(second, bool)
+        or not isinstance(second, (int, float))
     ):
         return None
-    low, high = sorted(float(value) for value in positions)
+    low, high = sorted((float(first), float(second)))
     return low, high
 
 

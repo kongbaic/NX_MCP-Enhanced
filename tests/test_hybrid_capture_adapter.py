@@ -4337,6 +4337,145 @@ def _rotational_profile_inventory():
     ]
 
 
+
+def _independent_profile_edge(
+    ref,
+    *,
+    orientation,
+    position,
+    span,
+    support=1,
+):
+    return {
+        "kind": "profile_edge_candidate",
+        "region_id": "R1",
+        "ref": ref,
+        "source_orientation": orientation,
+        "position_px": float(position),
+        "span_px": [float(span[0]), float(span[1])],
+        "non_dimension_crossing_source_count": support,
+    }
+
+
+def test_rotational_oblique_profile_candidate_records_only_topology_evidence():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_B",
+            orientation="horizontal",
+            position=140,
+            span=[40, 180],
+        ),
+        _independent_profile_edge(
+            "DIMENSION_ONLY",
+            orientation="vertical",
+            position=120,
+            span=[20, 170],
+            support=0,
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 60], [120, 138]],
+                "angle_deg": 45.0,
+                "length_px": 110.0,
+                "candidate_only": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["region_id"] == "R1"
+    assert hint["rotation_axis"] == "Z"
+    assert hint["plane"] == "XZ"
+    assert hint["supporting_profile_refs"] == [
+        "VERTICAL_A",
+        "HORIZONTAL_B",
+    ]
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
+    assert hint["basis"] == (
+        "established_rotational_symmetry_plus_"
+        "unique_independent_structural_contacts"
+    )
+
+
+def test_rotational_oblique_profile_candidate_fails_closed_on_ambiguous_contact():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_B1",
+            orientation="horizontal",
+            position=139,
+            span=[40, 180],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_B2",
+            orientation="horizontal",
+            position=142,
+            span=[40, 180],
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 60], [120, 140]],
+                "angle_deg": 45.0,
+                "length_px": 112.0,
+                "candidate_only": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert hints == []
+
+
 def test_rotational_profile_topology_records_connectivity_without_pixel_metric():
     inventory = _rotational_profile_inventory()
     hints = hybrid_adapter._rotational_profile_topology_hints(

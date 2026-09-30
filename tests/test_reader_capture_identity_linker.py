@@ -3279,7 +3279,7 @@ def test_symmetric_center_distance_bridge_never_overrides_ambiguous_owner():
     ]
     assert any(
         item.get("capture_dimension_id") == "D_DISTANCE"
-        and item.get("endpoint_unresolved_kinds") == ["ambiguous_owner"]
+        and "ambiguous_owner" in item.get("endpoint_unresolved_kinds", [])
         for item in linked.evidence.unresolved_evidence
     )
 

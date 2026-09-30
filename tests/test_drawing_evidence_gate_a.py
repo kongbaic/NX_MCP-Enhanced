@@ -608,6 +608,12 @@ def test_symmetric_center_constraint_round_trips_through_gate_a():
         ),
         direct_values=[
             *_overall_values(length_x=100, width_y=40, height_z=20),
+            DirectValueEvidence(
+                id="F_REFERENCE_TYPE",
+                target="feature:F_REFERENCE.type",
+                value="reference_point",
+                source_ids=["REFERENCE_POINT"],
+            ),
         ],
         relations=[
             RelationEvidence(

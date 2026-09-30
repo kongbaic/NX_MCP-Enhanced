@@ -989,6 +989,190 @@ def _symmetric_profile_test_inventory():
     ]
 
 
+def _resolved_profile_span_center_test_record(
+    *,
+    dimension_key="R1.DG_SPAN",
+    region_id="R1",
+    midpoint=50.0,
+):
+    return {
+        "dimension_key": dimension_key,
+        "candidate_id": dimension_key.split(".")[-1],
+        "region_id": region_id,
+        "axis": "X",
+        "profile_entity_keys": [
+            f"{region_id}.LEFT_PROFILE",
+            f"{region_id}.RIGHT_PROFILE",
+        ],
+        "selected_witness_positions_px": [midpoint - 20.0, midpoint + 20.0],
+        "span_midpoint_px": midpoint,
+        "source_ids": [f"test:{dimension_key}"],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+
+def test_profile_span_center_record_needs_only_resolved_profile_pair():
+    candidate = _symmetric_profile_test_candidate(
+        "DG_SPAN",
+        "R1",
+        "40",
+        [30.0, 70.0],
+    )
+    record = hybrid_adapter._profile_span_center_record(
+        candidate=candidate,
+        dimension_key="R1.DG_SPAN",
+        axis="X",
+        dimension_endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.LEFT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.RIGHT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:right"],
+            ),
+        ],
+    )
+
+    assert record is not None
+    assert record["span_midpoint_px"] == 50.0
+    assert record["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_dimension_span_center_identity_accepts_unique_witness_match():
+    candidate = _symmetric_profile_test_candidate(
+        "DG_DISTANCE",
+        "R1",
+        "30",
+        [50.0, 90.0],
+    )
+    dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_DISTANCE",
+        value=30,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="unresolved",
+                unresolved_kind="intermediate_surface",
+                evidence=["test:w0"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="overall_max",
+                evidence=["test:w1"],
+            ),
+        ],
+        unresolved_reason="first endpoint unresolved",
+        direction=1,
+        evidence=["test:dimension"],
+    )
+
+    records = hybrid_adapter._dimension_span_center_identity_records(
+        dimensions=[dimension],
+        candidates=[candidate],
+        profile_span_records=[_resolved_profile_span_center_test_record()],
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        view_lookup={"R1": _symmetric_profile_test_context().region_views[0]},
+        profile_inventory=[],
+    )
+
+    assert len(records) == 1
+    assert records[0]["endpoint_index"] == 0
+    assert records[0]["span_dimension_key"] == "R1.DG_SPAN"
+    assert records[0]["basis"] == (
+        "unique_witness_to_resolved_profile_span_midpoint"
+    )
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_dimension_span_center_identity_rejects_ambiguous_midpoint_match():
+    candidate = _symmetric_profile_test_candidate(
+        "DG_DISTANCE",
+        "R1",
+        "30",
+        [50.0, 90.0],
+    )
+    dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_DISTANCE",
+        value=30,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="unresolved",
+                unresolved_kind="intermediate_surface",
+                evidence=["test:w0"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="overall_max",
+                evidence=["test:w1"],
+            ),
+        ],
+        unresolved_reason="first endpoint unresolved",
+        evidence=["test:dimension"],
+    )
+
+    records = hybrid_adapter._dimension_span_center_identity_records(
+        dimensions=[dimension],
+        candidates=[candidate],
+        profile_span_records=[
+            _resolved_profile_span_center_test_record(
+                dimension_key="R1.DG_SPAN_A"
+            ),
+            _resolved_profile_span_center_test_record(
+                dimension_key="R1.DG_SPAN_B"
+            ),
+        ],
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        view_lookup={"R1": _symmetric_profile_test_context().region_views[0]},
+        profile_inventory=[],
+    )
+
+    assert records == []
+
+
+def test_dimension_span_center_identity_does_not_override_ambiguous_owner():
+    candidate = _symmetric_profile_test_candidate(
+        "DG_DISTANCE",
+        "R1",
+        "30",
+        [50.0, 90.0],
+    )
+    dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_DISTANCE",
+        value=30,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="unresolved",
+                candidate_entity_keys=["R1.LEFT_PROFILE", "R1.RIGHT_PROFILE"],
+                unresolved_kind="ambiguous_owner",
+                evidence=["test:w0"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="overall_max",
+                evidence=["test:w1"],
+            ),
+        ],
+        unresolved_reason="first endpoint ambiguous",
+        evidence=["test:dimension"],
+    )
+
+    records = hybrid_adapter._dimension_span_center_identity_records(
+        dimensions=[dimension],
+        candidates=[candidate],
+        profile_span_records=[_resolved_profile_span_center_test_record()],
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        view_lookup={"R1": _symmetric_profile_test_context().region_views[0]},
+        profile_inventory=[],
+    )
+
+    assert records == []
+
+
 def test_symmetric_profile_span_accepts_resolved_centered_profile_pair():
     context = _symmetric_profile_test_context()
     anchor = _symmetric_profile_test_candidate(

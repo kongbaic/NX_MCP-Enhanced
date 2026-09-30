@@ -370,6 +370,7 @@ def _mapped(
 def _capture_observations_with_entity_ids(
     observations: ReaderObservations,
     entity_ids: dict[str, str],
+    dimension_ids: dict[str, str],
 ) -> list[dict[str, Any]]:
     """Carry compact entity identity into topology-only observation ledgers."""
 
@@ -393,6 +394,58 @@ def _capture_observations_with_entity_ids(
                         entity_ids,
                         key,
                         "profile topology entity",
+                    )
+            continue
+
+        if observation.get("kind") == "hybrid_profile_span_center_ledger":
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                dimension_key = item.get("dimension_key")
+                if isinstance(dimension_key, str) and dimension_key:
+                    item["dimension_id"] = _mapped(
+                        dimension_ids,
+                        dimension_key,
+                        "profile span dimension",
+                    )
+                keys = item.get("profile_entity_keys")
+                if (
+                    isinstance(keys, list)
+                    and len(keys) == 2
+                    and all(isinstance(key, str) and key for key in keys)
+                ):
+                    item["profile_entity_ids"] = [
+                        _mapped(entity_ids, key, "profile span entity")
+                        for key in keys
+                    ]
+            continue
+
+        if (
+            observation.get("kind")
+            == "hybrid_dimension_span_center_identity_ledger"
+        ):
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                dimension_key = item.get("dimension_key")
+                span_dimension_key = item.get("span_dimension_key")
+                if isinstance(dimension_key, str) and dimension_key:
+                    item["dimension_id"] = _mapped(
+                        dimension_ids,
+                        dimension_key,
+                        "span-center owner dimension",
+                    )
+                if isinstance(span_dimension_key, str) and span_dimension_key:
+                    item["span_dimension_id"] = _mapped(
+                        dimension_ids,
+                        span_dimension_key,
+                        "span-center source dimension",
                     )
             continue
 
@@ -484,6 +537,7 @@ def assemble_reader_capture(observations: ReaderObservations) -> ReaderCapture:
             *_capture_observations_with_entity_ids(
                 observations,
                 entity_ids,
+                dimension_ids,
             ),
             *[
                 {

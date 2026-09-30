@@ -4602,6 +4602,193 @@ def _selected_witness_pair(
     return [float(value) for value in raw]
 
 
+def _profile_span_center_record(
+    *,
+    candidate: dict[str, Any],
+    dimension_key: str,
+    axis: Axis,
+    dimension_endpoints: list[ObservationDimensionEndpoint],
+) -> dict[str, Any] | None:
+    """Describe one resolved profile span center as raster identity only."""
+
+    if not (
+        len(dimension_endpoints) == 2
+        and all(item.role == "profile_boundary" for item in dimension_endpoints)
+        and all(item.entity_key for item in dimension_endpoints)
+        and dimension_endpoints[0].entity_key != dimension_endpoints[1].entity_key
+    ):
+        return None
+
+    witness_pair = _selected_witness_pair(candidate)
+    if witness_pair is None:
+        return None
+    witness_low, witness_high = sorted(witness_pair)
+    if witness_high <= witness_low:
+        return None
+
+    candidate_id = str(candidate.get("candidate_id") or "")
+    region_id = str(candidate.get("region_id") or "")
+    if not candidate_id or not region_id:
+        return None
+
+    return {
+        "dimension_key": dimension_key,
+        "candidate_id": candidate_id,
+        "region_id": region_id,
+        "axis": axis,
+        "profile_entity_keys": [
+            str(dimension_endpoints[0].entity_key),
+            str(dimension_endpoints[1].entity_key),
+        ],
+        "selected_witness_positions_px": [witness_low, witness_high],
+        "span_midpoint_px": (witness_low + witness_high) / 2.0,
+        "source_ids": _candidate_evidence(candidate_id),
+        "basis": "resolved_profile_boundary_span_midpoint",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+
+def _dimension_span_center_identity_records(
+    *,
+    dimensions: list[ObservationDimension],
+    candidates: list[dict[str, Any]],
+    profile_span_records: list[dict[str, Any]],
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Match unresolved dimension witnesses to unique resolved span midpoints."""
+
+    candidate_by_dimension_key = {
+        f"{str(item.get('region_id') or '')}.{str(item.get('candidate_id') or '')}": item
+        for item in candidates
+        if str(item.get("region_id") or "")
+        and str(item.get("candidate_id") or "")
+        and item.get("accepted_token") is not None
+    }
+    output: list[dict[str, Any]] = []
+
+    for dimension in dimensions:
+        if not any(endpoint.role == "unresolved" for endpoint in dimension.endpoints):
+            continue
+        candidate = candidate_by_dimension_key.get(dimension.key)
+        if candidate is None:
+            continue
+        witness_pair = _selected_witness_pair(candidate)
+        if witness_pair is None:
+            continue
+        region_id = str(candidate.get("region_id") or "")
+        if not region_id:
+            continue
+
+        for endpoint_index, endpoint in enumerate(dimension.endpoints):
+            if endpoint.role != "unresolved":
+                continue
+            if endpoint.unresolved_kind == "ambiguous_owner":
+                continue
+
+            witness_position = witness_pair[endpoint_index]
+            matches: list[dict[str, Any]] = []
+            for span in profile_span_records:
+                if span.get("axis") != dimension.axis:
+                    continue
+                span_dimension_key = str(span.get("dimension_key") or "")
+                span_region_id = str(span.get("region_id") or "")
+                if (
+                    not span_dimension_key
+                    or not span_region_id
+                    or span_dimension_key == dimension.key
+                ):
+                    continue
+                same_raster_view = region_id == span_region_id
+                if not same_raster_view:
+                    same_raster_view = _regions_share_structural_raster_view(
+                        report=report,
+                        profile_inventory=profile_inventory,
+                        view_lookup=view_lookup,
+                        first_region_id=region_id,
+                        second_region_id=span_region_id,
+                    )
+                if not same_raster_view:
+                    continue
+
+                raw_span_pair = span.get("selected_witness_positions_px")
+                span_midpoint = span.get("span_midpoint_px")
+                if not (
+                    isinstance(raw_span_pair, list)
+                    and len(raw_span_pair) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in raw_span_pair
+                    )
+                    and isinstance(span_midpoint, (int, float))
+                    and not isinstance(span_midpoint, bool)
+                ):
+                    continue
+                span_low, span_high = sorted(float(value) for value in raw_span_pair)
+                span_width = span_high - span_low
+                if span_width <= 0:
+                    continue
+                tolerance = max(2.0, span_width * 0.015)
+                residual = abs(witness_position - float(span_midpoint))
+                if residual > tolerance:
+                    continue
+                matches.append(
+                    {
+                        "span_dimension_key": span_dimension_key,
+                        "span_region_id": span_region_id,
+                        "span_midpoint_px": float(span_midpoint),
+                        "midpoint_residual_px": residual,
+                        "midpoint_tolerance_px": tolerance,
+                        "source_ids": [
+                            item
+                            for item in span.get("source_ids", [])
+                            if isinstance(item, str) and item
+                        ],
+                    }
+                )
+
+            if len(matches) != 1:
+                continue
+
+            match = matches[0]
+            candidate_id = str(candidate.get("candidate_id") or "")
+            output.append(
+                {
+                    "dimension_key": dimension.key,
+                    "endpoint_index": endpoint_index,
+                    "axis": dimension.axis,
+                    "witness_position_px": witness_position,
+                    "span_dimension_key": match["span_dimension_key"],
+                    "span_region_id": match["span_region_id"],
+                    "span_midpoint_px": match["span_midpoint_px"],
+                    "midpoint_residual_px": round(
+                        float(match["midpoint_residual_px"]),
+                        3,
+                    ),
+                    "midpoint_tolerance_px": round(
+                        float(match["midpoint_tolerance_px"]),
+                        3,
+                    ),
+                    "basis": "unique_witness_to_resolved_profile_span_midpoint",
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *_candidate_evidence(candidate_id),
+                                *match["source_ids"],
+                            ]
+                        )
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            )
+
+    return output
+
+
 def _symmetric_profile_span_record(
     *,
     candidate: dict[str, Any],
@@ -4953,6 +5140,7 @@ def adapt_hybrid_ocr_report(
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     symmetric_pair_records: list[dict[str, Any]] = []
+    profile_span_center_records: list[dict[str, Any]] = []
     symmetric_profile_span_records: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
@@ -5259,6 +5447,15 @@ def adapt_hybrid_ocr_report(
                 )
 
         if unresolved_reason is None and symmetric_pair is None:
+            profile_span_center = _profile_span_center_record(
+                candidate=raw_candidate,
+                dimension_key=dimension_key,
+                axis=axis,
+                dimension_endpoints=dimension_endpoints,
+            )
+            if profile_span_center is not None:
+                profile_span_center_records.append(profile_span_center)
+
             symmetric_profile_span = _symmetric_profile_span_record(
                 candidate=raw_candidate,
                 dimension_key=dimension_key,
@@ -5335,6 +5532,17 @@ def adapt_hybrid_ocr_report(
                     required_for_modeling=False,
                 )
             )
+
+    dimension_span_center_identity_records = (
+        _dimension_span_center_identity_records(
+            dimensions=dimensions,
+            candidates=dimension_candidates,
+            profile_span_records=profile_span_center_records,
+            report=report,
+            view_lookup=view_lookup,
+            profile_inventory=profile_inventory,
+        )
+    )
 
     recovered_half_dimensions, symmetric_chain_ledger = (
         _recover_symmetric_half_dimensions(
@@ -5472,6 +5680,20 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_symmetric_count_two_ledger",
             "schema": "1.0",
             "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_profile_span_center_ledger",
+            "schema": "1.0",
+            "items": profile_span_center_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_dimension_span_center_identity_ledger",
+            "schema": "1.0",
+            "items": dimension_span_center_identity_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

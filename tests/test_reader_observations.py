@@ -284,3 +284,69 @@ def test_centerline_alignment_survives_capture_assembly():
     assert alignment.feature_axis == "Y"
     assert alignment.source_ids == ["coaxial:evidence"]
 
+
+
+def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
+    payload = _base_observations()
+    payload["dimensions"].append(
+        {
+            "key": "profile_span",
+            "value": 20,
+            "axis": "X",
+            "endpoints": [
+                {
+                    "role": "overall_min",
+                    "evidence": ["span:left"],
+                },
+                {
+                    "role": "overall_max",
+                    "evidence": ["span:right"],
+                },
+            ],
+            "evidence": ["span"],
+        }
+    )
+    payload["observations"] = [
+        {
+            "kind": "hybrid_profile_span_center_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "profile_span",
+                    "profile_entity_keys": ["front_bore", "side_bore"],
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_dimension_span_center_identity_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "center_height",
+                    "span_dimension_key": "profile_span",
+                    "endpoint_index": 0,
+                }
+            ],
+        },
+    ]
+
+    observations = ReaderObservations.model_validate(payload)
+    capture = assemble_reader_capture(observations)
+
+    span_ledger = next(
+        item
+        for item in capture.observations
+        if item.get("kind") == "hybrid_profile_span_center_ledger"
+    )
+    span_item = span_ledger["items"][0]
+    assert span_item["dimension_id"] == "D002"
+    assert span_item["profile_entity_ids"] == ["E001", "E002"]
+
+    identity_ledger = next(
+        item
+        for item in capture.observations
+        if item.get("kind") == "hybrid_dimension_span_center_identity_ledger"
+    )
+    identity_item = identity_ledger["items"][0]
+    assert identity_item["dimension_id"] == "D001"
+    assert identity_item["span_dimension_id"] == "D002"

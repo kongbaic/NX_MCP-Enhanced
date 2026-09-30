@@ -88,6 +88,10 @@ def _canonical_field(
 _SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
 _STRUCTURED_SYMMETRIC_COUNT_TWO_KIND = "symmetric_count_two_overall_center"
 _STRUCTURED_SYMMETRIC_PROFILE_SPAN_KIND = "hybrid_symmetric_profile_span_ledger"
+_PROFILE_SPAN_CENTER_KIND = "hybrid_profile_span_center_ledger"
+_DIMENSION_SPAN_CENTER_IDENTITY_KIND = (
+    "hybrid_dimension_span_center_identity_ledger"
+)
 
 _TRANSVERSE_CENTER_INDEX: dict[Axis, dict[Axis, int]] = {
     "X": {"Y": 0, "Z": 1},
@@ -169,6 +173,29 @@ def _structured_symmetric_count_two_sources(
     return list(dict.fromkeys(source_ids))
 
 
+def _profile_span_constraint_identity(
+    *,
+    axis: Axis,
+    boundary_targets: list[str],
+) -> tuple[str, str] | None:
+    if len(boundary_targets) != 2 or len(set(boundary_targets)) != 2:
+        return None
+
+    ordered_boundaries = sorted(boundary_targets)
+    identity_payload = json.dumps(
+        {
+            "axis": axis,
+            "boundaries": ordered_boundaries,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
+    center_target = f"constraints.span_centers.C_{digest}.{axis.lower()}"
+    return digest, center_target
+
+
 def _profile_span_midpoint_relation(
     *,
     dimension: CaptureDimension,
@@ -177,27 +204,13 @@ def _profile_span_midpoint_relation(
 ) -> RelationEvidence | None:
     """Create a stable midpoint constraint for one resolved profile span."""
 
-    if (
-        len(boundary_targets) != 2
-        or len(set(boundary_targets)) != 2
-        or dimension.axis not in {"X", "Y", "Z"}
-    ):
-        return None
-
-    ordered_boundaries = sorted(boundary_targets)
-    identity_payload = json.dumps(
-        {
-            "axis": dimension.axis,
-            "boundaries": ordered_boundaries,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
-    center_target = (
-        f"constraints.span_centers.C_{digest}.{dimension.axis.lower()}"
+    identity = _profile_span_constraint_identity(
+        axis=dimension.axis,
+        boundary_targets=boundary_targets,
     )
+    if identity is None:
+        return None
+    digest, center_target = identity
     return RelationEvidence(
         id=f"R_PROFILE_SPAN_MIDPOINT_{digest}",
         kind="midpoint",
@@ -219,6 +232,367 @@ def _profile_span_midpoint_relation(
         metadata={
             "basis": "resolved_profile_boundary_span_midpoint",
             "constraint_target": center_target,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+    )
+
+
+def _profile_span_centered_relation(
+    *,
+    dimension: CaptureDimension,
+    boundary_targets: list[str],
+    endpoint_source_ids: list[str],
+) -> RelationEvidence | None:
+    """Bind a resolved profile span width to its non-modeling center target."""
+
+    identity = _profile_span_constraint_identity(
+        axis=dimension.axis,
+        boundary_targets=boundary_targets,
+    )
+    if identity is None:
+        return None
+    digest, center_target = identity
+    return RelationEvidence(
+        id=f"R_PROFILE_SPAN_CENTERED_{digest}",
+        kind="centered_span",
+        axis=dimension.axis,
+        value=dimension.value,
+        direction=dimension.direction,
+        targets=[
+            boundary_targets[0],
+            center_target,
+            boundary_targets[1],
+        ],
+        source_ids=list(
+            dict.fromkeys(
+                [
+                    *dimension.source_ids,
+                    *endpoint_source_ids,
+                ]
+            )
+        ),
+        required_for_modeling=False,
+        metadata={
+            "basis": "resolved_profile_boundary_span_width_and_midpoint",
+            "constraint_target": center_target,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+    )
+
+
+def _profile_span_boundary_targets(
+    dimension: CaptureDimension,
+    entity_to_feature: dict[str, str],
+) -> list[str] | None:
+    if any(endpoint.role == "unresolved" for endpoint in dimension.endpoints):
+        return None
+    if not all(
+        endpoint.role == "profile_boundary" and endpoint.entity_id
+        for endpoint in dimension.endpoints
+    ):
+        return None
+
+    axis_leaf = dimension.axis.lower()
+    targets: list[str] = []
+    for endpoint in dimension.endpoints:
+        assert endpoint.entity_id is not None
+        feature_id = entity_to_feature.get(endpoint.entity_id)
+        if feature_id is None:
+            return None
+        targets.append(f"feature:{feature_id}.boundary.{axis_leaf}")
+    if len(set(targets)) != 2:
+        return None
+    return targets
+
+
+def _validated_profile_span_centers(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Return only structurally traceable profile-span center identities."""
+
+    dimension_by_id = {item.id: item for item in capture.dimensions}
+    records_by_dimension: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for observation in capture.observations:
+        if observation.get("kind") != _PROFILE_SPAN_CENTER_KIND:
+            continue
+        if observation.get("engineering_coordinate_inferred_from_pixels") is not False:
+            continue
+        if observation.get("pixel_geometry_used_for_identity_only") is not True:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            dimension_id = record.get("dimension_id")
+            if not isinstance(dimension_id, str) or not dimension_id:
+                continue
+            dimension = dimension_by_id.get(dimension_id)
+            if dimension is None or record.get("axis") != dimension.axis:
+                continue
+            if record.get("basis") != "resolved_profile_boundary_span_midpoint":
+                continue
+            raw_entities = record.get("profile_entity_ids")
+            endpoint_entities = [
+                endpoint.entity_id
+                for endpoint in dimension.endpoints
+                if endpoint.role == "profile_boundary" and endpoint.entity_id
+            ]
+            if (
+                not isinstance(raw_entities, list)
+                or raw_entities != endpoint_entities
+                or len(endpoint_entities) != 2
+            ):
+                continue
+            raw_pair = record.get("selected_witness_positions_px")
+            raw_midpoint = record.get("span_midpoint_px")
+            if not (
+                isinstance(raw_pair, list)
+                and len(raw_pair) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in raw_pair
+                )
+                and isinstance(raw_midpoint, (int, float))
+                and not isinstance(raw_midpoint, bool)
+            ):
+                continue
+
+            boundary_targets = _profile_span_boundary_targets(
+                dimension,
+                entity_to_feature,
+            )
+            if boundary_targets is None:
+                continue
+            identity = _profile_span_constraint_identity(
+                axis=dimension.axis,
+                boundary_targets=boundary_targets,
+            )
+            if identity is None:
+                continue
+            _digest, center_target = identity
+            raw_sources = record.get("source_ids")
+            source_ids = [
+                item
+                for item in raw_sources
+                if isinstance(item, str) and item
+            ] if isinstance(raw_sources, list) else []
+            records_by_dimension[dimension_id].append(
+                {
+                    "target": center_target,
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *dimension.source_ids,
+                                *source_ids,
+                            ]
+                        )
+                    ),
+                }
+            )
+
+    return {
+        dimension_id: records[0]
+        for dimension_id, records in records_by_dimension.items()
+        if len(records) == 1
+    }
+
+
+def _dimension_span_center_endpoint_matches(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    span_centers: dict[str, dict[str, Any]],
+) -> dict[int, dict[str, Any]] | None:
+    """Resolve every intermediate-surface endpoint through unique span identity."""
+
+    unresolved_indices = [
+        index
+        for index, endpoint in enumerate(dimension.endpoints)
+        if endpoint.role == "unresolved"
+    ]
+    if not unresolved_indices:
+        return None
+    if any(
+        dimension.endpoints[index].unresolved_kind != "intermediate_surface"
+        for index in unresolved_indices
+    ):
+        return None
+
+    matches_by_index: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for observation in capture.observations:
+        if observation.get("kind") != _DIMENSION_SPAN_CENTER_IDENTITY_KIND:
+            continue
+        if observation.get("engineering_coordinate_inferred_from_pixels") is not False:
+            continue
+        if observation.get("pixel_geometry_used_for_identity_only") is not True:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            if record.get("dimension_id") != dimension.id:
+                continue
+            if record.get("axis") != dimension.axis:
+                continue
+            if record.get("basis") != (
+                "unique_witness_to_resolved_profile_span_midpoint"
+            ):
+                continue
+            endpoint_index = record.get("endpoint_index")
+            if (
+                not isinstance(endpoint_index, int)
+                or isinstance(endpoint_index, bool)
+                or endpoint_index not in unresolved_indices
+            ):
+                continue
+            span_dimension_id = record.get("span_dimension_id")
+            if (
+                not isinstance(span_dimension_id, str)
+                or not span_dimension_id
+                or span_dimension_id == dimension.id
+            ):
+                continue
+            span_center = span_centers.get(span_dimension_id)
+            if span_center is None:
+                continue
+            raw_sources = record.get("source_ids")
+            source_ids = [
+                item
+                for item in raw_sources
+                if isinstance(item, str) and item
+            ] if isinstance(raw_sources, list) else []
+            matches_by_index[endpoint_index].append(
+                {
+                    "target": span_center["target"],
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *span_center["source_ids"],
+                                *source_ids,
+                            ]
+                        )
+                    ),
+                }
+            )
+
+    if any(len(matches_by_index.get(index, [])) != 1 for index in unresolved_indices):
+        return None
+    result = {
+        index: matches_by_index[index][0]
+        for index in unresolved_indices
+    }
+    targets = [item["target"] for item in result.values()]
+    if len(set(targets)) != len(targets):
+        return None
+    return result
+
+
+def _known_dimension_endpoint_target(
+    endpoint: Any,
+    *,
+    axis_leaf: str,
+    entity_to_feature: dict[str, str],
+) -> tuple[str, str | None] | None:
+    if endpoint.role in {"overall_min", "overall_max"}:
+        return endpoint.role, None
+    if endpoint.role not in {"entity_center", "profile_boundary"}:
+        return None
+    if not endpoint.entity_id:
+        return None
+    feature_id = entity_to_feature.get(endpoint.entity_id)
+    if feature_id is None:
+        return None
+    if endpoint.role == "entity_center":
+        return "center", f"feature:{feature_id}.centerline.{axis_leaf}"
+    return "profile", f"feature:{feature_id}.boundary.{axis_leaf}"
+
+
+def _dimension_relation_from_span_center_identity(
+    *,
+    dimension: CaptureDimension,
+    endpoint_matches: dict[int, dict[str, Any]],
+    entity_to_feature: dict[str, str],
+) -> RelationEvidence | None:
+    """Promote one fully covered unresolved dimension to a formal relation."""
+
+    axis_leaf = dimension.axis.lower()
+    specs: list[tuple[str, str | None]] = []
+    source_ids = list(dimension.source_ids)
+
+    for index, endpoint in enumerate(dimension.endpoints):
+        source_ids.extend(endpoint.source_ids)
+        if endpoint.role == "unresolved":
+            match = endpoint_matches.get(index)
+            if match is None:
+                return None
+            specs.append(("center", str(match["target"])))
+            source_ids.extend(match["source_ids"])
+            continue
+        known = _known_dimension_endpoint_target(
+            endpoint,
+            axis_leaf=axis_leaf,
+            entity_to_feature=entity_to_feature,
+        )
+        if known is None:
+            return None
+        specs.append(known)
+
+    overall = [
+        (index, role)
+        for index, (role, _target) in enumerate(specs)
+        if role in {"overall_min", "overall_max"}
+    ]
+    if overall:
+        if len(overall) != 1:
+            return None
+        measured_index = 1 - overall[0][0]
+        measured_target = specs[measured_index][1]
+        if measured_target is None:
+            return None
+        return RelationEvidence(
+            id=dimension.id,
+            kind="edge_offset",
+            axis=dimension.axis,
+            value=dimension.value,
+            from_side=overall[0][1].removeprefix("overall_"),
+            targets=[measured_target],
+            source_ids=list(dict.fromkeys(source_ids)),
+            required_for_modeling=dimension.required_for_modeling,
+            metadata={
+                "basis": "dimension_endpoint_resolved_by_profile_span_center_identity",
+                "span_center_endpoint_indices": sorted(endpoint_matches),
+                "engineering_coordinate_inferred_from_pixels": False,
+            },
+        )
+
+    targets = [target for _role, target in specs if target is not None]
+    if len(targets) != 2 or len(set(targets)) != 2:
+        return None
+    roles = [role for role, _target in specs]
+    kind = (
+        "center_distance"
+        if roles == ["center", "center"]
+        else "coordinate_distance"
+    )
+    return RelationEvidence(
+        id=dimension.id,
+        kind=kind,
+        axis=dimension.axis,
+        value=dimension.value,
+        direction=dimension.direction,
+        targets=targets,
+        source_ids=list(dict.fromkeys(source_ids)),
+        required_for_modeling=dimension.required_for_modeling,
+        metadata={
+            "basis": "dimension_endpoint_resolved_by_profile_span_center_identity",
+            "span_center_endpoint_indices": sorted(endpoint_matches),
             "engineering_coordinate_inferred_from_pixels": False,
         },
     )
@@ -984,8 +1358,27 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
 
     dimensions: list[DimensionObservation] = []
     synthetic_relations: list[RelationEvidence] = []
+    profile_span_centers = _validated_profile_span_centers(
+        capture,
+        entity_to_feature,
+    )
     for item in capture.dimensions:
         if any(endpoint.role == "unresolved" for endpoint in item.endpoints):
+            endpoint_matches = _dimension_span_center_endpoint_matches(
+                capture,
+                dimension=item,
+                span_centers=profile_span_centers,
+            )
+            if endpoint_matches is not None:
+                bridged_relation = _dimension_relation_from_span_center_identity(
+                    dimension=item,
+                    endpoint_matches=endpoint_matches,
+                    entity_to_feature=entity_to_feature,
+                )
+                if bridged_relation is not None:
+                    synthetic_relations.append(bridged_relation)
+                    continue
+
             related_entity_ids = sorted(
                 {
                     entity_id
@@ -1140,6 +1533,19 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 )
             ):
                 synthetic_relations.append(midpoint_relation)
+            centered_relation = _profile_span_centered_relation(
+                dimension=item,
+                boundary_targets=profile_boundary_targets,
+                endpoint_source_ids=endpoint_source_ids,
+            )
+            if (
+                centered_relation is not None
+                and not any(
+                    relation.id == centered_relation.id
+                    for relation in synthetic_relations
+                )
+            ):
+                synthetic_relations.append(centered_relation)
 
         if (
             len(profile_boundary_targets) == 2

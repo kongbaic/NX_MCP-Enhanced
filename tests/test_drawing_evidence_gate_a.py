@@ -497,3 +497,95 @@ def test_centered_span_constraint_round_trips_through_gate_a():
     assert source["direction"] == 1
     assert source["links"] == [left, center, right]
     assert R.check_drawing_json(draft) == []
+
+
+def test_coordinate_distance_is_audited_as_formal_relation():
+    left = "feature:F_LEFT.boundary.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+            DirectValueEvidence(
+                id="LEFT_BOUNDARY",
+                target=left,
+                value=20,
+                source_ids=["LEFT"],
+            ),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_COORD_DISTANCE",
+                kind="coordinate_distance",
+                axis="X",
+                value=30,
+                direction=1,
+                targets=[left, right],
+                source_ids=["DIMENSION"],
+                required_for_modeling=True,
+            )
+        ],
+        required_targets=[right],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.values[right] == 50.0
+    source = next(
+        item
+        for item in draft["source_ledger"]
+        if item["id"] == "R_COORD_DISTANCE"
+    )
+    assert source["semantic"] == "coordinate_distance"
+    assert source["between"] == [left, right]
+    assert R.check_drawing_json(draft) == []
+
+
+def test_center_distance_accepts_profile_span_constraint_center():
+    span_center = "constraints.span_centers.C_GENERIC.x"
+    feature_center = "feature:F_HOLE.centerline.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_SPAN_CENTER",
+                kind="edge_offset",
+                axis="X",
+                value=30,
+                from_side="min",
+                targets=[span_center],
+                source_ids=["SPAN_CENTER"],
+                required_for_modeling=True,
+            ),
+            RelationEvidence(
+                id="R_CENTER_DISTANCE",
+                kind="center_distance",
+                axis="X",
+                value=20,
+                direction=1,
+                targets=[span_center, feature_center],
+                source_ids=["CENTER_DISTANCE"],
+                required_for_modeling=True,
+            ),
+        ],
+        required_targets=[feature_center],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.values[span_center] == 30.0
+    assert result.values[feature_center] == 50.0
+    assert R.check_drawing_json(draft) == []

@@ -2977,6 +2977,166 @@ def test_profile_span_midpoint_identity_is_stable_when_endpoint_order_reverses()
     assert first.targets[1] == second.targets[1]
 
 
+def _span_center_bridge_capture(
+    *,
+    endpoint_kind="intermediate_surface",
+    two_unresolved=False,
+):
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_endpoint = (
+        CaptureDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            source_ids=["SRC_DISTANCE_RIGHT"],
+        )
+        if two_unresolved
+        else CaptureDimensionEndpoint(
+            role="overall_max",
+            source_ids=["SRC_DISTANCE_RIGHT"],
+        )
+    )
+    capture.dimensions.append(
+        CaptureDimension(
+            id="D_DISTANCE",
+            value=30,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    source_ids=["SRC_DISTANCE_LEFT"],
+                ),
+                second_endpoint,
+            ],
+            unresolved_reason="endpoint ownership unresolved",
+            source_ids=["SRC_DISTANCE"],
+        )
+    )
+    capture.observations.extend(
+        [
+            {
+                "kind": "hybrid_profile_span_center_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_SPAN",
+                        "axis": "X",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [30.0, 70.0],
+                        "span_midpoint_px": 50.0,
+                        "basis": "resolved_profile_boundary_span_midpoint",
+                        "source_ids": ["SRC_SPAN_CENTER"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_dimension_span_center_identity_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_DISTANCE",
+                        "endpoint_index": 0,
+                        "axis": "X",
+                        "span_dimension_id": "D_SPAN",
+                        "basis": (
+                            "unique_witness_to_resolved_profile_span_midpoint"
+                        ),
+                        "source_ids": ["SRC_WITNESS_TO_SPAN_CENTER"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+        ]
+    )
+    return capture
+
+
+def test_identity_linker_resolves_intermediate_surface_to_profile_span_center():
+    capture = _span_center_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    bridge = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert bridge.kind == "edge_offset"
+    assert bridge.from_side == "max"
+    assert bridge.value == 30
+    assert bridge.targets[0].startswith("constraints.span_centers.C_")
+    assert bridge.metadata["basis"] == (
+        "dimension_endpoint_resolved_by_profile_span_center_identity"
+    )
+
+    midpoint = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "midpoint"
+    )
+    centered = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "centered_span"
+    )
+    assert centered.value == 40
+    assert centered.direction == 1
+    assert centered.targets == midpoint.targets
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    center_target = bridge.targets[0]
+    assert resolution.values[center_target] == 70.0
+    assert resolution.values[centered.targets[0]] == 50.0
+    assert resolution.values[centered.targets[2]] == 90.0
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    ]
+
+
+def test_span_center_bridge_requires_every_unresolved_endpoint_to_be_covered():
+    capture = _span_center_bridge_capture(two_unresolved=True)
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    unresolved = [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0]["endpoint_unresolved_kinds"] == ["intermediate_surface"]
+
+
+def test_span_center_bridge_never_overrides_ambiguous_owner():
+    capture = _span_center_bridge_capture(endpoint_kind="ambiguous_owner")
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    unresolved = [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0]["endpoint_unresolved_kinds"] == ["ambiguous_owner"]
+
+
 def test_identity_linker_anchors_structured_symmetric_profile_span():
     capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
     linked = link_reader_capture(capture)

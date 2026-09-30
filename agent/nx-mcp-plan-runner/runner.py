@@ -5638,6 +5638,7 @@ _DRAWING_META_KEYS = {
 _DRAWING_RELATION_SEMANTICS = {
     "center_distance",
     "center_spacing",
+    "coordinate_distance",
     "edge_offset",
     "symmetry",
     "upper_tangent",
@@ -5800,7 +5801,8 @@ def _drawing_target_feature_id(target: str) -> str | None:
 def _drawing_is_center_target(target: str) -> bool:
     leaf = target.split(".")[-1].lower()
     return (
-        ".centerline." in target
+        target.startswith("constraints.span_centers.")
+        or ".centerline." in target
         or ".position.center" in target
         or ".explicit_centers." in target
         or leaf in {
@@ -6092,7 +6094,7 @@ def _drawing_relation_source_ok(
 ) -> tuple[bool, str | None]:
     semantic = str(source.get("semantic") or "")
 
-    if semantic in {"center_distance", "center_spacing"}:
+    if semantic in {"center_distance", "center_spacing", "coordinate_distance"}:
         between = source.get("between")
         if (
             not isinstance(between, list)
@@ -6661,7 +6663,7 @@ def check_drawing_json(data: dict) -> list[str]:
                             continue
                         relation_targets.add(target)
                 continue
-            if semantic in {"center_distance", "center_spacing"}:
+            if semantic in {"center_distance", "center_spacing", "coordinate_distance"}:
                 between = source.get("between")
                 if (
                     not isinstance(between, list)
@@ -6670,7 +6672,13 @@ def check_drawing_json(data: dict) -> list[str]:
                 ):
                     errors.append(f"source {sid!r} requires between=[targetA,targetB]")
                 else:
-                    if not all(_drawing_is_center_target(target) for target in between):
+                    if (
+                        semantic != "coordinate_distance"
+                        and not all(
+                            _drawing_is_center_target(target)
+                            for target in between
+                        )
+                    ):
                         errors.append(
                             f"source {sid!r} center distance endpoints must be center coordinates"
                         )
@@ -6878,7 +6886,11 @@ def check_drawing_json(data: dict) -> list[str]:
             if source is None:
                 continue
             semantic = str(source.get("semantic") or "")
-            if semantic in {"center_distance", "center_spacing"}:
+            if semantic in {
+                "center_distance",
+                "center_spacing",
+                "coordinate_distance",
+            }:
                 ok, reason = _drawing_relation_source_ok(
                     data, source, target, target_refs
                 )

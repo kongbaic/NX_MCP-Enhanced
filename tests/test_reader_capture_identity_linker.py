@@ -3855,6 +3855,131 @@ def _projected_profile_bridge_capture(
     )
 
 
+def test_rotational_profile_topology_materializes_otherwise_orphan_profile_edge():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_ROT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.ROT"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.ROT",
+                                "profile_entity_id": "E_ROT",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            }
+                        ],
+                        "junctions": [],
+                        "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_ROT" in linked.entity_to_feature
+    assert linked.report["ignored_orphan_profiles"] == 0
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    edge = ledger["items"][0]["edges"][0]
+    feature_id = linked.entity_to_feature["E_ROT"]
+    assert edge["physical_feature_id"] == feature_id
+    assert edge["boundary_target"] == f"feature:{feature_id}.boundary.x"
+
+
+def test_rotational_profile_topology_does_not_materialize_edge_without_strict_contract():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_ROT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.ROT"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.ROT",
+                                "profile_entity_id": "E_ROT",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            }
+                        ],
+                        "junctions": [],
+                        "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": False,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_ROT" not in linked.entity_to_feature
+    assert linked.report["ignored_orphan_profiles"] == 1
+
+
 def test_rotational_profile_topology_maps_capture_edges_to_physical_boundary_targets():
     capture = _projected_profile_bridge_capture()
     capture.observations.append(

@@ -1494,25 +1494,72 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
     for item in capture.unresolved_evidence:
         referenced.update(item.entity_ids)
 
+    profile_entity_ids = {
+        item.id
+        for item in capture.entities
+        if item.shape == "profile"
+    }
+
     for observation in capture.observations:
-        if observation.get("kind") != _PROJECTED_PROFILE_LEVEL_KIND:
+        kind = observation.get("kind")
+        if kind == _PROJECTED_PROFILE_LEVEL_KIND:
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for record in items:
+                if not isinstance(record, dict):
+                    continue
+                if record.get("overall_role") in {"overall_min", "overall_max"}:
+                    continue
+                raw_entity_ids = record.get("profile_entity_ids")
+                if not isinstance(raw_entity_ids, list):
+                    continue
+                referenced.update(
+                    entity_id
+                    for entity_id in raw_entity_ids
+                    if (
+                        isinstance(entity_id, str)
+                        and entity_id in profile_entity_ids
+                    )
+                )
+            continue
+
+        if kind != _ROTATIONAL_PROFILE_TOPOLOGY_KIND:
+            continue
+        if (
+            observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only")
+            is not True
+        ):
             continue
         items = observation.get("items")
         if not isinstance(items, list):
             continue
-        for record in items:
-            if not isinstance(record, dict):
+        for item in items:
+            if not isinstance(item, dict):
                 continue
-            if record.get("overall_role") in {"overall_min", "overall_max"}:
+            axis = str(item.get("rotation_axis") or "").upper()
+            plane = str(item.get("plane") or "").upper()
+            edges = item.get("edges")
+            if (
+                axis not in {"X", "Y", "Z"}
+                or plane not in {"XY", "XZ", "YZ"}
+                or axis not in plane
+                or not isinstance(edges, list)
+            ):
                 continue
-            raw_entity_ids = record.get("profile_entity_ids")
-            if not isinstance(raw_entity_ids, list):
-                continue
-            referenced.update(
-                entity_id
-                for entity_id in raw_entity_ids
-                if isinstance(entity_id, str) and entity_id
-            )
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                entity_id = edge.get("profile_entity_id")
+                constant_axis = str(edge.get("constant_axis") or "").upper()
+                if (
+                    isinstance(entity_id, str)
+                    and entity_id in profile_entity_ids
+                    and constant_axis in set(plane)
+                ):
+                    referenced.add(entity_id)
 
     return referenced
 

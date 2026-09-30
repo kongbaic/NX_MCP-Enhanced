@@ -1309,6 +1309,111 @@ def test_default_modeling_capability_registry_is_valid():
     assert R.capability_registry_errors(registry) == []
 
 
+def _rotational_body_drawing():
+    return {
+        "profile": {
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "topology": "closed_polygon",
+            "segments": [
+                {
+                    "type": "line",
+                    "x1": 0.0,
+                    "z1": 0.0,
+                    "x2": 30.0,
+                    "z2": 0.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 30.0,
+                    "z1": 0.0,
+                    "x2": 30.0,
+                    "z2": 60.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 30.0,
+                    "z1": 60.0,
+                    "x2": 0.0,
+                    "z2": 60.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 0.0,
+                    "z1": 60.0,
+                    "x2": 0.0,
+                    "z2": 0.0,
+                },
+            ],
+        },
+        "features": [],
+    }
+
+
+def _plan_from_operation_contract(contract):
+    operations = []
+    sketch_id = "SK_BODY"
+    step = 1
+    for item in contract["operations"]:
+        tool_args = json.loads(json.dumps(item.get("fixed_args") or {}))
+        if "sketch_id" in item.get("requires", []):
+            tool_args["sketch_id"] = sketch_id
+        operations.append(
+            {
+                "step": step,
+                "tool": item["tool"],
+                "tool_args": tool_args,
+            }
+        )
+        step += 1
+    return {"operations": operations}
+
+
+def test_rotational_profile_selects_exact_revolve_capability_and_contract():
+    drawing = _rotational_body_drawing()
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert errors == []
+    assert len(dispatches) == 1
+    capability = dispatches[0]["capability"]
+    payload = dispatches[0]["payload"]
+    assert capability["implementation_id"] == "rotational-profile-revolve-v1"
+    assert capability["feature_kind"] == "rotational_body"
+    geometry = payload["geometries"][0]
+    assert geometry["axis"] == "Z"
+    assert geometry["plane"] == "XZ"
+    contract = payload["operation_contracts"][0]
+    assert [item["tool"] for item in contract["operations"]] == [
+        "nx_create_sketch",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_finish_sketch",
+        "nx_revolve",
+    ]
+    assert contract["operations"][-1]["fixed_args"] == {
+        "axis_start": {"x": 0.0, "y": 0.0},
+        "axis_end": {"x": 0.0, "y": 60.0},
+        "angle": 360.0,
+        "reverse": False,
+    }
+
+    plan = _plan_from_operation_contract(contract)
+    assert R.capability_plan_errors(plan, dispatches) == []
+
+
+def test_rotational_profile_revolve_fails_closed_when_meridian_crosses_axis():
+    drawing = _rotational_body_drawing()
+    drawing["profile"]["segments"][0]["x1"] = -1.0
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert dispatches == []
+    assert any("crosses the rotation axis" in item for item in errors)
+
+
 def test_capability_resolution_is_feature_axis_scoped():
     candidates, errors = R.resolve_modeling_capabilities(
         "counterbore_hole",

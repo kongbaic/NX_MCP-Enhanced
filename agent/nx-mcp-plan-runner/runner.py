@@ -101,6 +101,7 @@ CAPABILITY_REGISTRY_FILENAME = "modeling_capabilities.json"
 # reference adapter/validator handlers that this Runner knows how to dispatch.
 REGISTERED_PLANNER_ADAPTER_HANDLERS = frozenset(
     {
+        "rotational_profile_revolve",
         "native_z_hole",
         "principal_axis_circular_subtract",
         "native_z_counterbore",
@@ -110,6 +111,7 @@ REGISTERED_PLANNER_ADAPTER_HANDLERS = frozenset(
 )
 REGISTERED_GATE_B_VALIDATOR_HANDLERS = frozenset(
     {
+        "rotational_profile_revolve_geometry",
         "native_hole_geometry",
         "circular_subtract_geometry",
         "native_counterbore_geometry",
@@ -4471,6 +4473,200 @@ def _thread_surrogate_operation_fields(geometry: dict) -> dict:
     return {"thread_surrogate_use": use}
 
 
+def _rotational_profile_geometry(
+    drawing: dict,
+) -> tuple[dict | None, list[str]]:
+    """Normalize one canonical rotational body profile for exact revolve."""
+
+    profile = drawing.get("profile")
+    if not isinstance(profile, dict):
+        return None, [
+            "capability_adapter_violation: rotational body requires canonical profile"
+        ]
+    plane = str(profile.get("plane") or "").upper()
+    axis = str(profile.get("rotation_axis") or "").upper()
+    if plane not in {"XY", "XZ", "YZ"} or axis not in {"X", "Y", "Z"}:
+        return None, [
+            "capability_adapter_violation: rotational body requires valid profile "
+            "plane and rotation_axis"
+        ]
+    if axis not in plane:
+        return None, [
+            f"capability_adapter_violation: rotation axis {axis!r} is not in "
+            f"profile plane {plane!r}"
+        ]
+
+    axes, polygon, polygon_errors = _profile_line_polygon(drawing)
+    if polygon_errors or axes is None:
+        return None, polygon_errors
+    if len(polygon) < 3:
+        return None, [
+            "capability_adapter_violation: rotational profile requires a closed "
+            "polygon with at least three vertices"
+        ]
+
+    axis_index = 0 if axes[0] == axis else 1
+    radial_index = 1 - axis_index
+    radial_values = [point[radial_index] for point in polygon]
+    if min(radial_values) < -1e-9:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian crosses "
+            "the rotation axis"
+        ]
+    if not any(abs(value) <= 1e-9 for value in radial_values):
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian does not "
+            "close on the rotation axis"
+        ]
+    if max(radial_values) <= 1e-9:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian has no "
+            "positive radial extent"
+        ]
+
+    raw_segments = profile.get("segments")
+    assert isinstance(raw_segments, list)
+    local_segments: list[dict[str, dict[str, float]]] = []
+    axial_values: list[float] = []
+    first_axis = axes[0].lower()
+    second_axis = axes[1].lower()
+    for index, segment in enumerate(raw_segments):
+        if not isinstance(segment, dict):
+            return None, [
+                f"capability_adapter_violation: profile segment {index} is not an object"
+            ]
+        values = [
+            _num(segment.get(f"{first_axis}1")),
+            _num(segment.get(f"{second_axis}1")),
+            _num(segment.get(f"{first_axis}2")),
+            _num(segment.get(f"{second_axis}2")),
+        ]
+        if any(value is None for value in values):
+            return None, [
+                f"capability_adapter_violation: profile segment {index} has "
+                "incomplete numeric coordinates"
+            ]
+        x1, y1, x2, y2 = (float(value) for value in values)
+        local_segments.append(
+            {
+                "start": {"x": x1, "y": y1},
+                "end": {"x": x2, "y": y2},
+            }
+        )
+        axial_values.extend(
+            [x1, x2] if axis_index == 0 else [y1, y2]
+        )
+
+    axis_min = min(axial_values)
+    axis_max = max(axial_values)
+    if axis_max - axis_min <= 1e-9:
+        return None, [
+            "capability_adapter_violation: rotational profile has zero axial span"
+        ]
+
+    if axis_index == 0:
+        axis_start = {"x": axis_min, "y": 0.0}
+        axis_end = {"x": axis_max, "y": 0.0}
+    else:
+        axis_start = {"x": 0.0, "y": axis_min}
+        axis_end = {"x": 0.0, "y": axis_max}
+
+    return {
+        "feature_id": "BODY_PROFILE",
+        "axis": axis,
+        "plane": plane,
+        "representation": "canonical_rotational_profile",
+        "segments": local_segments,
+        "axis_start": axis_start,
+        "axis_end": axis_end,
+        "angle": 360.0,
+    }, []
+
+
+def _rotational_profile_operation_contract(
+    geometry: dict,
+) -> tuple[dict | None, list[str]]:
+    feature_id = str(geometry.get("feature_id") or "BODY_PROFILE")
+    plane = str(geometry.get("plane") or "").upper()
+    axis = str(geometry.get("axis") or "").upper()
+    segments = geometry.get("segments")
+    axis_start = geometry.get("axis_start")
+    axis_end = geometry.get("axis_end")
+    angle = _num(geometry.get("angle"))
+    if (
+        plane not in {"XY", "XZ", "YZ"}
+        or axis not in {"X", "Y", "Z"}
+        or axis not in plane
+        or not isinstance(segments, list)
+        or len(segments) < 3
+        or not isinstance(axis_start, dict)
+        or not isinstance(axis_end, dict)
+        or angle is None
+        or angle <= 0
+        or angle > 360
+    ):
+        return None, [
+            f"capability_materialization_violation: rotational body "
+            f"{feature_id!r} geometry is incomplete"
+        ]
+
+    operations: list[dict[str, Any]] = [
+        {
+            "tool": "nx_create_sketch",
+            "fixed_args": {"plane": plane},
+        }
+    ]
+    for segment in segments:
+        if not isinstance(segment, dict):
+            return None, [
+                f"capability_materialization_violation: rotational body "
+                f"{feature_id!r} has malformed profile segment"
+            ]
+        start = segment.get("start")
+        end = segment.get("end")
+        if not isinstance(start, dict) or not isinstance(end, dict):
+            return None, [
+                f"capability_materialization_violation: rotational body "
+                f"{feature_id!r} has malformed profile coordinates"
+            ]
+        operations.append(
+            {
+                "tool": "nx_sketch_line",
+                "fixed_args": {
+                    "start": copy.deepcopy(start),
+                    "end": copy.deepcopy(end),
+                },
+                "requires": ["sketch_id"],
+            }
+        )
+    operations.extend(
+        [
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_revolve",
+                "fixed_args": {
+                    "axis_start": copy.deepcopy(axis_start),
+                    "axis_end": copy.deepcopy(axis_end),
+                    "angle": float(angle),
+                    "reverse": False,
+                },
+                "requires": ["sketch_id"],
+            },
+        ]
+    )
+    return {
+        "feature_id": feature_id,
+        "role": "rotational_body",
+        "axis": axis,
+        "representation": "canonical_rotational_profile",
+        "operations": operations,
+    }, []
+
+
 def materialize_capability_operation_contracts(
     capability: dict,
     payload: dict,
@@ -4491,6 +4687,15 @@ def materialize_capability_operation_contracts(
     for geometry in geometries:
         feature_id = str(geometry.get("feature_id") or "?")
         axis = str(geometry.get("axis") or "").upper()
+
+        if adapter_name == "rotational_profile_revolve":
+            contract, contract_errors = _rotational_profile_operation_contract(
+                geometry
+            )
+            errors.extend(contract_errors)
+            if contract is not None:
+                contracts.append(contract)
+            continue
 
         if adapter_name == "native_z_hole":
             for center in geometry.get("transverse_centers") or []:
@@ -5105,6 +5310,122 @@ def _continuous_hole_slot_plan_errors(
     return []
 
 
+def _planner_adapter_rotational_profile_revolve(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometry, errors = _rotational_profile_geometry(drawing)
+    if errors or geometry is None:
+        return None, errors
+    supported_axes = {
+        str(item).upper()
+        for item in capability.get("supported_axes") or []
+    }
+    if geometry["axis"] not in supported_axes:
+        return None, [
+            f"capability_adapter_violation: rotational body axis "
+            f"{geometry['axis']!r} is unsupported"
+        ]
+    return _adapter_payload(capability, [geometry], [])
+
+
+def _rotational_profile_plan_errors(
+    plan: dict,
+    contract: dict,
+) -> list[str]:
+    feature_id = str(contract.get("feature_id") or "BODY_PROFILE")
+    expected_operations = contract.get("operations")
+    if not isinstance(expected_operations, list) or len(expected_operations) < 5:
+        return [
+            f"capability_dispatch_violation: rotational body contract "
+            f"{feature_id!r} is incomplete"
+        ]
+
+    expected_create = expected_operations[0]
+    expected_lines = expected_operations[1:-2]
+    expected_finish = expected_operations[-2]
+    expected_revolve = expected_operations[-1]
+    operations = plan.get("operations") or []
+    matches = 0
+
+    for revolve_index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            continue
+        if not _operation_matches_fixed_args(operation, expected_revolve):
+            continue
+        revolve_args = operation.get("tool_args") or {}
+        sketch_id = revolve_args.get("sketch_id")
+        if not isinstance(sketch_id, str) or not sketch_id:
+            continue
+
+        prior = operations[:revolve_index]
+        finishes = [
+            (index, candidate)
+            for index, candidate in enumerate(prior)
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_finish_sketch"
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(finishes) != 1:
+            continue
+        finish_index, finish_op = finishes[0]
+        if not _operation_matches_fixed_args(finish_op, expected_finish):
+            continue
+
+        line_ops = [
+            candidate
+            for candidate in prior[:finish_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_sketch_line"
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(line_ops) != len(expected_lines):
+            continue
+        if any(
+            not _operation_matches_fixed_args(actual, expected)
+            for actual, expected in zip(line_ops, expected_lines, strict=False)
+        ):
+            continue
+
+        first_line_index = prior.index(line_ops[0])
+        creates = [
+            candidate
+            for candidate in prior[:first_line_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_create_sketch"
+        ]
+        if not creates or not _operation_matches_fixed_args(
+            creates[-1], expected_create
+        ):
+            continue
+        matches += 1
+
+    if matches != 1:
+        return [
+            f"rotational body {feature_id!r} exact revolve operation count "
+            f"must be 1, got {matches}"
+        ]
+    return []
+
+
+def _gate_b_rotational_profile_revolve_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    contracts = [
+        item
+        for item in payload.get("operation_contracts") or []
+        if isinstance(item, dict)
+        and item.get("role") == "rotational_body"
+    ]
+    if len(contracts) != 1:
+        return [
+            "capability_dispatch_violation: rotational body requires exactly "
+            "one operation contract"
+        ]
+    return _rotational_profile_plan_errors(plan, contracts[0])
+
+
 def _planner_adapter_native_z_hole(
     drawing: dict,
     capability: dict,
@@ -5278,6 +5599,7 @@ PLANNER_ADAPTER_HANDLER_MAP: dict[
     str,
     Callable[[dict, dict], tuple[dict | None, list[str]]],
 ] = {
+    "rotational_profile_revolve": _planner_adapter_rotational_profile_revolve,
     "native_z_hole": _planner_adapter_native_z_hole,
     "principal_axis_circular_subtract": (
         _planner_adapter_principal_axis_circular_subtract
@@ -5291,6 +5613,9 @@ GATE_B_VALIDATOR_HANDLER_MAP: dict[
     str,
     Callable[[dict, dict], list[str]],
 ] = {
+    "rotational_profile_revolve_geometry": (
+        _gate_b_rotational_profile_revolve_geometry
+    ),
     "native_hole_geometry": _gate_b_native_hole_geometry,
     "circular_subtract_geometry": _gate_b_circular_subtract_geometry,
     "native_counterbore_geometry": _gate_b_native_counterbore_geometry,
@@ -5389,6 +5714,29 @@ def resolve_drawing_capability_dispatches(
     }
     selected: dict[str, dict] = {}
     errors: list[str] = []
+
+    profile = drawing.get("profile")
+    if isinstance(profile, dict) and profile.get("rotation_axis") is not None:
+        feature_kind = "rotational_body"
+        axis = str(profile.get("rotation_axis") or "").upper()
+        if feature_kind in supported_feature_kinds:
+            candidates, resolution_errors = resolve_modeling_capabilities(
+                feature_kind,
+                axis,
+                registry=data,
+            )
+            if resolution_errors:
+                errors.extend(
+                    "capability_selection_violation: profile rotational body: "
+                    + item
+                    for item in resolution_errors
+                )
+            else:
+                capability = candidates[0]
+                implementation_id = str(
+                    capability.get("implementation_id") or ""
+                )
+                selected[implementation_id] = capability
 
     for feature in drawing.get("features") or []:
         if not isinstance(feature, dict):

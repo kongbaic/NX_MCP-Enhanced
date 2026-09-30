@@ -9,11 +9,34 @@
   },
   "implementations": [
     {
+      "implementation_id": "rotational-profile-revolve-v1",
+      "feature_kind": "rotational_body",
+      "exactness": "exact",
+      "supported_axes": [
+        "X",
+        "Y",
+        "Z"
+      ],
+      "required_tools": [
+        "nx_create_sketch",
+        "nx_sketch_line",
+        "nx_finish_sketch",
+        "nx_revolve"
+      ],
+      "planner_adapter": "rotational_profile_revolve",
+      "gate_b_validator": "rotational_profile_revolve_geometry",
+      "priority": 10
+    },
+    {
       "implementation_id": "native-z-hole-v1",
       "feature_kind": "hole",
       "exactness": "exact",
-      "supported_axes": ["Z"],
-      "required_tools": ["nx_hole"],
+      "supported_axes": [
+        "Z"
+      ],
+      "required_tools": [
+        "nx_hole"
+      ],
       "planner_adapter": "native_z_hole",
       "gate_b_validator": "native_hole_geometry",
       "priority": 10
@@ -22,7 +45,10 @@
       "implementation_id": "principal-axis-hole-v1",
       "feature_kind": "hole",
       "exactness": "exact",
-      "supported_axes": ["X", "Y"],
+      "supported_axes": [
+        "X",
+        "Y"
+      ],
       "required_tools": [
         "nx_create_sketch",
         "nx_sketch_circle",
@@ -37,8 +63,12 @@
       "implementation_id": "native-z-counterbore-v1",
       "feature_kind": "counterbore_hole",
       "exactness": "exact",
-      "supported_axes": ["Z"],
-      "required_tools": ["nx_counterbore_hole"],
+      "supported_axes": [
+        "Z"
+      ],
+      "required_tools": [
+        "nx_counterbore_hole"
+      ],
       "planner_adapter": "native_z_counterbore",
       "gate_b_validator": "native_counterbore_geometry",
       "priority": 10
@@ -47,7 +77,10 @@
       "implementation_id": "principal-axis-counterbore-v1",
       "feature_kind": "counterbore_hole",
       "exactness": "exact",
-      "supported_axes": ["X", "Y"],
+      "supported_axes": [
+        "X",
+        "Y"
+      ],
       "required_tools": [
         "nx_create_sketch",
         "nx_sketch_circle",
@@ -62,8 +95,12 @@
       "implementation_id": "metric-thread-surrogate-z-v1",
       "feature_kind": "threaded_hole",
       "exactness": "surrogate",
-      "supported_axes": ["Z"],
-      "required_tools": ["nx_hole"],
+      "supported_axes": [
+        "Z"
+      ],
+      "required_tools": [
+        "nx_hole"
+      ],
       "planner_adapter": "metric_thread_surrogate",
       "gate_b_validator": "thread_surrogate",
       "priority": 100
@@ -72,7 +109,10 @@
       "implementation_id": "metric-thread-surrogate-principal-v1",
       "feature_kind": "threaded_hole",
       "exactness": "surrogate",
-      "supported_axes": ["X", "Y"],
+      "supported_axes": [
+        "X",
+        "Y"
+      ],
       "required_tools": [
         "nx_create_sketch",
         "nx_sketch_circle",

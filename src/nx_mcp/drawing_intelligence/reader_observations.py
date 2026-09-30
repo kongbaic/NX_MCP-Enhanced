@@ -397,6 +397,25 @@ def _capture_observations_with_entity_ids(
                     )
             continue
 
+        if (
+            observation.get("kind")
+            == "hybrid_symmetric_dimension_pair_ledger"
+        ):
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                dimension_key = item.get("dimension_key")
+                if isinstance(dimension_key, str) and dimension_key:
+                    item["dimension_id"] = _mapped(
+                        dimension_ids,
+                        dimension_key,
+                        "symmetric dimension pair",
+                    )
+            continue
+
         if observation.get("kind") == "hybrid_profile_span_center_ledger":
             items = observation.get("items")
             if not isinstance(items, list):

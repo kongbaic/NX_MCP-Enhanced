@@ -1173,6 +1173,107 @@ def test_dimension_span_center_identity_does_not_override_ambiguous_owner():
     assert records == []
 
 
+def test_symmetric_dimension_pair_accepts_centered_pair_without_endpoint_ownership():
+    context = _symmetric_profile_test_context()
+    anchor = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+    candidate = _symmetric_profile_test_candidate(
+        "DG_CENTER_DISTANCE",
+        "R2",
+        "60",
+        [20.0, 80.0],
+    )
+
+    record = hybrid_adapter._symmetric_dimension_pair_record(
+        candidate=candidate,
+        dimension_key="R2.DG_CENTER_DISTANCE",
+        dimension_value=60.0,
+        axis="X",
+        candidates=[anchor, candidate],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 10, 100, 80]},
+                {"region_id": "R2", "bbox_px": [10, 0, 80, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    )
+
+    assert record is not None
+    assert record["dimension_key"] == "R2.DG_CENTER_DISTANCE"
+    assert record["overall_candidate_id"] == "DG_OVERALL"
+    assert record["engineering_coordinate_inferred_from_pixels"] is False
+    assert "profile_entity_keys" not in record
+
+
+def test_symmetric_dimension_pair_rejects_off_center_pair():
+    context = _symmetric_profile_test_context()
+    anchor = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+    candidate = _symmetric_profile_test_candidate(
+        "DG_LOCAL",
+        "R2",
+        "20",
+        [10.0, 30.0],
+    )
+
+    assert hybrid_adapter._symmetric_dimension_pair_record(
+        candidate=candidate,
+        dimension_key="R2.DG_LOCAL",
+        dimension_value=20.0,
+        axis="X",
+        candidates=[anchor, candidate],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 10, 100, 80]},
+                {"region_id": "R2", "bbox_px": [10, 0, 80, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    ) is None
+
+
+def test_symmetric_dimension_pair_does_not_duplicate_overall_dimension():
+    context = _symmetric_profile_test_context()
+    anchor = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+
+    assert hybrid_adapter._symmetric_dimension_pair_record(
+        candidate=anchor,
+        dimension_key="R1.DG_OVERALL",
+        dimension_value=100.0,
+        axis="X",
+        candidates=[anchor],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 0, 100, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    ) is None
+
+
 def test_symmetric_profile_span_accepts_resolved_centered_profile_pair():
     context = _symmetric_profile_test_context()
     anchor = _symmetric_profile_test_candidate(

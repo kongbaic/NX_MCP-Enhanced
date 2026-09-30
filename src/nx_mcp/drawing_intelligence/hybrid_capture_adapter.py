@@ -4789,13 +4789,12 @@ def _dimension_span_center_identity_records(
     return output
 
 
-def _symmetric_profile_span_record(
+def _symmetric_dimension_pair_record(
     *,
     candidate: dict[str, Any],
     dimension_key: str,
     dimension_value: float,
     axis: Axis,
-    dimension_endpoints: list[ObservationDimensionEndpoint],
     candidates: list[dict[str, Any]],
     report: dict[str, Any],
     context: HybridAdapterContext,
@@ -4803,20 +4802,11 @@ def _symmetric_profile_span_record(
     profile_inventory: list[dict[str, Any]],
     overall_dimensions: dict[str, float],
 ) -> dict[str, Any] | None:
-    """Prove that a resolved profile span is symmetric about the overall center.
+    """Prove only that a dimension witness pair is centered on the overall datum.
 
-    Raster geometry establishes only identity and symmetry. Engineering
-    coordinates remain derived downstream from the accepted dimension value
-    and the independently known overall extent.
+    Raster geometry establishes identity/symmetry only. No endpoint ownership
+    and no engineering coordinate are inferred here.
     """
-
-    if not (
-        len(dimension_endpoints) == 2
-        and all(item.role == "profile_boundary" for item in dimension_endpoints)
-        and all(item.entity_key for item in dimension_endpoints)
-        and dimension_endpoints[0].entity_key != dimension_endpoints[1].entity_key
-    ):
-        return None
 
     region_id = str(candidate.get("region_id") or "")
     if not region_id or not _region_has_rotational_symmetry(
@@ -4832,7 +4822,8 @@ def _symmetric_profile_span_record(
         not isinstance(overall_value, (int, float))
         or isinstance(overall_value, bool)
         or float(overall_value) <= 0
-        or dimension_value > float(overall_value) + 1e-9
+        or dimension_value <= 0
+        or dimension_value >= float(overall_value) - 1e-9
     ):
         return None
 
@@ -4929,10 +4920,6 @@ def _symmetric_profile_span_record(
         "region_id": region_id,
         "axis": axis,
         "datum": "overall_center",
-        "profile_entity_keys": [
-            str(dimension_endpoints[0].entity_key),
-            str(dimension_endpoints[1].entity_key),
-        ],
         "dimension_value": dimension_value,
         "overall_dimension_value": float(overall_value),
         "selected_witness_positions_px": [witness_low, witness_high],
@@ -4956,6 +4943,54 @@ def _symmetric_profile_span_record(
         ),
         "engineering_coordinate_inferred_from_pixels": False,
         "pixel_geometry_used_for_identity_only": True,
+    }
+
+
+def _symmetric_profile_span_record(
+    *,
+    candidate: dict[str, Any],
+    dimension_key: str,
+    dimension_value: float,
+    axis: Axis,
+    dimension_endpoints: list[ObservationDimensionEndpoint],
+    candidates: list[dict[str, Any]],
+    report: dict[str, Any],
+    context: HybridAdapterContext,
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+    overall_dimensions: dict[str, float],
+) -> dict[str, Any] | None:
+    """Prove that a resolved profile span is symmetric about the overall center."""
+
+    if not (
+        len(dimension_endpoints) == 2
+        and all(item.role == "profile_boundary" for item in dimension_endpoints)
+        and all(item.entity_key for item in dimension_endpoints)
+        and dimension_endpoints[0].entity_key != dimension_endpoints[1].entity_key
+    ):
+        return None
+
+    record = _symmetric_dimension_pair_record(
+        candidate=candidate,
+        dimension_key=dimension_key,
+        dimension_value=dimension_value,
+        axis=axis,
+        candidates=candidates,
+        report=report,
+        context=context,
+        view_lookup=view_lookup,
+        profile_inventory=profile_inventory,
+        overall_dimensions=overall_dimensions,
+    )
+    if record is None:
+        return None
+
+    return {
+        **record,
+        "profile_entity_keys": [
+            str(dimension_endpoints[0].entity_key),
+            str(dimension_endpoints[1].entity_key),
+        ],
     }
 
 
@@ -5140,6 +5175,7 @@ def adapt_hybrid_ocr_report(
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     symmetric_pair_records: list[dict[str, Any]] = []
+    symmetric_dimension_pair_records: list[dict[str, Any]] = []
     profile_span_center_records: list[dict[str, Any]] = []
     symmetric_profile_span_records: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
@@ -5446,6 +5482,21 @@ def adapt_hybrid_ocr_report(
                     )
                 )
 
+        symmetric_dimension_pair = _symmetric_dimension_pair_record(
+            candidate=raw_candidate,
+            dimension_key=dimension_key,
+            dimension_value=value,
+            axis=axis,
+            candidates=dimension_candidates,
+            report=report,
+            context=context,
+            view_lookup=view_lookup,
+            profile_inventory=profile_inventory,
+            overall_dimensions=overall_dimensions,
+        )
+        if symmetric_dimension_pair is not None:
+            symmetric_dimension_pair_records.append(symmetric_dimension_pair)
+
         if unresolved_reason is None and symmetric_pair is None:
             profile_span_center = _profile_span_center_record(
                 candidate=raw_candidate,
@@ -5680,6 +5731,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_symmetric_count_two_ledger",
             "schema": "1.0",
             "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_symmetric_dimension_pair_ledger",
+            "schema": "1.0",
+            "items": symmetric_dimension_pair_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

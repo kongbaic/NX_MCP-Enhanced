@@ -308,6 +308,16 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
     )
     payload["observations"] = [
         {
+            "kind": "hybrid_symmetric_dimension_pair_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "center_height",
+                    "axis": "X",
+                }
+            ],
+        },
+        {
             "kind": "hybrid_profile_span_center_ledger",
             "schema": "1.0",
             "items": [
@@ -332,6 +342,13 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
 
     observations = ReaderObservations.model_validate(payload)
     capture = assemble_reader_capture(observations)
+
+    symmetric_pair_ledger = next(
+        item
+        for item in capture.observations
+        if item.get("kind") == "hybrid_symmetric_dimension_pair_ledger"
+    )
+    assert symmetric_pair_ledger["items"][0]["dimension_id"] == "D001"
 
     span_ledger = next(
         item

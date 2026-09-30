@@ -547,6 +547,237 @@ def test_profile_extreme_fallback_requires_same_region_overall_fact_scope():
     assert items[0]["overall_fact_scope"] == "same_region_structural_evidence"
 
 
+def _overlap_profile_edge(
+    region_id,
+    ref,
+    *,
+    position,
+    span,
+    orientation,
+    side=None,
+):
+    item = {
+        "region_id": region_id,
+        "kind": "profile_edge_candidate",
+        "ref": ref,
+        "position_px": position,
+        "source_orientation": orientation,
+        "span_px": list(span),
+    }
+    if side is not None:
+        item["relative_extreme_side"] = side
+    return item
+
+
+def test_overlapping_region_local_extreme_cannot_impersonate_global_overall_boundary():
+    profile_inventory = [
+        _overlap_profile_edge(
+            "R1",
+            "R1.TOP_LOCAL",
+            position=296.0,
+            span=[470.0, 950.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.BOTTOM",
+            position=524.0,
+            span=[395.0, 1060.0],
+            orientation="horizontal",
+            side="max",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.SHARED_A",
+            position=441.0,
+            span=[338.0, 486.0],
+            orientation="horizontal",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.SHARED_B",
+            position=472.0,
+            span=[140.0, 454.0],
+            orientation="vertical",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.TOP_GLOBAL",
+            position=146.0,
+            span=[470.0, 974.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.BOTTOM",
+            position=524.0,
+            span=[395.0, 1060.0],
+            orientation="horizontal",
+            side="max",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.SHARED_A",
+            position=441.0,
+            span=[338.0, 486.0],
+            orientation="horizontal",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.SHARED_B",
+            position=472.0,
+            span=[140.0, 454.0],
+            orientation="vertical",
+        ),
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R1": "front", "R2": "front"},
+        overall_dimensions={"height_z": 75.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "Z"), ("R2", "Z")},
+    )
+
+    assert [(item["region_id"], item["axis"]) for item in items] == [
+        ("R2", "Z")
+    ]
+    assert {
+        (anchor["ref"], anchor["role"])
+        for anchor in items[0]["anchors"]
+    } == {
+        ("R2.TOP_GLOBAL", "overall_max"),
+        ("R2.BOTTOM", "overall_min"),
+    }
+
+
+def test_separate_same_kind_views_are_not_cross_region_reconciled_without_shared_raster_edges():
+    profile_inventory = [
+        _overlap_profile_edge(
+            "R1",
+            "R1.TOP",
+            position=100.0,
+            span=[10.0, 200.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.BOTTOM",
+            position=300.0,
+            span=[10.0, 200.0],
+            orientation="horizontal",
+            side="max",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.TOP",
+            position=500.0,
+            span=[400.0, 600.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.BOTTOM",
+            position=700.0,
+            span=[400.0, 600.0],
+            orientation="horizontal",
+            side="max",
+        ),
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R1": "front", "R2": "front"},
+        overall_dimensions={"height_z": 75.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "Z"), ("R2", "Z")},
+    )
+
+    assert [(item["region_id"], item["axis"]) for item in items] == [
+        ("R1", "Z"),
+        ("R2", "Z"),
+    ]
+
+
+def test_overlapping_partial_regions_fail_closed_when_no_region_spans_global_extremes():
+    profile_inventory = [
+        _overlap_profile_edge(
+            "R1",
+            "R1.TOP",
+            position=100.0,
+            span=[10.0, 300.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.BOTTOM_LOCAL",
+            position=300.0,
+            span=[10.0, 300.0],
+            orientation="horizontal",
+            side="max",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.SHARED_A",
+            position=180.0,
+            span=[20.0, 250.0],
+            orientation="horizontal",
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.SHARED_B",
+            position=220.0,
+            span=[50.0, 280.0],
+            orientation="vertical",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.TOP_LOCAL",
+            position=200.0,
+            span=[10.0, 300.0],
+            orientation="horizontal",
+            side="min",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.BOTTOM",
+            position=400.0,
+            span=[10.0, 300.0],
+            orientation="horizontal",
+            side="max",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.SHARED_A",
+            position=180.0,
+            span=[20.0, 250.0],
+            orientation="horizontal",
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.SHARED_B",
+            position=220.0,
+            span=[50.0, 280.0],
+            orientation="vertical",
+        ),
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R1": "front", "R2": "front"},
+        overall_dimensions={"height_z": 75.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "Z"), ("R2", "Z")},
+    )
+
+    assert items == []
+
+
 def test_profile_extreme_fallback_rejects_annotation_only_region_without_overall_fact():
     items = derive_view_axis_boundaries(
         candidates=[],

@@ -185,6 +185,196 @@ def _profile_extremes_agree_with_overall_witnesses(
     return True
 
 
+def _profile_edge_raster_signature(
+    item: dict[str, Any],
+) -> tuple[str, float, float, float] | None:
+    """Return a strict same-raster identity signature for one structural edge."""
+
+    if item.get("kind") != "profile_edge_candidate":
+        return None
+    orientation = str(item.get("source_orientation") or "")
+    position = item.get("position_px")
+    span = item.get("span_px")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or isinstance(position, bool)
+        or not isinstance(position, (int, float))
+        or not isinstance(span, list)
+        or len(span) != 2
+        or any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            for value in span
+        )
+    ):
+        return None
+    low, high = sorted(float(value) for value in span)
+    return (
+        orientation,
+        round(float(position), 3),
+        round(low, 3),
+        round(high, 3),
+    )
+
+
+def _overlapping_profile_region_groups(
+    *,
+    region_views: dict[str, str],
+    profile_inventory: list[dict[str, Any]],
+) -> list[set[str]]:
+    """Group overlapping crops only when shared raster geometry proves identity.
+
+    Same view kind alone is insufficient: one drawing can contain multiple
+    front/side/top views.  Two regions are linked only when at least two
+    structural profile edges have identical global-raster geometry.
+    """
+
+    signatures: dict[str, set[tuple[str, float, float, float]]] = {}
+    for item in profile_inventory:
+        if not isinstance(item, dict):
+            continue
+        region_id = str(item.get("region_id") or "")
+        if region_id not in region_views:
+            continue
+        signature = _profile_edge_raster_signature(item)
+        if signature is None:
+            continue
+        signatures.setdefault(region_id, set()).add(signature)
+
+    adjacency: dict[str, set[str]] = {
+        region_id: set() for region_id in signatures
+    }
+    region_ids = sorted(signatures)
+    for index, left in enumerate(region_ids):
+        for right in region_ids[index + 1 :]:
+            if region_views.get(left) != region_views.get(right):
+                continue
+            if len(signatures[left] & signatures[right]) < 2:
+                continue
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+
+    groups: list[set[str]] = []
+    visited: set[str] = set()
+    for seed in region_ids:
+        if seed in visited or not adjacency[seed]:
+            continue
+        stack = [seed]
+        component: set[str] = set()
+        while stack:
+            region_id = stack.pop()
+            if region_id in visited:
+                continue
+            visited.add(region_id)
+            component.add(region_id)
+            stack.extend(sorted(adjacency[region_id] - visited, reverse=True))
+        if len(component) >= 2:
+            groups.append(component)
+    return groups
+
+
+def _boundary_record_pixel_pair(
+    record: dict[str, Any],
+) -> tuple[float, float] | None:
+    anchors = record.get("anchors")
+    if not isinstance(anchors, list) or len(anchors) != 2:
+        return None
+    positions = [
+        anchor.get("position_px")
+        for anchor in anchors
+        if isinstance(anchor, dict)
+    ]
+    if (
+        len(positions) != 2
+        or any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            for value in positions
+        )
+    ):
+        return None
+    low, high = sorted(float(value) for value in positions)
+    return low, high
+
+
+def _reconcile_overlapping_region_boundaries(
+    *,
+    records: list[dict[str, Any]],
+    region_views: dict[str, str],
+    profile_inventory: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Reject local crop extremes that do not span the shared physical view.
+
+    Pixel positions are used only to choose boundary identity across proven
+    overlapping crops.  Engineering values remain sourced exclusively from the
+    independent overall-dimension facts already carried by each record.
+    """
+
+    groups = _overlapping_profile_region_groups(
+        region_views=region_views,
+        profile_inventory=profile_inventory,
+    )
+    if not groups:
+        return records
+
+    suppressed: set[int] = set()
+    for group in groups:
+        buckets: dict[tuple[str, str, float], list[dict[str, Any]]] = {}
+        for record in records:
+            if (
+                record.get("status") != "resolved"
+                or str(record.get("region_id") or "") not in group
+            ):
+                continue
+            view_kind = str(record.get("view_kind") or "")
+            axis = str(record.get("axis") or "")
+            overall_value = record.get("overall_dimension_value")
+            if (
+                not view_kind
+                or axis not in {"X", "Y", "Z"}
+                or isinstance(overall_value, bool)
+                or not isinstance(overall_value, (int, float))
+            ):
+                continue
+            buckets.setdefault(
+                (view_kind, axis, round(float(overall_value), 9)),
+                [],
+            ).append(record)
+
+        for bucket in buckets.values():
+            region_ids = {
+                str(record.get("region_id") or "")
+                for record in bucket
+            }
+            if len(region_ids) < 2:
+                continue
+            pairs = [
+                (record, _boundary_record_pixel_pair(record))
+                for record in bucket
+            ]
+            if any(pair is None for _record, pair in pairs):
+                continue
+            valid_pairs = [
+                (record, pair)
+                for record, pair in pairs
+                if pair is not None
+            ]
+            global_low = min(pair[0] for _record, pair in valid_pairs)
+            global_high = max(pair[1] for _record, pair in valid_pairs)
+
+            keep = {
+                id(record)
+                for record, pair in valid_pairs
+                if (
+                    abs(pair[0] - global_low) <= 1e-9
+                    and abs(pair[1] - global_high) <= 1e-9
+                )
+            }
+            for record, _pair in valid_pairs:
+                if id(record) not in keep:
+                    suppressed.add(id(record))
+
+    return [record for record in records if id(record) not in suppressed]
+
+
 def derive_view_axis_boundaries(
     *,
     candidates: list[dict[str, Any]],
@@ -421,6 +611,13 @@ def derive_view_axis_boundaries(
                 "reason": "multiple_overall_dimensions_disagree_on_boundary_identity",
                 "engineering_coordinate_inferred_from_pixels": False,
             }
+        )
+
+    if profile_inventory:
+        output = _reconcile_overlapping_region_boundaries(
+            records=output,
+            region_views=region_views,
+            profile_inventory=profile_inventory,
         )
 
     return output

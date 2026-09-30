@@ -894,15 +894,16 @@ def _projected_profile_endpoint_matches(
                 )
                 for entity_id in raw_entity_ids
             }
-            if len(targets) != 1:
+            if not targets:
                 continue
-            matches[endpoint_index].append(
-                {
-                    "role": "profile",
-                    "target": next(iter(targets)),
-                    "source_ids": source_ids,
-                }
-            )
+            for target in sorted(targets):
+                matches[endpoint_index].append(
+                    {
+                        "role": "profile",
+                        "target": target,
+                        "source_ids": source_ids,
+                    }
+                )
 
     return matches
 

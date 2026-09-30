@@ -935,6 +935,214 @@ def _profile_lines_touch(
 
 
 
+
+def _point_to_axis_profile_segment_distance(
+    point: tuple[float, float],
+    item: dict[str, Any],
+) -> float | None:
+    segment = _profile_line_segment_px(item)
+    if segment is None:
+        return None
+    orientation, position, start, end = segment
+    x, y = point
+    if orientation == "vertical":
+        nearest_y = min(max(y, start), end)
+        return math.hypot(x - position, y - nearest_y)
+    nearest_x = min(max(x, start), end)
+    return math.hypot(x - nearest_x, y - position)
+
+
+def _rotational_oblique_profile_hints(
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    context: HybridAdapterContext,
+) -> list[dict[str, Any]]:
+    """Record only strictly corroborated oblique rotational-profile evidence.
+
+    Raw oblique Hough segments remain candidate-only.  A segment is promoted
+    into this topology ledger only when one proven rotational view contains
+    the segment midpoint and each segment endpoint uniquely contacts a
+    different independently supported structural profile edge.  Pixel geometry
+    establishes topology/identity only and never becomes an engineering value.
+    """
+
+    raw_candidates = report.get("annotation_line_candidates")
+    if not isinstance(raw_candidates, list):
+        return []
+
+    hints: list[dict[str, Any]] = []
+    for region_id, region_view in sorted(view_lookup.items()):
+        plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
+        if plane is None:
+            continue
+        region_evidence = set(region_view.evidence)
+        rotation_axes = {
+            fact.axis
+            for fact in context.rotational_symmetry_facts
+            if fact.axis in set(plane)
+            and region_evidence.intersection(fact.evidence)
+        }
+        if len(rotation_axes) != 1:
+            continue
+        rotation_axis = next(iter(rotation_axes))
+
+        bbox = _region_bbox(report, region_id)
+        if bbox is None:
+            continue
+        bx, by, bw, bh = bbox
+
+        supports = [
+            item
+            for item in profile_inventory
+            if (
+                isinstance(item, dict)
+                and item.get("kind") == "profile_edge_candidate"
+                and str(item.get("region_id") or "") == region_id
+                and _profile_line_segment_px(item) is not None
+                and isinstance(
+                    item.get("non_dimension_crossing_source_count"),
+                    int,
+                )
+                and not isinstance(
+                    item.get("non_dimension_crossing_source_count"),
+                    bool,
+                )
+                and int(item.get("non_dimension_crossing_source_count", 0)) > 0
+                and str(item.get("ref") or "")
+            )
+        ]
+        if len(supports) < 2:
+            continue
+
+        tolerance = max(
+            5.0,
+            _region_profile_match_tolerance(report, region_id) * 2.0,
+        )
+
+        for candidate_index, candidate in enumerate(raw_candidates):
+            if (
+                not isinstance(candidate, dict)
+                or candidate.get("kind") != "oblique_line_candidate"
+                or candidate.get("candidate_only") is not True
+            ):
+                continue
+            endpoints = candidate.get("endpoints_px")
+            angle = candidate.get("angle_deg")
+            if (
+                not isinstance(endpoints, list)
+                or len(endpoints) != 2
+                or not all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in point
+                    )
+                    for point in endpoints
+                )
+                or not isinstance(angle, (int, float))
+                or isinstance(angle, bool)
+            ):
+                continue
+            angle_value = float(angle)
+            if not 10.0 <= angle_value <= 80.0:
+                continue
+
+            first = (float(endpoints[0][0]), float(endpoints[0][1]))
+            second = (float(endpoints[1][0]), float(endpoints[1][1]))
+            midpoint = (
+                (first[0] + second[0]) / 2.0,
+                (first[1] + second[1]) / 2.0,
+            )
+            if not (
+                bx <= midpoint[0] <= bx + bw
+                and by <= midpoint[1] <= by + bh
+            ):
+                continue
+
+            endpoint_matches: list[list[str]] = []
+            for point in (first, second):
+                matches = sorted(
+                    str(item.get("ref") or "")
+                    for item in supports
+                    if (
+                        _point_to_axis_profile_segment_distance(point, item)
+                        is not None
+                        and _point_to_axis_profile_segment_distance(point, item)
+                        <= tolerance
+                    )
+                )
+                endpoint_matches.append(list(dict.fromkeys(matches)))
+
+            if (
+                len(endpoint_matches[0]) != 1
+                or len(endpoint_matches[1]) != 1
+                or endpoint_matches[0][0] == endpoint_matches[1][0]
+            ):
+                continue
+
+            support_refs = [
+                endpoint_matches[0][0],
+                endpoint_matches[1][0],
+            ]
+            digest = hashlib.sha256(
+                "|".join(
+                    [
+                        region_id,
+                        str(candidate_index),
+                        support_refs[0],
+                        support_refs[1],
+                        f"{first[0]:.3f},{first[1]:.3f}",
+                        f"{second[0]:.3f},{second[1]:.3f}",
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()[:12].upper()
+            hints.append(
+                {
+                    "id": f"OBLIQUE_PROFILE_{digest}",
+                    "region_id": region_id,
+                    "view_kind": region_view.view_kind,
+                    "plane": plane,
+                    "rotation_axis": rotation_axis,
+                    "supporting_profile_refs": support_refs,
+                    "endpoints_px": [
+                        [round(first[0], 3), round(first[1], 3)],
+                        [round(second[0], 3), round(second[1], 3)],
+                    ],
+                    "angle_deg": round(angle_value, 3),
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *region_view.evidence,
+                                f"hybrid:oblique-line:{candidate_index}",
+                                *[
+                                    f"hybrid:profile-edge:{ref}"
+                                    for ref in support_refs
+                                ],
+                            ]
+                        )
+                    ),
+                    "basis": (
+                        "established_rotational_symmetry_plus_"
+                        "unique_independent_structural_contacts"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            )
+
+    hints.sort(
+        key=lambda item: (
+            str(item.get("region_id") or ""),
+            str(item.get("id") or ""),
+        )
+    )
+    return hints
+
+
 def _rotational_profile_topology_hints(
     *,
     report: dict[str, Any],
@@ -5748,6 +5956,12 @@ def adapt_hybrid_ocr_report(
         context=context,
         profile_entity_by_ref=profile_entity_by_ref,
     )
+    rotational_oblique_profile_hints = _rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=profile_inventory,
+        view_lookup=view_lookup,
+        context=context,
+    )
 
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
@@ -6361,6 +6575,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_rotational_profile_topology_ledger",
             "schema": "1.0",
             "items": rotational_profile_topology_hints,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": rotational_oblique_profile_hints,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_topology_only": True,
         },

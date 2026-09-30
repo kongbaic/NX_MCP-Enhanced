@@ -3925,6 +3925,57 @@ def _view_axis_boundary_capture(*, overall_value=80.0, inferred=False):
     )
 
 
+def test_view_axis_boundary_prefers_edge_entity_over_vertices_sharing_edge_source():
+    capture = _view_axis_boundary_capture()
+    capture.entities.extend(
+        [
+            CaptureEntity(
+                id="E_BOTTOM_VERTEX_MIN",
+                view_id="VF",
+                shape="profile",
+                source_ids=[
+                    "hybrid:profile-vertex:R1.BOTTOM.vertex.min",
+                    "hybrid:profile-edge:R1.BOTTOM",
+                ],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_BOTTOM_VERTEX_MAX",
+                view_id="VF",
+                shape="profile",
+                source_ids=[
+                    "hybrid:profile-vertex:R1.BOTTOM.vertex.max",
+                    "hybrid:profile-edge:R1.BOTTOM",
+                ],
+                required_for_modeling=False,
+            ),
+        ]
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_BOTTOM" in linked.entity_to_feature
+    assert "E_BOTTOM_VERTEX_MIN" not in linked.entity_to_feature
+    assert "E_BOTTOM_VERTEX_MAX" not in linked.entity_to_feature
+    bottom_feature = linked.entity_to_feature["E_BOTTOM"]
+    bottom_target = f"feature:{bottom_feature}.boundary.z"
+    boundary_relations = [
+        item
+        for item in linked.evidence.relations
+        if item.metadata.get("basis")
+        == "independent_overall_dimension_plus_unique_profile_extremes"
+    ]
+    assert any(
+        item.from_side == "min"
+        and item.targets == [bottom_target]
+        for item in boundary_relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[bottom_target] == 0.0
+
+
 def test_view_axis_boundary_ledger_materializes_profile_extremes_and_resolves_coordinates():
     capture = _view_axis_boundary_capture()
 

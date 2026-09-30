@@ -130,7 +130,14 @@ def _profile_entity_ids_for_ref(
     return sorted(
         item.id
         for item in capture.entities
-        if item.shape == "profile" and token in item.source_ids
+        if (
+            item.shape == "profile"
+            and token in item.source_ids
+            and not any(
+                source_id.startswith("hybrid:profile-vertex:")
+                for source_id in item.source_ids
+            )
+        )
     )
 
 

@@ -110,6 +110,60 @@ def test_compact_observations_assemble_valid_reader_capture():
     assert capture.required_targets == []
 
 
+def test_rotational_profile_topology_maps_compact_entity_keys_to_capture_ids():
+    payload = _base_observations()
+    payload["entities"].append(
+        {
+            "key": "front_profile",
+            "view_key": "front",
+            "shape": "profile",
+            "cross_view_disposition": "single_view",
+            "evidence": ["R1.profile"],
+            "required_for_modeling": False,
+        }
+    )
+    payload["observations"] = [
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "R1.profile.edge.1",
+                            "profile_entity_key": "front_profile",
+                            "source_orientation": "vertical",
+                            "constant_axis": "X",
+                        }
+                    ],
+                    "junctions": [],
+                    "source_ids": ["structural:R1"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    capture = assemble_reader_capture(ReaderObservations.model_validate(payload))
+
+    ledger = next(
+        item
+        for item in capture.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    edge = ledger["items"][0]["edges"][0]
+    assert edge["profile_entity_key"] == "front_profile"
+    assert edge["profile_entity_id"] == "E003"
+
+
 def test_unresolved_endpoint_is_preserved_without_owner_inference():
     payload = _base_observations()
     payload["dimensions"][0] = {

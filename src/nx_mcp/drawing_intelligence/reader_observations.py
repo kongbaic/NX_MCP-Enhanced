@@ -379,6 +379,32 @@ def _capture_observations_with_entity_ids(
         if not isinstance(observation, dict):
             continue
 
+        if (
+            observation.get("kind")
+            == "hybrid_rotational_profile_topology_ledger"
+        ):
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                edges = item.get("edges")
+                if not isinstance(edges, list):
+                    continue
+                for edge in edges:
+                    if not isinstance(edge, dict):
+                        continue
+                    key = edge.get("profile_entity_key")
+                    if not isinstance(key, str) or not key:
+                        continue
+                    edge["profile_entity_id"] = _mapped(
+                        entity_ids,
+                        key,
+                        "rotational profile topology entity",
+                    )
+            continue
+
         if observation.get("kind") == "hybrid_profile_topology_ledger":
             items = observation.get("items")
             if not isinstance(items, list):

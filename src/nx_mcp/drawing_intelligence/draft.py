@@ -701,6 +701,85 @@ def _expected_profile_overall(
     }[plane]
 
 
+def _rotational_profile_topology_unresolved(
+    graph: EvidenceGraph,
+) -> list[dict[str, Any]]:
+    """Block silent acceptance until proven rotational topology becomes metric geometry.
+
+    The Hybrid adapter may prove that structural profile edges form a connected
+    component in a view with established rotational symmetry.  That proof is
+    identity/topology evidence only; it does not authorize pixel-to-mm geometry.
+    Until a later compiler materializes the component from engineering
+    dimensions and resolved boundaries, preserve it as a modeling blocker.
+    """
+
+    output: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, int]] = set()
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_profile_topology_ledger"
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            axis = str(item.get("rotation_axis") or "")
+            plane = str(item.get("plane") or "")
+            region_id = str(item.get("region_id") or "")
+            component_index = item.get("component_index")
+            edges = item.get("edges")
+            if (
+                axis not in {"X", "Y", "Z"}
+                or plane not in {"XY", "XZ", "YZ"}
+                or not region_id
+                or not isinstance(component_index, int)
+                or not isinstance(edges, list)
+                or not edges
+            ):
+                continue
+            key = (axis, plane, region_id, component_index)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            stable = _stable_fragment(
+                "|".join((axis, plane, region_id, str(component_index)))
+            )
+            output.append(
+                {
+                    "id": f"U_ROTATIONAL_PROFILE_{stable}",
+                    "kind": "unsupported_representation",
+                    "field": "rotational_profile",
+                    "axis": axis,
+                    "reason": (
+                        "established rotational profile topology has not been "
+                        "materialized from engineering dimensions into canonical "
+                        "profile geometry"
+                    ),
+                    "source_ids": list(dict.fromkeys(source_ids)),
+                    "required_for_modeling": True,
+                    "metadata": {
+                        "plane": plane,
+                        "region_id": region_id,
+                        "component_index": component_index,
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                }
+            )
+    return output
+
+
 def _auto_metric_profile_spec(
     graph: EvidenceGraph,
     resolution: ResolutionResult,
@@ -1030,6 +1109,7 @@ def build_semantic_draft(
             draft["derived"].append(entry)
 
     draft["unresolved"] = _unresolved_entries(resolution)
+    draft["unresolved"].extend(_rotational_profile_topology_unresolved(graph))
 
     if resolution.conflicts:
         draft["dimension_closure"]["status"] = "conflict"

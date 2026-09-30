@@ -44,6 +44,77 @@ def _overall_values(length_x=40, width_y=32, height_z=66):
     ]
 
 
+def test_rotational_topology_without_metric_profile_fails_closed_before_planner():
+    boundary = "feature:F_PROFILE_EDGE.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=300, width_y=300, height_z=75),
+        direct_values=[
+            *_overall_values(length_x=300, width_y=300, height_z=75),
+            DirectValueEvidence(
+                id="S_PROFILE_BOUNDARY",
+                target=boundary,
+                value=54,
+                source_ids=["DIM_PROFILE"],
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.profile.edge.1",
+                                "profile_entity_id": "E001",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            }
+                        ],
+                        "junctions": [],
+                        "source_ids": ["structural:R1:context"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["kind"] == "unsupported_representation"
+    assert blockers[0]["field"] == "rotational_profile"
+    assert blockers[0]["axis"] == "Z"
+    assert (
+        blockers[0]["metadata"]["engineering_coordinate_inferred_from_pixels"]
+        is False
+    )
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+    errors = R.check_drawing_json(draft)
+    assert "blocking_unresolved=1" in errors
+    assert "dimension_closure.status must be closed" in errors
+
+
 def test_resolver_to_semantic_draft_passes_existing_gate_a_for_bottom_offset():
     target = "feature:F_MAIN_HOLE.centerline.z"
     graph = EvidenceGraph(

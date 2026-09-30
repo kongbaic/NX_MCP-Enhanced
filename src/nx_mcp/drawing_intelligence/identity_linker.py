@@ -449,8 +449,6 @@ def _attach_physical_oblique_fragments(
 
     output = copy.deepcopy(topology_items)
     for fragment in oblique_items:
-        if not isinstance(fragment, dict):
-            continue
         fragment_regions = {
             str(region_id)
             for region_id in fragment.get("region_ids", [])
@@ -461,8 +459,6 @@ def _attach_physical_oblique_fragments(
 
         matches: list[int] = []
         for index, item in enumerate(output):
-            if not isinstance(item, dict):
-                continue
             item_regions = {
                 str(region_id)
                 for region_id in item.get("region_ids", [])

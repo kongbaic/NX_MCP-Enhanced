@@ -3880,7 +3880,7 @@ def test_projected_profile_bridge_resolves_overall_to_profile_level():
     draft = build_semantic_draft(compiled, resolution)
     reference = next(
         item for item in draft["features"]
-        if item.get("boundary", {}).get("z") == -12.0
+        if item.get("boundary", {}).get("z") == 28.0
     )
     assert reference["type"] == "reference_boundary"
 

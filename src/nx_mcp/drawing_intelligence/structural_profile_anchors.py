@@ -493,6 +493,15 @@ def derive_structural_profile_anchors(
         independent_profile_source = (
             int(line.get("non_dimension_crossing_source_count", 0)) > 0
         )
+
+        ink_run = line.get("axis_ink_run_fraction")
+        if (
+            isinstance(ink_run, (int, float))
+            and not isinstance(ink_run, bool)
+            and float(ink_run) < 0.25
+        ):
+            continue
+
         long_single_corner = (
             span_local_norm >= 0.25
             and junction_count >= 1

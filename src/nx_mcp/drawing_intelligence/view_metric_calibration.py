@@ -108,7 +108,7 @@ def _profile_extreme(
 
 def _accepted_overall_witness_pairs(
     *,
-    candidates: list[dict[str, Any]],
+    candidates: list[Any],
     region_id: str,
     axis: str,
     region_views: dict[str, str],

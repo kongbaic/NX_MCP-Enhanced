@@ -183,7 +183,11 @@ def _merge_physical_rotational_topology_items(
                     continue
                 left_ref = canonical_ref[left_key]
                 right_ref = canonical_ref[right_key]
-                junctions.add(tuple(sorted((left_ref, right_ref))))
+                junctions.add(
+                    (left_ref, right_ref)
+                    if left_ref < right_ref
+                    else (right_ref, left_ref)
+                )
 
         region_ids = sorted(
             {

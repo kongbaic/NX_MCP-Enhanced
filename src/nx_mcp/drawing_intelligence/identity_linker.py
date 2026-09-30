@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections import defaultdict
@@ -61,6 +62,63 @@ def _canon(value: Any) -> Any:
     if isinstance(value, list):
         return [_canon(item) for item in value]
     return value
+
+
+_ROTATIONAL_PROFILE_TOPOLOGY_KIND = "hybrid_rotational_profile_topology_ledger"
+
+
+def _linked_rotational_profile_topology_observations(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Attach deterministic physical boundary targets to rotational topology edges.
+
+    The Capture ledger already proves only view-local topology.  This bridge
+    adds no geometry: it maps each recorded Capture entity through the
+    Identity Linker's physical identity and names the engineering boundary
+    target for the edge's constant axis.  Missing/ambiguous identity stays
+    unmaterialized and is handled fail-closed downstream.
+    """
+
+    observations = copy.deepcopy(capture.observations)
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ROTATIONAL_PROFILE_TOPOLOGY_KIND
+        ):
+            continue
+        if observation.get("engineering_coordinate_inferred_from_pixels") is not False:
+            continue
+        if observation.get("pixel_geometry_used_for_topology_only") is not True:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            edges = item.get("edges")
+            if not isinstance(edges, list):
+                continue
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                entity_id = edge.get("profile_entity_id")
+                axis = str(edge.get("constant_axis") or "").upper()
+                if (
+                    not isinstance(entity_id, str)
+                    or not entity_id
+                    or axis not in {"X", "Y", "Z"}
+                ):
+                    continue
+                feature_id = entity_to_feature.get(entity_id)
+                if feature_id is None:
+                    continue
+                edge["physical_feature_id"] = feature_id
+                edge["boundary_target"] = (
+                    f"feature:{feature_id}.boundary.{axis.lower()}"
+                )
+    return observations
 
 
 def _raw_fields_by_entity(capture: ReaderCapture) -> dict[str, set[str]]:
@@ -2665,7 +2723,10 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         relations=synthetic_relations,
         required_targets=required_targets,
         observations=[
-            *capture.observations,
+            *_linked_rotational_profile_topology_observations(
+                capture,
+                entity_to_feature,
+            ),
             {
                 "kind": "reader_required_targets_advisory",
                 "items": [

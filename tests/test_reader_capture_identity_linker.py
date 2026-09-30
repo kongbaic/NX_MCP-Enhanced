@@ -4612,6 +4612,60 @@ def test_oblique_dimension_projection_fails_closed_without_near_projection():
     )
 
 
+def test_physical_oblique_profile_items_merge_supportless_exterior_crop_duplicates():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": [],
+                    "supporting_profile_constant_axes": [],
+                    "support_status": "unresolved",
+                    "source_ids": ["structural:R1", "hybrid:oblique-line:0"],
+                    "one_sided_boundary_candidate": True,
+                    "exterior_boundary_candidate": True,
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": [],
+                    "supporting_profile_constant_axes": [],
+                    "support_status": "unresolved",
+                    "source_ids": ["structural:R2", "hybrid:oblique-line:0"],
+                    "one_sided_boundary_candidate": True,
+                    "exterior_boundary_candidate": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations, {}
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["supporting_physical_feature_ids"] == []
+    assert item["supporting_physical_edges"] == []
+    assert item["connection_kind"] == (
+        "exterior_non_orthogonal_boundary_fragment"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_topology_only"] is True
+
+
 def test_physical_oblique_fragment_attaches_to_one_matching_rotational_topology():
     topology = [
         {

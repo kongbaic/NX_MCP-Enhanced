@@ -83,6 +83,16 @@ def _collect_source_lines(
                     record["dimension_crossing_source_count"] += 1
                 elif source.get("crosses_dimension_axis") is False:
                     record["non_dimension_crossing_source_count"] += 1
+                for field in ("axis_ink_fraction", "axis_ink_run_fraction"):
+                    raw_value = source.get(field)
+                    if (
+                        isinstance(raw_value, (int, float))
+                        and not isinstance(raw_value, bool)
+                    ):
+                        record[field] = max(
+                            float(record.get(field, 0.0)),
+                            float(raw_value),
+                        )
 
     return sorted(
         lines.values(),
@@ -157,23 +167,33 @@ def _merge_near_duplicate_lines(
         )
         start = min(int(item["span_px"][0]) for item in group)
         end = max(int(item["span_px"][1]) for item in group)
-        merged.append(
-            {
-                "orientation": group[0]["orientation"],
-                "axis_px": round(axis, 3),
-                "span_px": [start, end],
-                "span_length_px": end - start,
-                "merged_source_line_count": len(group),
-                "dimension_crossing_source_count": sum(
-                    int(item.get("dimension_crossing_source_count", 0))
-                    for item in group
-                ),
-                "non_dimension_crossing_source_count": sum(
-                    int(item.get("non_dimension_crossing_source_count", 0))
-                    for item in group
-                ),
-            }
-        )
+        merged_record = {
+            "orientation": group[0]["orientation"],
+            "axis_px": round(axis, 3),
+            "span_px": [start, end],
+            "span_length_px": end - start,
+            "merged_source_line_count": len(group),
+            "dimension_crossing_source_count": sum(
+                int(item.get("dimension_crossing_source_count", 0))
+                for item in group
+            ),
+            "non_dimension_crossing_source_count": sum(
+                int(item.get("non_dimension_crossing_source_count", 0))
+                for item in group
+            ),
+        }
+        for field in ("axis_ink_fraction", "axis_ink_run_fraction"):
+            values = [
+                float(item[field])
+                for item in group
+                if (
+                    isinstance(item.get(field), (int, float))
+                    and not isinstance(item.get(field), bool)
+                )
+            ]
+            if values:
+                merged_record[field] = round(max(values), 5)
+        merged.append(merged_record)
 
     merged.sort(
         key=lambda item: (

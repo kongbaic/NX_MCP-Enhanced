@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from nx_mcp.drawing_intelligence.raster_evidence import (
+    _axis_ink_continuity,
     _compact_fragments,
     _radial_gradient_alignment,
     _adapt_probe,
@@ -197,6 +198,27 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
         all("source_lines" in witness for witness in item["witness_line_evidence"])
         for item in raw["dimension_geometry_candidates"]
     )
+
+
+def test_axis_ink_continuity_separates_continuous_edge_from_sparse_hatch():
+    import cv2
+    import numpy as np
+
+    image = np.full((220, 220), 255, np.uint8)
+    cv2.line(image, (40, 20), (40, 200), 0, 3)
+    for offset in range(30, 190, 20):
+        cv2.line(image, (115, offset), (135, offset + 20), 0, 2)
+
+    continuous_fraction, continuous_run = _axis_ink_continuity(
+        image, "vertical", 40.0, 20, 200
+    )
+    _hatch_fraction, hatch_run = _axis_ink_continuity(
+        image, "vertical", 125.0, 20, 200
+    )
+
+    assert continuous_fraction > 0.90
+    assert continuous_run > 0.90
+    assert hatch_run < 0.25
 
 
 def test_region_scoped_witnesses_excludes_other_region_axes():

@@ -305,7 +305,6 @@ def _physical_rotational_oblique_profile_items(
                 or plane not in {"XY", "XZ", "YZ"}
                 or rotation_axis not in set(plane)
                 or not isinstance(entity_ids, list)
-                or not entity_ids
                 or not all(
                     isinstance(entity_id, str) and entity_id
                     for entity_id in entity_ids
@@ -339,14 +338,20 @@ def _physical_rotational_oblique_profile_items(
                     }
                 )
             )
-            if not physical_edges:
-                continue
-
             one_sided = item.get("one_sided_boundary_candidate") is True
+            exterior = item.get("exterior_boundary_candidate") is True
+            support_status = str(item.get("support_status") or "")
             if one_sided and len(physical_edges) == 1:
                 connection_kind = "one_sided_non_orthogonal_boundary_continuation"
             elif len(physical_edges) >= 2:
                 connection_kind = "non_orthogonal_profile_connection"
+            elif (
+                not physical_edges
+                and exterior
+                and one_sided
+                and support_status == "unresolved"
+            ):
+                connection_kind = "exterior_non_orthogonal_boundary_fragment"
             else:
                 continue
 

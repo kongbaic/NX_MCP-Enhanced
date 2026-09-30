@@ -4345,6 +4345,7 @@ def _independent_profile_edge(
     position,
     span,
     support=1,
+    ink_run=1.0,
 ):
     return {
         "kind": "profile_edge_candidate",
@@ -4354,6 +4355,7 @@ def _independent_profile_edge(
         "position_px": float(position),
         "span_px": [float(span[0]), float(span[1])],
         "non_dimension_crossing_source_count": support,
+        "axis_ink_run_fraction": float(ink_run),
     }
 
 
@@ -4533,6 +4535,7 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
         "R1.PROFILE.VERTICAL_A"
     ]
     assert hints[0]["supporting_profile_constant_axes"] == ["X"]
+    assert hints[0]["support_status"] == "verified"
     assert hints[0]["one_sided_boundary_candidate"] is True
     assert hints[0]["basis"] == (
         "established_rotational_symmetry_plus_"
@@ -4633,6 +4636,59 @@ def test_rotational_oblique_profile_rejects_non_exterior_candidate():
     )
 
     assert hints == []
+
+
+def test_rotational_oblique_profile_preserves_exterior_when_axis_support_is_unverified():
+    inventory = [
+        _independent_profile_edge(
+            "FAKE_VERTICAL",
+            orientation="vertical",
+            position=80,
+            span=[20, 170],
+            ink_run=0.05,
+        ),
+    ]
+    report = {
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 200, 200]}],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[82, 40], [120, 120]],
+                "angle_deg": 64.6,
+                "length_px": 88.5,
+                "candidate_only": True,
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={"FAKE_VERTICAL": "R1.PROFILE.FAKE_VERTICAL"},
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["supporting_profile_refs"] == []
+    assert hint["supporting_profile_entity_keys"] == []
+    assert hint["supporting_profile_constant_axes"] == []
+    assert hint["support_status"] == "unresolved"
+    assert hint["basis"] == (
+        "established_rotational_symmetry_plus_"
+        "exterior_one_sided_boundary_without_verified_structural_contact"
+    )
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
 
 
 def test_rotational_profile_topology_records_connectivity_without_pixel_metric():

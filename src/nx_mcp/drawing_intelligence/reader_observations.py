@@ -392,7 +392,6 @@ def _capture_observations_with_entity_ids(
                 keys = item.get("supporting_profile_entity_keys")
                 if not (
                     isinstance(keys, list)
-                    and keys
                     and all(isinstance(key, str) and key for key in keys)
                 ):
                     continue

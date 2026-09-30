@@ -960,6 +960,57 @@ def _source_line_intersects_region(
     return False
 
 
+def _axis_ink_continuity(
+    gray: Any,
+    orientation: str,
+    axis: float,
+    start: int,
+    end: int,
+) -> tuple[float, float]:
+    """Measure actual drafting-ink continuity along one H/V source line."""
+
+    height, width = gray.shape[:2]
+    lower = int(round(min(start, end)))
+    upper = int(round(max(start, end)))
+    axis_index = int(round(float(axis)))
+    if orientation == "vertical":
+        lower = max(0, lower)
+        upper = min(height - 1, upper)
+        left = max(0, axis_index - 1)
+        right = min(width, axis_index + 2)
+        if upper < lower or right <= left:
+            return 0.0, 0.0
+        samples = gray[lower : upper + 1, left:right].min(axis=1)
+    elif orientation == "horizontal":
+        lower = max(0, lower)
+        upper = min(width - 1, upper)
+        top = max(0, axis_index - 1)
+        bottom = min(height, axis_index + 2)
+        if upper < lower or bottom <= top:
+            return 0.0, 0.0
+        samples = gray[top:bottom, lower : upper + 1].min(axis=0)
+    else:
+        return 0.0, 0.0
+
+    if len(samples) == 0:
+        return 0.0, 0.0
+
+    ink = samples <= 96
+    ink_fraction = float(ink.mean())
+    longest = 0
+    current = 0
+    for value in ink.tolist():
+        if bool(value):
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return (
+        round(ink_fraction, 5),
+        round(float(longest) / float(len(samples)), 5),
+    )
+
+
 def _witness_line_evidence(
     witnesses: list[float],
     source_lines: list[tuple[str, float, int, int]],
@@ -969,6 +1020,7 @@ def _witness_line_evidence(
     cross_tolerance: float,
     region_bbox: list[int],
     region_margin: float,
+    gray: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Preserve same-region merged orthogonal lines that produced each witness axis."""
 
@@ -987,19 +1039,28 @@ def _witness_line_evidence(
                 margin=region_margin,
             ):
                 continue
-            matched.append(
-                {
-                    "orientation": orientation,
-                    "axis_px": round(float(axis), 3),
-                    "span_px": [int(start), int(end)],
-                    "span_length_px": int(end - start),
-                    "crosses_dimension_axis": (
-                        float(start) - cross_tolerance
-                        <= float(dimension_axis)
-                        <= float(end) + cross_tolerance
-                    ),
-                }
-            )
+            record = {
+                "orientation": orientation,
+                "axis_px": round(float(axis), 3),
+                "span_px": [int(start), int(end)],
+                "span_length_px": int(end - start),
+                "crosses_dimension_axis": (
+                    float(start) - cross_tolerance
+                    <= float(dimension_axis)
+                    <= float(end) + cross_tolerance
+                ),
+            }
+            if gray is not None:
+                ink_fraction, ink_run_fraction = _axis_ink_continuity(
+                    gray,
+                    orientation,
+                    axis,
+                    start,
+                    end,
+                )
+                record["axis_ink_fraction"] = ink_fraction
+                record["axis_ink_run_fraction"] = ink_run_fraction
+            matched.append(record)
         matched.sort(
             key=lambda item: (
                 abs(float(item["axis_px"]) - float(witness)),
@@ -1163,6 +1224,7 @@ def _dimension_geometry(
                         cross_tolerance=float(witness_tolerance),
                         region_bbox=bbox,
                         region_margin=float(witness_tolerance),
+                        gray=gray,
                     ),
                     "status": "candidate_only_no_semantics",
                 }
@@ -1224,6 +1286,7 @@ def _dimension_geometry(
                         cross_tolerance=float(witness_tolerance),
                         region_bbox=bbox,
                         region_margin=float(witness_tolerance),
+                        gray=gray,
                     ),
                     "status": "candidate_only_no_semantics",
                 }

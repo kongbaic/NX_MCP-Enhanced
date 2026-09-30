@@ -1011,12 +1011,12 @@ def _rotational_oblique_profile_hints(
                     bool,
                 )
                 and int(item.get("non_dimension_crossing_source_count", 0)) > 0
+                and isinstance(item.get("axis_ink_run_fraction"), (int, float))
+                and not isinstance(item.get("axis_ink_run_fraction"), bool)
+                and float(item.get("axis_ink_run_fraction", 0.0)) >= 0.25
                 and str(item.get("ref") or "")
             )
         ]
-        if not supports:
-            continue
-
         strict_contact_tolerance = _region_profile_match_tolerance(
             report,
             region_id,
@@ -1126,19 +1126,28 @@ def _rotational_oblique_profile_hints(
                         list(dict.fromkeys(matches))
                     )
 
-                if sorted(
+                match_sizes = sorted(
                     len(matches)
                     for matches in strict_endpoint_matches
-                ) != [0, 1]:
+                )
+                if match_sizes == [0, 1]:
+                    support_refs = (
+                        strict_endpoint_matches[0]
+                        or strict_endpoint_matches[1]
+                    )
+                    basis = (
+                        "established_rotational_symmetry_plus_"
+                        "one_sided_boundary_plus_unique_structural_contact"
+                    )
+                elif match_sizes == [0, 0]:
+                    support_refs = []
+                    basis = (
+                        "established_rotational_symmetry_plus_"
+                        "exterior_one_sided_boundary_without_verified_"
+                        "structural_contact"
+                    )
+                else:
                     continue
-                support_refs = (
-                    strict_endpoint_matches[0]
-                    or strict_endpoint_matches[1]
-                )
-                basis = (
-                    "established_rotational_symmetry_plus_"
-                    "one_sided_boundary_plus_unique_structural_contact"
-                )
             else:
                 continue
 
@@ -1205,6 +1214,9 @@ def _rotational_oblique_profile_hints(
                     "supporting_profile_refs": support_refs,
                     "supporting_profile_entity_keys": support_entity_keys,
                     "supporting_profile_constant_axes": support_constant_axes,
+                    "support_status": (
+                        "verified" if support_refs else "unresolved"
+                    ),
                     "endpoints_px": [
                         [round(first[0], 3), round(first[1], 3)],
                         [round(second[0], 3), round(second[1], 3)],

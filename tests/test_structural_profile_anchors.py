@@ -86,6 +86,28 @@ def test_structural_profile_anchors_stay_geometry_only():
     assert all(anchor["ownership_claimed"] is False for anchor in anchors)
 
 
+def test_structural_profile_anchors_preserve_axis_ink_continuity():
+    raw = _raw()
+    source_lines = raw["dimension_geometry_candidates"][0][
+        "witness_line_evidence"
+    ][0]["source_lines"]
+    source_lines[0]["axis_ink_fraction"] = 0.88
+    source_lines[0]["axis_ink_run_fraction"] = 0.77
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "horizontal",
+    )
+    by_position = {
+        round(float(anchor["position_px"]), 3): anchor
+        for anchor in anchors
+    }
+
+    assert by_position[20.0]["axis_ink_fraction"] == 0.88
+    assert by_position[20.0]["axis_ink_run_fraction"] == 0.77
+
+
 def test_structural_profile_anchors_flow_into_witness_evidence():
     reduced = {
         "dimensions": [

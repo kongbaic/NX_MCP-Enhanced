@@ -545,6 +545,13 @@ def derive_structural_profile_anchors(
             "candidate_only": True,
             "ownership_claimed": False,
         }
+        for field in ("axis_ink_fraction", "axis_ink_run_fraction"):
+            raw_value = line.get(field)
+            if (
+                isinstance(raw_value, (int, float))
+                and not isinstance(raw_value, bool)
+            ):
+                anchor[field] = float(raw_value)
         if at_minimum:
             anchor["relative_extreme_side"] = "min"
         elif at_maximum:

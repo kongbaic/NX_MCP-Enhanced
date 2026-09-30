@@ -4225,6 +4225,97 @@ def test_rotational_topology_merges_crop_items_after_physical_identity_link():
     assert len(item["junctions"]) == 2
 
 
+def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_R1"],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:oblique-line:46",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_R2"],
+                    "source_ids": [
+                        "structural:R2",
+                        "hybrid:oblique-line:46",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_R1": "F_SHARED",
+            "E_R2": "F_SHARED",
+        },
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["supporting_physical_feature_ids"] == ["F_SHARED"]
+    assert item["connection_kind"] == (
+        "one_sided_non_orthogonal_boundary_continuation"
+    )
+    assert item["basis"] == (
+        "identity_linked_physical_oblique_profile_topology"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_topology_only"] is True
+    assert "endpoints_px" not in repr(item)
+    assert "angle_deg" not in repr(item)
+
+
+def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_UNKNOWN"],
+                    "source_ids": ["hybrid:oblique-line:9"],
+                    "one_sided_boundary_candidate": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    assert (
+        identity_linker_module._physical_rotational_oblique_profile_items(
+            observations,
+            {},
+        )
+        == []
+    )
+
+
 def test_rotational_topology_keeps_disjoint_physical_items_separate():
     items = [
         {

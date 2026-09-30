@@ -958,6 +958,7 @@ def _rotational_oblique_profile_hints(
     profile_inventory: list[dict[str, Any]],
     view_lookup: dict[str, HybridRegionView],
     context: HybridAdapterContext,
+    profile_entity_by_ref: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Record only strictly corroborated oblique rotational-profile evidence.
 
@@ -1139,6 +1140,20 @@ def _rotational_oblique_profile_hints(
             else:
                 continue
 
+            support_entity_keys = [
+                profile_entity_by_ref[ref]
+                for ref in support_refs
+                if (
+                    profile_entity_by_ref is not None
+                    and ref in profile_entity_by_ref
+                )
+            ]
+            if (
+                profile_entity_by_ref is not None
+                and len(support_entity_keys) != len(support_refs)
+            ):
+                continue
+
             digest = hashlib.sha256(
                 "|".join(
                     [
@@ -1158,6 +1173,7 @@ def _rotational_oblique_profile_hints(
                     "plane": plane,
                     "rotation_axis": rotation_axis,
                     "supporting_profile_refs": support_refs,
+                    "supporting_profile_entity_keys": support_entity_keys,
                     "endpoints_px": [
                         [round(first[0], 3), round(first[1], 3)],
                         [round(second[0], 3), round(second[1], 3)],
@@ -6011,6 +6027,7 @@ def adapt_hybrid_ocr_report(
         profile_inventory=profile_inventory,
         view_lookup=view_lookup,
         context=context,
+        profile_entity_by_ref=profile_entity_by_ref,
     )
 
     hidden_entity_records: dict[str, dict[str, Any]] = {}

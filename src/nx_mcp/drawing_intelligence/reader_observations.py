@@ -381,6 +381,33 @@ def _capture_observations_with_entity_ids(
 
         if (
             observation.get("kind")
+            == "hybrid_rotational_oblique_profile_candidate_ledger"
+        ):
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                keys = item.get("supporting_profile_entity_keys")
+                if not (
+                    isinstance(keys, list)
+                    and keys
+                    and all(isinstance(key, str) and key for key in keys)
+                ):
+                    continue
+                item["supporting_profile_entity_ids"] = [
+                    _mapped(
+                        entity_ids,
+                        key,
+                        "rotational oblique profile support entity",
+                    )
+                    for key in keys
+                ]
+            continue
+
+        if (
+            observation.get("kind")
             == "hybrid_rotational_profile_topology_ledger"
         ):
             items = observation.get("items")

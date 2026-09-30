@@ -4518,10 +4518,17 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
             )
         },
         context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            "VERTICAL_A": "R1.PROFILE.VERTICAL_A",
+            "HORIZONTAL_FAR": "R1.PROFILE.HORIZONTAL_FAR",
+        },
     )
 
     assert len(hints) == 1
     assert hints[0]["supporting_profile_refs"] == ["VERTICAL_A"]
+    assert hints[0]["supporting_profile_entity_keys"] == [
+        "R1.PROFILE.VERTICAL_A"
+    ]
     assert hints[0]["one_sided_boundary_candidate"] is True
     assert hints[0]["basis"] == (
         "established_rotational_symmetry_plus_"

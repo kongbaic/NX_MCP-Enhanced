@@ -149,7 +149,31 @@ def test_rotational_profile_topology_maps_compact_entity_keys_to_capture_ids():
             ],
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_topology_only": True,
-        }
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_PROFILE_TEST",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_refs": ["R1.profile.edge.1"],
+                    "supporting_profile_entity_keys": ["front_profile"],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:oblique-line:7",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
     ]
 
     capture = assemble_reader_capture(ReaderObservations.model_validate(payload))
@@ -162,6 +186,14 @@ def test_rotational_profile_topology_maps_compact_entity_keys_to_capture_ids():
     edge = ledger["items"][0]["edges"][0]
     assert edge["profile_entity_key"] == "front_profile"
     assert edge["profile_entity_id"] == "E003"
+
+    oblique = next(
+        item
+        for item in capture.observations
+        if item.get("kind")
+        == "hybrid_rotational_oblique_profile_candidate_ledger"
+    )
+    assert oblique["items"][0]["supporting_profile_entity_ids"] == ["E003"]
 
 
 def test_unresolved_endpoint_is_preserved_without_owner_inference():

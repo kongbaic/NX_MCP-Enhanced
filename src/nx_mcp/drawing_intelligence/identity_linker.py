@@ -65,6 +65,12 @@ def _canon(value: Any) -> Any:
 
 
 _ROTATIONAL_PROFILE_TOPOLOGY_KIND = "hybrid_rotational_profile_topology_ledger"
+_ROTATIONAL_OBLIQUE_PROFILE_KIND = (
+    "hybrid_rotational_oblique_profile_candidate_ledger"
+)
+_PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND = (
+    "hybrid_physical_rotational_oblique_profile_topology_ledger"
+)
 _VIEW_AXIS_BOUNDARY_KIND = "hybrid_view_axis_boundary_ledger"
 
 
@@ -239,6 +245,161 @@ def _merge_physical_rotational_topology_items(
     return output
 
 
+def _physical_rotational_oblique_profile_items(
+    observations: list[dict[str, Any]],
+    entity_to_feature: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Collapse crop-local oblique evidence only after physical identity is proven.
+
+    This bridge records topology/identity only.  Pixel endpoints and angles stay
+    in the source candidate ledger and never become engineering coordinates.
+    """
+
+    grouped: dict[
+        tuple[str, str, str, tuple[str, ...], str, str],
+        list[dict[str, Any]],
+    ] = {}
+
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ROTATIONAL_OBLIQUE_PROFILE_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            region_id = str(item.get("region_id") or "")
+            view_kind = str(item.get("view_kind") or "")
+            plane = str(item.get("plane") or "").upper()
+            rotation_axis = str(item.get("rotation_axis") or "").upper()
+            entity_ids = item.get("supporting_profile_entity_ids")
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            oblique_sources = sorted(
+                value
+                for value in source_ids
+                if value.startswith("hybrid:oblique-line:")
+            )
+            if (
+                not region_id
+                or not view_kind
+                or plane not in {"XY", "XZ", "YZ"}
+                or rotation_axis not in set(plane)
+                or not isinstance(entity_ids, list)
+                or not entity_ids
+                or not all(
+                    isinstance(entity_id, str) and entity_id
+                    for entity_id in entity_ids
+                )
+                or len(oblique_sources) != 1
+            ):
+                continue
+            if any(entity_id not in entity_to_feature for entity_id in entity_ids):
+                continue
+
+            physical_features = tuple(
+                sorted(
+                    {
+                        entity_to_feature[entity_id]
+                        for entity_id in entity_ids
+                    }
+                )
+            )
+            if not physical_features:
+                continue
+
+            one_sided = item.get("one_sided_boundary_candidate") is True
+            if one_sided and len(physical_features) == 1:
+                connection_kind = "one_sided_non_orthogonal_boundary_continuation"
+            elif len(physical_features) >= 2:
+                connection_kind = "non_orthogonal_profile_connection"
+            else:
+                continue
+
+            key = (
+                plane,
+                rotation_axis,
+                view_kind,
+                physical_features,
+                oblique_sources[0],
+                connection_kind,
+            )
+            grouped.setdefault(key, []).append(
+                {
+                    "region_id": region_id,
+                    "source_ids": source_ids,
+                }
+            )
+
+    output: list[dict[str, Any]] = []
+    for key, records in sorted(grouped.items()):
+        (
+            plane,
+            rotation_axis,
+            view_kind,
+            physical_features,
+            oblique_source,
+            connection_kind,
+        ) = key
+        region_ids = sorted(
+            {
+                str(record["region_id"])
+                for record in records
+                if str(record.get("region_id") or "")
+            }
+        )
+        source_ids = list(
+            dict.fromkeys(
+                source_id
+                for record in records
+                for source_id in record.get("source_ids", [])
+                if isinstance(source_id, str) and source_id
+            )
+        )
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    plane,
+                    rotation_axis,
+                    view_kind,
+                    *physical_features,
+                    oblique_source,
+                    connection_kind,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        output.append(
+            {
+                "id": f"PHYSICAL_OBLIQUE_{digest}",
+                "region_ids": region_ids,
+                "view_kind": view_kind,
+                "plane": plane,
+                "rotation_axis": rotation_axis,
+                "supporting_physical_feature_ids": list(physical_features),
+                "connection_kind": connection_kind,
+                "source_ids": source_ids,
+                "basis": (
+                    "identity_linked_physical_oblique_profile_topology"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
+
+    return output
+
+
 def _linked_rotational_profile_topology_observations(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
@@ -300,6 +461,21 @@ def _linked_rotational_profile_topology_observations(
                     if isinstance(linked_item, dict)
                 ]
             )
+
+    physical_oblique_items = _physical_rotational_oblique_profile_items(
+        observations,
+        entity_to_feature,
+    )
+    if physical_oblique_items:
+        observations.append(
+            {
+                "kind": _PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND,
+                "schema": "1.0",
+                "items": physical_oblique_items,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
     return observations
 
 

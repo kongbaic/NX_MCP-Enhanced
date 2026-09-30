@@ -701,18 +701,412 @@ def _expected_profile_overall(
     }[plane]
 
 
-def _rotational_profile_topology_unresolved(
-    graph: EvidenceGraph,
-) -> list[dict[str, Any]]:
-    """Block silent acceptance until proven rotational topology becomes metric geometry.
+def _rotational_profile_key(item: dict[str, Any]) -> tuple[str, str, str, int] | None:
+    axis = str(item.get("rotation_axis") or "")
+    plane = str(item.get("plane") or "")
+    region_id = str(item.get("region_id") or "")
+    component_index = item.get("component_index")
+    if (
+        axis not in {"X", "Y", "Z"}
+        or plane not in {"XY", "XZ", "YZ"}
+        or axis not in plane
+        or not region_id
+        or not isinstance(component_index, int)
+        or isinstance(component_index, bool)
+    ):
+        return None
+    return axis, plane, region_id, component_index
 
-    The Hybrid adapter may prove that structural profile edges form a connected
-    component in a view with established rotational symmetry.  That proof is
-    identity/topology evidence only; it does not authorize pixel-to-mm geometry.
-    Until a later compiler materializes the component from engineering
-    dimensions and resolved boundaries, preserve it as a modeling blocker.
+
+def _rotational_axis_center(
+    graph: EvidenceGraph,
+    radial_axis: str,
+) -> float:
+    if radial_axis in {"X", "Y"}:
+        return 0.0
+    return float(graph.overall_dimensions.height_z) / 2.0
+
+
+def _point_key(point: dict[str, float], axes: tuple[str, str]) -> tuple[float, float]:
+    return tuple(round(float(point[axis]), 12) for axis in axes)
+
+
+def _materialize_rotational_profile(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+) -> set[tuple[str, str, str, int]]:
+    """Build one deterministic max-radial meridian from resolved topology.
+
+    Topology may identify which structural profile edges connect, but only
+    Resolver values attached to engineering boundary targets supply metric
+    coordinates.  A full closed silhouette cycle is clipped to the max-radial
+    half about the established rotation axis and then closed on that axis.
+    Anything incomplete or non-unique remains unmaterialized and therefore
+    fail-closed.
     """
 
+    if draft.get("profile") not in (None, {}):
+        return set()
+
+    candidates: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_profile_topology_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if isinstance(items, list):
+            candidates.extend(item for item in items if isinstance(item, dict))
+
+    materialized: set[tuple[str, str, str, int]] = set()
+    for item in candidates:
+        key = _rotational_profile_key(item)
+        if key is None:
+            continue
+        rotation_axis, plane, _region_id, _component_index = key
+        axes = (plane[0], plane[1])
+        radial_axis = axes[1] if axes[0] == rotation_axis else axes[0]
+        axis_center = _rotational_axis_center(graph, radial_axis)
+        tolerance = 1e-9
+
+        raw_edges = item.get("edges")
+        raw_junctions = item.get("junctions")
+        if (
+            not isinstance(raw_edges, list)
+            or len(raw_edges) < 4
+            or not isinstance(raw_junctions, list)
+        ):
+            continue
+
+        edges: dict[str, dict[str, Any]] = {}
+        valid = True
+        for raw_edge in raw_edges:
+            if not isinstance(raw_edge, dict):
+                valid = False
+                break
+            ref = str(raw_edge.get("ref") or "")
+            constant_axis = str(raw_edge.get("constant_axis") or "").upper()
+            target = raw_edge.get("boundary_target")
+            if (
+                not ref
+                or ref in edges
+                or constant_axis not in axes
+                or not isinstance(target, str)
+                or target not in resolution.values
+            ):
+                valid = False
+                break
+            raw_value = resolution.values[target]
+            if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+                valid = False
+                break
+            edges[ref] = {
+                "axis": constant_axis,
+                "target": target,
+                "value": float(
+                    _planner_value_for_target(graph, target, raw_value)
+                ),
+            }
+        if not valid:
+            continue
+
+        adjacency: dict[str, set[str]] = {ref: set() for ref in edges}
+        for raw_pair in raw_junctions:
+            if (
+                not isinstance(raw_pair, list)
+                or len(raw_pair) != 2
+                or not all(isinstance(ref, str) for ref in raw_pair)
+            ):
+                valid = False
+                break
+            left, right = raw_pair
+            if (
+                left not in edges
+                or right not in edges
+                or left == right
+                or edges[left]["axis"] == edges[right]["axis"]
+            ):
+                valid = False
+                break
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+        if not valid or any(len(neighbors) != 2 for neighbors in adjacency.values()):
+            continue
+
+        seen: set[str] = set()
+        stack = [next(iter(edges))]
+        while stack:
+            ref = stack.pop()
+            if ref in seen:
+                continue
+            seen.add(ref)
+            stack.extend(adjacency[ref] - seen)
+        if seen != set(edges):
+            continue
+
+        junction_points: dict[tuple[str, str], dict[str, float]] = {}
+        for left in sorted(edges):
+            for right in sorted(adjacency[left]):
+                if left >= right:
+                    continue
+                point = {
+                    edges[left]["axis"]: edges[left]["value"],
+                    edges[right]["axis"]: edges[right]["value"],
+                }
+                if set(point) != set(axes):
+                    valid = False
+                    break
+                junction_points[(left, right)] = point
+            if not valid:
+                break
+        if not valid:
+            continue
+
+        segments: list[dict[str, Any]] = []
+        for ref, edge in sorted(edges.items()):
+            neighbors = sorted(adjacency[ref])
+            points = [
+                junction_points[tuple(sorted((ref, neighbor)))]
+                for neighbor in neighbors
+            ]
+            first = dict(points[0])
+            second = dict(points[1])
+            sources = {
+                edge["target"],
+                edges[neighbors[0]]["target"],
+                edges[neighbors[1]]["target"],
+            }
+
+            if edge["axis"] == radial_axis:
+                radial = edge["value"]
+                if radial <= axis_center + tolerance:
+                    continue
+            else:
+                first_radial = first[radial_axis]
+                second_radial = second[radial_axis]
+                if (
+                    first_radial < axis_center - tolerance
+                    and second_radial < axis_center - tolerance
+                ):
+                    continue
+                if first_radial < axis_center - tolerance:
+                    first[radial_axis] = axis_center
+                if second_radial < axis_center - tolerance:
+                    second[radial_axis] = axis_center
+
+            if _point_key(first, axes) == _point_key(second, axes):
+                continue
+            segments.append(
+                {
+                    "start": first,
+                    "end": second,
+                    "source_targets": sorted(sources),
+                    "source_ref": ref,
+                }
+            )
+
+        if len(segments) < 3:
+            continue
+
+        degrees: dict[tuple[float, float], int] = {}
+        point_values: dict[tuple[float, float], dict[str, float]] = {}
+        for segment in segments:
+            for name in ("start", "end"):
+                point = segment[name]
+                point_id = _point_key(point, axes)
+                point_values[point_id] = point
+                degrees[point_id] = degrees.get(point_id, 0) + 1
+
+        endpoints = sorted(point for point, degree in degrees.items() if degree == 1)
+        if (
+            len(endpoints) != 2
+            or any(degree not in {1, 2} for degree in degrees.values())
+            or any(
+                abs(point_values[point][radial_axis] - axis_center) > tolerance
+                for point in endpoints
+            )
+        ):
+            continue
+
+        axis_sources: set[str] = set()
+        for segment in segments:
+            if (
+                _point_key(segment["start"], axes) in endpoints
+                or _point_key(segment["end"], axes) in endpoints
+            ):
+                axis_sources.update(segment["source_targets"])
+        segments.append(
+            {
+                "start": dict(point_values[endpoints[0]]),
+                "end": dict(point_values[endpoints[1]]),
+                "source_targets": sorted(axis_sources),
+                "source_ref": "rotation_axis_closure",
+            }
+        )
+
+        by_vertex: dict[tuple[float, float], list[int]] = {}
+        for index, segment in enumerate(segments):
+            for name in ("start", "end"):
+                point_id = _point_key(segment[name], axes)
+                by_vertex.setdefault(point_id, []).append(index)
+        if any(len(indices) != 2 for indices in by_vertex.values()):
+            continue
+
+        start_vertex = min(by_vertex)
+        first_options = sorted(
+            by_vertex[start_vertex],
+            key=lambda index: (
+                _point_key(
+                    segments[index]["end"]
+                    if _point_key(segments[index]["start"], axes) == start_vertex
+                    else segments[index]["start"],
+                    axes,
+                ),
+                segments[index]["source_ref"],
+            ),
+        )
+        if not first_options:
+            continue
+
+        ordered: list[dict[str, Any]] = []
+        used: set[int] = set()
+        current_vertex = start_vertex
+        current_index = first_options[0]
+        while current_index not in used:
+            segment = segments[current_index]
+            start_id = _point_key(segment["start"], axes)
+            end_id = _point_key(segment["end"], axes)
+            if start_id == current_vertex:
+                oriented = segment
+                next_vertex = end_id
+            elif end_id == current_vertex:
+                oriented = {
+                    **segment,
+                    "start": segment["end"],
+                    "end": segment["start"],
+                }
+                next_vertex = start_id
+            else:
+                valid = False
+                break
+            ordered.append(oriented)
+            used.add(current_index)
+            current_vertex = next_vertex
+            next_indices = [
+                index
+                for index in by_vertex[current_vertex]
+                if index not in used
+            ]
+            if not next_indices:
+                break
+            current_index = next_indices[0]
+
+        if (
+            not valid
+            or len(used) != len(segments)
+            or current_vertex != start_vertex
+        ):
+            continue
+
+        profile_segments: list[dict[str, Any]] = []
+        all_sources = [
+            source
+            for source in item.get("source_ids", [])
+            if isinstance(source, str) and source
+        ]
+        for index, segment in enumerate(ordered):
+            start_point = segment["start"]
+            end_point = segment["end"]
+            profile_segment: dict[str, Any] = {"type": "line"}
+            for axis in axes:
+                lower = axis.lower()
+                profile_segment[f"{lower}1"] = start_point[axis]
+                profile_segment[f"{lower}2"] = end_point[axis]
+            profile_segments.append(profile_segment)
+
+            trace_sources = list(all_sources)
+            for source_target in segment["source_targets"]:
+                trace_sources.extend(resolution.traces.get(source_target, []))
+            trace_sources = list(dict.fromkeys(trace_sources))
+            draft["source_ledger"].append(
+                {
+                    "id": f"ROTATIONAL_PROFILE_{index}_TYPE",
+                    "semantic": "profile_dimension",
+                    "value": "line",
+                    "target": f"profile.segments.{index}.type",
+                    "evidence": trace_sources,
+                    "solver": "rotational_profile_solver",
+                }
+            )
+            for field, value in profile_segment.items():
+                if field == "type":
+                    continue
+                draft["source_ledger"].append(
+                    {
+                        "id": f"ROTATIONAL_PROFILE_{index}_{field.upper()}",
+                        "semantic": "profile_dimension",
+                        "value": value,
+                        "target": f"profile.segments.{index}.{field}",
+                        "evidence": trace_sources,
+                        "solver": "rotational_profile_solver",
+                        "source_targets": list(segment["source_targets"]),
+                    }
+                )
+
+        draft["profile"] = {
+            "plane": plane,
+            "topology": "closed_polygon",
+            "rotation_axis": rotation_axis,
+            "segments": profile_segments,
+        }
+        draft["source_ledger"].extend(
+            [
+                {
+                    "id": "ROTATIONAL_PROFILE_PLANE",
+                    "semantic": "profile_dimension",
+                    "value": plane,
+                    "target": "profile.plane",
+                    "evidence": list(dict.fromkeys(all_sources)),
+                    "solver": "rotational_profile_solver",
+                },
+                {
+                    "id": "ROTATIONAL_PROFILE_TOPOLOGY",
+                    "semantic": "profile_dimension",
+                    "value": "closed_polygon",
+                    "target": "profile.topology",
+                    "evidence": list(dict.fromkeys(all_sources)),
+                    "solver": "rotational_profile_solver",
+                },
+                {
+                    "id": "ROTATIONAL_PROFILE_AXIS",
+                    "semantic": "profile_dimension",
+                    "value": rotation_axis,
+                    "target": "profile.rotation_axis",
+                    "evidence": list(dict.fromkeys(all_sources)),
+                    "solver": "rotational_profile_solver",
+                },
+            ]
+        )
+        materialized.add(key)
+        break
+
+    return materialized
+
+
+def _rotational_profile_topology_unresolved(
+    graph: EvidenceGraph,
+    *,
+    materialized: set[tuple[str, str, str, int]] | None = None,
+) -> list[dict[str, Any]]:
+    """Block topology components that still lack canonical metric geometry."""
+
+    materialized = materialized or set()
     output: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, int]] = set()
     for observation in graph.observations:
@@ -728,24 +1122,19 @@ def _rotational_profile_topology_unresolved(
         for item in items:
             if not isinstance(item, dict):
                 continue
-            axis = str(item.get("rotation_axis") or "")
-            plane = str(item.get("plane") or "")
-            region_id = str(item.get("region_id") or "")
-            component_index = item.get("component_index")
+            key = _rotational_profile_key(item)
             edges = item.get("edges")
             if (
-                axis not in {"X", "Y", "Z"}
-                or plane not in {"XY", "XZ", "YZ"}
-                or not region_id
-                or not isinstance(component_index, int)
+                key is None
+                or key in materialized
                 or not isinstance(edges, list)
                 or not edges
             ):
                 continue
-            key = (axis, plane, region_id, component_index)
             if key in seen:
                 continue
             seen.add(key)
+            axis, plane, region_id, component_index = key
 
             source_ids = [
                 value
@@ -1054,6 +1443,12 @@ def build_semantic_draft(
     if metric_profile is not None:
         _materialize_metric_profile(draft, graph, metric_profile)
 
+    rotational_profile_keys = _materialize_rotational_profile(
+        draft,
+        graph,
+        resolution,
+    )
+
     # Materialize all direct observations first so feature type is available
     # before semantic inference (for example slot width -> slot_width).
     for fact in sorted(graph.direct_values, key=lambda item: (item.target, item.id)):
@@ -1109,7 +1504,12 @@ def build_semantic_draft(
             draft["derived"].append(entry)
 
     draft["unresolved"] = _unresolved_entries(resolution)
-    draft["unresolved"].extend(_rotational_profile_topology_unresolved(graph))
+    draft["unresolved"].extend(
+        _rotational_profile_topology_unresolved(
+            graph,
+            materialized=rotational_profile_keys,
+        )
+    )
 
     if resolution.conflicts:
         draft["dimension_closure"]["status"] = "conflict"

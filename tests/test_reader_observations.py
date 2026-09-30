@@ -308,6 +308,17 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
     )
     payload["observations"] = [
         {
+            "kind": "hybrid_projected_profile_level_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "center_height",
+                    "endpoint_index": 0,
+                    "axis": "Z",
+                }
+            ],
+        },
+        {
             "kind": "hybrid_symmetric_dimension_pair_ledger",
             "schema": "1.0",
             "items": [
@@ -342,6 +353,13 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
 
     observations = ReaderObservations.model_validate(payload)
     capture = assemble_reader_capture(observations)
+
+    projected_level_ledger = next(
+        item
+        for item in capture.observations
+        if item.get("kind") == "hybrid_projected_profile_level_ledger"
+    )
+    assert projected_level_ledger["items"][0]["dimension_id"] == "D001"
 
     symmetric_pair_ledger = next(
         item

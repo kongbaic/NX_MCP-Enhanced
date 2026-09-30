@@ -1173,6 +1173,229 @@ def test_dimension_span_center_identity_does_not_override_ambiguous_owner():
     assert records == []
 
 
+def test_projected_profile_level_accepts_structural_collinear_gap(monkeypatch):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "selected_witness_positions_px": [100.0, 200.0],
+            "endpoints": [
+                {
+                    "ignored_nonownership_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.vertical.010",
+                            "position_px": 101.0,
+                            "source_orientation": "vertical",
+                            "axis_tolerance_px": 4.0,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 2,
+                            "non_dimension_crossing_source_count": 3,
+                            "ownership_rejection_reason": (
+                                "profile_not_connected_to_witness_terminal"
+                            ),
+                        }
+                    ]
+                },
+                {"ignored_nonownership_anchors": []},
+            ],
+        },
+    )
+    candidate = {
+        "candidate_id": "DG_PROJECTED",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [10.0, 40.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+    }
+    endpoints = [
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            evidence=["test:left"],
+        ),
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            evidence=["test:right"],
+        ),
+    ]
+
+    records = hybrid_adapter._projected_profile_level_records(
+        candidate=candidate,
+        dimension_key="R1.DG_PROJECTED",
+        axis="X",
+        dimension_endpoints=endpoints,
+        boundary_roles={"R1.structural.vertical.010": "overall_min"},
+    )
+
+    assert len(records) == 1
+    assert records[0]["endpoint_index"] == 0
+    assert records[0]["profile_refs"] == ["R1.structural.vertical.010"]
+    assert records[0]["overall_role"] == "overall_min"
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_projected_profile_level_rejects_multiple_coordinate_clusters(monkeypatch):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "selected_witness_positions_px": [100.0, 200.0],
+            "endpoints": [
+                {
+                    "ignored_nonownership_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.vertical.010",
+                            "position_px": 100.0,
+                            "source_orientation": "vertical",
+                            "axis_tolerance_px": 2.0,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 2,
+                            "non_dimension_crossing_source_count": 2,
+                            "ownership_rejection_reason": (
+                                "profile_not_connected_to_witness_terminal"
+                            ),
+                        },
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.vertical.020",
+                            "position_px": 108.0,
+                            "source_orientation": "vertical",
+                            "axis_tolerance_px": 2.0,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 2,
+                            "non_dimension_crossing_source_count": 2,
+                            "ownership_rejection_reason": (
+                                "profile_not_connected_to_witness_terminal"
+                            ),
+                        },
+                    ]
+                },
+                {"ignored_nonownership_anchors": []},
+            ],
+        },
+    )
+    candidate = {
+        "candidate_id": "DG_AMBIG_LEVEL",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [10.0, 40.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+    }
+    endpoints = [
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            evidence=["test:left"],
+        ),
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            evidence=["test:right"],
+        ),
+    ]
+
+    assert hybrid_adapter._projected_profile_level_records(
+        candidate=candidate,
+        dimension_key="R1.DG_AMBIG_LEVEL",
+        axis="X",
+        dimension_endpoints=endpoints,
+        boundary_roles={},
+    ) == []
+
+
+def test_projected_profile_level_never_overrides_ambiguous_owner(monkeypatch):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "selected_witness_positions_px": [100.0, 200.0],
+            "endpoints": [
+                {
+                    "ignored_nonownership_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "R1.structural.vertical.010",
+                            "position_px": 100.0,
+                            "source_orientation": "vertical",
+                            "axis_tolerance_px": 4.0,
+                            "junction_count": 2,
+                            "endpoint_junction_count": 2,
+                            "non_dimension_crossing_source_count": 2,
+                            "ownership_rejection_reason": (
+                                "profile_not_connected_to_witness_terminal"
+                            ),
+                        }
+                    ]
+                },
+                {"ignored_nonownership_anchors": []},
+            ],
+        },
+    )
+    candidate = {
+        "candidate_id": "DG_AMBIG_OWNER",
+        "region_id": "R1",
+        "orientation": "horizontal",
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [
+                    {
+                        "orientation": "vertical",
+                        "axis_px": 100.0,
+                        "span_px": [10.0, 40.0],
+                        "crosses_dimension_axis": True,
+                    }
+                ],
+            }
+        ],
+    }
+    endpoints = [
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="ambiguous_owner",
+            evidence=["test:left"],
+        ),
+        hybrid_adapter.ObservationDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            evidence=["test:right"],
+        ),
+    ]
+
+    assert hybrid_adapter._projected_profile_level_records(
+        candidate=candidate,
+        dimension_key="R1.DG_AMBIG_OWNER",
+        axis="X",
+        dimension_endpoints=endpoints,
+        boundary_roles={},
+    ) == []
+
+
 def test_symmetric_dimension_pair_accepts_centered_pair_without_endpoint_ownership():
     context = _symmetric_profile_test_context()
     anchor = _symmetric_profile_test_candidate(

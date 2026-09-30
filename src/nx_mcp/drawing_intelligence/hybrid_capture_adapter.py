@@ -4602,6 +4602,210 @@ def _selected_witness_pair(
     return [float(value) for value in raw]
 
 
+def _projected_profile_level_records(
+    *,
+    candidate: dict[str, Any],
+    dimension_key: str,
+    axis: Axis,
+    dimension_endpoints: list[ObservationDimensionEndpoint],
+    boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
+) -> list[dict[str, Any]]:
+    """Record extension-line projection onto one structural profile coordinate.
+
+    Pixel coordinates establish only that an unresolved witness and a
+    structurally validated profile edge share the same measured-axis level.
+    The record never converts raster position into engineering units.
+    """
+
+    if len(dimension_endpoints) != 2:
+        return []
+
+    endpoint_evidence = derive_dimension_endpoint_candidates(candidate)
+    raw_endpoints = endpoint_evidence.get("endpoints")
+    witness_positions = endpoint_evidence.get("selected_witness_positions_px")
+    if not (
+        isinstance(raw_endpoints, list)
+        and len(raw_endpoints) == 2
+        and isinstance(witness_positions, list)
+        and len(witness_positions) == 2
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in witness_positions
+        )
+    ):
+        return []
+
+    orientation = str(candidate.get("orientation") or "")
+    expected_profile_orientation = {
+        "horizontal": "vertical",
+        "vertical": "horizontal",
+    }.get(orientation)
+    if expected_profile_orientation is None:
+        return []
+
+    witness_lines_by_index: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for witness in candidate.get("witness_line_evidence", []):
+        if not isinstance(witness, dict):
+            continue
+        witness_index = witness.get("witness_index")
+        if not isinstance(witness_index, int) or isinstance(witness_index, bool):
+            continue
+        witness_lines_by_index[witness_index].extend(
+            item
+            for item in witness.get("source_lines", [])
+            if isinstance(item, dict)
+        )
+
+    candidate_id = str(candidate.get("candidate_id") or "")
+    region_id = str(candidate.get("region_id") or "")
+    if not candidate_id or not region_id:
+        return []
+
+    output: list[dict[str, Any]] = []
+    for endpoint_index, (observed, raw_endpoint) in enumerate(
+        zip(dimension_endpoints, raw_endpoints, strict=True)
+    ):
+        if (
+            observed.role != "unresolved"
+            or observed.unresolved_kind != "intermediate_surface"
+            or not isinstance(raw_endpoint, dict)
+        ):
+            continue
+
+        witness_position = float(witness_positions[endpoint_index])
+        eligible: list[dict[str, Any]] = []
+        for anchor in raw_endpoint.get("ignored_nonownership_anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            if anchor.get("kind") != "profile_edge_candidate":
+                continue
+            if (
+                anchor.get("ownership_rejection_reason")
+                != "profile_not_connected_to_witness_terminal"
+            ):
+                continue
+            if (
+                str(anchor.get("source_orientation") or "")
+                != expected_profile_orientation
+            ):
+                continue
+
+            ref = str(anchor.get("ref") or "")
+            position = anchor.get("position_px")
+            axis_tolerance = anchor.get("axis_tolerance_px")
+            junction_count = anchor.get("junction_count")
+            endpoint_junction_count = anchor.get("endpoint_junction_count")
+            independent_count = anchor.get(
+                "non_dimension_crossing_source_count"
+            )
+            if (
+                not ref
+                or not isinstance(position, (int, float))
+                or isinstance(position, bool)
+                or not isinstance(axis_tolerance, (int, float))
+                or isinstance(axis_tolerance, bool)
+                or not isinstance(junction_count, int)
+                or isinstance(junction_count, bool)
+                or junction_count < 2
+                or not isinstance(endpoint_junction_count, int)
+                or isinstance(endpoint_junction_count, bool)
+                or endpoint_junction_count < 2
+                or not isinstance(independent_count, int)
+                or isinstance(independent_count, bool)
+                or independent_count <= 0
+            ):
+                continue
+            tolerance = max(2.0, float(axis_tolerance))
+            if abs(float(position) - witness_position) > tolerance:
+                continue
+
+            crossing_support = any(
+                line.get("crosses_dimension_axis") is True
+                and str(line.get("orientation") or "")
+                == expected_profile_orientation
+                and isinstance(line.get("axis_px"), (int, float))
+                and not isinstance(line.get("axis_px"), bool)
+                and abs(float(line["axis_px"]) - witness_position)
+                <= tolerance
+                for line in witness_lines_by_index.get(endpoint_index, [])
+            )
+            if not crossing_support:
+                continue
+
+            eligible.append(
+                {
+                    "ref": ref,
+                    "position_px": float(position),
+                    "tolerance_px": tolerance,
+                }
+            )
+
+        if not eligible:
+            continue
+
+        eligible.sort(key=lambda item: item["position_px"])
+        clusters: list[list[dict[str, Any]]] = []
+        for item in eligible:
+            if not clusters:
+                clusters.append([item])
+                continue
+            previous = clusters[-1][-1]
+            cluster_tolerance = max(
+                float(previous["tolerance_px"]),
+                float(item["tolerance_px"]),
+            )
+            if (
+                abs(float(item["position_px"]) - float(previous["position_px"]))
+                <= cluster_tolerance
+            ):
+                clusters[-1].append(item)
+            else:
+                clusters.append([item])
+
+        if len(clusters) != 1:
+            continue
+        cluster = clusters[0]
+        refs = sorted({str(item["ref"]) for item in cluster})
+        if not refs:
+            continue
+
+        roles = {
+            boundary_roles[ref]
+            for ref in refs
+            if ref in boundary_roles
+        }
+        if len(roles) > 1:
+            continue
+        overall_role = next(iter(roles)) if roles else None
+        profile_position = sum(
+            float(item["position_px"]) for item in cluster
+        ) / len(cluster)
+        residual = abs(profile_position - witness_position)
+
+        output.append(
+            {
+                "dimension_key": dimension_key,
+                "candidate_id": candidate_id,
+                "region_id": region_id,
+                "endpoint_index": endpoint_index,
+                "axis": axis,
+                "witness_position_px": witness_position,
+                "profile_position_px": round(profile_position, 3),
+                "profile_refs": refs,
+                "overall_role": overall_role,
+                "projection_residual_px": round(residual, 3),
+                "basis": (
+                    "extension_line_projection_to_structural_profile_level"
+                ),
+                "source_ids": _candidate_evidence(candidate_id),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return output
+
+
 def _profile_span_center_record(
     *,
     candidate: dict[str, Any],
@@ -5176,6 +5380,7 @@ def adapt_hybrid_ocr_report(
     dimensions: list[ObservationDimension] = []
     symmetric_pair_records: list[dict[str, Any]] = []
     symmetric_dimension_pair_records: list[dict[str, Any]] = []
+    projected_profile_level_records: list[dict[str, Any]] = []
     profile_span_center_records: list[dict[str, Any]] = []
     symmetric_profile_span_records: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
@@ -5482,6 +5687,16 @@ def adapt_hybrid_ocr_report(
                     )
                 )
 
+        projected_profile_level_records.extend(
+            _projected_profile_level_records(
+                candidate=raw_candidate,
+                dimension_key=dimension_key,
+                axis=axis,
+                dimension_endpoints=dimension_endpoints,
+                boundary_roles=boundary_roles,
+            )
+        )
+
         symmetric_dimension_pair = _symmetric_dimension_pair_record(
             candidate=raw_candidate,
             dimension_key=dimension_key,
@@ -5731,6 +5946,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_symmetric_count_two_ledger",
             "schema": "1.0",
             "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_projected_profile_level_ledger",
+            "schema": "1.0",
+            "items": projected_profile_level_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

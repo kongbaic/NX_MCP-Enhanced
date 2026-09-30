@@ -414,6 +414,16 @@ def _capture_observations_with_entity_ids(
                         dimension_key,
                         "projected profile level dimension",
                     )
+                keys = item.get("profile_entity_keys")
+                if (
+                    isinstance(keys, list)
+                    and keys
+                    and all(isinstance(key, str) and key for key in keys)
+                ):
+                    item["profile_entity_ids"] = [
+                        _mapped(entity_ids, key, "projected profile entity")
+                        for key in keys
+                    ]
             continue
 
         if (

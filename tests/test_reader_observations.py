@@ -315,6 +315,7 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
                     "dimension_key": "center_height",
                     "endpoint_index": 0,
                     "axis": "Z",
+                    "profile_entity_keys": ["front_bore"],
                 }
             ],
         },
@@ -360,6 +361,7 @@ def test_span_center_ledgers_map_dimension_keys_to_capture_ids():
         if item.get("kind") == "hybrid_projected_profile_level_ledger"
     )
     assert projected_level_ledger["items"][0]["dimension_id"] == "D001"
+    assert projected_level_ledger["items"][0]["profile_entity_ids"] == ["E001"]
 
     symmetric_pair_ledger = next(
         item

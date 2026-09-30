@@ -1238,11 +1238,15 @@ def test_projected_profile_level_accepts_structural_collinear_gap(monkeypatch):
         axis="X",
         dimension_endpoints=endpoints,
         boundary_roles={"R1.structural.vertical.010": "overall_min"},
+        profile_entity_by_ref={
+            "R1.structural.vertical.010": "R1.PROFILE.LEFT",
+        },
     )
 
     assert len(records) == 1
     assert records[0]["endpoint_index"] == 0
     assert records[0]["profile_refs"] == ["R1.structural.vertical.010"]
+    assert records[0]["profile_entity_keys"] == ["R1.PROFILE.LEFT"]
     assert records[0]["overall_role"] == "overall_min"
     assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
 
@@ -1325,6 +1329,10 @@ def test_projected_profile_level_rejects_multiple_coordinate_clusters(monkeypatc
         axis="X",
         dimension_endpoints=endpoints,
         boundary_roles={},
+        profile_entity_by_ref={
+            "R1.structural.vertical.010": "R1.PROFILE.LEFT_A",
+            "R1.structural.vertical.020": "R1.PROFILE.LEFT_B",
+        },
     ) == []
 
 
@@ -1397,6 +1405,10 @@ def test_projected_profile_level_never_overrides_ambiguous_owner(monkeypatch):
         axis="X",
         dimension_endpoints=endpoints,
         boundary_roles={},
+        profile_entity_by_ref={
+            "R1.structural.vertical.010": "R1.PROFILE.LEFT_A",
+            "R1.structural.vertical.020": "R1.PROFILE.LEFT_B",
+        },
     ) == []
 
 

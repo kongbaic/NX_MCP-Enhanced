@@ -4610,6 +4610,7 @@ def _projected_profile_level_records(
     axis: Axis,
     dimension_endpoints: list[ObservationDimensionEndpoint],
     boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
+    profile_entity_by_ref: dict[str, str],
 ) -> list[dict[str, Any]]:
     """Record extension-line projection onto one structural profile coordinate.
 
@@ -4769,6 +4770,13 @@ def _projected_profile_level_records(
         refs = sorted({str(item["ref"]) for item in cluster})
         if not refs:
             continue
+        if any(ref not in profile_entity_by_ref for ref in refs):
+            continue
+        profile_entity_keys = sorted(
+            {profile_entity_by_ref[ref] for ref in refs}
+        )
+        if not profile_entity_keys:
+            continue
 
         roles = {
             boundary_roles[ref]
@@ -4793,6 +4801,7 @@ def _projected_profile_level_records(
                 "witness_position_px": witness_position,
                 "profile_position_px": round(profile_position, 3),
                 "profile_refs": refs,
+                "profile_entity_keys": profile_entity_keys,
                 "overall_role": overall_role,
                 "projection_residual_px": round(residual, 3),
                 "basis": (
@@ -5695,6 +5704,7 @@ def adapt_hybrid_ocr_report(
                 axis=axis,
                 dimension_endpoints=dimension_endpoints,
                 boundary_roles=boundary_roles,
+                profile_entity_by_ref=profile_entity_by_ref,
             )
         )
 

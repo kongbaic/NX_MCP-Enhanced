@@ -169,6 +169,61 @@ def _structured_symmetric_count_two_sources(
     return list(dict.fromkeys(source_ids))
 
 
+def _profile_span_midpoint_relation(
+    *,
+    dimension: CaptureDimension,
+    boundary_targets: list[str],
+    endpoint_source_ids: list[str],
+) -> RelationEvidence | None:
+    """Create a stable midpoint constraint for one resolved profile span."""
+
+    if (
+        len(boundary_targets) != 2
+        or len(set(boundary_targets)) != 2
+        or dimension.axis not in {"X", "Y", "Z"}
+    ):
+        return None
+
+    ordered_boundaries = sorted(boundary_targets)
+    identity_payload = json.dumps(
+        {
+            "axis": dimension.axis,
+            "boundaries": ordered_boundaries,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
+    center_target = (
+        f"constraints.span_centers.C_{digest}.{dimension.axis.lower()}"
+    )
+    return RelationEvidence(
+        id=f"R_PROFILE_SPAN_MIDPOINT_{digest}",
+        kind="midpoint",
+        axis=dimension.axis,
+        targets=[
+            boundary_targets[0],
+            center_target,
+            boundary_targets[1],
+        ],
+        source_ids=list(
+            dict.fromkeys(
+                [
+                    *dimension.source_ids,
+                    *endpoint_source_ids,
+                ]
+            )
+        ),
+        required_for_modeling=False,
+        metadata={
+            "basis": "resolved_profile_boundary_span_midpoint",
+            "constraint_target": center_target,
+            "engineering_coordinate_inferred_from_pixels": False,
+        },
+    )
+
+
 def _structured_symmetric_profile_span_sources(
     capture: ReaderCapture,
     *,
@@ -1063,6 +1118,29 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             for endpoint in endpoints
             if endpoint.role == "profile_boundary" and endpoint.target
         ]
+        if (
+            len(profile_boundary_targets) == 2
+            and len(set(profile_boundary_targets)) == 2
+        ):
+            endpoint_source_ids = [
+                source_id
+                for endpoint in item.endpoints
+                for source_id in endpoint.source_ids
+            ]
+            midpoint_relation = _profile_span_midpoint_relation(
+                dimension=item,
+                boundary_targets=profile_boundary_targets,
+                endpoint_source_ids=endpoint_source_ids,
+            )
+            if (
+                midpoint_relation is not None
+                and not any(
+                    relation.id == midpoint_relation.id
+                    for relation in synthetic_relations
+                )
+            ):
+                synthetic_relations.append(midpoint_relation)
+
         if (
             len(profile_boundary_targets) == 2
             and len(set(profile_boundary_targets)) == 2

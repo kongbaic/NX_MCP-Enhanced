@@ -2931,6 +2931,52 @@ def _symmetric_profile_span_capture(*, include_symmetry_observation):
     )
 
 
+def test_identity_linker_emits_generic_profile_span_midpoint_without_symmetry():
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    linked = link_reader_capture(capture)
+
+    relation = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "midpoint"
+    )
+
+    assert relation.id.startswith("R_PROFILE_SPAN_MIDPOINT_")
+    assert relation.required_for_modeling is False
+    assert relation.targets[1].startswith("constraints.span_centers.C_")
+    assert relation.targets[1].endswith(".x")
+    assert relation.metadata["basis"] == (
+        "resolved_profile_boundary_span_midpoint"
+    )
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_profile_span_midpoint_identity_is_stable_when_endpoint_order_reverses():
+    first_capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_capture.dimensions[0].endpoints.reverse()
+
+    first = next(
+        item
+        for item in link_reader_capture(first_capture).evidence.relations
+        if item.kind == "midpoint"
+    )
+    second = next(
+        item
+        for item in link_reader_capture(second_capture).evidence.relations
+        if item.kind == "midpoint"
+    )
+
+    assert first.id == second.id
+    assert first.targets[1] == second.targets[1]
+
+
 def test_identity_linker_anchors_structured_symmetric_profile_span():
     capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
     linked = link_reader_capture(capture)

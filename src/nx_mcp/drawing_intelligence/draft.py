@@ -728,7 +728,10 @@ def _rotational_axis_center(
 
 
 def _point_key(point: dict[str, float], axes: tuple[str, str]) -> tuple[float, float]:
-    return tuple(round(float(point[axis]), 12) for axis in axes)
+    return (
+        round(float(point[axes[0]]), 12),
+        round(float(point[axes[1]]), 12),
+    )
 
 
 def _materialize_rotational_profile(
@@ -872,7 +875,9 @@ def _materialize_rotational_profile(
         for ref, edge in sorted(edges.items()):
             neighbors = sorted(adjacency[ref])
             points = [
-                junction_points[tuple(sorted((ref, neighbor)))]
+                junction_points[
+                    (ref, neighbor) if ref < neighbor else (neighbor, ref)
+                ]
                 for neighbor in neighbors
             ]
             first = dict(points[0])

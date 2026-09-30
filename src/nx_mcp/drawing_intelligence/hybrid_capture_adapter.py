@@ -1298,6 +1298,13 @@ def _rotational_profile_topology_hints(
                 continue
             if _profile_line_segment_px(item) is None:
                 continue
+            ink_run = item.get("axis_ink_run_fraction")
+            if (
+                not isinstance(ink_run, (int, float))
+                or isinstance(ink_run, bool)
+                or float(ink_run) < 0.25
+            ):
+                continue
             edges[ref] = item
 
         if len(edges) < 2:

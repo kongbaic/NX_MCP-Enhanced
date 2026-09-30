@@ -4309,6 +4309,7 @@ def _rotational_profile_inventory():
             "source_orientation": "vertical",
             "position_px": 20.0,
             "span_px": [20.0, 80.0],
+            "axis_ink_run_fraction": 1.0,
         },
         {
             "kind": "profile_edge_candidate",
@@ -4317,6 +4318,7 @@ def _rotational_profile_inventory():
             "source_orientation": "horizontal",
             "position_px": 20.0,
             "span_px": [20.0, 50.0],
+            "axis_ink_run_fraction": 1.0,
         },
         {
             "kind": "profile_edge_candidate",
@@ -4325,6 +4327,7 @@ def _rotational_profile_inventory():
             "source_orientation": "vertical",
             "position_px": 50.0,
             "span_px": [20.0, 60.0],
+            "axis_ink_run_fraction": 1.0,
         },
         {
             "kind": "profile_edge_candidate",
@@ -4333,6 +4336,7 @@ def _rotational_profile_inventory():
             "source_orientation": "vertical",
             "position_px": 90.0,
             "span_px": [5.0, 10.0],
+            "axis_ink_run_fraction": 1.0,
         },
     ]
 
@@ -4737,6 +4741,38 @@ def test_rotational_profile_topology_records_connectivity_without_pixel_metric()
     assert hint["pixel_geometry_used_for_topology_only"] is True
     assert "position_px" not in repr(hint)
     assert "span_px" not in repr(hint)
+
+
+def test_rotational_profile_topology_rejects_low_continuity_structural_edge():
+    inventory = _rotational_profile_inventory()
+    for item in inventory:
+        if item["ref"] == "STEP":
+            item["axis_ink_run_fraction"] = 0.05
+
+    hints = hybrid_adapter._rotational_profile_topology_hints(
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            item["ref"]: f"R1.PROFILE.{item['ref']}"
+            for item in inventory
+        },
+    )
+
+    assert len(hints) == 1
+    assert [item["ref"] for item in hints[0]["edges"]] == [
+        "LEFT",
+        "SHOULDER",
+    ]
+    assert hints[0]["junctions"] == [["LEFT", "SHOULDER"]]
+    assert "axis_ink_run_fraction" not in repr(hints[0])
 
 
 def test_rotational_profile_topology_requires_established_rotation():

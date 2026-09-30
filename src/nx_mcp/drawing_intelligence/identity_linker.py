@@ -441,6 +441,267 @@ def _physical_rotational_oblique_profile_items(
     return output
 
 
+def _oblique_dimension_projection_relations(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> list[RelationEvidence]:
+    """Align a dimension extension projection with a proven exterior profile.
+
+    The accepted dimension keeps all engineering metric authority.  Raster
+    positions are used only to prove that an exact crossing extension line and
+    one exterior-oblique support represent the same measured-axis coordinate.
+    """
+
+    supports_by_ref: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ROTATIONAL_OBLIQUE_PROFILE_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("exterior_boundary_candidate") is not True
+                or item.get("one_sided_boundary_candidate") is not True
+            ):
+                continue
+            refs = item.get("supporting_profile_refs")
+            entity_ids = item.get("supporting_profile_entity_ids")
+            axes = item.get("supporting_profile_constant_axes")
+            if not (
+                isinstance(refs, list)
+                and isinstance(entity_ids, list)
+                and isinstance(axes, list)
+                and len(refs) == len(entity_ids) == len(axes)
+            ):
+                continue
+            region_id = str(item.get("region_id") or "")
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            for ref, entity_id, raw_axis in zip(
+                refs,
+                entity_ids,
+                axes,
+                strict=True,
+            ):
+                axis = str(raw_axis).upper()
+                if (
+                    not isinstance(ref, str)
+                    or not ref
+                    or not isinstance(entity_id, str)
+                    or not entity_id
+                    or axis not in {"X", "Y", "Z"}
+                    or not region_id
+                ):
+                    continue
+                supports_by_ref[ref].append(
+                    {
+                        "entity_id": entity_id,
+                        "axis": axis,
+                        "region_id": region_id,
+                        "source_ids": source_ids,
+                    }
+                )
+
+    anchor_records: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != "hybrid_dimension_anchor_ledger"
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            candidate_id = str(item.get("candidate_id") or "")
+            if candidate_id:
+                anchor_records[candidate_id].append(item)
+
+    relations: list[RelationEvidence] = []
+    seen: set[tuple[str, str, str]] = set()
+    for dimension in capture.dimensions:
+        candidate_ids = {
+            parts[1]
+            for source_id in dimension.source_ids
+            for parts in [source_id.split(":")]
+            if (
+                len(parts) == 3
+                and parts[0] == "hybrid"
+                and parts[1]
+                and parts[2] in {"whole", "wide"}
+            )
+        }
+        if len(candidate_ids) != 1:
+            continue
+        candidate_id = next(iter(candidate_ids))
+        records = anchor_records.get(candidate_id, [])
+        if len(records) != 1:
+            continue
+        record = records[0]
+        endpoint_evidence = record.get("endpoint_candidate_evidence")
+        if not isinstance(endpoint_evidence, dict):
+            continue
+        raw_endpoints = endpoint_evidence.get("endpoints")
+        if (
+            not isinstance(raw_endpoints, list)
+            or len(raw_endpoints) != len(dimension.endpoints)
+        ):
+            continue
+
+        region_id = str(record.get("region_id") or "")
+        for endpoint_index, (endpoint, raw_endpoint) in enumerate(
+            zip(dimension.endpoints, raw_endpoints, strict=True)
+        ):
+            if (
+                endpoint.role != "profile_boundary"
+                or not endpoint.entity_id
+                or not isinstance(raw_endpoint, dict)
+                or raw_endpoint.get("ownership_narrowing_basis")
+                != "exact_crossing_witness_profile_line_identity"
+            ):
+                continue
+            physical_candidates = raw_endpoint.get("physical_candidates")
+            if not (
+                isinstance(physical_candidates, list)
+                and len(physical_candidates) == 1
+                and isinstance(physical_candidates[0], dict)
+                and physical_candidates[0].get("kind")
+                == "profile_edge_candidate"
+            ):
+                continue
+
+            witness_position = raw_endpoint.get("position_px")
+            if (
+                isinstance(witness_position, bool)
+                or not isinstance(witness_position, (int, float))
+            ):
+                continue
+
+            projected_supports: dict[tuple[str, str], dict[str, Any]] = {}
+            ignored = raw_endpoint.get("ignored_nonownership_anchors")
+            if not isinstance(ignored, list):
+                continue
+            for anchor in ignored:
+                if (
+                    not isinstance(anchor, dict)
+                    or anchor.get("kind") != "profile_edge_candidate"
+                    or anchor.get("ownership_rejection_reason")
+                    != "profile_not_connected_to_witness_terminal"
+                ):
+                    continue
+                ref = str(anchor.get("ref") or "")
+                position = anchor.get("position_px")
+                tolerance = anchor.get("axis_tolerance_px")
+                if (
+                    not ref
+                    or isinstance(position, bool)
+                    or not isinstance(position, (int, float))
+                    or isinstance(tolerance, bool)
+                    or not isinstance(tolerance, (int, float))
+                    or abs(float(position) - float(witness_position))
+                    > max(2.0, float(tolerance))
+                ):
+                    continue
+                for support in supports_by_ref.get(ref, []):
+                    if (
+                        support["region_id"] != region_id
+                        or support["axis"] != dimension.axis
+                        or support["entity_id"] == endpoint.entity_id
+                    ):
+                        continue
+                    projected_supports[
+                        (support["entity_id"], support["axis"])
+                    ] = {
+                        **support,
+                        "ref": ref,
+                    }
+
+            if len(projected_supports) != 1:
+                continue
+            support = next(iter(projected_supports.values()))
+            owned_feature = entity_to_feature.get(endpoint.entity_id)
+            support_feature = entity_to_feature.get(support["entity_id"])
+            if (
+                owned_feature is None
+                or support_feature is None
+                or owned_feature == support_feature
+            ):
+                continue
+
+            axis = dimension.axis
+            owned_target = (
+                f"feature:{owned_feature}.boundary.{axis.lower()}"
+            )
+            support_target = (
+                f"feature:{support_feature}.boundary.{axis.lower()}"
+            )
+            key = (axis, owned_target, support_target)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            digest = hashlib.sha256(
+                "|".join(
+                    [
+                        dimension.id,
+                        str(endpoint_index),
+                        axis,
+                        owned_target,
+                        support_target,
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()[:12].upper()
+            relations.append(
+                RelationEvidence(
+                    id=f"R_OBLIQUE_DIMENSION_PROJECTION_{digest}",
+                    kind="alignment",
+                    axis=axis,
+                    targets=[owned_target, support_target],
+                    source_ids=list(
+                        dict.fromkeys(
+                            [
+                                *dimension.source_ids,
+                                *endpoint.source_ids,
+                                *support["source_ids"],
+                                (
+                                    "hybrid:dimension-extension-projection:"
+                                    f"{candidate_id}:{endpoint_index}"
+                                ),
+                            ]
+                        )
+                    ),
+                    required_for_modeling=False,
+                    metadata={
+                        "basis": (
+                            "accepted_dimension_extension_projection_to_"
+                            "exterior_oblique_profile"
+                        ),
+                        "dimension_id": dimension.id,
+                        "endpoint_index": endpoint_index,
+                        "supporting_profile_ref": support["ref"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                )
+            )
+
+    relations.sort(key=lambda item: item.id)
+    return relations
+
+
 def _attach_physical_oblique_fragments(
     topology_items: list[dict[str, Any]],
     oblique_items: list[dict[str, Any]],
@@ -3381,6 +3642,12 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     synthetic_relations.extend(slot_tangent_relations)
     synthetic_relations.extend(
         _view_axis_boundary_relations(
+            capture,
+            entity_to_feature,
+        )
+    )
+    synthetic_relations.extend(
+        _oblique_dimension_projection_relations(
             capture,
             entity_to_feature,
         )

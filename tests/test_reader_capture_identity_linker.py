@@ -4326,6 +4326,292 @@ def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
     )
 
 
+def test_oblique_dimension_projection_aligns_extension_to_exterior_support():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_EXTENSION",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:EXT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_OBLIQUE_SUPPORT",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:OBLIQUE_SUPPORT"],
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[],
+        values=[],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=168.3,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_LEFT",
+                        basis="profile_edge",
+                        source_ids=["hybrid:DG3:whole"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                        source_ids=["hybrid:DG3:whole"],
+                    ),
+                ],
+                direction=1,
+                source_ids=["hybrid:DG3:whole", "hybrid:DG3:wide"],
+            )
+        ],
+        required_targets=[],
+        observations=[
+            {
+                "kind": "hybrid_dimension_anchor_ledger",
+                "items": [
+                    {
+                        "candidate_id": "DG3",
+                        "region_id": "R1",
+                        "endpoint_candidate_evidence": {
+                            "endpoints": [
+                                {
+                                    "endpoint_index": 0,
+                                    "position_px": 40.0,
+                                    "status": "unique_physical_candidate",
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "LEFT",
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": None,
+                                    "ignored_nonownership_anchors": [],
+                                },
+                                {
+                                    "endpoint_index": 1,
+                                    "position_px": 100.0,
+                                    "status": "unique_physical_candidate",
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "EXT",
+                                            "position_px": 100.0,
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": (
+                                        "exact_crossing_witness_profile_line_identity"
+                                    ),
+                                    "ignored_nonownership_anchors": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "OBLIQUE_SUPPORT",
+                                            "position_px": 100.4,
+                                            "axis_tolerance_px": 2.0,
+                                            "ownership_rejection_reason": (
+                                                "profile_not_connected_to_"
+                                                "witness_terminal"
+                                            ),
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "OBLIQUE_R1",
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "supporting_profile_refs": ["OBLIQUE_SUPPORT"],
+                        "supporting_profile_entity_ids": ["E_OBLIQUE_SUPPORT"],
+                        "supporting_profile_constant_axes": ["X"],
+                        "source_ids": [
+                            "structural:R1",
+                            "hybrid:oblique-line:0",
+                        ],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+
+    relations = identity_linker_module._oblique_dimension_projection_relations(
+        capture,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_EXTENSION": "F_EXTENSION",
+            "E_OBLIQUE_SUPPORT": "F_OBLIQUE",
+        },
+    )
+
+    assert len(relations) == 1
+    relation = relations[0]
+    assert relation.kind == "alignment"
+    assert relation.axis == "X"
+    assert relation.targets == [
+        "feature:F_EXTENSION.boundary.x",
+        "feature:F_OBLIQUE.boundary.x",
+    ]
+    assert relation.value is None
+    assert relation.required_for_modeling is False
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert relation.metadata["pixel_geometry_used_for_identity_only"] is True
+    assert relation.metadata["basis"] == (
+        "accepted_dimension_extension_projection_to_exterior_oblique_profile"
+    )
+
+
+def test_oblique_dimension_projection_fails_closed_without_near_projection():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_EXTENSION",
+                view_id="V_FRONT",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_OBLIQUE_SUPPORT",
+                view_id="V_FRONT",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[],
+        values=[],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=168.3,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                    ),
+                ],
+                direction=1,
+                source_ids=["hybrid:DG3:whole", "hybrid:DG3:wide"],
+            )
+        ],
+        required_targets=[],
+        observations=[
+            {
+                "kind": "hybrid_dimension_anchor_ledger",
+                "items": [
+                    {
+                        "candidate_id": "DG3",
+                        "region_id": "R1",
+                        "endpoint_candidate_evidence": {
+                            "endpoints": [
+                                {
+                                    "endpoint_index": 0,
+                                    "position_px": 40.0,
+                                    "physical_candidates": [],
+                                    "ignored_nonownership_anchors": [],
+                                },
+                                {
+                                    "endpoint_index": 1,
+                                    "position_px": 100.0,
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "EXT",
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": (
+                                        "exact_crossing_witness_profile_line_identity"
+                                    ),
+                                    "ignored_nonownership_anchors": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "OBLIQUE_SUPPORT",
+                                            "position_px": 112.0,
+                                            "axis_tolerance_px": 2.0,
+                                            "ownership_rejection_reason": (
+                                                "profile_not_connected_to_"
+                                                "witness_terminal"
+                                            ),
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "supporting_profile_refs": ["OBLIQUE_SUPPORT"],
+                        "supporting_profile_entity_ids": ["E_OBLIQUE_SUPPORT"],
+                        "supporting_profile_constant_axes": ["X"],
+                        "source_ids": ["hybrid:oblique-line:0"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+
+    assert (
+        identity_linker_module._oblique_dimension_projection_relations(
+            capture,
+            {
+                "E_EXTENSION": "F_EXTENSION",
+                "E_OBLIQUE_SUPPORT": "F_OBLIQUE",
+            },
+        )
+        == []
+    )
+
+
 def test_physical_oblique_fragment_attaches_to_one_matching_rotational_topology():
     topology = [
         {

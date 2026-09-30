@@ -382,3 +382,51 @@ def test_inferred_feature_types_emit_gate_a_provenance_writers():
         for error in errors
     )
 
+
+
+def test_midpoint_constraint_round_trips_through_draft_and_gate_a():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_GENERIC.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=100, width_y=40, height_z=20),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+            DirectValueEvidence(
+                id="LEFT_BOUNDARY",
+                target=left,
+                value=20,
+                source_ids=["LEFT_PROFILE"],
+            ),
+            DirectValueEvidence(
+                id="RIGHT_BOUNDARY",
+                target=right,
+                value=60,
+                source_ids=["RIGHT_PROFILE"],
+            ),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_MID_GENERIC",
+                kind="midpoint",
+                axis="X",
+                targets=[left, center, right],
+                source_ids=["SPAN_PROFILE"],
+                required_for_modeling=False,
+            )
+        ],
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.values[center] == 40.0
+    assert draft["constraints"]["span_centers"]["C_GENERIC"]["x"] == -10.0
+    relation = next(
+        item for item in draft["source_ledger"]
+        if item["id"] == "R_MID_GENERIC"
+    )
+    assert relation["semantic"] == "midpoint"
+    assert relation["links"] == [left, center, right]
+    derived = next(item for item in draft["derived"] if item["target"] == center)
+    assert derived["relation_refs"] == ["R_MID_GENERIC"]
+    assert R.check_drawing_json(draft) == []

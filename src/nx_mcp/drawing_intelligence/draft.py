@@ -42,6 +42,13 @@ def _scalar_coordinate_axis(target: str) -> str | None:
     if match:
         return match.group(1).upper()
 
+    match = re.search(
+        r"^constraints\.span_centers\.[^.]+\.(x|y|z)$",
+        lower,
+    )
+    if match:
+        return match.group(1).upper()
+
     match = re.search(r"\.explicit_centers\.\d+\.(0|1|2)$", lower)
     if match:
         return {"0": "X", "1": "Y", "2": "Z"}[match.group(1)]
@@ -495,8 +502,9 @@ def _relation_source(relation: RelationEvidence) -> dict[str, Any]:
                 "between": list(relation.targets),
             }
         )
-    elif relation.kind == "alignment":
+    elif relation.kind in {"alignment", "midpoint"}:
         source["links"] = list(relation.targets)
+        source["axis"] = relation.axis
     elif relation.kind in {"upper_tangent", "lower_tangent"}:
         center_target, tangent_target = relation.targets
         source.update(
@@ -560,6 +568,48 @@ def _derived_entry(
                     {"source": relation_id},
                 ],
             },
+        }
+
+    if kind == "midpoint":
+        op = derivation.get("op")
+        if len(dependencies) != 2 or op not in {"mean", "reflect"} or not relation_id:
+            raise DraftAssemblyError(
+                f"midpoint derivation for {target!r} is incomplete"
+            )
+        if op == "mean":
+            expr = {
+                "op": "div",
+                "args": [
+                    {
+                        "op": "add",
+                        "args": [
+                            {"target": dependencies[0]},
+                            {"target": dependencies[1]},
+                        ],
+                    },
+                    {"const": 2.0},
+                ],
+            }
+        else:
+            expr = {
+                "op": "sub",
+                "args": [
+                    {
+                        "op": "mul",
+                        "args": [
+                            {"const": 2.0},
+                            {"target": dependencies[0]},
+                        ],
+                    },
+                    {"target": dependencies[1]},
+                ],
+            }
+        return {
+            "id": f"D_{_stable_fragment(relation_id)}_{_stable_fragment(target)}",
+            "target": target,
+            "value": value,
+            "expr": expr,
+            "relation_refs": [relation_id],
         }
 
     raise DraftAssemblyError(

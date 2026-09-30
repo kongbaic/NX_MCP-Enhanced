@@ -5644,6 +5644,7 @@ _DRAWING_RELATION_SEMANTICS = {
     "lower_tangent",
     "coincident",
     "alignment",
+    "midpoint",
 }
 
 
@@ -6129,12 +6130,34 @@ def _drawing_relation_ref_ok(
         "lower_tangent",
         "coincident",
         "alignment",
+        "midpoint",
     }:
         return False, f"source semantic {semantic!r} is not a relation_ref"
     if not isinstance(links, list) or not all(isinstance(item, str) for item in links):
         return False, f"relation source {semantic!r} requires links"
     if derived_target not in links:
         return False, f"relation source {semantic!r} does not cover {derived_target!r}"
+
+    if semantic == "midpoint":
+        if len(links) != 3 or len(set(links)) != 3:
+            return False, "midpoint source requires [endpoint_a, midpoint, endpoint_b]"
+        required_dependencies = set(links) - {derived_target}
+        if target_refs != required_dependencies:
+            return False, (
+                "midpoint derivation must reference the other two constraint targets"
+            )
+        try:
+            first = _num(_drawing_path_get(data, links[0]))
+            center = _num(_drawing_path_get(data, links[1]))
+            second = _num(_drawing_path_get(data, links[2]))
+        except KeyError:
+            return False, "midpoint source references a missing target"
+        if first is None or center is None or second is None:
+            return False, "midpoint source links must be numeric scalars"
+        if abs(center - (first + second) / 2.0) > 1e-9:
+            return False, "midpoint source does not match target geometry"
+        return True, None
+
     if target_refs and not any(ref in links for ref in target_refs):
         return False, f"relation source {semantic!r} does not link a derived dependency"
 
@@ -6704,13 +6727,27 @@ def check_drawing_json(data: dict) -> list[str]:
                     relation_targets.add(tangent)
             elif semantic == "symmetry":
                 _drawing_check_symmetry(errors, source, features)
-            elif semantic in {"coincident", "alignment"}:
+            elif semantic in {"coincident", "alignment", "midpoint"}:
                 links = source.get("links")
-                if not isinstance(links, list) or not links:
-                    errors.append(f"source {sid!r} {semantic} requires links")
+                required_link_count = 3 if semantic == "midpoint" else 1
+                if (
+                    not isinstance(links, list)
+                    or len(links) < required_link_count
+                    or not all(isinstance(item, str) and item for item in links)
+                ):
+                    errors.append(f"source {sid!r} {semantic} requires valid links")
                 else:
+                    probe_target = links[1] if semantic == "midpoint" else links[0]
+                    probe_dependencies = (
+                        {links[0], links[2]}
+                        if semantic == "midpoint"
+                        else set(links[1:])
+                    )
                     ok, reason = _drawing_relation_ref_ok(
-                        data, source, links[0], set(links[1:])
+                        data,
+                        source,
+                        probe_target,
+                        probe_dependencies,
                     )
                     if not ok and reason:
                         errors.append(f"source {sid!r}: {reason}")

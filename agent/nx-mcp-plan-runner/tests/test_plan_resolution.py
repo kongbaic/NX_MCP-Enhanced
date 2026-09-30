@@ -1407,6 +1407,9 @@ def test_rotational_profile_selects_exact_revolve_capability_and_contract():
 def test_rotational_profile_revolve_fails_closed_when_meridian_crosses_axis():
     drawing = _rotational_body_drawing()
     drawing["profile"]["segments"][0]["x1"] = -1.0
+    drawing["profile"]["segments"][2]["x2"] = -1.0
+    drawing["profile"]["segments"][3]["x1"] = -1.0
+    drawing["profile"]["segments"][3]["x2"] = -1.0
 
     dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
 

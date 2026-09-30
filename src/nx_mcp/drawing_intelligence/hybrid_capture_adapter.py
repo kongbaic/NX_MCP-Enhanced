@@ -4359,6 +4359,335 @@ def _region_overall_fact_axes(
     return result
 
 
+
+def _region_has_rotational_symmetry(
+    context: HybridAdapterContext,
+    *,
+    region_id: str,
+    dimension_axis: Axis,
+) -> bool:
+    region = next(
+        (item for item in context.region_views if item.region_id == region_id),
+        None,
+    )
+    if region is None:
+        return False
+    visible_axes = _VISIBLE_AXES_BY_VIEW.get(region.view_kind, set())
+    for fact in context.rotational_symmetry_facts:
+        if fact.axis == dimension_axis or fact.axis not in visible_axes:
+            continue
+        if set(region.evidence) & set(fact.evidence):
+            return True
+    return False
+
+
+def _region_bbox(
+    report: dict[str, Any],
+    region_id: str,
+) -> tuple[float, float, float, float] | None:
+    matches = [
+        item
+        for item in report.get("regions", [])
+        if isinstance(item, dict)
+        and str(item.get("region_id") or "") == region_id
+    ]
+    if len(matches) != 1:
+        return None
+    bbox = matches[0].get("bbox_px")
+    if not (
+        isinstance(bbox, list)
+        and len(bbox) == 4
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in bbox
+        )
+    ):
+        return None
+    x, y, width, height = (float(value) for value in bbox)
+    if width <= 0 or height <= 0:
+        return None
+    return x, y, width, height
+
+
+def _regions_share_structural_raster_view(
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    first_region_id: str,
+    second_region_id: str,
+) -> bool:
+    """Prove that two region crops observe the same physical raster view.
+
+    Region labels remain distinct.  This relation is identity-only: it uses
+    overlapping source-image crops plus at least two independently supported
+    structural profile edges that recur at the same raster positions.
+    """
+
+    if first_region_id == second_region_id:
+        return True
+    first_view = view_lookup.get(first_region_id)
+    second_view = view_lookup.get(second_region_id)
+    if (
+        first_view is None
+        or second_view is None
+        or first_view.view_kind != second_view.view_kind
+    ):
+        return False
+
+    first_bbox = _region_bbox(report, first_region_id)
+    second_bbox = _region_bbox(report, second_region_id)
+    if first_bbox is None or second_bbox is None:
+        return False
+    fx, fy, fw, fh = first_bbox
+    sx, sy, sw, sh = second_bbox
+    if min(fx + fw, sx + sw) <= max(fx, sx):
+        return False
+    if min(fy + fh, sy + sh) <= max(fy, sy):
+        return False
+
+    def independent_edges(region_id: str) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in profile_inventory
+            if isinstance(item, dict)
+            and item.get("kind") == "profile_edge_candidate"
+            and str(item.get("region_id") or "") == region_id
+            and isinstance(item.get("position_px"), (int, float))
+            and not isinstance(item.get("position_px"), bool)
+            and isinstance(item.get("span_px"), list)
+            and len(item.get("span_px")) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in item.get("span_px")
+            )
+            and isinstance(item.get("non_dimension_crossing_source_count"), int)
+            and item.get("non_dimension_crossing_source_count", 0) > 0
+        ]
+
+    first_edges = independent_edges(first_region_id)
+    second_edges = independent_edges(second_region_id)
+    first_matches: set[str] = set()
+    second_matches: set[str] = set()
+    for first in first_edges:
+        for second in second_edges:
+            if str(first.get("source_orientation") or "") != str(
+                second.get("source_orientation") or ""
+            ):
+                continue
+            first_tolerance = float(first.get("axis_tolerance_px", 0.0) or 0.0)
+            second_tolerance = float(second.get("axis_tolerance_px", 0.0) or 0.0)
+            if abs(float(first["position_px"]) - float(second["position_px"])) > max(
+                1.0,
+                first_tolerance,
+                second_tolerance,
+            ):
+                continue
+            first_span = sorted(float(value) for value in first["span_px"])
+            second_span = sorted(float(value) for value in second["span_px"])
+            if min(first_span[1], second_span[1]) <= max(
+                first_span[0],
+                second_span[0],
+            ):
+                continue
+            first_ref = str(first.get("ref") or "")
+            second_ref = str(second.get("ref") or "")
+            if first_ref and second_ref:
+                first_matches.add(first_ref)
+                second_matches.add(second_ref)
+
+    return len(first_matches) >= 2 and len(second_matches) >= 2
+
+
+def _selected_witness_pair(
+    candidate: dict[str, Any],
+) -> list[float] | None:
+    endpoint_evidence = derive_dimension_endpoint_candidates(candidate)
+    raw = endpoint_evidence.get("selected_witness_positions_px")
+    if not (
+        isinstance(raw, list)
+        and len(raw) == 2
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in raw
+        )
+    ):
+        return None
+    return [float(value) for value in raw]
+
+
+def _symmetric_profile_span_record(
+    *,
+    candidate: dict[str, Any],
+    dimension_key: str,
+    dimension_value: float,
+    axis: Axis,
+    dimension_endpoints: list[ObservationDimensionEndpoint],
+    candidates: list[dict[str, Any]],
+    report: dict[str, Any],
+    context: HybridAdapterContext,
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+    overall_dimensions: dict[str, float],
+) -> dict[str, Any] | None:
+    """Prove that a resolved profile span is symmetric about the overall center.
+
+    Raster geometry establishes only identity and symmetry. Engineering
+    coordinates remain derived downstream from the accepted dimension value
+    and the independently known overall extent.
+    """
+
+    if not (
+        len(dimension_endpoints) == 2
+        and all(item.role == "profile_boundary" for item in dimension_endpoints)
+        and all(item.entity_key for item in dimension_endpoints)
+        and dimension_endpoints[0].entity_key != dimension_endpoints[1].entity_key
+    ):
+        return None
+
+    region_id = str(candidate.get("region_id") or "")
+    if not region_id or not _region_has_rotational_symmetry(
+        context,
+        region_id=region_id,
+        dimension_axis=axis,
+    ):
+        return None
+
+    overall_key = {"X": "length_x", "Y": "width_y", "Z": "height_z"}[axis]
+    overall_value = overall_dimensions.get(overall_key)
+    if (
+        not isinstance(overall_value, (int, float))
+        or isinstance(overall_value, bool)
+        or float(overall_value) <= 0
+        or dimension_value > float(overall_value) + 1e-9
+    ):
+        return None
+
+    witness_pair = _selected_witness_pair(candidate)
+    if witness_pair is None:
+        return None
+    witness_low, witness_high = sorted(witness_pair)
+    witness_midpoint = (witness_low + witness_high) / 2.0
+
+    anchors: list[dict[str, Any]] = []
+    for overall_candidate in candidates:
+        if not isinstance(overall_candidate, dict):
+            continue
+        accepted_token = overall_candidate.get("accepted_token")
+        anchor_region_id = str(overall_candidate.get("region_id") or "")
+        if not isinstance(accepted_token, str) or not anchor_region_id:
+            continue
+        anchor_view = view_lookup.get(anchor_region_id)
+        if anchor_view is None:
+            continue
+        try:
+            anchor_axis = _axis_for(
+                anchor_view.view_kind,
+                str(overall_candidate.get("orientation") or ""),
+            )
+            anchor_value, _ = _dimension_value(accepted_token)
+        except HybridCaptureAdapterError:
+            continue
+        if anchor_axis != axis or not math.isclose(
+            anchor_value,
+            float(overall_value),
+            abs_tol=max(abs(float(overall_value)) * 1e-6, 1e-9),
+        ):
+            continue
+        if not _region_has_rotational_symmetry(
+            context,
+            region_id=anchor_region_id,
+            dimension_axis=axis,
+        ):
+            continue
+        if not _regions_share_structural_raster_view(
+            report=report,
+            profile_inventory=profile_inventory,
+            view_lookup=view_lookup,
+            first_region_id=region_id,
+            second_region_id=anchor_region_id,
+        ):
+            continue
+
+        anchor_pair = _selected_witness_pair(overall_candidate)
+        if anchor_pair is None:
+            continue
+        anchor_low, anchor_high = sorted(anchor_pair)
+        anchor_span = anchor_high - anchor_low
+        if (
+            anchor_span <= 0
+            or witness_low < anchor_low
+            or witness_high > anchor_high
+        ):
+            continue
+        anchor_midpoint = (anchor_low + anchor_high) / 2.0
+        midpoint_tolerance = max(2.0, anchor_span * 0.015)
+        midpoint_residual = abs(witness_midpoint - anchor_midpoint)
+        if midpoint_residual > midpoint_tolerance:
+            continue
+        anchors.append(
+            {
+                "candidate_id": str(overall_candidate.get("candidate_id") or ""),
+                "region_id": anchor_region_id,
+                "witness_positions_px": [anchor_low, anchor_high],
+                "midpoint_residual_px": midpoint_residual,
+                "midpoint_tolerance_px": midpoint_tolerance,
+            }
+        )
+
+    if len(anchors) != 1:
+        return None
+
+    anchor = anchors[0]
+    candidate_id = str(candidate.get("candidate_id") or "")
+    symmetry_evidence: list[str] = []
+    for fact in context.rotational_symmetry_facts:
+        if fact.axis == axis:
+            continue
+        if set(fact.evidence) & {
+            evidence
+            for region in context.region_views
+            if region.region_id in {region_id, anchor["region_id"]}
+            for evidence in region.evidence
+        }:
+            symmetry_evidence.extend(fact.evidence)
+
+    return {
+        "dimension_key": dimension_key,
+        "candidate_id": candidate_id,
+        "region_id": region_id,
+        "axis": axis,
+        "datum": "overall_center",
+        "profile_entity_keys": [
+            str(dimension_endpoints[0].entity_key),
+            str(dimension_endpoints[1].entity_key),
+        ],
+        "dimension_value": dimension_value,
+        "overall_dimension_value": float(overall_value),
+        "selected_witness_positions_px": [witness_low, witness_high],
+        "overall_candidate_id": anchor["candidate_id"],
+        "overall_region_id": anchor["region_id"],
+        "overall_witness_positions_px": anchor["witness_positions_px"],
+        "midpoint_residual_px": round(float(anchor["midpoint_residual_px"]), 3),
+        "midpoint_tolerance_px": round(float(anchor["midpoint_tolerance_px"]), 3),
+        "basis": (
+            "rotational_symmetry_plus_structurally_shared_raster_view"
+            "_plus_overall_witness_midpoint"
+        ),
+        "source_ids": list(
+            dict.fromkeys(
+                [
+                    *_candidate_evidence(candidate_id),
+                    f"hybrid:{anchor['candidate_id']}:overall-center-anchor",
+                    *symmetry_evidence,
+                ]
+            )
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+
 _CROSS_REGION_ENDPOINT_STATUS_RANK = {
     "no_physical_candidate": 0,
     "ambiguous_physical_candidates": 1,
@@ -4540,6 +4869,7 @@ def adapt_hybrid_ocr_report(
     candidate_lookup: dict[str, dict[str, Any]] = {}
     dimensions: list[ObservationDimension] = []
     symmetric_pair_records: list[dict[str, Any]] = []
+    symmetric_profile_span_records: list[dict[str, Any]] = []
     unresolved: list[ObservationUnresolved] = []
     entities = _circle_entities(report, view_lookup)
     profile_entities, profile_entity_by_ref = _profile_boundary_entities(
@@ -4835,6 +5165,23 @@ def adapt_hybrid_ocr_report(
                     )
                 )
 
+        if unresolved_reason is None and symmetric_pair is None:
+            symmetric_profile_span = _symmetric_profile_span_record(
+                candidate=raw_candidate,
+                dimension_key=dimension_key,
+                dimension_value=value,
+                axis=axis,
+                dimension_endpoints=dimension_endpoints,
+                candidates=dimension_candidates,
+                report=report,
+                context=context,
+                view_lookup=view_lookup,
+                profile_inventory=profile_inventory,
+                overall_dimensions=overall_dimensions,
+            )
+            if symmetric_profile_span is not None:
+                symmetric_profile_span_records.append(symmetric_profile_span)
+
         dimension_required_for_modeling = True
         if (
             unresolved_reason is not None
@@ -5032,6 +5379,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_symmetric_count_two_ledger",
             "schema": "1.0",
             "items": symmetric_pair_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_symmetric_profile_span_ledger",
+            "schema": "1.0",
+            "items": symmetric_profile_span_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

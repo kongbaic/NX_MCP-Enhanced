@@ -396,6 +396,26 @@ def _capture_observations_with_entity_ids(
                     )
             continue
 
+        if observation.get("kind") == "hybrid_symmetric_profile_span_ledger":
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                keys = item.get("profile_entity_keys")
+                if not (
+                    isinstance(keys, list)
+                    and len(keys) == 2
+                    and all(isinstance(key, str) and key for key in keys)
+                ):
+                    continue
+                item["profile_entity_ids"] = [
+                    _mapped(entity_ids, key, "symmetric profile span entity")
+                    for key in keys
+                ]
+            continue
+
         if observation.get("kind") == "hybrid_open_slot_ledger":
             items = observation.get("items")
             if not isinstance(items, list):

@@ -2857,6 +2857,121 @@ def test_capture_accepts_circle_center_as_entity_center_basis():
     assert endpoint.basis == "circle_center"
 
 
+def _symmetric_profile_span_capture(*, include_symmetry_observation):
+    observations = []
+    if include_symmetry_observation:
+        observations.append(
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "candidate_id": "DG_SPAN",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "dimension_value": 40.0,
+                        "overall_dimension_value": 100.0,
+                        "source_ids": ["SRC_PROFILE_SPAN_SYMMETRY"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+            }
+        )
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=80,
+            height_z=20,
+        ),
+        views=[CaptureView(id="VF", kind="front", source_ids=["SRC_FRONT"])],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["SRC_LEFT"],
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["SRC_RIGHT"],
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=40,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_LEFT",
+                        basis="profile_edge",
+                        source_ids=["SRC_LEFT_ENDPOINT"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_RIGHT",
+                        basis="profile_edge",
+                        source_ids=["SRC_RIGHT_ENDPOINT"],
+                    ),
+                ],
+                source_ids=["hybrid:DG_SPAN:whole", "hybrid:DG_SPAN:wide"],
+            )
+        ],
+        observations=observations,
+    )
+
+
+def test_identity_linker_anchors_structured_symmetric_profile_span():
+    capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
+    linked = link_reader_capture(capture)
+
+    left_feature = linked.entity_to_feature["E_LEFT"]
+    right_feature = linked.entity_to_feature["E_RIGHT"]
+    left_target = f"feature:{left_feature}.boundary.x"
+    right_target = f"feature:{right_feature}.boundary.x"
+
+    anchor = next(
+        relation
+        for relation in linked.evidence.relations
+        if relation.id == "R_SYMMETRIC_PROFILE_ANCHOR_D_SPAN"
+    )
+    assert anchor.kind == "edge_offset"
+    assert anchor.value == 30.0
+    assert anchor.targets == [left_target]
+    assert anchor.metadata["basis"] == (
+        "structured_overall_center_symmetric_profile_span"
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[left_target] == 30.0
+    assert resolution.values[right_target] == 70.0
+    assert resolution.ok
+
+
+def test_identity_linker_does_not_anchor_profile_span_without_structured_symmetry():
+    capture = _symmetric_profile_span_capture(include_symmetry_observation=False)
+    linked = link_reader_capture(capture)
+
+    assert not any(
+        relation.id == "R_SYMMETRIC_PROFILE_ANCHOR_D_SPAN"
+        for relation in linked.evidence.relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert not resolution.ok
+
+
 def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_marker():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(

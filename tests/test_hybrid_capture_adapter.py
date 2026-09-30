@@ -884,6 +884,215 @@ def test_local_only_token_from_rejected_dimension_role_is_advisory():
     assert "advisory OCR coverage" in item.reason
 
 
+def _symmetric_profile_test_context():
+    return hybrid_adapter.HybridAdapterContext(
+        region_views=[
+            hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            ),
+            hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="front",
+                evidence=["structural:R2:context"],
+            ),
+        ],
+        overall_dimension_facts=[
+            hybrid_adapter.PartialOverallDimensionFact(
+                axis="X",
+                value=100.0,
+                evidence=["structural:R1:context"],
+            )
+        ],
+        rotational_symmetry_facts=[
+            hybrid_adapter.PartialRotationalSymmetryFact(
+                axis="Z",
+                evidence=[
+                    "structural:R1:context",
+                    "structural:R2:context",
+                ],
+            )
+        ],
+    )
+
+
+def _symmetric_profile_test_candidate(
+    candidate_id,
+    region_id,
+    token,
+    witnesses,
+):
+    midpoint = sum(witnesses) / len(witnesses)
+    return {
+        "candidate_id": candidate_id,
+        "region_id": region_id,
+        "orientation": "horizontal",
+        "axis_px": 50.0,
+        "accepted_token": str(token),
+        "global_assignments": [
+            {
+                "token": str(token),
+                "bbox": [
+                    [midpoint - 5.0, 40.0],
+                    [midpoint + 5.0, 40.0],
+                    [midpoint + 5.0, 60.0],
+                    [midpoint - 5.0, 60.0],
+                ],
+            }
+        ],
+        "witness_positions_px": witnesses,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": index,
+                "position_px": witness,
+                "nearest_anchors": [],
+            }
+            for index, witness in enumerate(witnesses)
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "position_px": witness,
+                "source_lines": [],
+            }
+            for index, witness in enumerate(witnesses)
+        ],
+    }
+
+
+def _symmetric_profile_test_inventory():
+    return [
+        {
+            "region_id": region_id,
+            "kind": "profile_edge_candidate",
+            "ref": f"{region_id}.LEFT",
+            "position_px": 20.0,
+            "source_orientation": "vertical",
+            "span_px": [20.0, 80.0],
+            "axis_tolerance_px": 2.0,
+            "non_dimension_crossing_source_count": 2,
+        }
+        for region_id in ("R1", "R2")
+    ] + [
+        {
+            "region_id": region_id,
+            "kind": "profile_edge_candidate",
+            "ref": f"{region_id}.RIGHT",
+            "position_px": 80.0,
+            "source_orientation": "vertical",
+            "span_px": [20.0, 80.0],
+            "axis_tolerance_px": 2.0,
+            "non_dimension_crossing_source_count": 2,
+        }
+        for region_id in ("R1", "R2")
+    ]
+
+
+def test_symmetric_profile_span_accepts_resolved_centered_profile_pair():
+    context = _symmetric_profile_test_context()
+    anchor = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+    candidate = _symmetric_profile_test_candidate(
+        "DG_SPAN",
+        "R2",
+        "40",
+        [30.0, 70.0],
+    )
+    record = hybrid_adapter._symmetric_profile_span_record(
+        candidate=candidate,
+        dimension_key="R2.DG_SPAN",
+        dimension_value=40.0,
+        axis="X",
+        dimension_endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.LEFT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.RIGHT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:right"],
+            ),
+        ],
+        candidates=[anchor, candidate],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 10, 100, 80]},
+                {"region_id": "R2", "bbox_px": [10, 0, 80, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    )
+
+    assert record is not None
+    assert record["profile_entity_keys"] == [
+        "R2.LEFT_PROFILE",
+        "R2.RIGHT_PROFILE",
+    ]
+    assert record["overall_candidate_id"] == "DG_OVERALL"
+    assert record["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_symmetric_profile_span_rejects_off_center_local_profile_pair():
+    context = _symmetric_profile_test_context()
+    anchor = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+    candidate = _symmetric_profile_test_candidate(
+        "DG_LOCAL",
+        "R2",
+        "20",
+        [10.0, 30.0],
+    )
+    record = hybrid_adapter._symmetric_profile_span_record(
+        candidate=candidate,
+        dimension_key="R2.DG_LOCAL",
+        dimension_value=20.0,
+        axis="X",
+        dimension_endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.LEFT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.RIGHT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:right"],
+            ),
+        ],
+        candidates=[anchor, candidate],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 10, 100, 80]},
+                {"region_id": "R2", "bbox_px": [10, 0, 80, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    )
+
+    assert record is None
+
+
 def test_adapter_closes_only_explicit_circle_center_endpoint_candidate():
     report = _report()
     report["regions"] = [

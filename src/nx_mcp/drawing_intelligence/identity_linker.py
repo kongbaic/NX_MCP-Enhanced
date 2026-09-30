@@ -82,6 +82,7 @@ def _canonical_field(
 
 _SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
 _STRUCTURED_SYMMETRIC_COUNT_TWO_KIND = "symmetric_count_two_overall_center"
+_STRUCTURED_SYMMETRIC_PROFILE_SPAN_KIND = "hybrid_symmetric_profile_span_ledger"
 
 _TRANSVERSE_CENTER_INDEX: dict[Axis, dict[Axis, int]] = {
     "X": {"Y": 0, "Z": 1},
@@ -160,6 +161,59 @@ def _structured_symmetric_count_two_sources(
         raw_sources = observation.get("source_ids")
         if isinstance(raw_sources, list):
             source_ids.extend(item for item in raw_sources if isinstance(item, str) and item)
+    return list(dict.fromkeys(source_ids))
+
+
+def _structured_symmetric_profile_span_sources(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    endpoint_entity_ids: list[str],
+) -> list[str]:
+    if len(endpoint_entity_ids) != 2 or len(set(endpoint_entity_ids)) != 2:
+        return []
+
+    source_ids: list[str] = []
+    for observation in capture.observations:
+        if observation.get("kind") != _STRUCTURED_SYMMETRIC_PROFILE_SPAN_KIND:
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            if record.get("axis") != dimension.axis or record.get("datum") != "overall_center":
+                continue
+            raw_entities = record.get("profile_entity_ids")
+            if not (
+                isinstance(raw_entities, list)
+                and len(raw_entities) == 2
+                and all(isinstance(entity_id, str) for entity_id in raw_entities)
+                and raw_entities == endpoint_entity_ids
+            ):
+                continue
+            raw_value = record.get("dimension_value")
+            if (
+                isinstance(raw_value, bool)
+                or not isinstance(raw_value, (int, float))
+                or abs(float(raw_value) - float(dimension.value)) > 1e-9
+            ):
+                continue
+            candidate_id = str(record.get("candidate_id") or "")
+            if not candidate_id:
+                continue
+            candidate_sources = {
+                f"hybrid:{candidate_id}:whole",
+                f"hybrid:{candidate_id}:wide",
+            }
+            if not candidate_sources.intersection(dimension.source_ids):
+                continue
+            raw_sources = record.get("source_ids")
+            if isinstance(raw_sources, list):
+                source_ids.extend(
+                    item for item in raw_sources if isinstance(item, str) and item
+                )
     return list(dict.fromkeys(source_ids))
 
 
@@ -998,6 +1052,61 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                         ),
                     )
                 )
+
+        profile_boundary_targets = [
+            endpoint.target
+            for endpoint in endpoints
+            if endpoint.role == "profile_boundary" and endpoint.target
+        ]
+        if (
+            len(profile_boundary_targets) == 2
+            and len(set(profile_boundary_targets)) == 2
+            and len(local_endpoint_entities) == 2
+        ):
+            structured_profile_sources = _structured_symmetric_profile_span_sources(
+                capture,
+                dimension=item,
+                endpoint_entity_ids=local_endpoint_entities,
+            )
+            if structured_profile_sources:
+                overall_extent = {
+                    "X": capture.overall_dimensions.length_x,
+                    "Y": capture.overall_dimensions.width_y,
+                    "Z": capture.overall_dimensions.height_z,
+                }[item.axis]
+                if item.direction in {-1, 1} and item.value <= overall_extent + 1e-9:
+                    endpoint_source_ids = [
+                        source_id
+                        for endpoint in item.endpoints
+                        for source_id in endpoint.source_ids
+                    ]
+                    all_source_ids = list(
+                        dict.fromkeys(
+                            [
+                                *item.source_ids,
+                                *endpoint_source_ids,
+                                *structured_profile_sources,
+                            ]
+                        )
+                    )
+                    synthetic_relations.append(
+                        RelationEvidence(
+                            id=f"R_SYMMETRIC_PROFILE_ANCHOR_{item.id}",
+                            kind="edge_offset",
+                            axis=item.axis,
+                            value=max(0.0, (overall_extent - item.value) / 2.0),
+                            from_side="min" if item.direction == 1 else "max",
+                            targets=[profile_boundary_targets[0]],
+                            source_ids=all_source_ids,
+                            required_for_modeling=item.required_for_modeling,
+                            metadata={
+                                "basis": (
+                                    "structured_overall_center_symmetric_profile_span"
+                                ),
+                                "overall_extent": overall_extent,
+                            },
+                        )
+                    )
 
         feature_center_targets = [
             endpoint.target

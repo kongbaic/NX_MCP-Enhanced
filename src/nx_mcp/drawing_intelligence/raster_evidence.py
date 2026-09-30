@@ -154,12 +154,88 @@ def _axis_lines(edges: Any, cv2: Any, np: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _one_sided_boundary_evidence(
+    gray: Any,
+    first: tuple[int, int],
+    second: tuple[int, int],
+) -> dict[str, Any]:
+    """Measure whether a raster line separates background from filled geometry."""
+
+    image_height, image_width = gray.shape[:2]
+    dx = float(second[0] - first[0])
+    dy = float(second[1] - first[1])
+    length = math.hypot(dx, dy)
+    if length <= 0.0:
+        return {
+            "one_sided_boundary_candidate": False,
+            "sample_offset_px": 0,
+            "sample_count": 0,
+            "side_mean_gray": [],
+            "side_background_fraction": [],
+            "mean_gray_delta": 0.0,
+        }
+
+    normal_x = -dy / length
+    normal_y = dx / length
+    sample_offset = max(4, int(round(min(image_width, image_height) * 0.01)))
+    sample_count = max(12, min(24, int(round(length / 3.0))))
+    side_samples: list[list[float]] = [[], []]
+
+    for index in range(2, sample_count - 2):
+        ratio = index / float(sample_count - 1)
+        x = float(first[0]) + dx * ratio
+        y = float(first[1]) + dy * ratio
+        for side_index, sign in enumerate((-1.0, 1.0)):
+            sample_x = int(round(x + sign * sample_offset * normal_x))
+            sample_y = int(round(y + sign * sample_offset * normal_y))
+            if 0 <= sample_x < image_width and 0 <= sample_y < image_height:
+                side_samples[side_index].append(float(gray[sample_y, sample_x]))
+
+    if min(len(values) for values in side_samples) < 6:
+        return {
+            "one_sided_boundary_candidate": False,
+            "sample_offset_px": sample_offset,
+            "sample_count": min(len(values) for values in side_samples),
+            "side_mean_gray": [],
+            "side_background_fraction": [],
+            "mean_gray_delta": 0.0,
+        }
+
+    side_means = [
+        sum(values) / len(values)
+        for values in side_samples
+    ]
+    background_fractions = [
+        sum(value >= 245.0 for value in values) / len(values)
+        for values in side_samples
+    ]
+    mean_delta = abs(side_means[0] - side_means[1])
+    one_sided = (
+        max(background_fractions) >= 0.70
+        and min(background_fractions) <= 0.25
+        and mean_delta >= 30.0
+    )
+    return {
+        "one_sided_boundary_candidate": one_sided,
+        "sample_offset_px": sample_offset,
+        "sample_count": min(len(values) for values in side_samples),
+        "side_mean_gray": [round(value, 3) for value in side_means],
+        "side_background_fraction": [
+            round(value, 3)
+            for value in background_fractions
+        ],
+        "mean_gray_delta": round(mean_delta, 3),
+    }
+
+
 def _oblique_annotation_lines(
     edges: Any,
     image_width: int,
     image_height: int,
     cv2: Any,
     np: Any,
+    *,
+    gray: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Return geometry-only oblique line candidates for later annotation routing."""
 
@@ -207,6 +283,16 @@ def _oblique_annotation_lines(
             "length_px": round(float(length), 2),
             "candidate_only": True,
         }
+        if gray is not None:
+            boundary_evidence = _one_sided_boundary_evidence(
+                gray,
+                first,
+                second,
+            )
+            candidate["boundary_evidence"] = boundary_evidence
+            candidate["one_sided_boundary_candidate"] = bool(
+                boundary_evidence["one_sided_boundary_candidate"]
+            )
 
         duplicate = False
         for previous in candidates:
@@ -1131,6 +1217,7 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
             int(gray.shape[0]),
             cv2,
             np,
+            gray=gray,
         ),
         "regions": probe_regions,
     }

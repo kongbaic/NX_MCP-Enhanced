@@ -5,6 +5,7 @@ from nx_mcp.drawing_intelligence.raster_evidence import (
     _radial_gradient_alignment,
     _adapt_probe,
     _oblique_annotation_lines,
+    _one_sided_boundary_evidence,
     _region_scoped_witnesses,
     _witness_line_evidence,
     extract_raw_evidence,
@@ -260,6 +261,33 @@ def test_oblique_annotation_lines_stay_geometry_only():
     assert all(item["candidate_only"] is True for item in candidates)
     assert all(8 < item["angle_deg"] < 82 for item in candidates)
 
+
+def test_one_sided_boundary_evidence_rejects_interior_line():
+    import cv2
+    import numpy as np
+
+    image = np.full((220, 220), 255, np.uint8)
+    polygon = np.array(
+        [[20, 190], [20, 110], [100, 30], [190, 30], [190, 190]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(image, [polygon], 128)
+
+    boundary = _one_sided_boundary_evidence(
+        image,
+        (20, 110),
+        (100, 30),
+    )
+    interior = _one_sided_boundary_evidence(
+        image,
+        (70, 150),
+        (150, 150),
+    )
+
+    assert boundary["one_sided_boundary_candidate"] is True
+    assert max(boundary["side_background_fraction"]) >= 0.70
+    assert min(boundary["side_background_fraction"]) <= 0.25
+    assert interior["one_sided_boundary_candidate"] is False
 
 
 def test_compact_fragments_does_not_silently_drop_ninth_valid_pattern():

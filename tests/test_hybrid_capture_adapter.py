@@ -4476,6 +4476,108 @@ def test_rotational_oblique_profile_candidate_fails_closed_on_ambiguous_contact(
     assert hints == []
 
 
+def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continuation():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_FAR",
+            orientation="horizontal",
+            position=180,
+            span=[120, 190],
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 40], [80, 120]],
+                "angle_deg": 64.6,
+                "length_px": 88.5,
+                "candidate_only": True,
+                "one_sided_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert len(hints) == 1
+    assert hints[0]["supporting_profile_refs"] == ["VERTICAL_A"]
+    assert hints[0]["one_sided_boundary_candidate"] is True
+    assert hints[0]["basis"] == (
+        "established_rotational_symmetry_plus_"
+        "one_sided_boundary_plus_unique_structural_contact"
+    )
+    assert hints[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert hints[0]["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_rotational_oblique_profile_candidate_rejects_ambiguous_one_sided_contact():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "VERTICAL_B",
+            orientation="vertical",
+            position=43,
+            span=[20, 170],
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 40], [80, 120]],
+                "angle_deg": 64.6,
+                "length_px": 88.5,
+                "candidate_only": True,
+                "one_sided_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert hints == []
+
+
 def test_rotational_profile_topology_records_connectivity_without_pixel_metric():
     inventory = _rotational_profile_inventory()
     hints = hybrid_adapter._rotational_profile_topology_hints(

@@ -1013,12 +1013,16 @@ def _rotational_oblique_profile_hints(
                 and str(item.get("ref") or "")
             )
         ]
-        if len(supports) < 2:
+        if not supports:
             continue
 
+        strict_contact_tolerance = _region_profile_match_tolerance(
+            report,
+            region_id,
+        )
         tolerance = max(
             5.0,
-            _region_profile_match_tolerance(report, region_id) * 2.0,
+            strict_contact_tolerance * 2.0,
         )
 
         for candidate_index, candidate in enumerate(raw_candidates):
@@ -1081,24 +1085,66 @@ def _rotational_oblique_profile_hints(
                 )
                 endpoint_matches.append(list(dict.fromkeys(matches)))
 
-            if (
-                len(endpoint_matches[0]) != 1
-                or len(endpoint_matches[1]) != 1
-                or endpoint_matches[0][0] == endpoint_matches[1][0]
-            ):
+            direct_contact = (
+                len(endpoint_matches[0]) == 1
+                and len(endpoint_matches[1]) == 1
+                and endpoint_matches[0][0] != endpoint_matches[1][0]
+            )
+            support_refs: list[str]
+            basis: str
+
+            if direct_contact:
+                support_refs = [
+                    endpoint_matches[0][0],
+                    endpoint_matches[1][0],
+                ]
+                basis = (
+                    "established_rotational_symmetry_plus_"
+                    "unique_independent_structural_contacts"
+                )
+            elif candidate.get("one_sided_boundary_candidate") is True:
+                strict_endpoint_matches: list[list[str]] = []
+                for point in (first, second):
+                    matches = sorted(
+                        str(item.get("ref") or "")
+                        for item in supports
+                        if (
+                            (
+                                distance := _point_to_axis_profile_segment_distance(
+                                    point,
+                                    item,
+                                )
+                            )
+                            is not None
+                            and distance <= strict_contact_tolerance
+                        )
+                    )
+                    strict_endpoint_matches.append(
+                        list(dict.fromkeys(matches))
+                    )
+
+                if sorted(
+                    len(matches)
+                    for matches in strict_endpoint_matches
+                ) != [0, 1]:
+                    continue
+                support_refs = (
+                    strict_endpoint_matches[0]
+                    or strict_endpoint_matches[1]
+                )
+                basis = (
+                    "established_rotational_symmetry_plus_"
+                    "one_sided_boundary_plus_unique_structural_contact"
+                )
+            else:
                 continue
 
-            support_refs = [
-                endpoint_matches[0][0],
-                endpoint_matches[1][0],
-            ]
             digest = hashlib.sha256(
                 "|".join(
                     [
                         region_id,
                         str(candidate_index),
-                        support_refs[0],
-                        support_refs[1],
+                        *support_refs,
                         f"{first[0]:.3f},{first[1]:.3f}",
                         f"{second[0]:.3f},{second[1]:.3f}",
                     ]
@@ -1129,10 +1175,10 @@ def _rotational_oblique_profile_hints(
                             ]
                         )
                     ),
-                    "basis": (
-                        "established_rotational_symmetry_plus_"
-                        "unique_independent_structural_contacts"
+                    "one_sided_boundary_candidate": (
+                        candidate.get("one_sided_boundary_candidate") is True
                     ),
+                    "basis": basis,
                     "engineering_coordinate_inferred_from_pixels": False,
                     "pixel_geometry_used_for_topology_only": True,
                 }

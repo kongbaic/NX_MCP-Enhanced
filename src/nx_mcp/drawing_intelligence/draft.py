@@ -505,6 +505,15 @@ def _relation_source(relation: RelationEvidence) -> dict[str, Any]:
     elif relation.kind in {"alignment", "midpoint"}:
         source["links"] = list(relation.targets)
         source["axis"] = relation.axis
+    elif relation.kind == "centered_span":
+        source.update(
+            {
+                "value": relation.value,
+                "axis": relation.axis,
+                "direction": relation.direction,
+                "links": list(relation.targets),
+            }
+        )
     elif relation.kind in {"upper_tangent", "lower_tangent"}:
         center_target, tangent_target = relation.targets
         source.update(
@@ -538,8 +547,13 @@ def _derived_entry(
         item for item in derivation.get("dependencies", []) if isinstance(item, str)
     ]
 
-    # Gate A treats edge_offset and tangent as relation writers themselves.
-    if kind in {"edge_offset", "upper_tangent", "lower_tangent"}:
+    # Gate A treats these relations as geometry writers themselves.
+    if kind in {
+        "edge_offset",
+        "centered_span",
+        "upper_tangent",
+        "lower_tangent",
+    }:
         return None
 
     if kind == "alignment":

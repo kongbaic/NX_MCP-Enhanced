@@ -430,3 +430,70 @@ def test_midpoint_constraint_round_trips_through_draft_and_gate_a():
     derived = next(item for item in draft["derived"] if item["target"] == center)
     assert derived["relation_refs"] == ["R_MID_GENERIC"]
     assert R.check_drawing_json(draft) == []
+
+
+def test_centered_span_constraint_round_trips_through_gate_a():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_GENERIC.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_CENTER",
+                kind="edge_offset",
+                axis="X",
+                from_side="min",
+                value=50,
+                targets=[center],
+                source_ids=["CENTER_ANCHOR"],
+                required_for_modeling=True,
+            ),
+            RelationEvidence(
+                id="R_CENTERED_SPAN",
+                kind="centered_span",
+                axis="X",
+                value=20,
+                direction=1,
+                targets=[left, center, right],
+                source_ids=["SPAN_DIMENSION"],
+                required_for_modeling=False,
+            ),
+        ],
+        required_targets=[left, right],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert result.values[left] == 40.0
+    assert result.values[center] == 50.0
+    assert result.values[right] == 60.0
+    assert draft["constraints"]["span_centers"]["C_GENERIC"]["x"] == 0.0
+
+    left_feature = next(
+        item for item in draft["features"] if item["id"] == "F_LEFT"
+    )
+    right_feature = next(
+        item for item in draft["features"] if item["id"] == "F_RIGHT"
+    )
+    assert left_feature["boundary"]["x"] == -10.0
+    assert right_feature["boundary"]["x"] == 10.0
+
+    source = next(
+        item for item in draft["source_ledger"]
+        if item["id"] == "R_CENTERED_SPAN"
+    )
+    assert source["semantic"] == "centered_span"
+    assert source["value"] == 20
+    assert source["direction"] == 1
+    assert source["links"] == [left, center, right]
+    assert R.check_drawing_json(draft) == []

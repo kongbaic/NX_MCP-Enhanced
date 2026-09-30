@@ -271,6 +271,103 @@ def _apply_midpoint(relation: RelationEvidence, state: _State) -> bool:
     return False
 
 
+def _apply_centered_span(
+    relation: RelationEvidence,
+    state: _State,
+) -> bool:
+    """Solve a centered span from its midpoint and engineering width."""
+
+    first, midpoint, second = relation.targets
+    assert relation.value is not None
+    distance = abs(relation.value)
+
+    first_known = first in state.values
+    midpoint_known = midpoint in state.values
+    second_known = second in state.values
+
+    if first_known and second_known:
+        actual_distance = abs(state.values[second] - state.values[first])
+        if not isclose(actual_distance, distance, abs_tol=_EPS, rel_tol=0.0):
+            conflict = {
+                "relation": relation.id,
+                "kind": "centered_span",
+                "expected_distance": distance,
+                "actual_distance": actual_distance,
+                "targets": list(relation.targets),
+            }
+            if conflict not in state.conflicts:
+                state.conflicts.append(conflict)
+        expected_midpoint = (
+            state.values[first] + state.values[second]
+        ) / 2.0
+        return state.assign(
+            midpoint,
+            expected_midpoint,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [first, second],
+                "op": "mean",
+            },
+        )
+
+    if midpoint_known and first_known:
+        return state.assign(
+            second,
+            2.0 * state.values[midpoint] - state.values[first],
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, first],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint_known and second_known:
+        return state.assign(
+            first,
+            2.0 * state.values[midpoint] - state.values[second],
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, second],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint_known and relation.direction in {-1, 1}:
+        half_span = distance / 2.0
+        signed_half = relation.direction * half_span
+        changed = state.assign(
+            first,
+            state.values[midpoint] - signed_half,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint],
+                "op": "center_minus_half",
+            },
+        )
+        changed = state.assign(
+            second,
+            state.values[midpoint] + signed_half,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint],
+                "op": "center_plus_half",
+            },
+        ) or changed
+        return changed
+
+    return False
+
+
 def _apply_tangent(relation: RelationEvidence, state: _State) -> bool:
     center_target, tangent_target = relation.targets
     diameter_target = relation.diameter_target
@@ -302,6 +399,8 @@ def _apply_relation(
         return _apply_spacing(relation, state)
     if relation.kind == "midpoint":
         return _apply_midpoint(relation, state)
+    if relation.kind == "centered_span":
+        return _apply_centered_span(relation, state)
     if relation.kind in {"upper_tangent", "lower_tangent"}:
         return _apply_tangent(relation, state)
     return False

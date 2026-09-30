@@ -498,3 +498,145 @@ def test_midpoint_relation_with_one_known_target_does_not_guess():
     assert right not in result.values
     assert result.conflicts == []
     assert result.ok
+
+
+def test_centered_span_solves_boundaries_from_known_midpoint_and_width():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_facts=[
+            CoordinateFact(
+                target=center,
+                axis="X",
+                value=50,
+                source_ids=["CENTER"],
+            )
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_CENTERED_SPAN",
+                kind="centered_span",
+                axis="X",
+                value=20,
+                direction=1,
+                targets=[left, center, right],
+                required_for_modeling=False,
+            )
+        ],
+        required_targets=[left, right],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert result.values[left] == 40.0
+    assert result.values[center] == 50.0
+    assert result.values[right] == 60.0
+    assert result.ok
+
+
+def test_centered_span_without_direction_does_not_guess_two_unknown_sides():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_facts=[CoordinateFact(target=center, axis="X", value=50)],
+        relations=[
+            RelationEvidence(
+                id="R_CENTERED_SPAN",
+                kind="centered_span",
+                axis="X",
+                value=20,
+                targets=[left, center, right],
+                required_for_modeling=False,
+            )
+        ],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert left not in result.values
+    assert right not in result.values
+    assert result.conflicts == []
+    assert result.ok
+
+
+def test_centered_span_can_reflect_opposite_side_without_direction():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_facts=[
+            CoordinateFact(target=left, axis="X", value=40),
+            CoordinateFact(target=center, axis="X", value=50),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_CENTERED_SPAN",
+                kind="centered_span",
+                axis="X",
+                value=20,
+                targets=[left, center, right],
+                required_for_modeling=False,
+            )
+        ],
+        required_targets=[right],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert result.values[right] == 60.0
+    assert result.ok
+
+
+def test_centered_span_reports_width_conflict():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_facts=[
+            CoordinateFact(target=left, axis="X", value=35),
+            CoordinateFact(target=center, axis="X", value=50),
+            CoordinateFact(target=right, axis="X", value=60),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_CENTERED_SPAN",
+                kind="centered_span",
+                axis="X",
+                value=20,
+                direction=1,
+                targets=[left, center, right],
+            )
+        ],
+    )
+
+    result = resolve_evidence_graph(graph)
+
+    assert any(
+        item.get("kind") == "centered_span"
+        and item.get("expected_distance") == 20.0
+        and item.get("actual_distance") == 25.0
+        for item in result.conflicts
+    )
+    assert not result.ok

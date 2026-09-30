@@ -5645,6 +5645,7 @@ _DRAWING_RELATION_SEMANTICS = {
     "coincident",
     "alignment",
     "midpoint",
+    "centered_span",
 }
 
 
@@ -6727,6 +6728,52 @@ def check_drawing_json(data: dict) -> list[str]:
                     relation_targets.add(tangent)
             elif semantic == "symmetry":
                 _drawing_check_symmetry(errors, source, features)
+            elif semantic == "centered_span":
+                links = source.get("links")
+                span_value = _num(source.get("value"))
+                direction = source.get("direction")
+                if (
+                    not isinstance(links, list)
+                    or len(links) != 3
+                    or len(set(links)) != 3
+                    or not all(isinstance(item, str) and item for item in links)
+                    or span_value is None
+                    or span_value <= 0
+                    or direction not in {None, -1, 1}
+                ):
+                    errors.append(
+                        f"source {sid!r} centered_span requires "
+                        "[endpoint_a, midpoint, endpoint_b], positive value, "
+                        "and optional direction ±1"
+                    )
+                else:
+                    try:
+                        first = _num(_drawing_path_get(data, links[0]))
+                        center = _num(_drawing_path_get(data, links[1]))
+                        second = _num(_drawing_path_get(data, links[2]))
+                    except KeyError:
+                        first, center, second = None, None, None
+                    if first is None or center is None or second is None:
+                        errors.append(
+                            f"source {sid!r} centered_span targets must be numeric"
+                        )
+                    else:
+                        if abs(center - (first + second) / 2.0) > 1e-9:
+                            errors.append(
+                                f"source {sid!r} centered_span midpoint mismatch"
+                            )
+                        if abs(abs(second - first) - span_value) > 1e-9:
+                            errors.append(
+                                f"source {sid!r} centered_span width mismatch"
+                            )
+                        if (
+                            direction in {-1, 1}
+                            and abs((second - first) - direction * span_value) > 1e-9
+                        ):
+                            errors.append(
+                                f"source {sid!r} centered_span direction mismatch"
+                            )
+                        relation_targets.update(links)
             elif semantic in {"coincident", "alignment", "midpoint"}:
                 links = source.get("links")
                 required_link_count = 3 if semantic == "midpoint" else 1

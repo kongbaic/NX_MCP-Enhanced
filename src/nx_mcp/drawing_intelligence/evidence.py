@@ -12,6 +12,7 @@ RelationKind = Literal[
     "center_distance",
     "coordinate_distance",
     "midpoint",
+    "centered_span",
     "upper_tangent",
     "lower_tangent",
 ]
@@ -189,6 +190,13 @@ class RelationEvidence(BaseModel):
                 )
             if self.value is not None:
                 raise ValueError("midpoint must not carry a numeric value")
+        elif self.kind == "centered_span":
+            if len(self.targets) != 3:
+                raise ValueError(
+                    "centered_span requires [endpoint_a, midpoint, endpoint_b]"
+                )
+            if self.value is None or self.value <= 0:
+                raise ValueError("centered_span requires a positive span value")
         elif self.kind in {"upper_tangent", "lower_tangent"}:
             if len(self.targets) != 2 or not self.diameter_target:
                 raise ValueError(

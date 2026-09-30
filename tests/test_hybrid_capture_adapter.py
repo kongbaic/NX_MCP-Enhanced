@@ -1259,7 +1259,7 @@ def test_projected_profile_level_rejects_multiple_coordinate_clusters(monkeypatc
                         {
                             "kind": "profile_edge_candidate",
                             "ref": "R1.structural.vertical.010",
-                            "position_px": 100.0,
+                            "position_px": 98.0,
                             "source_orientation": "vertical",
                             "axis_tolerance_px": 2.0,
                             "junction_count": 2,
@@ -1272,7 +1272,7 @@ def test_projected_profile_level_rejects_multiple_coordinate_clusters(monkeypatc
                         {
                             "kind": "profile_edge_candidate",
                             "ref": "R1.structural.vertical.020",
-                            "position_px": 108.0,
+                            "position_px": 102.0,
                             "source_orientation": "vertical",
                             "axis_tolerance_px": 2.0,
                             "junction_count": 2,
@@ -1378,6 +1378,10 @@ def test_projected_profile_level_never_overrides_ambiguous_owner(monkeypatch):
         hybrid_adapter.ObservationDimensionEndpoint(
             role="unresolved",
             unresolved_kind="ambiguous_owner",
+            candidate_entity_keys=[
+                "R1.PROFILE_BOUNDARY.LEFT_A",
+                "R1.PROFILE_BOUNDARY.LEFT_B",
+            ],
             evidence=["test:left"],
         ),
         hybrid_adapter.ObservationDimensionEndpoint(

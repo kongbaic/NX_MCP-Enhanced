@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections import defaultdict
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator

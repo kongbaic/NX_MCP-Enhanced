@@ -68,6 +68,173 @@ _ROTATIONAL_PROFILE_TOPOLOGY_KIND = "hybrid_rotational_profile_topology_ledger"
 _VIEW_AXIS_BOUNDARY_KIND = "hybrid_view_axis_boundary_ledger"
 
 
+
+def _merge_physical_rotational_topology_items(
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge crop-local topology only after physical profile identity overlaps."""
+
+    if len(items) < 2:
+        return items
+
+    edge_sets: list[set[tuple[str, str]]] = []
+    for item in items:
+        current: set[tuple[str, str]] = set()
+        edges = item.get("edges")
+        if isinstance(edges, list):
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                feature_id = edge.get("physical_feature_id")
+                axis = str(edge.get("constant_axis") or "").upper()
+                if isinstance(feature_id, str) and feature_id and axis in {"X", "Y", "Z"}:
+                    current.add((feature_id, axis))
+        edge_sets.append(current)
+
+    parent = list(range(len(items)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        lroot = find(left)
+        rroot = find(right)
+        if lroot != rroot:
+            parent[rroot] = lroot
+
+    for left in range(len(items)):
+        for right in range(left + 1, len(items)):
+            if (
+                items[left].get("plane") == items[right].get("plane")
+                and items[left].get("rotation_axis") == items[right].get("rotation_axis")
+                and items[left].get("view_kind") == items[right].get("view_kind")
+                and edge_sets[left].intersection(edge_sets[right])
+            ):
+                union(left, right)
+
+    groups: dict[int, list[int]] = {}
+    for index in range(len(items)):
+        groups.setdefault(find(index), []).append(index)
+
+    output: list[dict[str, Any]] = []
+    for indices in groups.values():
+        if len(indices) == 1:
+            output.append(items[indices[0]])
+            continue
+
+        grouped = [items[index] for index in indices]
+        by_physical: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        original_to_physical: dict[str, tuple[str, str]] = {}
+        valid = True
+
+        for item in grouped:
+            for edge in item.get("edges", []):
+                if not isinstance(edge, dict):
+                    valid = False
+                    break
+                feature_id = str(edge.get("physical_feature_id") or "")
+                axis = str(edge.get("constant_axis") or "").upper()
+                ref = str(edge.get("ref") or "")
+                target = edge.get("boundary_target")
+                if (
+                    not feature_id
+                    or not ref
+                    or axis not in {"X", "Y", "Z"}
+                    or target != f"feature:{feature_id}.boundary.{axis.lower()}"
+                ):
+                    valid = False
+                    break
+                key = (feature_id, axis)
+                by_physical.setdefault(key, []).append(edge)
+                original_to_physical[ref] = key
+            if not valid:
+                break
+
+        if not valid:
+            output.extend(grouped)
+            continue
+
+        canonical_ref: dict[tuple[str, str], str] = {}
+        merged_edges: list[dict[str, Any]] = []
+        for key, records in sorted(by_physical.items()):
+            refs = sorted(str(record.get("ref") or "") for record in records)
+            representative = min(records, key=lambda record: str(record.get("ref") or ""))
+            canonical_ref[key] = refs[0]
+            merged_edge = copy.deepcopy(representative)
+            merged_edge["ref"] = refs[0]
+            merged_edge["source_refs"] = refs
+            merged_edges.append(merged_edge)
+
+        junctions: set[tuple[str, str]] = set()
+        for item in grouped:
+            for pair in item.get("junctions", []):
+                if (
+                    not isinstance(pair, list)
+                    or len(pair) != 2
+                    or not all(isinstance(ref, str) for ref in pair)
+                ):
+                    continue
+                left_key = original_to_physical.get(pair[0])
+                right_key = original_to_physical.get(pair[1])
+                if left_key is None or right_key is None or left_key == right_key:
+                    continue
+                left_ref = canonical_ref[left_key]
+                right_ref = canonical_ref[right_key]
+                junctions.add(tuple(sorted((left_ref, right_ref))))
+
+        region_ids = sorted(
+            {
+                str(item.get("region_id") or "")
+                for item in grouped
+                if str(item.get("region_id") or "")
+            }
+        )
+        source_ids = list(
+            dict.fromkeys(
+                source_id
+                for item in grouped
+                for source_id in item.get("source_ids", [])
+                if isinstance(source_id, str) and source_id
+            )
+        )
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    str(grouped[0].get("plane") or ""),
+                    str(grouped[0].get("rotation_axis") or ""),
+                    *region_ids,
+                    *[
+                        f"{feature_id}:{axis}"
+                        for feature_id, axis in sorted(by_physical)
+                    ],
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+
+        merged = copy.deepcopy(grouped[0])
+        merged["region_id"] = f"PHYSICAL_{digest}"
+        merged["region_ids"] = region_ids
+        merged["component_index"] = 0
+        merged["edges"] = merged_edges
+        merged["junctions"] = [list(pair) for pair in sorted(junctions)]
+        merged["source_ids"] = source_ids
+        merged["basis"] = "identity_linked_physical_rotational_profile_topology"
+        output.append(merged)
+
+    output.sort(
+        key=lambda item: (
+            str(item.get("plane") or ""),
+            str(item.get("rotation_axis") or ""),
+            str(item.get("region_id") or ""),
+            int(item.get("component_index") or 0),
+        )
+    )
+    return output
+
+
 def _linked_rotational_profile_topology_observations(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
@@ -119,6 +286,16 @@ def _linked_rotational_profile_topology_observations(
                 edge["boundary_target"] = (
                     f"feature:{feature_id}.boundary.{axis.lower()}"
                 )
+
+        linked_items = observation.get("items")
+        if isinstance(linked_items, list):
+            observation["items"] = _merge_physical_rotational_topology_items(
+                [
+                    linked_item
+                    for linked_item in linked_items
+                    if isinstance(linked_item, dict)
+                ]
+            )
     return observations
 
 

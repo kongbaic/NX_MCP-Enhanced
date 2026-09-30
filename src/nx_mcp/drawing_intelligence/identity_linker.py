@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .capture import (
     AssociationClaim,
@@ -556,12 +556,15 @@ def _dimension_relation_from_span_center_identity(
         measured_target = specs[measured_index][1]
         if measured_target is None:
             return None
+        from_side: Literal["min", "max"] = (
+            "min" if overall[0][1] == "overall_min" else "max"
+        )
         return RelationEvidence(
             id=dimension.id,
             kind="edge_offset",
             axis=dimension.axis,
             value=dimension.value,
-            from_side=overall[0][1].removeprefix("overall_"),
+            from_side=from_side,
             targets=[measured_target],
             source_ids=list(dict.fromkeys(source_ids)),
             required_for_modeling=dimension.required_for_modeling,
@@ -576,7 +579,7 @@ def _dimension_relation_from_span_center_identity(
     if len(targets) != 2 or len(set(targets)) != 2:
         return None
     roles = [role for role, _target in specs]
-    kind = (
+    kind: Literal["center_distance", "coordinate_distance"] = (
         "center_distance"
         if roles == ["center", "center"]
         else "coordinate_distance"

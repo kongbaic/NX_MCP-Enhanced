@@ -557,6 +557,12 @@ def test_center_distance_accepts_profile_span_constraint_center():
         ),
         direct_values=[
             *_overall_values(length_x=100, width_y=40, height_z=20),
+            DirectValueEvidence(
+                id="F_HOLE_TYPE",
+                target="feature:F_HOLE.type",
+                value="reference_point",
+                source_ids=["REFERENCE_POINT"],
+            ),
         ],
         relations=[
             RelationEvidence(

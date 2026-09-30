@@ -202,6 +202,75 @@ def _apply_spacing(relation: RelationEvidence, state: _State) -> bool:
     return False
 
 
+def _apply_midpoint(relation: RelationEvidence, state: _State) -> bool:
+    """Solve [endpoint_a, midpoint, endpoint_b] from any two known coordinates."""
+
+    first, midpoint, second = relation.targets
+    known = {
+        target: state.values[target]
+        for target in relation.targets
+        if target in state.values
+    }
+    if len(known) < 2:
+        return False
+
+    if len(known) == 3:
+        expected = (state.values[first] + state.values[second]) / 2.0
+        actual = state.values[midpoint]
+        if not isclose(actual, expected, abs_tol=_EPS, rel_tol=0.0):
+            conflict = {
+                "relation": relation.id,
+                "kind": "midpoint",
+                "targets": list(relation.targets),
+                "expected_midpoint": expected,
+                "actual_midpoint": actual,
+            }
+            if conflict not in state.conflicts:
+                state.conflicts.append(conflict)
+        return False
+
+    if first in known and second in known:
+        return state.assign(
+            midpoint,
+            (known[first] + known[second]) / 2.0,
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [first, second],
+                "op": "mean",
+            },
+        )
+
+    if midpoint in known and first in known:
+        return state.assign(
+            second,
+            2.0 * known[midpoint] - known[first],
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, first],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint in known and second in known:
+        return state.assign(
+            first,
+            2.0 * known[midpoint] - known[second],
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, second],
+                "op": "reflect",
+            },
+        )
+
+    return False
+
+
 def _apply_tangent(relation: RelationEvidence, state: _State) -> bool:
     center_target, tangent_target = relation.targets
     diameter_target = relation.diameter_target
@@ -231,6 +300,8 @@ def _apply_relation(
         return _apply_alignment(relation, state)
     if relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
         return _apply_spacing(relation, state)
+    if relation.kind == "midpoint":
+        return _apply_midpoint(relation, state)
     if relation.kind in {"upper_tangent", "lower_tangent"}:
         return _apply_tangent(relation, state)
     return False

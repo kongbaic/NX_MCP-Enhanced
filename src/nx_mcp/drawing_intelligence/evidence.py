@@ -11,6 +11,7 @@ RelationKind = Literal[
     "center_spacing",
     "center_distance",
     "coordinate_distance",
+    "midpoint",
     "upper_tangent",
     "lower_tangent",
 ]
@@ -181,6 +182,13 @@ class RelationEvidence(BaseModel):
         elif self.kind == "alignment":
             if len(self.targets) < 2:
                 raise ValueError("alignment requires at least two targets")
+        elif self.kind == "midpoint":
+            if len(self.targets) != 3:
+                raise ValueError(
+                    "midpoint requires [endpoint_a, midpoint, endpoint_b]"
+                )
+            if self.value is not None:
+                raise ValueError("midpoint must not carry a numeric value")
         elif self.kind in {"upper_tangent", "lower_tangent"}:
             if len(self.targets) != 2 or not self.diameter_target:
                 raise ValueError(

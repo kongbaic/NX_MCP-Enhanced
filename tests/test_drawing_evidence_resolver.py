@@ -395,3 +395,106 @@ def test_alignment_with_two_different_known_values_reports_conflict():
     assert result.conflicts[0]["existing"] == 1
     assert result.conflicts[0]["candidate"] == 0
 
+
+
+def test_midpoint_relation_derives_center_from_two_boundaries():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=100, width_y=40, height_z=20),
+        direct_facts=[
+            CoordinateFact(target=left, axis="X", value=20),
+            CoordinateFact(target=right, axis="X", value=60),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_MID",
+                kind="midpoint",
+                axis="X",
+                targets=[left, center, right],
+                required_for_modeling=False,
+            )
+        ],
+    )
+    result = resolve_evidence_graph(graph)
+    assert result.values[center] == 40.0
+    assert result.derivations[center]["op"] == "mean"
+    assert result.ok
+
+
+def test_midpoint_relation_back_solves_opposite_boundary():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=100, width_y=40, height_z=20),
+        direct_facts=[
+            CoordinateFact(target=left, axis="X", value=20),
+            CoordinateFact(target=center, axis="X", value=40),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_MID",
+                kind="midpoint",
+                axis="X",
+                targets=[left, center, right],
+            )
+        ],
+        required_targets=[right],
+    )
+    result = resolve_evidence_graph(graph)
+    assert result.values[right] == 60.0
+    assert result.derivations[right]["op"] == "reflect"
+    assert result.ok
+
+
+def test_midpoint_relation_reports_conflicting_known_center():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=100, width_y=40, height_z=20),
+        direct_facts=[
+            CoordinateFact(target=left, axis="X", value=20),
+            CoordinateFact(target=center, axis="X", value=41),
+            CoordinateFact(target=right, axis="X", value=60),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_MID",
+                kind="midpoint",
+                axis="X",
+                targets=[left, center, right],
+            )
+        ],
+    )
+    result = resolve_evidence_graph(graph)
+    assert result.conflicts[0]["kind"] == "midpoint"
+    assert result.conflicts[0]["expected_midpoint"] == 40.0
+    assert result.conflicts[0]["actual_midpoint"] == 41.0
+    assert not result.ok
+
+
+def test_midpoint_relation_with_one_known_target_does_not_guess():
+    left = "feature:F_LEFT.boundary.x"
+    center = "constraints.span_centers.C_TEST.x"
+    right = "feature:F_RIGHT.boundary.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(length_x=100, width_y=40, height_z=20),
+        direct_facts=[CoordinateFact(target=left, axis="X", value=20)],
+        relations=[
+            RelationEvidence(
+                id="R_MID",
+                kind="midpoint",
+                axis="X",
+                targets=[left, center, right],
+                required_for_modeling=False,
+            )
+        ],
+    )
+    result = resolve_evidence_graph(graph)
+    assert center not in result.values
+    assert right not in result.values
+    assert result.conflicts == []
+    assert result.ok

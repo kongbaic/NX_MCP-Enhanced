@@ -1154,6 +1154,34 @@ def _rotational_oblique_profile_hints(
             ):
                 continue
 
+            support_by_ref = {
+                str(item.get("ref") or ""): item
+                for item in supports
+            }
+            support_constant_axes: list[str] = []
+            support_axes_valid = True
+            for ref in support_refs:
+                support = support_by_ref.get(ref)
+                if support is None:
+                    support_axes_valid = False
+                    break
+                orientation = str(support.get("source_orientation") or "")
+                pixel_index = 0 if orientation == "vertical" else 1
+                constant_axes = [
+                    axis
+                    for axis in plane
+                    if _PIXEL_INDEX_BY_VIEW_AXIS.get(
+                        (region_view.view_kind, axis)
+                    )
+                    == pixel_index
+                ]
+                if len(constant_axes) != 1:
+                    support_axes_valid = False
+                    break
+                support_constant_axes.append(constant_axes[0])
+            if not support_axes_valid:
+                continue
+
             digest = hashlib.sha256(
                 "|".join(
                     [
@@ -1174,6 +1202,7 @@ def _rotational_oblique_profile_hints(
                     "rotation_axis": rotation_axis,
                     "supporting_profile_refs": support_refs,
                     "supporting_profile_entity_keys": support_entity_keys,
+                    "supporting_profile_constant_axes": support_constant_axes,
                     "endpoints_px": [
                         [round(first[0], 3), round(first[1], 3)],
                         [round(second[0], 3), round(second[1], 3)],

@@ -4529,6 +4529,7 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
     assert hints[0]["supporting_profile_entity_keys"] == [
         "R1.PROFILE.VERTICAL_A"
     ]
+    assert hints[0]["supporting_profile_constant_axes"] == ["X"]
     assert hints[0]["one_sided_boundary_candidate"] is True
     assert hints[0]["basis"] == (
         "established_rotational_symmetry_plus_"

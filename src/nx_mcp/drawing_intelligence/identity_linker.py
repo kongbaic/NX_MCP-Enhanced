@@ -256,7 +256,14 @@ def _physical_rotational_oblique_profile_items(
     """
 
     grouped: dict[
-        tuple[str, str, str, tuple[str, ...], str, str],
+        tuple[
+            str,
+            str,
+            str,
+            tuple[tuple[str, str], ...],
+            str,
+            str,
+        ],
         list[dict[str, Any]],
     ] = {}
 
@@ -281,6 +288,7 @@ def _physical_rotational_oblique_profile_items(
             plane = str(item.get("plane") or "").upper()
             rotation_axis = str(item.get("rotation_axis") or "").upper()
             entity_ids = item.get("supporting_profile_entity_ids")
+            constant_axes = item.get("supporting_profile_constant_axes")
             source_ids = [
                 value
                 for value in item.get("source_ids", [])
@@ -302,27 +310,42 @@ def _physical_rotational_oblique_profile_items(
                     isinstance(entity_id, str) and entity_id
                     for entity_id in entity_ids
                 )
+                or not isinstance(constant_axes, list)
+                or len(constant_axes) != len(entity_ids)
+                or not all(
+                    isinstance(axis, str)
+                    and axis.upper() in {"X", "Y", "Z"}
+                    and axis.upper() in set(plane)
+                    for axis in constant_axes
+                )
                 or len(oblique_sources) != 1
             ):
                 continue
             if any(entity_id not in entity_to_feature for entity_id in entity_ids):
                 continue
 
-            physical_features = tuple(
+            physical_edges = tuple(
                 sorted(
                     {
-                        entity_to_feature[entity_id]
-                        for entity_id in entity_ids
+                        (
+                            entity_to_feature[entity_id],
+                            str(axis).upper(),
+                        )
+                        for entity_id, axis in zip(
+                            entity_ids,
+                            constant_axes,
+                            strict=True,
+                        )
                     }
                 )
             )
-            if not physical_features:
+            if not physical_edges:
                 continue
 
             one_sided = item.get("one_sided_boundary_candidate") is True
-            if one_sided and len(physical_features) == 1:
+            if one_sided and len(physical_edges) == 1:
                 connection_kind = "one_sided_non_orthogonal_boundary_continuation"
-            elif len(physical_features) >= 2:
+            elif len(physical_edges) >= 2:
                 connection_kind = "non_orthogonal_profile_connection"
             else:
                 continue
@@ -331,7 +354,7 @@ def _physical_rotational_oblique_profile_items(
                 plane,
                 rotation_axis,
                 view_kind,
-                physical_features,
+                physical_edges,
                 oblique_sources[0],
                 connection_kind,
             )
@@ -348,7 +371,7 @@ def _physical_rotational_oblique_profile_items(
             plane,
             rotation_axis,
             view_kind,
-            physical_features,
+            physical_edges,
             oblique_source,
             connection_kind,
         ) = key
@@ -373,7 +396,10 @@ def _physical_rotational_oblique_profile_items(
                     plane,
                     rotation_axis,
                     view_kind,
-                    *physical_features,
+                    *[
+                        f"{feature_id}:{axis}"
+                        for feature_id, axis in physical_edges
+                    ],
                     oblique_source,
                     connection_kind,
                 ]
@@ -386,7 +412,22 @@ def _physical_rotational_oblique_profile_items(
                 "view_kind": view_kind,
                 "plane": plane,
                 "rotation_axis": rotation_axis,
-                "supporting_physical_feature_ids": list(physical_features),
+                "supporting_physical_feature_ids": sorted(
+                    {
+                        feature_id
+                        for feature_id, _axis in physical_edges
+                    }
+                ),
+                "supporting_physical_edges": [
+                    {
+                        "physical_feature_id": feature_id,
+                        "constant_axis": axis,
+                        "boundary_target": (
+                            f"feature:{feature_id}.boundary.{axis.lower()}"
+                        ),
+                    }
+                    for feature_id, axis in physical_edges
+                ],
                 "connection_kind": connection_kind,
                 "source_ids": source_ids,
                 "basis": (
@@ -396,6 +437,58 @@ def _physical_rotational_oblique_profile_items(
                 "pixel_geometry_used_for_topology_only": True,
             }
         )
+
+    return output
+
+
+def _attach_physical_oblique_fragments(
+    topology_items: list[dict[str, Any]],
+    oblique_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach physical non-orthogonal fragments to one unambiguous topology item."""
+
+    output = copy.deepcopy(topology_items)
+    for fragment in oblique_items:
+        if not isinstance(fragment, dict):
+            continue
+        fragment_regions = {
+            str(region_id)
+            for region_id in fragment.get("region_ids", [])
+            if isinstance(region_id, str) and region_id
+        }
+        if not fragment_regions:
+            continue
+
+        matches: list[int] = []
+        for index, item in enumerate(output):
+            if not isinstance(item, dict):
+                continue
+            item_regions = {
+                str(region_id)
+                for region_id in item.get("region_ids", [])
+                if isinstance(region_id, str) and region_id
+            }
+            if not item_regions:
+                region_id = str(item.get("region_id") or "")
+                if region_id and not region_id.startswith("PHYSICAL_"):
+                    item_regions = {region_id}
+            if (
+                item.get("plane") == fragment.get("plane")
+                and item.get("rotation_axis") == fragment.get("rotation_axis")
+                and item.get("view_kind") == fragment.get("view_kind")
+                and fragment_regions.intersection(item_regions)
+            ):
+                matches.append(index)
+
+        if len(matches) != 1:
+            continue
+
+        target = output[matches[0]]
+        fragments = target.setdefault("non_orthogonal_fragments", [])
+        if not isinstance(fragments, list):
+            continue
+        fragments.append(copy.deepcopy(fragment))
+        fragments.sort(key=lambda item: str(item.get("id") or ""))
 
     return output
 
@@ -467,6 +560,20 @@ def _linked_rotational_profile_topology_observations(
         entity_to_feature,
     )
     if physical_oblique_items:
+        for observation in observations:
+            if (
+                isinstance(observation, dict)
+                and observation.get("kind") == _ROTATIONAL_PROFILE_TOPOLOGY_KIND
+                and isinstance(observation.get("items"), list)
+            ):
+                observation["items"] = _attach_physical_oblique_fragments(
+                    [
+                        item
+                        for item in observation["items"]
+                        if isinstance(item, dict)
+                    ],
+                    physical_oblique_items,
+                )
         observations.append(
             {
                 "kind": _PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND,

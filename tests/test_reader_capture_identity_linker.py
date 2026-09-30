@@ -4238,6 +4238,7 @@ def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
                     "plane": "XZ",
                     "rotation_axis": "Z",
                     "supporting_profile_entity_ids": ["E_R1"],
+                    "supporting_profile_constant_axes": ["X"],
                     "source_ids": [
                         "structural:R1",
                         "hybrid:oblique-line:46",
@@ -4251,6 +4252,7 @@ def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
                     "plane": "XZ",
                     "rotation_axis": "Z",
                     "supporting_profile_entity_ids": ["E_R2"],
+                    "supporting_profile_constant_axes": ["X"],
                     "source_ids": [
                         "structural:R2",
                         "hybrid:oblique-line:46",
@@ -4275,6 +4277,13 @@ def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
     item = items[0]
     assert item["region_ids"] == ["R1", "R2"]
     assert item["supporting_physical_feature_ids"] == ["F_SHARED"]
+    assert item["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F_SHARED",
+            "constant_axis": "X",
+            "boundary_target": "feature:F_SHARED.boundary.x",
+        }
+    ]
     assert item["connection_kind"] == (
         "one_sided_non_orthogonal_boundary_continuation"
     )
@@ -4298,6 +4307,7 @@ def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
                     "plane": "XZ",
                     "rotation_axis": "Z",
                     "supporting_profile_entity_ids": ["E_UNKNOWN"],
+                    "supporting_profile_constant_axes": ["X"],
                     "source_ids": ["hybrid:oblique-line:9"],
                     "one_sided_boundary_candidate": True,
                 }
@@ -4314,6 +4324,85 @@ def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
         )
         == []
     )
+
+
+def test_physical_oblique_fragment_attaches_to_one_matching_rotational_topology():
+    topology = [
+        {
+            "region_id": "PHYSICAL_MAIN",
+            "region_ids": ["R1", "R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [],
+            "junctions": [],
+        }
+    ]
+    fragment = {
+        "id": "PHYSICAL_OBLIQUE_TEST",
+        "region_ids": ["R1", "R2"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": ["F_SUPPORT"],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": "F_SUPPORT",
+                "constant_axis": "X",
+                "boundary_target": "feature:F_SUPPORT.boundary.x",
+            }
+        ],
+        "connection_kind": (
+            "one_sided_non_orthogonal_boundary_continuation"
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+    attached = identity_linker_module._attach_physical_oblique_fragments(
+        topology,
+        [fragment],
+    )
+
+    assert attached[0]["non_orthogonal_fragments"] == [fragment]
+    assert "endpoints_px" not in repr(attached[0]["non_orthogonal_fragments"])
+    assert "angle_deg" not in repr(attached[0]["non_orthogonal_fragments"])
+
+
+def test_physical_oblique_fragment_fails_closed_on_ambiguous_topology_owner():
+    topology = [
+        {
+            "region_id": "PHYSICAL_A",
+            "region_ids": ["R1", "R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+        },
+        {
+            "region_id": "PHYSICAL_B",
+            "region_ids": ["R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+        },
+    ]
+    fragment = {
+        "id": "PHYSICAL_OBLIQUE_TEST",
+        "region_ids": ["R2"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+    }
+
+    attached = identity_linker_module._attach_physical_oblique_fragments(
+        topology,
+        [fragment],
+    )
+
+    assert all("non_orthogonal_fragments" not in item for item in attached)
 
 
 def test_rotational_topology_keeps_disjoint_physical_items_separate():

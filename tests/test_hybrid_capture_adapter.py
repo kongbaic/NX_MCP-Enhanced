@@ -884,6 +884,159 @@ def test_local_only_token_from_rejected_dimension_role_is_advisory():
     assert "advisory OCR coverage" in item.reason
 
 
+def _overlap_profile_edge(
+    region_id,
+    ref,
+    *,
+    orientation,
+    position,
+    span,
+):
+    return {
+        "kind": "profile_edge_candidate",
+        "region_id": region_id,
+        "ref": ref,
+        "source_orientation": orientation,
+        "position_px": float(position),
+        "span_px": [float(span[0]), float(span[1])],
+        "axis_tolerance_px": 1.0,
+        "non_dimension_crossing_source_count": 1,
+    }
+
+
+def test_overlapping_profile_associations_merge_only_mutual_unique_edges():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+            {"region_id": "R2", "bbox_px": [50, 0, 200, 200]},
+        ]
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["structural:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="front",
+            evidence=["structural:R2"],
+        ),
+    }
+    inventory = [
+        _overlap_profile_edge(
+            "R1", "R1.H1", orientation="horizontal", position=40, span=[20, 180]
+        ),
+        _overlap_profile_edge(
+            "R1", "R1.V1", orientation="vertical", position=80, span=[10, 190]
+        ),
+        _overlap_profile_edge(
+            "R1", "R1.V2", orientation="vertical", position=140, span=[20, 180]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.H1", orientation="horizontal", position=40, span=[60, 180]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.V1", orientation="vertical", position=80, span=[20, 190]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.V2", orientation="vertical", position=140, span=[30, 170]
+        ),
+    ]
+    by_ref = {
+        item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
+        for item in inventory
+    }
+
+    associations = hybrid_adapter._overlapping_profile_associations(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        profile_entity_by_ref=by_ref,
+    )
+
+    paired_refs = {
+        tuple(
+            sorted(
+                entity.split(".PROFILE.", 1)[1]
+                for entity in association.entity_keys
+            )
+        )
+        for association in associations
+    }
+    assert ("R1.H1", "R2.H1") in paired_refs
+    assert ("R1.V1", "R2.V1") in paired_refs
+    assert ("R1.V2", "R2.V2") in paired_refs
+    assert all(
+        association.basis == ["shared_raster_profile_identity"]
+        for association in associations
+    )
+
+
+def test_overlapping_profile_associations_fail_closed_on_one_to_many_match():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+            {"region_id": "R2", "bbox_px": [50, 0, 200, 200]},
+        ]
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["structural:R1"],
+        ),
+        "R2": hybrid_adapter.HybridRegionView(
+            region_id="R2",
+            view_kind="front",
+            evidence=["structural:R2"],
+        ),
+    }
+    inventory = [
+        _overlap_profile_edge(
+            "R1", "R1.SHARED_A", orientation="horizontal", position=40, span=[20, 180]
+        ),
+        _overlap_profile_edge(
+            "R1", "R1.SHARED_B", orientation="vertical", position=80, span=[10, 190]
+        ),
+        _overlap_profile_edge(
+            "R1", "R1.AMB", orientation="vertical", position=140, span=[20, 180]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.SHARED_A", orientation="horizontal", position=40, span=[60, 180]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.SHARED_B", orientation="vertical", position=80, span=[20, 190]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.AMB_TOP", orientation="vertical", position=140, span=[20, 120]
+        ),
+        _overlap_profile_edge(
+            "R2", "R2.AMB_BOTTOM", orientation="vertical", position=140, span=[80, 180]
+        ),
+    ]
+    by_ref = {
+        item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
+        for item in inventory
+    }
+
+    associations = hybrid_adapter._overlapping_profile_associations(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        profile_entity_by_ref=by_ref,
+    )
+
+    associated_entities = {
+        entity
+        for association in associations
+        for entity in association.entity_keys
+    }
+    assert by_ref["R1.AMB"] not in associated_entities
+    assert by_ref["R2.AMB_TOP"] not in associated_entities
+    assert by_ref["R2.AMB_BOTTOM"] not in associated_entities
+
+
 def _symmetric_profile_test_context():
     return hybrid_adapter.HybridAdapterContext(
         region_views=[

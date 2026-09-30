@@ -47,12 +47,16 @@ AssociationEvidenceKind = Literal[
     "matching_specification",
     "unique_orthographic_counterpart",
     "explicit_section_correspondence",
+    "shared_raster_profile_identity",
 ]
 
 
 def _association_basis_sufficient(basis: list[AssociationEvidenceKind]) -> bool:
     kinds = set(basis)
-    if "explicit_section_correspondence" in kinds:
+    if (
+        "explicit_section_correspondence" in kinds
+        or "shared_raster_profile_identity" in kinds
+    ):
         return True
     identity_support = {
         "leader_correspondence",

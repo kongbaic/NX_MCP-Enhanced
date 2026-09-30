@@ -190,6 +190,52 @@ def test_production_capture_rejects_same_view_multi_entity_association():
         )
 
 
+def test_identity_linker_accepts_shared_raster_profile_identity_across_region_views():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(id="V_R1", kind="front"),
+            CaptureView(id="V_R2", kind="front"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_R1",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="E_R2",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="associated",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_SHARED_RASTER",
+                entity_ids=["E_R1", "E_R2"],
+                basis=["shared_raster_profile_identity"],
+                source_ids=["SRC_SHARED_RASTER"],
+                required_for_modeling=False,
+            )
+        ],
+        required_targets=[
+            CaptureRequiredTarget(entity_id="E_R1", field="boundary.x"),
+            CaptureRequiredTarget(entity_id="E_R2", field="boundary.x"),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    assert result.entity_to_feature["E_R1"] == result.entity_to_feature["E_R2"]
+    assert result.report["rejected_associations"] == 0
+
+
 def test_identity_linker_quarantines_legacy_same_view_multi_entity_association():
     capture = ReaderCapture.model_construct(
         overall_dimensions=OverallDimensions(

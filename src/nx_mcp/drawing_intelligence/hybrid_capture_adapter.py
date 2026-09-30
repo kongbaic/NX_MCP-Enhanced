@@ -4749,6 +4749,167 @@ def _regions_share_structural_raster_view(
     return len(first_matches) >= 2 and len(second_matches) >= 2
 
 
+def _overlapping_profile_associations(
+    *,
+    report: dict[str, Any],
+    profile_inventory: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    profile_entity_by_ref: dict[str, str],
+) -> list[ObservationAssociation]:
+    """Merge only mutually unique structural edges from proven overlapping crops.
+
+    Raster geometry proves identity only.  It never supplies an engineering
+    coordinate.  Candidate pairs must agree in orientation and global-raster
+    axis position, overlap most of the shorter observed span, and be mutually
+    unique within each region pair.
+    """
+
+    eligible_by_region: dict[str, list[dict[str, Any]]] = {}
+    ref_region: dict[str, str] = {}
+
+    for item in profile_inventory:
+        if item.get("kind") != "profile_edge_candidate":
+            continue
+        region_id = str(item.get("region_id") or "")
+        ref = str(item.get("ref") or "")
+        orientation = str(item.get("source_orientation") or "")
+        position = item.get("position_px")
+        span = item.get("span_px")
+        support = item.get("non_dimension_crossing_source_count")
+        if (
+            not region_id
+            or region_id not in view_lookup
+            or not ref
+            or ref not in profile_entity_by_ref
+            or orientation not in {"horizontal", "vertical"}
+            or isinstance(position, bool)
+            or not isinstance(position, (int, float))
+            or not isinstance(span, list)
+            or len(span) != 2
+            or any(
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                for value in span
+            )
+            or not isinstance(support, int)
+            or isinstance(support, bool)
+            or support <= 0
+        ):
+            continue
+        low, high = sorted(float(value) for value in span)
+        if high <= low:
+            continue
+        eligible_by_region.setdefault(region_id, []).append(item)
+        ref_region[ref] = region_id
+
+    def pair_matches(
+        left: dict[str, Any],
+        right: dict[str, Any],
+    ) -> bool:
+        if str(left.get("source_orientation") or "") != str(
+            right.get("source_orientation") or ""
+        ):
+            return False
+        left_position = float(left["position_px"])
+        right_position = float(right["position_px"])
+        left_tolerance = float(left.get("axis_tolerance_px", 0.0) or 0.0)
+        right_tolerance = float(right.get("axis_tolerance_px", 0.0) or 0.0)
+        if abs(left_position - right_position) > max(
+            1.0,
+            left_tolerance,
+            right_tolerance,
+        ):
+            return False
+
+        left_low, left_high = sorted(float(value) for value in left["span_px"])
+        right_low, right_high = sorted(float(value) for value in right["span_px"])
+        overlap = min(left_high, right_high) - max(left_low, right_low)
+        shorter = min(left_high - left_low, right_high - right_low)
+        if shorter <= 0 or overlap <= 0:
+            return False
+        return overlap / shorter >= 0.8
+
+    graph: dict[str, set[str]] = {}
+    regions = sorted(eligible_by_region)
+    for index, left_region in enumerate(regions):
+        for right_region in regions[index + 1 :]:
+            if not _regions_share_structural_raster_view(
+                report=report,
+                profile_inventory=profile_inventory,
+                view_lookup=view_lookup,
+                first_region_id=left_region,
+                second_region_id=right_region,
+            ):
+                continue
+
+            left_edges = eligible_by_region[left_region]
+            right_edges = eligible_by_region[right_region]
+            right_candidates_by_left: dict[str, list[str]] = {}
+            left_candidates_by_right: dict[str, list[str]] = {}
+            for left in left_edges:
+                left_ref = str(left["ref"])
+                for right in right_edges:
+                    right_ref = str(right["ref"])
+                    if not pair_matches(left, right):
+                        continue
+                    right_candidates_by_left.setdefault(left_ref, []).append(
+                        right_ref
+                    )
+                    left_candidates_by_right.setdefault(right_ref, []).append(
+                        left_ref
+                    )
+
+            for left_ref, right_refs in sorted(right_candidates_by_left.items()):
+                unique_rights = sorted(set(right_refs))
+                if len(unique_rights) != 1:
+                    continue
+                right_ref = unique_rights[0]
+                unique_lefts = sorted(
+                    set(left_candidates_by_right.get(right_ref, []))
+                )
+                if unique_lefts != [left_ref]:
+                    continue
+                graph.setdefault(left_ref, set()).add(right_ref)
+                graph.setdefault(right_ref, set()).add(left_ref)
+
+    associations: list[ObservationAssociation] = []
+    visited: set[str] = set()
+    for seed in sorted(graph):
+        if seed in visited:
+            continue
+        stack = [seed]
+        component: list[str] = []
+        while stack:
+            ref = stack.pop()
+            if ref in visited:
+                continue
+            visited.add(ref)
+            component.append(ref)
+            stack.extend(sorted(graph.get(ref, set()) - visited, reverse=True))
+        if len(component) < 2:
+            continue
+
+        regions_in_component = [ref_region[ref] for ref in component]
+        if len(regions_in_component) != len(set(regions_in_component)):
+            continue
+
+        refs = sorted(component)
+        entity_keys = [profile_entity_by_ref[ref] for ref in refs]
+        digest = hashlib.sha256("|".join(refs).encode("utf-8")).hexdigest()[:12]
+        associations.append(
+            ObservationAssociation(
+                entity_keys=entity_keys,
+                basis=["shared_raster_profile_identity"],
+                evidence=[
+                    f"hybrid:shared-raster-profile:{digest}",
+                    *[f"hybrid:profile-edge:{ref}" for ref in refs],
+                ],
+                required_for_modeling=False,
+            )
+        )
+
+    return associations
+
+
 def _selected_witness_pair(
     candidate: dict[str, Any],
 ) -> list[float] | None:
@@ -6039,6 +6200,28 @@ def adapt_hybrid_ocr_report(
         callout_ledger=callout_ledger,
     )
     unresolved.extend(association_unresolved)
+
+    profile_associations = _overlapping_profile_associations(
+        report=report,
+        profile_inventory=profile_inventory,
+        view_lookup=view_lookup,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+    associations.extend(profile_associations)
+    associated_profile_keys = {
+        entity_key
+        for association in profile_associations
+        for entity_key in association.entity_keys
+    }
+    if associated_profile_keys:
+        entities = [
+            item.model_copy(
+                update={"cross_view_disposition": "associated"}
+            )
+            if item.key in associated_profile_keys
+            else item
+            for item in entities
+        ]
 
     coverage = report["coverage"]
     anchor_items = [

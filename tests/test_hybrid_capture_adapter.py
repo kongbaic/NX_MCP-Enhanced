@@ -4018,3 +4018,68 @@ def test_profile_vertices_map_to_distinct_profile_boundary_entities(monkeypatch)
         "profile_boundary",
     ]
     assert [item.entity_key for item in endpoints] == ["E_LEFT", "E_RIGHT"]
+
+
+def test_profile_vertex_entities_are_view_local_filtered_and_deduplicated():
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["test:R1"],
+        )
+    }
+    candidates = [
+        {
+            "region_id": "UNKNOWN",
+            "witness_anchor_evidence": [],
+        },
+        {
+            "region_id": "R1",
+            "witness_anchor_evidence": [
+                "not-a-witness",
+                {
+                    "witness_index": 0,
+                    "nearest_anchors": [
+                        "not-an-anchor",
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": "EDGE_ONLY",
+                        },
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "",
+                        },
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "VERTEX_A",
+                            "supporting_profile_ref": "EDGE_A",
+                        },
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "VERTEX_A",
+                            "supporting_profile_ref": "EDGE_A",
+                        },
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "VERTEX_B",
+                        },
+                    ],
+                },
+            ],
+        },
+    ]
+
+    entities, by_ref = hybrid_adapter._profile_vertex_entities(
+        candidates,
+        view_lookup,
+    )
+
+    assert set(by_ref) == {"VERTEX_A", "VERTEX_B"}
+    assert len(entities) == 2
+    assert all(item.view_key == "view.R1" for item in entities)
+    assert all(item.shape == "profile" for item in entities)
+    vertex_a = next(item for item in entities if item.key.endswith("VERTEX_A"))
+    assert vertex_a.evidence == [
+        "hybrid:profile-vertex:VERTEX_A",
+        "hybrid:profile-edge:EDGE_A",
+    ]

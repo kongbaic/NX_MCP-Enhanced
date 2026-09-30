@@ -117,11 +117,18 @@ def test_structural_profile_anchors_flow_into_witness_evidence():
         {item["kind"] for item in witness["nearest_anchors"]} for witness in evidence
     ]
 
-    assert kinds_by_witness == [
-        {"profile_edge_candidate"},
-        {"profile_edge_candidate"},
-        {"profile_edge_candidate"},
-    ]
+    assert all(
+        "profile_edge_candidate" in kinds
+        for kinds in kinds_by_witness
+    )
+    assert all(
+        kinds <= {"profile_edge_candidate", "profile_vertex_candidate"}
+        for kinds in kinds_by_witness
+    )
+    assert any(
+        "profile_vertex_candidate" in kinds
+        for kinds in kinds_by_witness
+    )
     assert result["anchor_schema_version"] == "1.1"
 
 
@@ -640,3 +647,12 @@ def test_dimension_crossing_only_profile_does_not_create_vertex_owner():
         )
         == []
     )
+
+
+def test_profile_vertex_anchor_rejects_unknown_dimension_orientation():
+    with __import__("pytest").raises(ValueError):
+        derive_structural_profile_vertex_anchors(
+            _raw(),
+            "R1",
+            "diagonal",
+        )

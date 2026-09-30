@@ -65,6 +65,7 @@ def _canon(value: Any) -> Any:
 
 
 _ROTATIONAL_PROFILE_TOPOLOGY_KIND = "hybrid_rotational_profile_topology_ledger"
+_VIEW_AXIS_BOUNDARY_KIND = "hybrid_view_axis_boundary_ledger"
 
 
 def _linked_rotational_profile_topology_observations(
@@ -119,6 +120,152 @@ def _linked_rotational_profile_topology_observations(
                     f"feature:{feature_id}.boundary.{axis.lower()}"
                 )
     return observations
+
+
+def _profile_entity_ids_for_ref(
+    capture: ReaderCapture,
+    ref: str,
+) -> list[str]:
+    token = f"hybrid:profile-edge:{ref}"
+    return sorted(
+        item.id
+        for item in capture.entities
+        if item.shape == "profile" and token in item.source_ids
+    )
+
+
+def _overall_extent(capture: ReaderCapture, axis: Axis) -> float:
+    return {
+        "X": float(capture.overall_dimensions.length_x),
+        "Y": float(capture.overall_dimensions.width_y),
+        "Z": float(capture.overall_dimensions.height_z),
+    }[axis]
+
+
+def _valid_view_axis_boundary_items(
+    capture: ReaderCapture,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _VIEW_AXIS_BOUNDARY_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("status") != "resolved"
+                or item.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+            ):
+                continue
+            raw_axis = str(item.get("axis") or "").upper()
+            if raw_axis not in {"X", "Y", "Z"}:
+                continue
+            axis: Axis = raw_axis
+            raw_value = item.get("overall_dimension_value")
+            if (
+                isinstance(raw_value, bool)
+                or not isinstance(raw_value, (int, float))
+                or abs(float(raw_value) - _overall_extent(capture, axis)) > 1e-9
+            ):
+                continue
+            anchors = item.get("anchors")
+            if not isinstance(anchors, list):
+                continue
+            roles = {
+                str(anchor.get("role") or "")
+                for anchor in anchors
+                if isinstance(anchor, dict)
+            }
+            if roles != {"overall_min", "overall_max"}:
+                continue
+            output.append(item)
+    return output
+
+
+def _view_axis_boundary_relations(
+    capture: ReaderCapture,
+    entity_to_feature: dict[str, str],
+) -> list[RelationEvidence]:
+    """Bind resolved overall profile extremes to engineering boundary targets.
+
+    The Hybrid ledger proves only which structural profile edge is the min/max
+    extreme for an independently known overall dimension. The metric value
+    comes from overall dimensions; raster positions are identity evidence only
+    and are never converted to engineering coordinates.
+    """
+
+    views = {item.id: item for item in capture.views}
+    entities = {item.id: item for item in capture.entities}
+    relations: list[RelationEvidence] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for item in _valid_view_axis_boundary_items(capture):
+        axis: Axis = str(item["axis"]).upper()
+        for anchor in item.get("anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            ref = str(anchor.get("ref") or "")
+            role = str(anchor.get("role") or "")
+            if not ref or role not in {"overall_min", "overall_max"}:
+                continue
+            entity_ids = _profile_entity_ids_for_ref(capture, ref)
+            if len(entity_ids) != 1:
+                continue
+            entity_id = entity_ids[0]
+            feature_id = entity_to_feature.get(entity_id)
+            if feature_id is None:
+                continue
+            key = (feature_id, axis, role)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            entity = entities.get(entity_id)
+            view = views.get(entity.view_id) if entity is not None else None
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        f"hybrid:profile-edge:{ref}",
+                        *([] if entity is None else entity.source_ids),
+                        *([] if view is None else [view.id, *view.source_ids]),
+                    ]
+                )
+            )
+            digest = hashlib.sha256(
+                "|".join((feature_id, axis, role, ref)).encode("utf-8")
+            ).hexdigest()[:12].upper()
+            relations.append(
+                RelationEvidence(
+                    id=f"R_VIEW_AXIS_BOUNDARY_{digest}",
+                    kind="edge_offset",
+                    axis=axis,
+                    value=0.0,
+                    from_side="min" if role == "overall_min" else "max",
+                    targets=[
+                        f"feature:{feature_id}.boundary.{axis.lower()}"
+                    ],
+                    source_ids=source_ids,
+                    required_for_modeling=False,
+                    metadata={
+                        "basis": (
+                            "independent_overall_dimension_plus_"
+                            "unique_profile_extremes"
+                        ),
+                        "overall_role": role,
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                )
+            )
+    return relations
 
 
 def _raw_fields_by_entity(capture: ReaderCapture) -> dict[str, set[str]]:
@@ -1502,6 +1649,20 @@ def _materialized_entity_ids(capture: ReaderCapture) -> set[str]:
 
     for observation in capture.observations:
         kind = observation.get("kind")
+        if kind == _VIEW_AXIS_BOUNDARY_KIND:
+            valid_items = _valid_view_axis_boundary_items(capture)
+            for item in valid_items:
+                if item not in observation.get("items", []):
+                    continue
+                for anchor in item.get("anchors", []):
+                    if not isinstance(anchor, dict):
+                        continue
+                    ref = str(anchor.get("ref") or "")
+                    entity_ids = _profile_entity_ids_for_ref(capture, ref)
+                    if len(entity_ids) == 1:
+                        referenced.add(entity_ids[0])
+            continue
+
         if kind == _PROJECTED_PROFILE_LEVEL_KIND:
             items = observation.get("items")
             if not isinstance(items, list):
@@ -2738,6 +2899,12 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         _open_slot_tangent_relations(capture, entity_to_feature)
     )
     synthetic_relations.extend(slot_tangent_relations)
+    synthetic_relations.extend(
+        _view_axis_boundary_relations(
+            capture,
+            entity_to_feature,
+        )
+    )
 
     required_targets = {
         item.target

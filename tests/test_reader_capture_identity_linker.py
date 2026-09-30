@@ -3855,6 +3855,129 @@ def _projected_profile_bridge_capture(
     )
 
 
+def _view_axis_boundary_capture(*, overall_value=80.0, inferred=False):
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(
+                id="VF",
+                kind="front",
+                source_ids=["structural:R1:context"],
+            )
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_TOP",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.TOP"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_BOTTOM",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.BOTTOM"],
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_view_axis_boundary_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "status": "resolved",
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "axis": "Z",
+                        "candidate_id": None,
+                        "overall_dimension_value": overall_value,
+                        "anchors": [
+                            {
+                                "ref": "R1.TOP",
+                                "pixel_extreme_side": "min",
+                                "role": "overall_max",
+                                "position_px": 20.0,
+                            },
+                            {
+                                "ref": "R1.BOTTOM",
+                                "pixel_extreme_side": "max",
+                                "role": "overall_min",
+                                "position_px": 100.0,
+                            },
+                        ],
+                        "basis": (
+                            "independent_overall_dimension_plus_"
+                            "unique_profile_extremes"
+                        ),
+                        "overall_fact_scope": "same_region_structural_evidence",
+                        "engineering_coordinate_inferred_from_pixels": inferred,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": inferred,
+            }
+        ],
+    )
+
+
+def test_view_axis_boundary_ledger_materializes_profile_extremes_and_resolves_coordinates():
+    capture = _view_axis_boundary_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert linked.report["ignored_orphan_profiles"] == 0
+    top_feature = linked.entity_to_feature["E_TOP"]
+    bottom_feature = linked.entity_to_feature["E_BOTTOM"]
+    top_target = f"feature:{top_feature}.boundary.z"
+    bottom_target = f"feature:{bottom_feature}.boundary.z"
+
+    boundary_relations = [
+        item
+        for item in linked.evidence.relations
+        if item.metadata.get("basis")
+        == "independent_overall_dimension_plus_unique_profile_extremes"
+    ]
+    assert len(boundary_relations) == 2
+    assert {
+        (item.from_side, item.value, item.targets[0])
+        for item in boundary_relations
+    } == {
+        ("max", 0.0, top_target),
+        ("min", 0.0, bottom_target),
+    }
+    assert all(
+        item.metadata["engineering_coordinate_inferred_from_pixels"] is False
+        for item in boundary_relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[top_target] == 80.0
+    assert resolution.values[bottom_target] == 0.0
+
+
+def test_view_axis_boundary_ledger_fails_closed_on_metric_or_provenance_mismatch():
+    for capture in (
+        _view_axis_boundary_capture(overall_value=79.0),
+        _view_axis_boundary_capture(inferred=True),
+    ):
+        linked = link_reader_capture(capture)
+
+        assert linked.entity_to_feature == {}
+        assert linked.report["ignored_orphan_profiles"] == 2
+        assert not [
+            item
+            for item in linked.evidence.relations
+            if item.metadata.get("basis")
+            == "independent_overall_dimension_plus_unique_profile_extremes"
+        ]
+
+
 def test_rotational_profile_topology_materializes_otherwise_orphan_profile_edge():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(

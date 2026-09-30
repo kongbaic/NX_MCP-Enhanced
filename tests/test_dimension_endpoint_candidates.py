@@ -339,3 +339,78 @@ def test_duplicate_accepted_assignment_fails_closed():
 
     assert result["status"] == "unresolved"
     assert result["reason"] == ("accepted_token_does_not_have_one_unique_global_assignment")
+
+
+def test_profile_vertex_at_witness_terminal_is_physical_owner():
+    vertex = {
+        "kind": "profile_vertex_candidate",
+        "ref": "R1.edge.vertex.min",
+        "position_px": 100.0,
+        "vertex_transverse_px": 120.0,
+        "supporting_profile_orientation": "horizontal",
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+        "vertex_match_tolerance_px": 3.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [vertex], 1: [_profile(200.0)]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [50.0, 121.0],
+                    "crosses_dimension_axis": True,
+                }
+            ]
+        },
+    )
+    candidate["axis_px"] = 50.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first = result["endpoints"][0]
+    assert first["status"] == "unique_physical_candidate"
+    assert first["physical_candidates"] == [vertex]
+
+
+def test_profile_vertex_without_terminal_contact_is_not_owner():
+    vertex = {
+        "kind": "profile_vertex_candidate",
+        "ref": "R1.edge.vertex.min",
+        "position_px": 100.0,
+        "vertex_transverse_px": 160.0,
+        "supporting_profile_orientation": "horizontal",
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+        "vertex_match_tolerance_px": 3.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [vertex], 1: [_profile(200.0)]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [50.0, 121.0],
+                    "crosses_dimension_axis": True,
+                }
+            ]
+        },
+    )
+    candidate["axis_px"] = 50.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first = result["endpoints"][0]
+    assert first["status"] == "no_physical_candidate"
+    assert first["physical_candidates"] == []
+    assert first["ignored_nonownership_anchors"][0][
+        "ownership_rejection_reason"
+    ] == "profile_vertex_not_connected_to_witness_terminal"

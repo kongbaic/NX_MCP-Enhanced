@@ -1179,6 +1179,54 @@ def _profile_boundary_entities(
     return entities, by_ref
 
 
+def _profile_vertex_entities(
+    candidates: list[dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+) -> tuple[list[ObservationEntity], dict[str, str]]:
+    """Materialize evidence-backed profile vertices as distinct local entities."""
+
+    entities: list[ObservationEntity] = []
+    by_ref: dict[str, str] = {}
+    for candidate in candidates:
+        region_id = str(candidate.get("region_id") or "")
+        if not region_id or region_id not in view_lookup:
+            continue
+        for witness in candidate.get("witness_anchor_evidence", []):
+            if not isinstance(witness, dict):
+                continue
+            for anchor in witness.get("nearest_anchors", []):
+                if (
+                    not isinstance(anchor, dict)
+                    or anchor.get("kind") != "profile_vertex_candidate"
+                ):
+                    continue
+                ref = str(anchor.get("ref") or "")
+                if not ref or ref in by_ref:
+                    continue
+                supporting_ref = str(
+                    anchor.get("supporting_profile_ref") or ""
+                )
+                entity_key = f"{region_id}.PROFILE_VERTEX.{ref}"
+                evidence = [f"hybrid:profile-vertex:{ref}"]
+                if supporting_ref:
+                    evidence.append(
+                        f"hybrid:profile-edge:{supporting_ref}"
+                    )
+                by_ref[ref] = entity_key
+                entities.append(
+                    ObservationEntity(
+                        key=entity_key,
+                        view_key=f"view.{region_id}",
+                        shape="profile",
+                        cross_view_disposition="single_view",
+                        evidence=evidence,
+                        required_for_modeling=False,
+                    )
+                )
+
+    return entities, by_ref
+
+
 _SYMMETRIC_COUNT_TWO_MARKER = "hybrid:symmetric-count2-overall-center"
 
 
@@ -1503,6 +1551,7 @@ def _dimension_endpoints_from_candidates(
     entity_keys: set[str],
     boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
     profile_entity_by_ref: dict[str, str],
+    profile_vertex_entity_by_ref: dict[str, str] | None = None,
     pattern_entity_by_ref: dict[str, str] | None = None,
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
@@ -1617,6 +1666,25 @@ def _dimension_endpoints_from_candidates(
                     )
                     continue
 
+            if physical.get("kind") == "profile_vertex_candidate":
+                ref = str(physical.get("ref") or "")
+                vertex_entity_key = (
+                    (profile_vertex_entity_by_ref or {}).get(ref)
+                )
+                if (
+                    vertex_entity_key is not None
+                    and vertex_entity_key in entity_keys
+                ):
+                    output.append(
+                        ObservationDimensionEndpoint(
+                            role="profile_boundary",
+                            entity_key=vertex_entity_key,
+                            basis="profile_edge",
+                            evidence=evidence,
+                        )
+                    )
+                    continue
+
         representable_candidate_keys: list[str] = []
         candidate_set_blocked = False
         for physical_candidate in physical_candidates:
@@ -1678,6 +1746,18 @@ def _dimension_endpoints_from_candidates(
                     and profile_entity_key in entity_keys
                 ):
                     representable_candidate_keys.append(profile_entity_key)
+                    continue
+
+            if physical_candidate.get("kind") == "profile_vertex_candidate":
+                ref = str(physical_candidate.get("ref") or "")
+                vertex_entity_key = (
+                    (profile_vertex_entity_by_ref or {}).get(ref)
+                )
+                if (
+                    vertex_entity_key is not None
+                    and vertex_entity_key in entity_keys
+                ):
+                    representable_candidate_keys.append(vertex_entity_key)
                     continue
 
             candidate_set_blocked = True
@@ -4881,6 +4961,13 @@ def adapt_hybrid_ocr_report(
         view_lookup,
     )
     entities.extend(profile_entities)
+    profile_vertex_entities, profile_vertex_entity_by_ref = (
+        _profile_vertex_entities(
+            dimension_candidates,
+            view_lookup,
+        )
+    )
+    entities.extend(profile_vertex_entities)
 
     metric_profile_topology_hints = _metric_profile_topology_hints(
         report=report,
@@ -5143,6 +5230,7 @@ def adapt_hybrid_ocr_report(
                 entity_keys={item.key for item in entities},
                 boundary_roles=boundary_roles,
                 profile_entity_by_ref=profile_entity_by_ref,
+                profile_vertex_entity_by_ref=profile_vertex_entity_by_ref,
                 pattern_entity_by_ref=pattern_entity_by_ref,
                 evidence=evidence,
             )
@@ -5164,6 +5252,7 @@ def adapt_hybrid_ocr_report(
                         entity_keys={item.key for item in entities},
                         boundary_roles={},
                         profile_entity_by_ref=profile_entity_by_ref,
+                        profile_vertex_entity_by_ref=profile_vertex_entity_by_ref,
                         pattern_entity_by_ref=pattern_entity_by_ref,
                         evidence=evidence,
                     )

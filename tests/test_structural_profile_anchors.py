@@ -5,6 +5,7 @@ from nx_mcp.drawing_intelligence.dimension_witness_anchors import (
 )
 from nx_mcp.drawing_intelligence.structural_profile_anchors import (
     derive_structural_profile_anchors,
+    derive_structural_profile_vertex_anchors,
 )
 
 
@@ -550,3 +551,92 @@ def test_line_through_circle_center_is_not_physical_profile_boundary():
     positions = {round(float(item["position_px"]), 1) for item in anchors}
 
     assert 744.0 not in positions
+
+
+def test_structural_profile_vertices_come_from_independent_closed_edge():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 400, "height": 300},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 400, 300],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_GENERIC",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 40.0,
+                        "source_lines": [
+                            _source("horizontal", 120.0, 40, 300),
+                            _source("vertical", 40.0, 100, 140),
+                            _source("vertical", 300.0, 100, 140),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    vertices = derive_structural_profile_vertex_anchors(
+        raw,
+        "R1",
+        "horizontal",
+    )
+
+    assert [item["position_px"] for item in vertices] == [40.0, 300.0]
+    assert all(item["vertex_transverse_px"] == 120.0 for item in vertices)
+    assert all(item["kind"] == "profile_vertex_candidate" for item in vertices)
+    assert all(item["ownership_claimed"] is False for item in vertices)
+
+
+def test_dimension_crossing_only_profile_does_not_create_vertex_owner():
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 400, "height": 300},
+        "regions": [
+            {
+                "region_id": "R1",
+                "bbox_px": [0, 0, 400, 300],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_GENERIC",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "witness_line_evidence": [
+                    {
+                        "witness_index": 0,
+                        "position_px": 40.0,
+                        "source_lines": [
+                            {
+                                **_source("horizontal", 120.0, 40, 300),
+                                "crosses_dimension_axis": True,
+                            },
+                            _source("vertical", 40.0, 100, 140),
+                            _source("vertical", 300.0, 100, 140),
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    assert (
+        derive_structural_profile_vertex_anchors(
+            raw,
+            "R1",
+            "horizontal",
+        )
+        == []
+    )

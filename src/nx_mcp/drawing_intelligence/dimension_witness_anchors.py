@@ -3,7 +3,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from .structural_profile_anchors import derive_structural_profile_anchors
+from .structural_profile_anchors import (
+    derive_structural_profile_anchors,
+    derive_structural_profile_vertex_anchors,
+)
 
 
 def _region_lookup(raw_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -170,6 +173,13 @@ def enrich_reduced_dimension_candidates(
             )
             anchors.extend(
                 derive_structural_profile_anchors(
+                    raw_evidence,
+                    region_id,
+                    orientation,
+                )
+            )
+            anchors.extend(
+                derive_structural_profile_vertex_anchors(
                     raw_evidence,
                     region_id,
                     orientation,

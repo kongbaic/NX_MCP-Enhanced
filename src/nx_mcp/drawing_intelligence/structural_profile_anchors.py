@@ -532,3 +532,103 @@ def derive_structural_profile_anchors(
         anchors.append(anchor)
 
     return anchors
+
+
+def derive_structural_profile_vertex_anchors(
+    raw_evidence: dict[str, Any],
+    region_id: str,
+    dimension_orientation: str,
+) -> list[dict[str, Any]]:
+    """Derive profile vertices that can own dimension extension-line endpoints.
+
+    A vertex is emitted only from an independently supported structural profile
+    edge whose two endpoints participate in structural junctions. Raster
+    coordinates prove physical contact/identity only; they are never converted
+    into engineering coordinates.
+    """
+
+    if dimension_orientation == "horizontal":
+        supporting_dimension_orientation = "vertical"
+    elif dimension_orientation == "vertical":
+        supporting_dimension_orientation = "horizontal"
+    else:
+        raise ValueError("dimension_orientation must be horizontal or vertical")
+
+    supporting_edges = derive_structural_profile_anchors(
+        raw_evidence,
+        region_id,
+        supporting_dimension_orientation,
+    )
+
+    anchors: list[dict[str, Any]] = []
+    for edge in supporting_edges:
+        span = edge.get("span_px")
+        transverse = edge.get("position_px")
+        endpoint_junction_count = edge.get("endpoint_junction_count")
+        independent_source_count = edge.get(
+            "non_dimension_crossing_source_count"
+        )
+        axis_tolerance = edge.get("axis_tolerance_px")
+        junction_tolerance = edge.get("junction_tolerance_px")
+        ref = str(edge.get("ref") or "")
+        if (
+            edge.get("kind") != "profile_edge_candidate"
+            or not ref
+            or not isinstance(span, list)
+            or len(span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+            or not isinstance(transverse, (int, float))
+            or isinstance(transverse, bool)
+            or not isinstance(endpoint_junction_count, int)
+            or isinstance(endpoint_junction_count, bool)
+            or endpoint_junction_count < 2
+            or not isinstance(independent_source_count, int)
+            or isinstance(independent_source_count, bool)
+            or independent_source_count <= 0
+            or not isinstance(axis_tolerance, (int, float))
+            or isinstance(axis_tolerance, bool)
+            or not isinstance(junction_tolerance, (int, float))
+            or isinstance(junction_tolerance, bool)
+        ):
+            continue
+
+        low, high = sorted(float(value) for value in span)
+        if high <= low:
+            continue
+        match_tolerance = max(
+            float(axis_tolerance),
+            min(float(junction_tolerance) * 0.5, 6.0),
+        )
+        for endpoint_side, endpoint_position in (
+            ("min", low),
+            ("max", high),
+        ):
+            anchors.append(
+                {
+                    "kind": "profile_vertex_candidate",
+                    "ref": f"{ref}.vertex.{endpoint_side}",
+                    "position_px": round(endpoint_position, 3),
+                    "vertex_transverse_px": round(float(transverse), 3),
+                    "supporting_profile_ref": ref,
+                    "supporting_profile_orientation": edge.get(
+                        "source_orientation"
+                    ),
+                    "endpoint_side": endpoint_side,
+                    "profile_span_px": [low, high],
+                    "axis_tolerance_px": float(axis_tolerance),
+                    "junction_tolerance_px": float(junction_tolerance),
+                    "vertex_match_tolerance_px": round(match_tolerance, 3),
+                    "junction_count": int(edge.get("junction_count", 0)),
+                    "endpoint_junction_count": endpoint_junction_count,
+                    "non_dimension_crossing_source_count": (
+                        independent_source_count
+                    ),
+                    "candidate_only": True,
+                    "ownership_claimed": False,
+                }
+            )
+
+    return anchors

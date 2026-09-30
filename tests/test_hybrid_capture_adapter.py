@@ -3970,3 +3970,51 @@ def test_metric_profile_topology_hint_accepts_fragmented_outer_edge_when_span_to
     assert hints[0]["internal_v_ref"] == "V_INTERNAL"
     assert hints[0]["engineering_coordinate_inferred_from_pixels"] is False
     assert hints[0]["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_profile_vertices_map_to_distinct_profile_boundary_entities(monkeypatch):
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {
+            "endpoints": [
+                {
+                    "status": "unique_physical_candidate",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "V_LEFT",
+                        }
+                    ],
+                },
+                {
+                    "status": "unique_physical_candidate",
+                    "physical_candidates": [
+                        {
+                            "kind": "profile_vertex_candidate",
+                            "ref": "V_RIGHT",
+                        }
+                    ],
+                },
+            ]
+        },
+    )
+
+    endpoints, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        {},
+        entity_keys={"E_LEFT", "E_RIGHT"},
+        boundary_roles={},
+        profile_entity_by_ref={},
+        profile_vertex_entity_by_ref={
+            "V_LEFT": "E_LEFT",
+            "V_RIGHT": "E_RIGHT",
+        },
+        evidence=["test:profile-vertex"],
+    )
+
+    assert reason is None
+    assert [item.role for item in endpoints] == [
+        "profile_boundary",
+        "profile_boundary",
+    ]
+    assert [item.entity_key for item in endpoints] == ["E_LEFT", "E_RIGHT"]

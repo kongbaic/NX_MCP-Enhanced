@@ -5,6 +5,7 @@ from typing import Any
 
 _PHYSICAL_ANCHOR_KINDS = {
     "profile_edge_candidate",
+    "profile_vertex_candidate",
     "circle_center_axis",
     "hidden_projection_center_axis",
 }
@@ -200,6 +201,80 @@ def _profile_connects_to_witness_terminal(
     return False
 
 
+
+def _profile_vertex_connects_to_witness_terminal(
+    vertex: dict[str, Any],
+    *,
+    witness_lines: list[Any],
+    dimension_axis_px: float | None,
+) -> bool:
+    """Require a structural vertex to coincide with the extension-line terminal."""
+
+    if vertex.get("kind") != "profile_vertex_candidate":
+        return False
+
+    position = vertex.get("position_px")
+    transverse = vertex.get("vertex_transverse_px")
+    supporting_orientation = str(
+        vertex.get("supporting_profile_orientation") or ""
+    )
+    axis_tolerance = vertex.get("axis_tolerance_px")
+    junction_tolerance = vertex.get("junction_tolerance_px")
+    match_tolerance = vertex.get("vertex_match_tolerance_px")
+    if (
+        supporting_orientation not in {"horizontal", "vertical"}
+        or not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(transverse, (int, float))
+        or isinstance(transverse, bool)
+        or not isinstance(axis_tolerance, (int, float))
+        or isinstance(axis_tolerance, bool)
+        or not isinstance(junction_tolerance, (int, float))
+        or isinstance(junction_tolerance, bool)
+        or not isinstance(match_tolerance, (int, float))
+        or isinstance(match_tolerance, bool)
+        or not isinstance(dimension_axis_px, (int, float))
+        or isinstance(dimension_axis_px, bool)
+    ):
+        return False
+
+    witness_orientation = (
+        "vertical" if supporting_orientation == "horizontal" else "horizontal"
+    )
+    for source_line in witness_lines:
+        if not isinstance(source_line, dict):
+            continue
+        if source_line.get("crosses_dimension_axis") is not True:
+            continue
+        if str(source_line.get("orientation") or "") != witness_orientation:
+            continue
+
+        source_axis = source_line.get("axis_px")
+        source_span = source_line.get("span_px")
+        if (
+            not isinstance(source_axis, (int, float))
+            or isinstance(source_axis, bool)
+            or not isinstance(source_span, list)
+            or len(source_span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in source_span
+            )
+        ):
+            continue
+        if abs(float(source_axis) - float(position)) > float(match_tolerance):
+            continue
+
+        source_low, source_high = sorted(float(value) for value in source_span)
+        terminal = max(
+            (source_low, source_high),
+            key=lambda value: abs(value - float(dimension_axis_px)),
+        )
+        if abs(terminal - float(transverse)) <= float(junction_tolerance):
+            return True
+
+    return False
+
 def _witness_anchor_lookup(
     candidate: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
@@ -321,20 +396,32 @@ def derive_dimension_endpoint_candidates(
             witness_lines = []
         dimension_axis_px = candidate.get("axis_px")
         disconnected_profiles: list[dict[str, Any]] = []
+        disconnected_vertices: list[dict[str, Any]] = []
         connected_candidates: list[dict[str, Any]] = []
+        typed_dimension_axis_px = (
+            float(dimension_axis_px)
+            if isinstance(dimension_axis_px, (int, float))
+            and not isinstance(dimension_axis_px, bool)
+            else None
+        )
         for item in physical_candidates:
+            if item.get("kind") == "profile_vertex_candidate":
+                if not _profile_vertex_connects_to_witness_terminal(
+                    item,
+                    witness_lines=witness_lines,
+                    dimension_axis_px=typed_dimension_axis_px,
+                ):
+                    disconnected_vertices.append(item)
+                    continue
+                connected_candidates.append(item)
+                continue
             if item.get("kind") != "profile_edge_candidate":
                 connected_candidates.append(item)
                 continue
             connectivity = _profile_connects_to_witness_terminal(
                 item,
                 witness_lines=witness_lines,
-                dimension_axis_px=(
-                    float(dimension_axis_px)
-                    if isinstance(dimension_axis_px, (int, float))
-                    and not isinstance(dimension_axis_px, bool)
-                    else None
-                ),
+                dimension_axis_px=typed_dimension_axis_px,
             )
             if connectivity is False:
                 disconnected_profiles.append(item)
@@ -395,6 +482,15 @@ def derive_dimension_endpoint_candidates(
                             ),
                         }
                         for item in disconnected_profiles
+                    ],
+                    *[
+                        {
+                            **item,
+                            "ownership_rejection_reason": (
+                                "profile_vertex_not_connected_to_witness_terminal"
+                            ),
+                        }
+                        for item in disconnected_vertices
                     ],
                     *[
                         item

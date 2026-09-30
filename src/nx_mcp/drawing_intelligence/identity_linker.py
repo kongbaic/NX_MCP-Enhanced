@@ -934,8 +934,122 @@ def _projected_profile_dimension_bridge(
         dimension=dimension,
         entity_to_feature=entity_to_feature,
     )
-    if any(len(matches.get(index, [])) != 1 for index in unresolved_indices):
+    if any(len(matches.get(index, [])) > 1 for index in unresolved_indices):
         return None
+
+    unique_matches = {
+        index: matches[index][0]
+        for index in unresolved_indices
+        if len(matches.get(index, [])) == 1
+    }
+    if len(unique_matches) != len(unresolved_indices):
+        pair = symmetric_pairs.get(dimension.id)
+        if (
+            len(unresolved_indices) != 2
+            or len(unique_matches) != 1
+            or pair is None
+            or dimension.direction not in {-1, 1}
+        ):
+            return None
+
+        matched_index, match = next(iter(unique_matches.items()))
+        if match.get("role") != "profile":
+            return None
+        known_target = match.get("target")
+        if not isinstance(known_target, str) or not known_target:
+            return None
+
+        overall_value = float(pair["overall_value"])
+        distance = float(dimension.value)
+        offset = (overall_value - distance) / 2.0
+        if offset < 0:
+            return None
+
+        if dimension.direction == 1:
+            matched_side: Literal["min", "max"] = (
+                "min" if matched_index == 0 else "max"
+            )
+        else:
+            matched_side = "max" if matched_index == 0 else "min"
+
+        identity_payload = json.dumps(
+            {
+                "axis": dimension.axis,
+                "known_target": known_target,
+                "distance": distance,
+                "overall": overall_value,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
+        mirror_target = (
+            "constraints.symmetric_profile_levels."
+            f"C_{digest}.{dimension.axis.lower()}"
+        )
+
+        if matched_side == "min":
+            min_target, max_target = known_target, mirror_target
+        else:
+            min_target, max_target = mirror_target, known_target
+
+        source_ids = list(
+            dict.fromkeys(
+                [
+                    *dimension.source_ids,
+                    *[
+                        source_id
+                        for endpoint in dimension.endpoints
+                        for source_id in endpoint.source_ids
+                    ],
+                    *match["source_ids"],
+                    *pair["source_ids"],
+                ]
+            )
+        )
+        metadata = {
+            "basis": "overall_center_symmetric_projected_profile_level",
+            "matched_projected_profile_endpoint_index": matched_index,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+
+        return [
+            RelationEvidence(
+                id=f"R_PROJECTED_PROFILE_MIRROR_{digest}_MIN",
+                kind="edge_offset",
+                axis=dimension.axis,
+                value=offset,
+                from_side="min",
+                targets=[min_target],
+                source_ids=source_ids,
+                required_for_modeling=False,
+                metadata=metadata,
+            ),
+            RelationEvidence(
+                id=f"R_PROJECTED_PROFILE_MIRROR_{digest}_MAX",
+                kind="edge_offset",
+                axis=dimension.axis,
+                value=offset,
+                from_side="max",
+                targets=[max_target],
+                source_ids=source_ids,
+                required_for_modeling=False,
+                metadata=metadata,
+            ),
+            RelationEvidence(
+                id=dimension.id,
+                kind="coordinate_distance",
+                axis=dimension.axis,
+                value=distance,
+                direction=1,
+                targets=[min_target, max_target],
+                source_ids=source_ids,
+                required_for_modeling=dimension.required_for_modeling,
+                metadata=metadata,
+            ),
+        ]
 
     axis_leaf = dimension.axis.lower()
     specs: list[tuple[str, str | None]] = []

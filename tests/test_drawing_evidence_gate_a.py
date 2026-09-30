@@ -597,6 +597,64 @@ def test_center_distance_accepts_profile_span_constraint_center():
     assert R.check_drawing_json(draft) == []
 
 
+def test_symmetric_profile_level_constraint_round_trips_through_gate_a():
+    profile_boundary = "feature:F_PROFILE.boundary.x"
+    mirror_level = "constraints.symmetric_profile_levels.C_MIRROR.x"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=40,
+            height_z=20,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=40, height_z=20),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_PROFILE_LEFT",
+                kind="edge_offset",
+                axis="X",
+                value=20,
+                from_side="min",
+                targets=[profile_boundary],
+                source_ids=["PROFILE_LEVEL"],
+                required_for_modeling=False,
+            ),
+            RelationEvidence(
+                id="R_PROFILE_RIGHT",
+                kind="edge_offset",
+                axis="X",
+                value=20,
+                from_side="max",
+                targets=[mirror_level],
+                source_ids=["MIRROR_LEVEL"],
+                required_for_modeling=False,
+            ),
+            RelationEvidence(
+                id="R_PROFILE_DISTANCE",
+                kind="coordinate_distance",
+                axis="X",
+                value=60,
+                direction=1,
+                targets=[profile_boundary, mirror_level],
+                source_ids=["SYMMETRIC_PROFILE_DISTANCE"],
+                required_for_modeling=True,
+            ),
+        ],
+        required_targets=[profile_boundary, mirror_level],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.values[profile_boundary] == 20.0
+    assert result.values[mirror_level] == 80.0
+    assert draft["features"][0]["boundary"]["x"] == -30.0
+    assert draft["features"][0]["type"] == "reference_boundary"
+    assert draft["constraints"]["symmetric_profile_levels"]["C_MIRROR"]["x"] == 30.0
+    assert R.check_drawing_json(draft) == []
+
+
 def test_symmetric_center_constraint_round_trips_through_gate_a():
     span_center = "constraints.span_centers.C_LEFT.x"
     mirror_center = "constraints.symmetric_centers.C_RIGHT.x"

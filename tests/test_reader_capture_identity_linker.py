@@ -3652,6 +3652,7 @@ def test_centerline_alignment_propagates_transverse_coordinates_without_merging_
 def _projected_profile_bridge_capture(
     *,
     symmetric=False,
+    one_sided=False,
     ambiguous_profile_target=False,
     endpoint_kind="intermediate_surface",
 ) -> ReaderCapture:
@@ -3735,18 +3736,21 @@ def _projected_profile_bridge_capture(
                 "basis": "extension_line_projection_to_structural_profile_level",
                 "source_ids": ["SRC_LEFT_PROJECTED"],
             },
-            {
-                "dimension_id": "D_PROJECTED",
-                "candidate_id": "DG_PROJECTED",
-                "endpoint_index": 1,
-                "axis": "X",
-                "profile_refs": ["R1.RIGHT"],
-                "profile_entity_ids": ["E_RIGHT"],
-                "overall_role": None,
-                "basis": "extension_line_projection_to_structural_profile_level",
-                "source_ids": ["SRC_RIGHT_PROJECTED"],
-            },
         ]
+        if not one_sided:
+            projected_items.append(
+                {
+                    "dimension_id": "D_PROJECTED",
+                    "candidate_id": "DG_PROJECTED",
+                    "endpoint_index": 1,
+                    "axis": "X",
+                    "profile_refs": ["R1.RIGHT"],
+                    "profile_entity_ids": ["E_RIGHT"],
+                    "overall_role": None,
+                    "basis": "extension_line_projection_to_structural_profile_level",
+                    "source_ids": ["SRC_RIGHT_PROJECTED"],
+                }
+            )
     else:
         dimension = CaptureDimension(
             id="D_PROJECTED",
@@ -3916,6 +3920,71 @@ def test_projected_profile_bridge_resolves_symmetric_profile_pair():
     assert resolution.values[distance.targets[0]] == 20.0
     assert resolution.values[distance.targets[1]] == 80.0
     assert resolution.ok
+
+
+def test_projected_profile_bridge_mirrors_one_proven_profile_level_from_symmetry():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    distance = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.direction == 1
+    assert distance.value == 60
+    assert distance.targets[0].endswith(".boundary.x")
+    assert distance.targets[1].startswith(
+        "constraints.symmetric_profile_levels."
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_projected_profile_level"
+    )
+    assert distance.metadata["matched_projected_profile_endpoint_index"] == 0
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    draft = build_semantic_draft(compiled, resolution)
+    mirror_id = distance.targets[1].split(".")[2]
+    assert (
+        draft["constraints"]["symmetric_profile_levels"][mirror_id]["x"]
+        == 30.0
+    )
+    assert resolution.ok
+
+
+def test_projected_profile_bridge_keeps_one_sided_level_unresolved_without_symmetry():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+    capture.observations = [
+        observation
+        for observation in capture.observations
+        if observation.get("kind") != "hybrid_symmetric_dimension_pair_ledger"
+    ]
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        for item in linked.evidence.unresolved_evidence
+    )
 
 
 def test_projected_profile_bridge_rejects_multiple_physical_boundary_targets():

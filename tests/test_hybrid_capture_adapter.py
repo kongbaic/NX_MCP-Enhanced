@@ -4390,6 +4390,7 @@ def test_rotational_oblique_profile_candidate_records_only_topology_evidence():
                 "angle_deg": 45.0,
                 "length_px": 110.0,
                 "candidate_only": True,
+                "exterior_boundary_candidate": True,
             }
         ],
     }
@@ -4456,6 +4457,7 @@ def test_rotational_oblique_profile_candidate_fails_closed_on_ambiguous_contact(
                 "angle_deg": 45.0,
                 "length_px": 112.0,
                 "candidate_only": True,
+                "exterior_boundary_candidate": True,
             }
         ],
     }
@@ -4503,6 +4505,7 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
                 "length_px": 88.5,
                 "candidate_only": True,
                 "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
             }
         ],
     }
@@ -4566,6 +4569,7 @@ def test_rotational_oblique_profile_candidate_rejects_ambiguous_one_sided_contac
                 "length_px": 88.5,
                 "candidate_only": True,
                 "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
             }
         ],
     }
@@ -4581,6 +4585,51 @@ def test_rotational_oblique_profile_candidate_rejects_ambiguous_one_sided_contac
             )
         },
         context=_rotational_profile_context(),
+    )
+
+    assert hints == []
+
+
+def test_rotational_oblique_profile_rejects_non_exterior_candidate():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 40], [80, 120]],
+                "angle_deg": 64.6,
+                "length_px": 88.5,
+                "candidate_only": True,
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": False,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            "VERTICAL_A": "R1.PROFILE.VERTICAL_A",
+        },
     )
 
     assert hints == []

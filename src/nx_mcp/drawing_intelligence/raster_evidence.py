@@ -259,6 +259,33 @@ def _one_sided_boundary_evidence(
     }
 
 
+def _exterior_edge_mask(
+    edges: Any,
+    gray: Any,
+    cv2: Any,
+    np: Any,
+) -> Any:
+    """Keep only edge pixels immediately adjacent to exterior white background.
+
+    This stays raster/topology-only.  It is intentionally stricter than the
+    farther one-sided sampling check so nearby internal hatch lines cannot be
+    promoted merely because the true silhouette is a few pixels away.
+    """
+
+    image_height, image_width = gray.shape[:2]
+    radius = max(
+        2,
+        int(round(min(image_width, image_height) * 0.0025)),
+    )
+    background = np.where(gray >= 245, 255, 0).astype(np.uint8)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (radius * 2 + 1, radius * 2 + 1),
+    )
+    near_background = cv2.dilate(background, kernel)
+    return cv2.bitwise_and(edges, near_background)
+
+
 def _oblique_annotation_lines(
     edges: Any,
     image_width: int,
@@ -268,85 +295,103 @@ def _oblique_annotation_lines(
     *,
     gray: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Return geometry-only oblique line candidates for later annotation routing."""
+    """Return geometry-only oblique candidates with explicit exterior provenance."""
 
-    raw = cv2.HoughLinesP(
-        edges,
-        1,
-        np.pi / 180,
-        threshold=max(18, round(image_width * 0.014)),
-        minLineLength=max(14, round(image_width * 0.009)),
-        maxLineGap=max(3, round(image_width * 0.0035)),
-    )
-    if raw is None:
-        return []
+    hough_sources: list[tuple[Any, bool]] = [(edges, False)]
+    if gray is not None:
+        hough_sources.append(
+            (
+                _exterior_edge_mask(
+                    edges,
+                    gray,
+                    cv2,
+                    np,
+                ),
+                True,
+            )
+        )
 
     minimum_length = max(14.0, image_width * 0.009)
     maximum_length = math.hypot(image_width, image_height) * 0.45
     candidates: list[dict[str, Any]] = []
 
-    for x1, y1, x2, y2 in raw[:, 0]:
-        dx = float(x2 - x1)
-        dy = float(y2 - y1)
-        length = math.hypot(dx, dy)
-        if length < minimum_length or length > maximum_length:
+    for source_edges, exterior_boundary_candidate in hough_sources:
+        raw = cv2.HoughLinesP(
+            source_edges,
+            1,
+            np.pi / 180,
+            threshold=max(18, round(image_width * 0.014)),
+            minLineLength=max(14, round(image_width * 0.009)),
+            maxLineGap=max(3, round(image_width * 0.0035)),
+        )
+        if raw is None:
             continue
 
-        angle = math.degrees(math.atan2(dy, dx))
-        normalized = abs(angle) % 180.0
-        if normalized > 90.0:
-            normalized = 180.0 - normalized
-        if normalized <= 3.0 or abs(normalized - 90.0) <= 3.0:
-            continue
+        for x1, y1, x2, y2 in raw[:, 0]:
+            dx = float(x2 - x1)
+            dy = float(y2 - y1)
+            length = math.hypot(dx, dy)
+            if length < minimum_length or length > maximum_length:
+                continue
 
-        first = (int(x1), int(y1))
-        second = (int(x2), int(y2))
-        if second < first:
-            first, second = second, first
+            angle = math.degrees(math.atan2(dy, dx))
+            normalized = abs(angle) % 180.0
+            if normalized > 90.0:
+                normalized = 180.0 - normalized
+            if normalized <= 3.0 or abs(normalized - 90.0) <= 3.0:
+                continue
 
-        candidate = {
-            "kind": "oblique_line_candidate",
-            "endpoints_px": [
-                [first[0], first[1]],
-                [second[0], second[1]],
-            ],
-            "angle_deg": round(float(normalized), 3),
-            "length_px": round(float(length), 2),
-            "candidate_only": True,
-        }
-        if gray is not None:
-            boundary_evidence = _one_sided_boundary_evidence(
-                gray,
-                first,
-                second,
-            )
-            candidate["boundary_evidence"] = boundary_evidence
-            candidate["one_sided_boundary_candidate"] = bool(
-                boundary_evidence["one_sided_boundary_candidate"]
-            )
+            first = (int(x1), int(y1))
+            second = (int(x2), int(y2))
+            if second < first:
+                first, second = second, first
 
-        duplicate = False
-        for previous in candidates:
-            p0, p1 = previous["endpoints_px"]
-            if (
-                math.hypot(first[0] - p0[0], first[1] - p0[1]) <= 4.0
-                and math.hypot(second[0] - p1[0], second[1] - p1[1]) <= 4.0
-                and abs(float(previous["angle_deg"]) - normalized) <= 3.0
-            ):
-                duplicate = True
-                break
-        if not duplicate:
-            candidates.append(candidate)
+            candidate = {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [
+                    [first[0], first[1]],
+                    [second[0], second[1]],
+                ],
+                "angle_deg": round(float(normalized), 3),
+                "length_px": round(float(length), 2),
+                "candidate_only": True,
+                "exterior_boundary_candidate": exterior_boundary_candidate,
+            }
+            if gray is not None:
+                boundary_evidence = _one_sided_boundary_evidence(
+                    gray,
+                    first,
+                    second,
+                )
+                candidate["boundary_evidence"] = boundary_evidence
+                candidate["one_sided_boundary_candidate"] = bool(
+                    boundary_evidence["one_sided_boundary_candidate"]
+                )
+
+            duplicate = False
+            for previous in candidates:
+                p0, p1 = previous["endpoints_px"]
+                if (
+                    math.hypot(first[0] - p0[0], first[1] - p0[1]) <= 4.0
+                    and math.hypot(second[0] - p1[0], second[1] - p1[1]) <= 4.0
+                    and abs(float(previous["angle_deg"]) - normalized) <= 3.0
+                ):
+                    if exterior_boundary_candidate:
+                        previous["exterior_boundary_candidate"] = True
+                    duplicate = True
+                    break
+            if not duplicate:
+                candidates.append(candidate)
 
     candidates.sort(
         key=lambda item: (
+            item.get("exterior_boundary_candidate") is not True,
             -float(item["length_px"]),
             item["endpoints_px"][0],
             item["endpoints_px"][1],
         )
     )
     return candidates[:128]
-
 
 def _view_regions(
     shape: tuple[int, int],

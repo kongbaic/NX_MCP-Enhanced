@@ -1055,6 +1055,8 @@ def _rotational_oblique_profile_hints(
             angle_value = float(angle)
             if not 10.0 <= angle_value <= 80.0:
                 continue
+            if candidate.get("exterior_boundary_candidate") is not True:
+                continue
 
             first = (float(endpoints[0][0]), float(endpoints[0][1]))
             second = (float(endpoints[1][0]), float(endpoints[1][1]))
@@ -1223,6 +1225,7 @@ def _rotational_oblique_profile_hints(
                     "one_sided_boundary_candidate": (
                         candidate.get("one_sided_boundary_candidate") is True
                     ),
+                    "exterior_boundary_candidate": True,
                     "basis": basis,
                     "engineering_coordinate_inferred_from_pixels": False,
                     "pixel_geometry_used_for_topology_only": True,

@@ -316,6 +316,52 @@ def test_one_sided_boundary_evidence_rejects_nearby_interior_line():
     assert interior_near_boundary["one_sided_boundary_candidate"] is False
 
 
+def test_oblique_exterior_mask_separates_silhouette_from_nearby_internal_hatch():
+    import cv2
+    import numpy as np
+
+    image = np.full((260, 320), 255, np.uint8)
+    polygon = np.array(
+        [[40, 220], [40, 50], [170, 50], [250, 220]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(image, [polygon], 150)
+    cv2.polylines(image, [polygon], True, 0, 5)
+
+    # A nearby internal line intentionally parallels the real exterior slope.
+    cv2.line(image, (172, 72), (231, 198), 70, 3)
+
+    edges = cv2.Canny(image, 50, 150, apertureSize=3)
+    candidates = _oblique_annotation_lines(
+        edges,
+        image_width=image.shape[1],
+        image_height=image.shape[0],
+        cv2=cv2,
+        np=np,
+        gray=image,
+    )
+
+    exterior = [
+        item
+        for item in candidates
+        if item.get("exterior_boundary_candidate") is True
+        and 55.0 <= float(item["angle_deg"]) <= 75.0
+    ]
+    assert exterior
+    assert any(
+        item.get("one_sided_boundary_candidate") is True
+        for item in exterior
+    )
+
+    internal = [
+        item
+        for item in candidates
+        if item.get("exterior_boundary_candidate") is not True
+        and 55.0 <= float(item["angle_deg"]) <= 75.0
+    ]
+    assert internal
+
+
 def test_compact_fragments_does_not_silently_drop_ninth_valid_pattern():
     groups = [
         {

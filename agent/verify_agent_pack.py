@@ -280,6 +280,9 @@ def main() -> None:
         "禁止改写 OCR 给出的 value",
         "pending_labeled_dimension_relation_read",
         "between_profile_boundaries",
+        "deterministic_visual_direction",
+        "尺寸箭头从一端到另一端的方向",
+        "整件 overall 外包边界",
     ):
         if token not in top:
             fail(f"bounded labeled-dimension structural contract missing: {token}")

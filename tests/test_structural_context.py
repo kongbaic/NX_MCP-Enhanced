@@ -1145,3 +1145,107 @@ def test_labeled_dimension_ambiguous_candidate_region_still_fails_closed():
         not query.labeled_dimension_targets
         for query in plan.queries
     )
+
+
+def _write_short_dimension_direction_fixture(
+    tmp_path: Path,
+    *,
+    witness_orientation: str,
+) -> tuple[str, list[list[float]]]:
+    import cv2
+    import numpy as np
+
+    image = np.full((300, 420), 255, np.uint8)
+    bbox = [
+        [120.0, 120.0],
+        [220.0, 120.0],
+        [220.0, 150.0],
+        [120.0, 150.0],
+    ]
+    if witness_orientation == "vertical":
+        cv2.line(image, (185, 155), (185, 235), 0, 2)
+        cv2.line(image, (210, 155), (210, 235), 0, 2)
+    elif witness_orientation == "horizontal":
+        cv2.line(image, (225, 125), (310, 125), 0, 2)
+        cv2.line(image, (225, 165), (310, 165), 0, 2)
+    else:
+        raise AssertionError(witness_orientation)
+
+    path = tmp_path / f"short-{witness_orientation}.png"
+    assert cv2.imwrite(str(path), image)
+    return str(path), bbox
+
+
+@pytest.mark.parametrize(
+    ("witness_orientation", "expected_direction"),
+    [
+        ("vertical", "horizontal"),
+        ("horizontal", "vertical"),
+    ],
+)
+def test_structural_labeled_dimension_uses_deterministic_short_direction(
+    tmp_path: Path,
+    witness_orientation: str,
+    expected_direction: str,
+):
+    source_raster, bbox = _write_short_dimension_direction_fixture(
+        tmp_path,
+        witness_orientation=witness_orientation,
+    )
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = source_raster
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    target = next(
+        target
+        for query in plan.queries
+        for target in query.labeled_dimension_targets
+        if target.target_id == "LD_0017"
+    )
+    assert target.deterministic_visual_direction == expected_direction
+    assert plan.rules["labeled_dimension_direction_from_topology_only"] is True
+    assert plan.rules["labeled_dimension_direction_hint_must_be_preserved"] is True
+
+
+def test_structural_context_rejects_visual_direction_against_deterministic_hint(
+    tmp_path: Path,
+):
+    source_raster, bbox = _write_short_dimension_direction_fixture(
+        tmp_path,
+        witness_orientation="horizontal",
+    )
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = source_raster
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "resolved",
+            "visual_direction": "horizontal",
+            "relation": "between_profile_boundaries",
+            "profile_transition_geometry": "orthogonal",
+            "symmetry_scope": "bilateral",
+            "evidence": ["structural:R1:crop"],
+            "reason": None,
+        }
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(
+        StructuralContextError,
+        match="visual direction conflicts with deterministic short-dimension topology",
+    ):
+        assemble_structural_context(plan, answers)

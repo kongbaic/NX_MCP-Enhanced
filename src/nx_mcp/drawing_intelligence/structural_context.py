@@ -16,6 +16,7 @@ from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialRotationalSymmetryFact,
 )
+from .short_dimension_orientation import infer_short_dimension_visual_direction
 
 
 class StructuralContextError(ValueError):
@@ -45,6 +46,7 @@ class StructuralLabeledDimensionTarget(_StrictStructuralModel):
     source_item_index: int = Field(ge=0)
     source_text: str = Field(min_length=1)
     value: float = Field(gt=0)
+    deterministic_visual_direction: Literal["horizontal", "vertical"] | None = None
 
 
 _LABELED_MM_DIMENSION_RE = re.compile(
@@ -195,6 +197,13 @@ def _labeled_dimension_targets_by_region(
                 continue
             candidate_region_by_id[candidate_id] = candidate_region_id
 
+    source_raster = hybrid_report.get("source_raster")
+    source_raster_path = (
+        source_raster
+        if isinstance(source_raster, str) and source_raster
+        else None
+    )
+
     output: dict[str, list[StructuralLabeledDimensionTarget]] = {}
     seen_sources: set[int] = set()
     for item in raw_items:
@@ -261,12 +270,21 @@ def _labeled_dimension_targets_by_region(
                 ):
                     continue
 
+        deterministic_visual_direction = (
+            infer_short_dimension_visual_direction(
+                source_raster_path,
+                item.get("bbox"),
+            )
+            if source_raster_path is not None
+            else None
+        )
         output.setdefault(region_id, []).append(
             StructuralLabeledDimensionTarget(
                 target_id=f"LD_{source_index:04d}",
                 source_item_index=source_index,
                 source_text=text.strip(),
                 value=token_value,
+                deterministic_visual_direction=deterministic_visual_direction,
             )
         )
         seen_sources.add(source_index)
@@ -623,6 +641,9 @@ def build_structural_context_queries(
             "local_feature_values": False,
             "labeled_dimension_value_from_hybrid_ocr_only": True,
             "labeled_dimension_relation_only": True,
+            "labeled_dimension_direction_from_topology_only": True,
+            "labeled_dimension_direction_hint_must_be_preserved": True,
+            "labeled_dimension_overall_relation_requires_actual_overall_boundary": True,
             "pixel_measurement": False,
         },
         view_axis_map={
@@ -760,6 +781,18 @@ def assemble_structural_context(
                 )
             assert decision.visual_direction is not None
             assert decision.relation is not None
+            if (
+                target.deterministic_visual_direction is not None
+                and decision.visual_direction != target.deterministic_visual_direction
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} labeled dimension "
+                    f"{target_id!r} visual direction conflicts with "
+                    "deterministic short-dimension topology"
+                )
+            visual_direction = (
+                target.deterministic_visual_direction or decision.visual_direction
+            )
             labeled_dimension_facts.append(
                 HybridLabeledDimensionFact(
                     target_id=target.target_id,
@@ -767,7 +800,7 @@ def assemble_structural_context(
                     source_text=target.source_text,
                     region_id=query.region_id,
                     value=target.value,
-                    axis=getattr(view_axes, decision.visual_direction),
+                    axis=getattr(view_axes, visual_direction),
                     relation=decision.relation,
                     profile_transition_geometry=decision.profile_transition_geometry,
                     symmetry_scope=decision.symmetry_scope,

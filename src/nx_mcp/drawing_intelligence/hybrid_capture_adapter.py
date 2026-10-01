@@ -945,6 +945,10 @@ def _reconcile_labeled_dimension_relations(
             "overall_max": "overall_max_to_profile_transition",
         }[overall_role]
 
+        contact_marker = (
+            "hybrid:labeled-overall-boundary-contact:"
+            f"{fact.region_id}:{fact.axis}:{overall_role}"
+        )
         if fact.relation == "between_profile_boundaries":
             copied = copied.model_copy(
                 update={
@@ -953,26 +957,32 @@ def _reconcile_labeled_dimension_relations(
                         dict.fromkeys(
                             [
                                 *fact.evidence,
-                                (
-                                    "hybrid:labeled-overall-boundary-contact:"
-                                    f"{fact.region_id}:{fact.axis}:{overall_role}"
-                                ),
+                                contact_marker,
                             ]
                         )
                     ),
                 }
             )
-        elif (
-            fact.relation
-            in {
-                "overall_min_to_profile_transition",
-                "overall_max_to_profile_transition",
-            }
-            and fact.relation != reconciled_relation
-        ):
-            raise HybridCaptureAdapterError(
-                "labeled dimension overall-boundary relation conflicts with "
-                "deterministic short-dimension topology"
+        elif fact.relation in {
+            "overall_min_to_profile_transition",
+            "overall_max_to_profile_transition",
+        }:
+            if fact.relation != reconciled_relation:
+                raise HybridCaptureAdapterError(
+                    "labeled dimension overall-boundary relation conflicts with "
+                    "deterministic short-dimension topology"
+                )
+            copied = copied.model_copy(
+                update={
+                    "evidence": list(
+                        dict.fromkeys(
+                            [
+                                *fact.evidence,
+                                contact_marker,
+                            ]
+                        )
+                    )
+                }
             )
 
         output.append(copied)

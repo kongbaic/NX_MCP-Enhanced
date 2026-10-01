@@ -3287,6 +3287,13 @@ def test_centered_symmetric_pair_rejects_mixed_local_overall_endpoint_role():
             "ref": "R2.profile.right",
         },
     )
+    candidate["accepted_token"] = "40"
+    candidate["global_assignments"] = [
+        {
+            "token": "40",
+            "bbox": [[140, 90], [160, 90], [160, 110], [140, 110]],
+        }
+    ]
     entity_keys = {
         "R2.PROFILE_BOUNDARY.LEFT",
         "R2.PROFILE_BOUNDARY.RIGHT",
@@ -3353,6 +3360,13 @@ def test_non_symmetric_dimension_keeps_valid_profile_to_overall_offset():
             "ref": "R2.profile.right",
         },
     )
+    candidate["accepted_token"] = "40"
+    candidate["global_assignments"] = [
+        {
+            "token": "40",
+            "bbox": [[140, 90], [160, 90], [160, 110], [140, 110]],
+        }
+    ]
     entity_keys = {
         "R2.PROFILE_BOUNDARY.LEFT",
         "R2.PROFILE_BOUNDARY.RIGHT",

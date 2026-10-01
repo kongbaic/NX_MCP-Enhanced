@@ -980,6 +980,280 @@ def _reconcile_labeled_dimension_relations(
     return output
 
 
+def _recover_labeled_profile_span_dimensions(
+    *,
+    report: dict[str, Any],
+    facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
+    """Bind labeled profile-to-profile dimensions only from unique raster identity.
+
+    OCR supplies the engineering value. Short-dimension witness topology and
+    structural profile lines are used only to identify the two physical profile
+    boundaries. Pixel distances never become engineering values or coordinates.
+    """
+
+    source_raster = report.get("source_raster")
+    if not isinstance(source_raster, str) or not source_raster:
+        return [], []
+
+    region_boxes: dict[str, tuple[float, float, float, float]] = {}
+    for region in report.get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        bbox = region.get("bbox_px")
+        if (
+            not region_id
+            or not isinstance(bbox, list)
+            or len(bbox) != 4
+            or any(
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                for value in bbox
+            )
+        ):
+            continue
+        x, y, width, height = (float(value) for value in bbox)
+        if width > 0 and height > 0:
+            region_boxes[region_id] = (x, y, width, height)
+
+    dimensions: list[ObservationDimension] = []
+    ledger: list[dict[str, Any]] = []
+
+    for fact in facts:
+        if fact.relation != "between_profile_boundaries":
+            continue
+
+        region_view = view_lookup.get(fact.region_id)
+        expected_direction = (
+            _visual_direction_for_axis(region_view.view_kind, fact.axis)
+            if region_view is not None
+            else None
+        )
+        raw_bbox = _coverage_bbox_for_source_index(
+            report,
+            fact.source_item_index,
+        )
+        bounds = _bbox_bounds(raw_bbox)
+        if (
+            region_view is None
+            or expected_direction is None
+            or bounds is None
+        ):
+            continue
+
+        topology = infer_short_dimension_visual_topology(
+            source_raster,
+            raw_bbox,
+        )
+        if topology is None or topology[0] != expected_direction:
+            continue
+
+        expected_profile_orientation = (
+            "vertical"
+            if expected_direction == "horizontal"
+            else "horizontal"
+        )
+        left, top, right, bottom = bounds
+        center_x = (left + right) / 2.0
+        center_y = (top + bottom) / 2.0
+
+        eligible_regions: list[str] = []
+        for region_id, (rx, ry, rw, rh) in region_boxes.items():
+            candidate_view = view_lookup.get(region_id)
+            if (
+                candidate_view is None
+                or candidate_view.view_kind != region_view.view_kind
+                or not (
+                    rx <= center_x <= rx + rw
+                    and ry <= center_y <= ry + rh
+                )
+            ):
+                continue
+            eligible_regions.append(region_id)
+
+        if not eligible_regions:
+            continue
+
+        candidate_records: list[dict[str, Any]] = []
+        base_tolerance = _region_profile_match_tolerance(
+            report,
+            fact.region_id,
+        )
+        for first_position, second_position in topology[1]:
+            for candidate_region in sorted(eligible_regions):
+                region_edges = [
+                    item
+                    for item in profile_inventory
+                    if (
+                        isinstance(item, dict)
+                        and item.get("kind") == "profile_edge_candidate"
+                        and str(item.get("region_id") or "") == candidate_region
+                        and str(item.get("source_orientation") or "")
+                        == expected_profile_orientation
+                        and str(item.get("ref") or "") in profile_entity_by_ref
+                        and isinstance(item.get("position_px"), (int, float))
+                        and not isinstance(item.get("position_px"), bool)
+                    )
+                ]
+
+                endpoint_matches: list[list[dict[str, Any]]] = []
+                for witness_position in (first_position, second_position):
+                    matches: list[dict[str, Any]] = []
+                    for edge in region_edges:
+                        edge_position = float(edge["position_px"])
+                        edge_tolerance = edge.get("axis_tolerance_px")
+                        tolerance = max(
+                            base_tolerance,
+                            float(edge_tolerance)
+                            if (
+                                isinstance(edge_tolerance, (int, float))
+                                and not isinstance(edge_tolerance, bool)
+                            )
+                            else 0.0,
+                        )
+                        if abs(edge_position - float(witness_position)) > tolerance:
+                            continue
+
+                        span = edge.get("span_px")
+                        if not (
+                            isinstance(span, list)
+                            and len(span) == 2
+                            and all(
+                                isinstance(value, (int, float))
+                                and not isinstance(value, bool)
+                                for value in span
+                            )
+                        ):
+                            continue
+                        span_low, span_high = sorted(
+                            float(value) for value in span
+                        )
+                        if expected_profile_orientation == "vertical":
+                            if min(span_high, bottom) < max(span_low, top):
+                                continue
+                        else:
+                            if min(span_high, right) < max(span_low, left):
+                                continue
+                        matches.append(edge)
+
+                    endpoint_matches.append(matches)
+
+                if (
+                    len(endpoint_matches) != 2
+                    or len(endpoint_matches[0]) != 1
+                    or len(endpoint_matches[1]) != 1
+                ):
+                    continue
+                first_edge = endpoint_matches[0][0]
+                second_edge = endpoint_matches[1][0]
+                first_ref = str(first_edge.get("ref") or "")
+                second_ref = str(second_edge.get("ref") or "")
+                if not first_ref or not second_ref or first_ref == second_ref:
+                    continue
+
+                candidate_records.append(
+                    {
+                        "selected_region_id": candidate_region,
+                        "profile_refs": [first_ref, second_ref],
+                        "profile_entity_keys": [
+                            profile_entity_by_ref[first_ref],
+                            profile_entity_by_ref[second_ref],
+                        ],
+                        "selected_witness_positions_px": [
+                            float(first_position),
+                            float(second_position),
+                        ],
+                    }
+                )
+
+        unique: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for record in candidate_records:
+            key = (
+                str(record["selected_region_id"]),
+                str(record["profile_refs"][0]),
+                str(record["profile_refs"][1]),
+            )
+            unique.setdefault(key, record)
+        if len(unique) != 1:
+            continue
+
+        selected = next(iter(unique.values()))
+        evidence = list(
+            dict.fromkeys(
+                [
+                    *fact.evidence,
+                    f"hybrid:labeled-profile-span:{fact.target_id}",
+                    *[
+                        f"hybrid:profile-edge:{ref}"
+                        for ref in selected["profile_refs"]
+                    ],
+                ]
+            )
+        )
+        dimension_key = (
+            f"{fact.region_id}.LABELED_PROFILE_SPAN_{fact.target_id}"
+        )
+        endpoint_entities = [
+            str(value)
+            for value in selected["profile_entity_keys"]
+        ]
+        dimensions.append(
+            ObservationDimension(
+                key=dimension_key,
+                value=fact.value,
+                axis=fact.axis,
+                endpoints=[
+                    ObservationDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_key=endpoint_entities[0],
+                        basis="profile_edge",
+                        evidence=evidence,
+                    ),
+                    ObservationDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_key=endpoint_entities[1],
+                        basis="profile_edge",
+                        evidence=evidence,
+                    ),
+                ],
+                direction=_dimension_direction_from_image_order(
+                    region_view.view_kind,
+                    expected_direction,
+                ),
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        ledger.append(
+            {
+                "dimension_key": dimension_key,
+                "target_id": fact.target_id,
+                "source_item_index": fact.source_item_index,
+                "source_text": fact.source_text,
+                "region_id": fact.region_id,
+                "selected_region_id": selected["selected_region_id"],
+                "axis": fact.axis,
+                "value": fact.value,
+                "profile_refs": list(selected["profile_refs"]),
+                "profile_entity_keys": endpoint_entities,
+                "selected_witness_positions_px": list(
+                    selected["selected_witness_positions_px"]
+                ),
+                "basis": (
+                    "unique_short_dimension_witness_pair_to_two_"
+                    "structural_profile_boundaries"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return dimensions, ledger
+
+
 def _enrich_candidate_from_profile_inventory(
     candidate: dict[str, Any],
     *,
@@ -6794,6 +7068,18 @@ def adapt_hybrid_ocr_report(
     )
     dimensions.extend(recovered_profile_dimensions)
 
+    (
+        labeled_profile_dimensions,
+        labeled_profile_span_ledger,
+    ) = _recover_labeled_profile_span_dimensions(
+        report=report,
+        facts=labeled_dimension_facts,
+        view_lookup=view_lookup,
+        profile_inventory=profile_inventory,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+    dimensions.extend(labeled_profile_dimensions)
+
     unresolved.extend(
         _coverage_unresolved(
             report,
@@ -6965,6 +7251,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_profile_offset_recovery_ledger",
             "schema": "1.0",
             "items": profile_offset_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_labeled_profile_span_identity_ledger",
+            "schema": "1.0",
+            "items": labeled_profile_span_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

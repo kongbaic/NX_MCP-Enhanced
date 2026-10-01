@@ -876,7 +876,14 @@ def _linked_rotational_profile_topology_observations(
     unmaterialized and is handled fail-closed downstream.
     """
 
-    observations = copy.deepcopy(capture.observations)
+    observations = [
+        copy.deepcopy(observation)
+        for observation in capture.observations
+        if not (
+            isinstance(observation, dict)
+            and observation.get("kind") == _LABELED_DIMENSION_RELATION_KIND
+        )
+    ]
     for observation in observations:
         if (
             not isinstance(observation, dict)

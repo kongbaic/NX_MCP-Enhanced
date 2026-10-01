@@ -323,6 +323,31 @@ def _compile_labeled_profile_transitions(
                 )
                 continue
 
+            region_id = str(item.get("region_id") or "")
+            expected_overall_role = (
+                "overall_min"
+                if relation == "overall_min_to_profile_transition"
+                else "overall_max"
+            )
+            expected_contact_marker = (
+                "hybrid:labeled-overall-boundary-contact:"
+                f"{region_id}:{axis}:{expected_overall_role}"
+            )
+            if not region_id or expected_contact_marker not in source_ids:
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_PROFILE_TRANSITION_CONTACT_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "labeled overall-to-profile relation lacks deterministic "
+                        "overall-boundary contact evidence"
+                    ),
+                    evidence=source_ids,
+                )
+                continue
+
             axis_typed = cast(Axis, axis)
             side: Literal["min", "max"] = (
                 "min"

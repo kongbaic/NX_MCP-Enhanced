@@ -738,6 +738,7 @@ def test_labeled_profile_span_recovers_unique_two_boundary_identity(
             "selected_region_id": "R2",
             "axis": "X",
             "value": 4.5,
+            "source_relation": "between_profile_boundaries",
             "profile_refs": ["R2.LEFT", "R2.RIGHT"],
             "profile_entity_keys": [
                 "R2.PROFILE.LEFT",
@@ -752,6 +753,76 @@ def test_labeled_profile_span_recovers_unique_two_boundary_identity(
             "pixel_geometry_used_for_identity_only": True,
         }
     ]
+
+
+def test_unique_profile_span_identity_overrides_unverified_overall_relation():
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_0004",
+        source_item_index=4,
+        source_text="S - 4.5 mm",
+        region_id="R3",
+        value=4.5,
+        axis="X",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:4", "structural:R3:context"],
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_profile_span_relations(
+        facts=[fact],
+        identity_ledger=[
+            {
+                "target_id": "LD_0004",
+                "basis": (
+                    "unique_short_dimension_witness_pair_to_two_"
+                    "structural_profile_boundaries"
+                ),
+            }
+        ],
+    )
+
+    assert reconciled[0].relation == "between_profile_boundaries"
+    assert (
+        "hybrid:labeled-profile-span-relation:LD_0004"
+        in reconciled[0].evidence
+    )
+    assert reconciled[0].engineering_coordinate_inferred_from_pixels is False
+    assert reconciled[0].pixel_geometry_used_for_topology_only is True
+
+
+def test_verified_overall_relation_is_not_overridden_by_profile_span_identity():
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_0005",
+        source_item_index=5,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="overall_max_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="bilateral",
+        evidence=[
+            "hybrid:whole:5",
+            "structural:R1:context",
+            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max",
+        ],
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_profile_span_relations(
+        facts=[fact],
+        identity_ledger=[
+            {
+                "target_id": "LD_0005",
+                "basis": (
+                    "unique_short_dimension_witness_pair_to_two_"
+                    "structural_profile_boundaries"
+                ),
+            }
+        ],
+    )
+
+    assert reconciled == [fact]
 
 
 def test_labeled_profile_span_fails_closed_when_two_regions_supply_full_pairs(

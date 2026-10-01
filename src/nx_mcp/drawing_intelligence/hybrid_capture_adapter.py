@@ -1023,7 +1023,20 @@ def _recover_labeled_profile_span_dimensions(
     ledger: list[dict[str, Any]] = []
 
     for fact in facts:
-        if fact.relation != "between_profile_boundaries":
+        verified_overall_contact = any(
+            source.startswith("hybrid:labeled-overall-boundary-contact:")
+            for source in fact.evidence
+        )
+        if (
+            fact.relation == "overall_extent"
+            or verified_overall_contact
+            or fact.relation
+            not in {
+                "between_profile_boundaries",
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+            }
+        ):
             continue
 
         region_view = view_lookup.get(fact.region_id)
@@ -1237,6 +1250,7 @@ def _recover_labeled_profile_span_dimensions(
                 "selected_region_id": selected["selected_region_id"],
                 "axis": fact.axis,
                 "value": fact.value,
+                "source_relation": fact.relation,
                 "profile_refs": list(selected["profile_refs"]),
                 "profile_entity_keys": endpoint_entities,
                 "selected_witness_positions_px": list(
@@ -1252,6 +1266,58 @@ def _recover_labeled_profile_span_dimensions(
         )
 
     return dimensions, ledger
+
+
+def _reconcile_labeled_profile_span_relations(
+    *,
+    facts: list[HybridLabeledDimensionFact],
+    identity_ledger: list[dict[str, Any]],
+) -> list[HybridLabeledDimensionFact]:
+    """Prefer deterministic two-profile identity over an unverified overall claim."""
+
+    recovered = {
+        str(item.get("target_id") or "")
+        for item in identity_ledger
+        if isinstance(item, dict)
+        and item.get("basis")
+        == "unique_short_dimension_witness_pair_to_two_structural_profile_boundaries"
+    }
+
+    output: list[HybridLabeledDimensionFact] = []
+    for fact in facts:
+        if (
+            fact.target_id in recovered
+            and fact.relation
+            in {
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+            }
+            and not any(
+                source.startswith("hybrid:labeled-overall-boundary-contact:")
+                for source in fact.evidence
+            )
+        ):
+            output.append(
+                fact.model_copy(
+                    update={
+                        "relation": "between_profile_boundaries",
+                        "evidence": list(
+                            dict.fromkeys(
+                                [
+                                    *fact.evidence,
+                                    (
+                                        "hybrid:labeled-profile-span-relation:"
+                                        f"{fact.target_id}"
+                                    ),
+                                ]
+                            )
+                        ),
+                    }
+                )
+            )
+            continue
+        output.append(fact.model_copy(deep=True))
+    return output
 
 
 def _enrich_candidate_from_profile_inventory(
@@ -7079,6 +7145,10 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
     dimensions.extend(labeled_profile_dimensions)
+    labeled_dimension_facts = _reconcile_labeled_profile_span_relations(
+        facts=labeled_dimension_facts,
+        identity_ledger=labeled_profile_span_ledger,
+    )
 
     unresolved.extend(
         _coverage_unresolved(

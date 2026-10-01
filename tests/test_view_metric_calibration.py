@@ -512,6 +512,39 @@ def test_profile_extreme_fallback_rejects_conflicting_overall_witness_pair():
     assert items == []
 
 
+def test_profile_extreme_fallback_rejects_zero_independent_profile_support():
+    profile_inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.LOCAL_LEFT",
+            "position_px": 100.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "min",
+            "non_dimension_crossing_source_count": 0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "ref": "R1.RIGHT",
+            "position_px": 300.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "max",
+            "non_dimension_crossing_source_count": 4,
+        },
+    ]
+
+    items = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R1": "front"},
+        overall_dimensions={"length_x": 40.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R1", "X")},
+    )
+
+    assert items == []
+
+
 def test_profile_extreme_fallback_requires_same_region_overall_fact_scope():
     profile_inventory = [
         {

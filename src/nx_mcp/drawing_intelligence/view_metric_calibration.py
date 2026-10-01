@@ -532,6 +532,27 @@ def derive_view_axis_boundaries(
                 if str(min_edge.get("ref") or "") == str(max_edge.get("ref") or ""):
                     continue
 
+                # A fallback overall boundary must be backed by independently
+                # observed structural profile support when that support metric
+                # is available.  A zero count means the extreme exists only
+                # through dimension-crossing evidence and must not be promoted
+                # to a physical overall boundary.  Historical fixtures that
+                # predate this metric remain compatible when the field is absent.
+                unsupported_extreme = False
+                for edge in (min_edge, max_edge):
+                    support = edge.get("non_dimension_crossing_source_count")
+                    if support is None:
+                        continue
+                    if (
+                        not isinstance(support, int)
+                        or isinstance(support, bool)
+                        or support <= 0
+                    ):
+                        unsupported_extreme = True
+                        break
+                if unsupported_extreme:
+                    continue
+
                 overall_witness_pairs = _accepted_overall_witness_pairs(
                     candidates=candidates,
                     region_id=region_id,

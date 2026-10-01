@@ -3276,6 +3276,84 @@ def test_symmetric_center_distance_bridge_anchors_span_center_and_mirror():
     assert resolution.ok
 
 
+def test_symmetric_intermediate_surface_bridge_preserves_virtual_span():
+    capture = _symmetric_center_distance_bridge_capture()
+    capture.observations = [
+        observation
+        for observation in capture.observations
+        if observation.get("kind")
+        not in {
+            "hybrid_profile_span_center_ledger",
+            "hybrid_dimension_span_center_identity_ledger",
+            "hybrid_projected_profile_level_ledger",
+        }
+    ]
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.value == 60
+    assert distance.direction == 1
+    assert all(
+        target.startswith("constraints.symmetric_profile_levels.C_")
+        for target in distance.targets
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_intermediate_surface_span"
+    )
+    assert distance.metadata["physical_endpoint_ownership_unresolved"] is True
+    assert distance.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert distance.metadata["pixel_geometry_used_for_identity_only"] is True
+
+    anchors = [
+        item
+        for item in linked.evidence.relations
+        if item.id.startswith("R_SYMMETRIC_INTERMEDIATE_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert resolution.ok
+
+
+def test_symmetric_intermediate_surface_bridge_does_not_override_projected_owner():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_projected_profile_level"
+    )
+    assert any(
+        target.endswith(".boundary.x")
+        for target in distance.targets
+    )
+
+
 def test_symmetric_center_distance_bridge_requires_structured_pair_topology():
     capture = _symmetric_center_distance_bridge_capture(
         include_symmetric_pair=False

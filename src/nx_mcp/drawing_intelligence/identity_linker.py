@@ -1859,6 +1859,126 @@ def _projected_profile_endpoint_matches(
     return matches
 
 
+def _symmetric_intermediate_surface_bridge(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    entity_to_feature: dict[str, str],
+    symmetric_pairs: dict[str, dict[str, Any]],
+) -> list[RelationEvidence] | None:
+    """Preserve a proven centered span without inventing physical endpoint owners.
+
+    The engineering distance and overall-center symmetry are authoritative.
+    Raster witness positions are used only to validate the symmetric identity;
+    the resulting targets stay virtual until a later topology/materialization
+    stage can bind them to physical profile geometry.
+    """
+
+    pair = symmetric_pairs.get(dimension.id)
+    if pair is None or dimension.direction not in {-1, 1}:
+        return None
+    if len(dimension.endpoints) != 2:
+        return None
+    if any(
+        endpoint.role != "unresolved"
+        or endpoint.unresolved_kind != "intermediate_surface"
+        for endpoint in dimension.endpoints
+    ):
+        return None
+
+    projected_matches = _projected_profile_endpoint_matches(
+        capture,
+        dimension=dimension,
+        entity_to_feature=entity_to_feature,
+    )
+    if any(projected_matches.get(index) for index in range(2)):
+        return None
+
+    overall_value = float(pair["overall_value"])
+    distance = float(dimension.value)
+    offset = (overall_value - distance) / 2.0
+    if offset < 0:
+        return None
+
+    identity_payload = json.dumps(
+        {
+            "axis": dimension.axis,
+            "distance": distance,
+            "overall": overall_value,
+            "source_ids": sorted(pair["source_ids"]),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity_payload).hexdigest()[:16].upper()
+    axis_leaf = dimension.axis.lower()
+    min_target = (
+        "constraints.symmetric_profile_levels."
+        f"C_{digest}_MIN.{axis_leaf}"
+    )
+    max_target = (
+        "constraints.symmetric_profile_levels."
+        f"C_{digest}_MAX.{axis_leaf}"
+    )
+
+    source_ids = list(
+        dict.fromkeys(
+            [
+                *dimension.source_ids,
+                *[
+                    source_id
+                    for endpoint in dimension.endpoints
+                    for source_id in endpoint.source_ids
+                ],
+                *pair["source_ids"],
+            ]
+        )
+    )
+    metadata = {
+        "basis": "overall_center_symmetric_intermediate_surface_span",
+        "physical_endpoint_ownership_unresolved": True,
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+    return [
+        RelationEvidence(
+            id=f"R_SYMMETRIC_INTERMEDIATE_{digest}_MIN",
+            kind="edge_offset",
+            axis=dimension.axis,
+            value=offset,
+            from_side="min",
+            targets=[min_target],
+            source_ids=source_ids,
+            required_for_modeling=False,
+            metadata=metadata,
+        ),
+        RelationEvidence(
+            id=f"R_SYMMETRIC_INTERMEDIATE_{digest}_MAX",
+            kind="edge_offset",
+            axis=dimension.axis,
+            value=offset,
+            from_side="max",
+            targets=[max_target],
+            source_ids=source_ids,
+            required_for_modeling=False,
+            metadata=metadata,
+        ),
+        RelationEvidence(
+            id=dimension.id,
+            kind="coordinate_distance",
+            axis=dimension.axis,
+            value=distance,
+            direction=1,
+            targets=[min_target, max_target],
+            source_ids=source_ids,
+            required_for_modeling=dimension.required_for_modeling,
+            metadata=metadata,
+        ),
+    ]
+
+
 def _projected_profile_dimension_bridge(
     capture: ReaderCapture,
     *,
@@ -3180,6 +3300,16 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             )
             if projected_profile_bridge is not None:
                 synthetic_relations.extend(projected_profile_bridge)
+                continue
+
+            symmetric_intermediate_bridge = _symmetric_intermediate_surface_bridge(
+                capture,
+                dimension=item,
+                entity_to_feature=entity_to_feature,
+                symmetric_pairs=symmetric_dimension_pairs,
+            )
+            if symmetric_intermediate_bridge is not None:
+                synthetic_relations.extend(symmetric_intermediate_bridge)
                 continue
 
             related_entity_ids = sorted(

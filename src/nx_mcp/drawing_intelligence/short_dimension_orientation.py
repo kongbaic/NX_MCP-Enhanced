@@ -83,28 +83,26 @@ def _interval_distance(
     return 0.0
 
 
-def _best_parallel_pair_score(
+def _parallel_pair_candidates(
     lines: list[tuple[float, float, float]],
     *,
     bbox_axis_low: float,
     bbox_axis_high: float,
     bbox_span_low: float,
     bbox_span_high: float,
-) -> float:
-    best = 0.0
+) -> list[tuple[float, float, float]]:
+    output: list[tuple[float, float, float]] = []
     for first_index in range(len(lines)):
         first = lines[first_index]
         for second in lines[first_index + 1 :]:
             separation = abs(first[0] - second[0])
             if separation < 6.0 or separation > 90.0:
                 continue
-
             overlap_low = max(first[1], second[1])
             overlap_high = min(first[2], second[2])
             overlap = overlap_high - overlap_low
             if overlap < 8.0:
                 continue
-
             axis_distance = _interval_distance(
                 min(first[0], second[0]),
                 max(first[0], second[0]),
@@ -119,26 +117,50 @@ def _best_parallel_pair_score(
             )
             if axis_distance > 60.0 or span_distance > 60.0:
                 continue
-
             score = overlap / (
                 1.0
                 + axis_distance / 12.0
                 + span_distance / 12.0
                 + max(0.0, separation - 50.0) / 100.0
             )
-            best = max(best, score)
-    return best
+            output.append(
+                (
+                    score,
+                    min(float(first[0]), float(second[0])),
+                    max(float(first[0]), float(second[0])),
+                )
+            )
+    output.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return output
 
 
-def infer_short_dimension_visual_direction(
+def _best_parallel_pair_score(
+    lines: list[tuple[float, float, float]],
+    *,
+    bbox_axis_low: float,
+    bbox_axis_high: float,
+    bbox_span_low: float,
+    bbox_span_high: float,
+) -> float:
+    candidates = _parallel_pair_candidates(
+        lines,
+        bbox_axis_low=bbox_axis_low,
+        bbox_axis_high=bbox_axis_high,
+        bbox_span_low=bbox_span_low,
+        bbox_span_high=bbox_span_high,
+    )
+    return candidates[0][0] if candidates else 0.0
+
+
+def infer_short_dimension_visual_topology(
     image_path: str,
     raw_bbox: object,
-) -> Direction | None:
-    """Infer only short orthogonal dimension-line direction from witness topology.
+) -> tuple[Direction, list[tuple[float, float]]] | None:
+    """Infer short dimension direction and plausible witness-axis pairs.
 
-    Paired horizontal witness lines imply a vertical dimension line; paired
-    vertical witness lines imply a horizontal dimension line. Pixel geometry is
-    topology-only and never becomes an engineering value or coordinate.
+    Returned pixel positions stay in source-raster coordinates and are for
+    identity/topology checks only. They are never engineering values or
+    coordinates.
     """
 
     rect = _bbox_rect(raw_bbox)
@@ -220,15 +242,14 @@ def infer_short_dimension_visual_direction(
 
     horizontal_lines = _cluster_axis_segments(horizontal_segments)
     vertical_lines = _cluster_axis_segments(vertical_segments)
-
-    horizontal_witness_score = _best_parallel_pair_score(
+    horizontal_pairs = _parallel_pair_candidates(
         horizontal_lines,
         bbox_axis_low=local_y0,
         bbox_axis_high=local_y1,
         bbox_span_low=local_x0,
         bbox_span_high=local_x1,
     )
-    vertical_witness_score = _best_parallel_pair_score(
+    vertical_pairs = _parallel_pair_candidates(
         vertical_lines,
         bbox_axis_low=local_x0,
         bbox_axis_high=local_x1,
@@ -236,6 +257,8 @@ def infer_short_dimension_visual_direction(
         bbox_span_high=local_y1,
     )
 
+    horizontal_witness_score = horizontal_pairs[0][0] if horizontal_pairs else 0.0
+    vertical_witness_score = vertical_pairs[0][0] if vertical_pairs else 0.0
     best = max(horizontal_witness_score, vertical_witness_score)
     other = min(horizontal_witness_score, vertical_witness_score)
     if best < 12.0:
@@ -244,7 +267,32 @@ def infer_short_dimension_visual_direction(
         return None
 
     if horizontal_witness_score > vertical_witness_score:
-        return "vertical"
-    if vertical_witness_score > horizontal_witness_score:
-        return "horizontal"
-    return None
+        direction: Direction = "vertical"
+        pairs = [
+            (low + float(roi_y0), high + float(roi_y0))
+            for score, low, high in horizontal_pairs
+            if score >= 12.0
+        ]
+    elif vertical_witness_score > horizontal_witness_score:
+        direction = "horizontal"
+        pairs = [
+            (low + float(roi_x0), high + float(roi_x0))
+            for score, low, high in vertical_pairs
+            if score >= 12.0
+        ]
+    else:
+        return None
+
+    if not pairs:
+        return None
+    return direction, pairs
+
+
+def infer_short_dimension_visual_direction(
+    image_path: str,
+    raw_bbox: object,
+) -> Direction | None:
+    """Infer only short orthogonal dimension-line direction from witness topology."""
+
+    topology = infer_short_dimension_visual_topology(image_path, raw_bbox)
+    return topology[0] if topology is not None else None

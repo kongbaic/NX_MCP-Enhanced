@@ -28,6 +28,7 @@ from .reader_observations import (
     ObservationValue,
     ObservationView,
 )
+from .short_dimension_orientation import infer_short_dimension_visual_topology
 from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
@@ -800,6 +801,183 @@ def _region_profile_match_tolerance(
         ):
             return max(2.0, min(float(bbox[2]), float(bbox[3])) * 0.003)
     return 2.0
+
+
+def _coverage_bbox_for_source_index(
+    report: dict[str, Any],
+    source_item_index: int,
+) -> object | None:
+    coverage = report.get("coverage")
+    if not isinstance(coverage, dict):
+        return None
+
+    matches: list[object] = []
+    for raw_bucket in coverage.values():
+        if not isinstance(raw_bucket, list):
+            continue
+        for item in raw_bucket:
+            if (
+                isinstance(item, dict)
+                and item.get("source_item_index") == source_item_index
+                and isinstance(item.get("bbox"), list)
+            ):
+                matches.append(item["bbox"])
+
+    if not matches:
+        return None
+    first = matches[0]
+    if any(item != first for item in matches[1:]):
+        return None
+    return first
+
+
+def _visual_direction_for_axis(
+    view_kind: ViewKind,
+    axis: Axis,
+) -> Literal["horizontal", "vertical"] | None:
+    mapping: dict[
+        tuple[ViewKind, Axis],
+        Literal["horizontal", "vertical"],
+    ] = {
+        ("front", "X"): "horizontal",
+        ("front", "Z"): "vertical",
+        ("side", "Y"): "horizontal",
+        ("side", "Z"): "vertical",
+        ("top", "X"): "horizontal",
+        ("top", "Y"): "vertical",
+    }
+    return mapping.get((view_kind, axis))
+
+
+def _reconcile_labeled_dimension_relations(
+    *,
+    report: dict[str, Any],
+    facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+) -> list[HybridLabeledDimensionFact]:
+    """Tighten local relation semantics only from proven overall contact.
+
+    Pixel positions are identity/topology evidence only. They never become an
+    engineering value or coordinate.
+    """
+
+    source_raster = report.get("source_raster")
+    if not isinstance(source_raster, str) or not source_raster:
+        return [item.model_copy(deep=True) for item in facts]
+
+    output: list[HybridLabeledDimensionFact] = []
+    for fact in facts:
+        copied = fact.model_copy(deep=True)
+        if fact.relation == "overall_extent":
+            output.append(copied)
+            continue
+
+        region_view = view_lookup.get(fact.region_id)
+        expected_direction = (
+            _visual_direction_for_axis(region_view.view_kind, fact.axis)
+            if region_view is not None
+            else None
+        )
+        bbox = _coverage_bbox_for_source_index(report, fact.source_item_index)
+        if expected_direction is None or bbox is None:
+            output.append(copied)
+            continue
+
+        topology = infer_short_dimension_visual_topology(source_raster, bbox)
+        if topology is None or topology[0] != expected_direction:
+            output.append(copied)
+            continue
+
+        anchors: list[tuple[str, float]] = []
+        for boundary in boundaries:
+            if (
+                not isinstance(boundary, dict)
+                or boundary.get("status") != "resolved"
+                or str(boundary.get("region_id") or "") != fact.region_id
+                or str(boundary.get("axis") or "") != fact.axis
+            ):
+                continue
+            for anchor in boundary.get("anchors", []):
+                if not isinstance(anchor, dict):
+                    continue
+                role = str(anchor.get("role") or "")
+                position = anchor.get("position_px")
+                if (
+                    role in {"overall_min", "overall_max"}
+                    and isinstance(position, (int, float))
+                    and not isinstance(position, bool)
+                ):
+                    anchors.append((role, float(position)))
+
+        if not anchors:
+            output.append(copied)
+            continue
+
+        tolerance = _region_profile_match_tolerance(report, fact.region_id)
+        pair_contacts: list[str | None] = []
+        for pair in topology[1]:
+            endpoint_roles: list[str | None] = []
+            for position in pair:
+                roles = {
+                    role
+                    for role, anchor_position in anchors
+                    if abs(float(position) - anchor_position) <= tolerance
+                }
+                endpoint_roles.append(
+                    next(iter(roles)) if len(roles) == 1 else None
+                )
+            contacts = [role for role in endpoint_roles if role is not None]
+            pair_contacts.append(contacts[0] if len(contacts) == 1 else None)
+
+        if (
+            not pair_contacts
+            or any(role is None for role in pair_contacts)
+            or len(set(pair_contacts)) != 1
+        ):
+            output.append(copied)
+            continue
+
+        overall_role = pair_contacts[0]
+        assert overall_role in {"overall_min", "overall_max"}
+        reconciled_relation = {
+            "overall_min": "overall_min_to_profile_transition",
+            "overall_max": "overall_max_to_profile_transition",
+        }[overall_role]
+
+        if fact.relation == "between_profile_boundaries":
+            copied = copied.model_copy(
+                update={
+                    "relation": reconciled_relation,
+                    "evidence": list(
+                        dict.fromkeys(
+                            [
+                                *fact.evidence,
+                                (
+                                    "hybrid:labeled-overall-boundary-contact:"
+                                    f"{fact.region_id}:{fact.axis}:{overall_role}"
+                                ),
+                            ]
+                        )
+                    ),
+                }
+            )
+        elif (
+            fact.relation
+            in {
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+            }
+            and fact.relation != reconciled_relation
+        ):
+            raise HybridCaptureAdapterError(
+                "labeled dimension overall-boundary relation conflicts with "
+                "deterministic short-dimension topology"
+            )
+
+        output.append(copied)
+
+    return output
 
 
 def _enrich_candidate_from_profile_inventory(
@@ -6102,6 +6280,12 @@ def adapt_hybrid_ocr_report(
         region_overall_fact_axes=region_overall_fact_axes,
     )
     boundary_roles = _boundary_role_lookup(boundaries)
+    labeled_dimension_facts = _reconcile_labeled_dimension_relations(
+        report=report,
+        facts=context.labeled_dimension_facts,
+        view_lookup=view_lookup,
+        boundaries=boundaries,
+    )
 
     dimension_candidates: list[dict[str, Any]] = []
     hidden_center_records: list[dict[str, Any]] = []
@@ -6789,7 +6973,7 @@ def adapt_hybrid_ocr_report(
             "schema": "1.0",
             "items": [
                 item.model_dump(mode="json")
-                for item in context.labeled_dimension_facts
+                for item in labeled_dimension_facts
             ],
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_topology_only": True,

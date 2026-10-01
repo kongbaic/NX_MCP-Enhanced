@@ -486,6 +486,132 @@ def test_adapter_preserves_labeled_dimension_facts_as_provenance_only():
     assert partial.unresolved == baseline.unresolved
 
 
+def test_labeled_dimension_relation_reconciles_unique_overall_boundary_contact(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_0005",
+        source_item_index=5,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="between_profile_boundaries",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:5", "structural:R1"],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 1000, 400]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "bbox": [[80, 100], [220, 100], [220, 130], [80, 130]],
+                }
+            ]
+        },
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "Z",
+            "anchors": [
+                {"role": "overall_max", "position_px": 100.0},
+                {"role": "overall_min", "position_px": 300.0},
+            ],
+        }
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(100.5, 145.0)]),
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_dimension_relations(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=boundaries,
+    )
+
+    assert reconciled[0].relation == "overall_max_to_profile_transition"
+    assert (
+        "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max"
+        in reconciled[0].evidence
+    )
+    assert reconciled[0].engineering_coordinate_inferred_from_pixels is False
+    assert reconciled[0].pixel_geometry_used_for_topology_only is True
+
+
+def test_labeled_dimension_relation_keeps_ambiguous_witness_topology_fail_closed(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_0004",
+        source_item_index=4,
+        source_text="S - 4.5 mm",
+        region_id="R1",
+        value=4.5,
+        axis="X",
+        relation="between_profile_boundaries",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:4", "structural:R1"],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 1000, 400]}],
+        "coverage": {
+            "unconfirmed_proposal_observations": [
+                {
+                    "source_item_index": 4,
+                    "bbox": [[400, 150], [530, 150], [530, 190], [400, 190]],
+                }
+            ]
+        },
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "X",
+            "anchors": [
+                {"role": "overall_min", "position_px": 100.0},
+                {"role": "overall_max", "position_px": 900.0},
+            ],
+        }
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("horizontal", [(100.5, 150.0), (120.0, 150.0)]),
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_dimension_relations(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=boundaries,
+    )
+
+    assert reconciled == [fact]
+
+
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 

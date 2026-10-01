@@ -1864,6 +1864,7 @@ def _symmetric_intermediate_surface_bridge(
     *,
     dimension: CaptureDimension,
     entity_to_feature: dict[str, str],
+    span_centers: dict[str, dict[str, Any]],
     symmetric_pairs: dict[str, dict[str, Any]],
 ) -> list[RelationEvidence] | None:
     """Preserve a proven centered span without inventing physical endpoint owners.
@@ -1892,6 +1893,14 @@ def _symmetric_intermediate_surface_bridge(
         entity_to_feature=entity_to_feature,
     )
     if any(projected_matches.get(index) for index in range(2)):
+        return None
+
+    span_matches = _span_center_identity_matches_by_endpoint(
+        capture,
+        dimension=dimension,
+        span_centers=span_centers,
+    )
+    if any(span_matches.get(index) for index in range(2)):
         return None
 
     overall_value = float(pair["overall_value"])
@@ -3306,6 +3315,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 capture,
                 dimension=item,
                 entity_to_feature=entity_to_feature,
+                span_centers=profile_span_centers,
                 symmetric_pairs=symmetric_dimension_pairs,
             )
             if symmetric_intermediate_bridge is not None:

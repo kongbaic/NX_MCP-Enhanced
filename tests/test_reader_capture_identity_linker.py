@@ -3329,7 +3329,71 @@ def test_symmetric_intermediate_surface_bridge_preserves_virtual_span():
 
     assert resolution.values[distance.targets[0]] == 20.0
     assert resolution.values[distance.targets[1]] == 80.0
-    assert resolution.ok
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    ]
+
+    draft = build_semantic_draft(compiled, resolution)
+    min_id = distance.targets[0].split(".")[2]
+    max_id = distance.targets[1].split(".")[2]
+    levels = draft["constraints"]["symmetric_profile_levels"]
+    assert levels[min_id]["x"] == -30.0
+    assert levels[max_id]["x"] == 30.0
+
+
+def test_symmetric_intermediate_surface_bridge_rejects_span_center_identity_matches():
+    capture = _symmetric_center_distance_bridge_capture()
+    identity_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_dimension_span_center_identity_ledger"
+    )
+    identity_ledger["items"].append(dict(identity_ledger["items"][0]))
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_case",
+    ["non_center_datum", "midpoint_mismatch", "distance_equals_overall", "no_direction"],
+)
+def test_symmetric_intermediate_surface_bridge_rejects_invalid_pair_evidence(
+    invalid_case,
+):
+    capture = _symmetric_center_distance_bridge_capture()
+    pair_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_symmetric_dimension_pair_ledger"
+    )
+    pair = pair_ledger["items"][0]
+    distance = next(item for item in capture.dimensions if item.id == "D_DISTANCE")
+
+    if invalid_case == "non_center_datum":
+        pair["datum"] = "feature_center"
+    elif invalid_case == "midpoint_mismatch":
+        pair["selected_witness_positions_px"] = [20.0, 70.0]
+    elif invalid_case == "distance_equals_overall":
+        distance.value = 100
+        pair["dimension_value"] = 100
+    else:
+        distance.direction = None
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
 
 
 def test_symmetric_intermediate_surface_bridge_does_not_override_projected_owner():

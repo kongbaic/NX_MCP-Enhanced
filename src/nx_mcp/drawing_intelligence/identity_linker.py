@@ -841,10 +841,12 @@ def _linked_labeled_dimension_relation_observations(
             ):
                 valid = False
                 break
-            if relation == "overall_extent":
-                if geometry is not None or scope is not None:
-                    valid = False
-                    break
+            if (
+                relation == "overall_extent"
+                and (geometry is not None or scope is not None)
+            ):
+                valid = False
+                break
 
             seen_target_ids.add(target_id)
             seen_source_indices.add(source_index)

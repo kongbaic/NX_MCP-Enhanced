@@ -465,14 +465,10 @@ class StructuralLabeledDimensionDecision(_StrictStructuralModel):
                     "overall_extent labeled dimension forbids profile topology fields"
                 )
             return self
-        if (
-            self.profile_transition_geometry is None
-            or self.symmetry_scope is None
-        ):
-            raise ValueError(
-                "local labeled dimension relation requires profile topology "
-                "and symmetry scope"
-            )
+        # Local profile topology metadata is optional.  Deterministic raster
+        # topology now owns endpoint/overall-side identity; these fields are
+        # retained only as descriptive metadata when the visual reader can
+        # supply them confidently.
         return self
 
 
@@ -644,6 +640,7 @@ def build_structural_context_queries(
             "labeled_dimension_direction_from_topology_only": True,
             "labeled_dimension_direction_hint_must_be_preserved": True,
             "labeled_dimension_overall_relation_requires_actual_overall_boundary": True,
+            "labeled_dimension_profile_topology_metadata_optional": True,
             "pixel_measurement": False,
         },
         view_axis_map={

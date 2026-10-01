@@ -845,9 +845,6 @@ def _linked_labeled_dimension_relation_observations(
                 if geometry is not None or scope is not None:
                     valid = False
                     break
-            elif geometry is None or scope is None:
-                valid = False
-                break
 
             seen_target_ids.add(target_id)
             seen_source_indices.add(source_index)

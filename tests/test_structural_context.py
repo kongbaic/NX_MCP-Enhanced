@@ -863,6 +863,39 @@ def test_structural_context_uses_ocr_value_for_labeled_dimension_fact():
     assert fact.evidence == ["hybrid:whole:17", "structural:R1:crop"]
 
 
+def test_structural_context_allows_local_relation_without_optional_topology_metadata():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "resolved",
+            "visual_direction": "vertical",
+            "relation": "between_profile_boundaries",
+            "profile_transition_geometry": None,
+            "symmetry_scope": None,
+            "evidence": ["structural:R1:crop"],
+            "reason": None,
+        }
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+
+    assert len(context.labeled_dimension_facts) == 1
+    fact = context.labeled_dimension_facts[0]
+    assert fact.relation == "between_profile_boundaries"
+    assert fact.profile_transition_geometry is None
+    assert fact.symmetry_scope is None
+    assert fact.value == 12
+    assert fact.axis == "Z"
+    assert fact.engineering_coordinate_inferred_from_pixels is False
+    assert fact.pixel_geometry_used_for_topology_only is True
+
+
 def test_structural_context_fails_closed_when_labeled_dimension_decision_missing():
     plan = build_structural_context_queries(
         _reader_input_with_labeled_dimension_regions(),

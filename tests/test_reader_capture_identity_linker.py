@@ -1490,6 +1490,51 @@ def test_identity_linker_preserves_labeled_dimension_relation_ledger_without_geo
     assert result.evidence.required_targets == []
 
 
+def test_identity_linker_preserves_labeled_dimension_relation_ledger_with_optional_null_metadata():
+    ledger = {
+        "kind": "hybrid_labeled_dimension_relation_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "target_id": "LD_0004",
+                "source_item_index": 4,
+                "source_text": "S - 4.5 mm",
+                "region_id": "R3",
+                "value": 4.5,
+                "axis": "X",
+                "relation": "between_profile_boundaries",
+                "profile_transition_geometry": None,
+                "symmetry_scope": None,
+                "evidence": ["hybrid:whole:4", "structural:R3"],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+        "engineering_value_source": "hybrid_ocr",
+        "relation_source": "bounded_structural_context",
+    }
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        observations=[ledger],
+    )
+
+    result = link_reader_capture(capture)
+
+    preserved = [
+        item
+        for item in result.evidence.observations
+        if item.get("kind") == "hybrid_labeled_dimension_relation_ledger"
+    ]
+    assert preserved == [ledger]
+
+
 def test_identity_linker_rejects_labeled_dimension_ledger_with_invalid_provenance_flags():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(

@@ -72,6 +72,7 @@ _PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND = (
     "hybrid_physical_rotational_oblique_profile_topology_ledger"
 )
 _VIEW_AXIS_BOUNDARY_KIND = "hybrid_view_axis_boundary_ledger"
+_LABELED_DIMENSION_RELATION_KIND = "hybrid_labeled_dimension_relation_ledger"
 
 
 
@@ -751,6 +752,113 @@ def _attach_physical_oblique_fragments(
             continue
         fragments.append(copy.deepcopy(fragment))
         fragments.sort(key=lambda item: str(item.get("id") or ""))
+
+    return output
+
+
+def _linked_labeled_dimension_relation_observations(
+    capture: ReaderCapture,
+) -> list[dict[str, Any]]:
+    """Preserve validated labeled-dimension provenance without adding geometry.
+
+    This bridge intentionally creates no RelationEvidence and no required target.
+    It only carries forward OCR-authoritative values plus bounded structural
+    relation semantics so a later deterministic stage can decide whether a
+    unique engineering constraint exists.
+    """
+
+    output: list[dict[str, Any]] = []
+    allowed_relations = {
+        "overall_extent",
+        "overall_min_to_profile_transition",
+        "overall_max_to_profile_transition",
+        "between_profile_boundaries",
+    }
+    allowed_geometries = {"orthogonal", "non_orthogonal", "mixed"}
+    allowed_scopes = {"single", "bilateral"}
+
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _LABELED_DIMENSION_RELATION_KIND
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_value_source") != "hybrid_ocr"
+            or observation.get("relation_source") != "bounded_structural_context"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        raw_items = observation.get("items")
+        if not isinstance(raw_items, list):
+            continue
+
+        validated_items: list[dict[str, Any]] = []
+        seen_target_ids: set[str] = set()
+        seen_source_indices: set[int] = set()
+        valid = True
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                valid = False
+                break
+            target_id = raw_item.get("target_id")
+            source_index = raw_item.get("source_item_index")
+            source_text = raw_item.get("source_text")
+            region_id = raw_item.get("region_id")
+            value = raw_item.get("value")
+            axis = str(raw_item.get("axis") or "").upper()
+            relation = raw_item.get("relation")
+            geometry = raw_item.get("profile_transition_geometry")
+            scope = raw_item.get("symmetry_scope")
+            evidence = raw_item.get("evidence")
+            if (
+                not isinstance(target_id, str)
+                or not target_id
+                or target_id in seen_target_ids
+                or not isinstance(source_index, int)
+                or isinstance(source_index, bool)
+                or source_index < 0
+                or source_index in seen_source_indices
+                or not isinstance(source_text, str)
+                or not source_text.strip()
+                or not isinstance(region_id, str)
+                or not region_id
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or float(value) <= 0.0
+                or axis not in {"X", "Y", "Z"}
+                or relation not in allowed_relations
+                or (
+                    geometry is not None
+                    and geometry not in allowed_geometries
+                )
+                or (scope is not None and scope not in allowed_scopes)
+                or not isinstance(evidence, list)
+                or not evidence
+                or not all(isinstance(item, str) and item for item in evidence)
+                or raw_item.get("engineering_coordinate_inferred_from_pixels") is not False
+                or raw_item.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                valid = False
+                break
+            if relation == "overall_extent":
+                if geometry is not None or scope is not None:
+                    valid = False
+                    break
+            elif geometry is None or scope is None:
+                valid = False
+                break
+
+            seen_target_ids.add(target_id)
+            seen_source_indices.add(source_index)
+            validated_items.append(copy.deepcopy(raw_item))
+
+        if not valid:
+            continue
+
+        copied = copy.deepcopy(observation)
+        copied["items"] = validated_items
+        output.append(copied)
 
     return output
 
@@ -3829,6 +3937,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         relations=synthetic_relations,
         required_targets=required_targets,
         observations=[
+            *_linked_labeled_dimension_relation_observations(capture),
             *_linked_rotational_profile_topology_observations(
                 capture,
                 entity_to_feature,

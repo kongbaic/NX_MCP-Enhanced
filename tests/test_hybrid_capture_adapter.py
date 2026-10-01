@@ -552,6 +552,78 @@ def test_labeled_dimension_relation_reconciles_unique_overall_boundary_contact(
     assert reconciled[0].pixel_geometry_used_for_topology_only is True
 
 
+def test_conflicting_agent_overall_side_is_canonicalized_by_unique_topology(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_0005",
+        source_item_index=5,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:5", "structural:R1:context"],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 1000, 400]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "bbox": [[80, 100], [220, 100], [220, 130], [80, 130]],
+                }
+            ]
+        },
+    }
+    boundaries = [
+        {
+            "status": "resolved",
+            "region_id": "R1",
+            "axis": "Z",
+            "anchors": [
+                {"role": "overall_max", "position_px": 100.0},
+                {"role": "overall_min", "position_px": 300.0},
+            ],
+        }
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(100.5, 145.0)]),
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_dimension_relations(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=boundaries,
+    )
+
+    assert reconciled[0].relation == "overall_max_to_profile_transition"
+    assert (
+        "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max"
+        in reconciled[0].evidence
+    )
+    assert (
+        "hybrid:labeled-overall-relation-canonicalized:"
+        "LD_0005:overall_min_to_profile_transition:"
+        "overall_max_to_profile_transition"
+        in reconciled[0].evidence
+    )
+    assert reconciled[0].engineering_coordinate_inferred_from_pixels is False
+    assert reconciled[0].pixel_geometry_used_for_topology_only is True
+
+
 def test_verified_existing_overall_relation_records_contact_marker(
     monkeypatch,
 ):

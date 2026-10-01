@@ -967,21 +967,21 @@ def _reconcile_labeled_dimension_relations(
             "overall_min_to_profile_transition",
             "overall_max_to_profile_transition",
         }:
+            evidence = [
+                *fact.evidence,
+                contact_marker,
+            ]
             if fact.relation != reconciled_relation:
-                raise HybridCaptureAdapterError(
-                    "labeled dimension overall-boundary relation conflicts with "
-                    "deterministic short-dimension topology"
+                evidence.append(
+                    (
+                        "hybrid:labeled-overall-relation-canonicalized:"
+                        f"{fact.target_id}:{fact.relation}:{reconciled_relation}"
+                    )
                 )
             copied = copied.model_copy(
                 update={
-                    "evidence": list(
-                        dict.fromkeys(
-                            [
-                                *fact.evidence,
-                                contact_marker,
-                            ]
-                        )
-                    )
+                    "relation": reconciled_relation,
+                    "evidence": list(dict.fromkeys(evidence)),
                 }
             )
 

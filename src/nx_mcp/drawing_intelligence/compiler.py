@@ -244,6 +244,123 @@ def _compile_overall_dimension_derivations(
             )
 
 
+def _compile_labeled_profile_transitions(
+    graph: EvidenceGraph,
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Compile only deterministic overall-to-profile transition offsets.
+
+    The OCR value remains authoritative. Structural Context supplies the bounded
+    relation semantic, while raster geometry is provenance-only and never
+    becomes an engineering coordinate. Profile-to-profile dimensions remain
+    provenance-only until both endpoint identities are deterministically known.
+    """
+
+    overall_by_axis = {
+        "X": float(graph.overall_dimensions.length_x),
+        "Y": float(graph.overall_dimensions.width_y),
+        "Z": float(graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_dimension_relation_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_value_source") != "hybrid_ocr"
+            or observation.get("relation_source") != "bounded_structural_context"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+
+            relation = str(item.get("relation") or "")
+            if relation not in {
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+            }:
+                continue
+
+            target_id = str(item.get("target_id") or "")
+            axis = str(item.get("axis") or "").upper()
+            value = item.get("value")
+            source_ids = [
+                source
+                for source in item.get("evidence", [])
+                if isinstance(source, str) and source
+            ]
+
+            if (
+                not target_id
+                or axis not in {"X", "Y", "Z"}
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or float(value) <= 0.0
+                or float(value) >= overall_by_axis[axis]
+                or item.get("engineering_coordinate_inferred_from_pixels") is not False
+                or item.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_PROFILE_TRANSITION_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "invalid labeled overall-to-profile transition contract"
+                    ),
+                    evidence=source_ids,
+                )
+                continue
+
+            axis_typed = cast(Axis, axis)
+            side: Literal["min", "max"] = (
+                "min"
+                if relation == "overall_min_to_profile_transition"
+                else "max"
+            )
+            target = (
+                "constraints.profile_transitions."
+                f"{target_id}.{axis.lower()}"
+            )
+            relation_id = f"LPT_{target_id}"
+
+            _append_relation(
+                relations,
+                RelationEvidence(
+                    id=relation_id,
+                    kind="edge_offset",
+                    axis=axis_typed,
+                    targets=[target],
+                    value=float(value),
+                    from_side=side,
+                    source_ids=source_ids,
+                    required_for_modeling=True,
+                    metadata={
+                        "basis": "labeled_overall_to_profile_transition",
+                        "labeled_target_id": target_id,
+                        "relation": relation,
+                        "profile_transition_geometry": item.get(
+                            "profile_transition_geometry"
+                        ),
+                        "symmetry_scope": item.get("symmetry_scope"),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                ),
+            )
+
+
 def _compile_axis_evidence(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -547,6 +664,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
 
     _compile_overall_dimension_facts(graph, direct, unresolved)
     _compile_overall_dimension_derivations(graph, relations, unresolved)
+    _compile_labeled_profile_transitions(graph, relations, unresolved)
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)

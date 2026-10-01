@@ -43,7 +43,7 @@ def _scalar_coordinate_axis(target: str) -> str | None:
         return match.group(1).upper()
 
     match = re.search(
-        r"^constraints\.(?:span_centers|symmetric_centers|symmetric_profile_levels)\.[^.]+\.(x|y|z)$",
+        r"^constraints\.(?:span_centers|symmetric_centers|symmetric_profile_levels|profile_transitions)\.[^.]+\.(x|y|z)$",
         lower,
     )
     if match:

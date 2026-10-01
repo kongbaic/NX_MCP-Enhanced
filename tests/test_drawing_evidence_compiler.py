@@ -969,6 +969,161 @@ def test_rotational_symmetry_overall_derivation_compiles_as_alignment_relation()
     assert alignment["links"] == relation.targets
 
 
+def test_labeled_overall_profile_transitions_compile_and_resolve_without_pixels():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_0005",
+                        "source_item_index": 5,
+                        "source_text": "H3 - 12 mm",
+                        "region_id": "R1",
+                        "value": 12.0,
+                        "axis": "Z",
+                        "relation": "overall_max_to_profile_transition",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "bilateral",
+                        "evidence": [
+                            "hybrid:whole:5",
+                            "structural:R1:context",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                    {
+                        "target_id": "LD_0010",
+                        "source_item_index": 10,
+                        "source_text": "f1 - 3 mm",
+                        "region_id": "R1",
+                        "value": 3.0,
+                        "axis": "Z",
+                        "relation": "overall_min_to_profile_transition",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": [
+                            "hybrid:whole:10",
+                            "structural:R1:context",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                    {
+                        "target_id": "LD_0004",
+                        "source_item_index": 4,
+                        "source_text": "S - 4.5 mm",
+                        "region_id": "R3",
+                        "value": 4.5,
+                        "axis": "X",
+                        "relation": "between_profile_boundaries",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": [
+                            "hybrid:whole:4",
+                            "structural:R3:context",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    transitions = {
+        relation.id: relation
+        for relation in compiled.relations
+        if relation.id.startswith("LPT_")
+    }
+    assert set(transitions) == {"LPT_LD_0005", "LPT_LD_0010"}
+    assert transitions["LPT_LD_0005"].kind == "edge_offset"
+    assert transitions["LPT_LD_0005"].from_side == "max"
+    assert transitions["LPT_LD_0005"].value == 12
+    assert transitions["LPT_LD_0005"].targets == [
+        "constraints.profile_transitions.LD_0005.z"
+    ]
+    assert transitions["LPT_LD_0010"].from_side == "min"
+    assert transitions["LPT_LD_0010"].value == 3
+    assert not any(
+        "LD_0004" in relation.id
+        for relation in compiled.relations
+    )
+
+    resolved = resolve_evidence_graph(compiled)
+    assert resolved.conflicts == []
+    assert resolved.values[
+        "constraints.profile_transitions.LD_0005.z"
+    ] == 63
+    assert resolved.values[
+        "constraints.profile_transitions.LD_0010.z"
+    ] == 3
+
+    draft = build_semantic_draft(compiled, resolved)
+    assert draft["constraints"]["profile_transitions"]["LD_0005"]["z"] == 63
+    assert draft["constraints"]["profile_transitions"]["LD_0010"]["z"] == 3
+
+
+def test_invalid_labeled_profile_transition_fails_closed():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_BAD",
+                        "source_item_index": 5,
+                        "source_text": "H3 - 80 mm",
+                        "region_id": "R1",
+                        "value": 80.0,
+                        "axis": "Z",
+                        "relation": "overall_max_to_profile_transition",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": ["hybrid:whole:5"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    assert not any(
+        relation.id.startswith("LPT_")
+        for relation in compiled.relations
+    )
+    assert any(
+        item["id"].startswith("U_LABELED_PROFILE_TRANSITION_")
+        and item["required_for_modeling"] is True
+        for item in compiled.unresolved_evidence
+    )
+
+
 def test_draft_infers_only_semantically_implied_feature_types():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),

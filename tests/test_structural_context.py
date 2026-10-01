@@ -923,3 +923,109 @@ def test_structural_labeled_dimension_answer_cannot_inject_numeric_value():
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         StructuralContextAnswers.model_validate(payload)
+
+
+def test_structural_query_builder_covers_safe_labeled_dimension_coverage_buckets():
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "text": "H3 - 12 mm",
+                    "bbox": [
+                        [86, 180],
+                        [223, 180],
+                        [223, 205],
+                        [86, 205],
+                    ],
+                    "primary_tokens": ["12"],
+                    "token": "12",
+                    "reason": "no_unique_DG_assignment",
+                }
+            ],
+            "unconfirmed_proposal_observations": [
+                {
+                    "source_item_index": 4,
+                    "text": "S- 4.5 mm",
+                    "bbox": [
+                        [150, 130],
+                        [240, 130],
+                        [240, 155],
+                        [150, 155],
+                    ],
+                    "primary_tokens": ["4.5"],
+                    "token": "4.5",
+                    "candidate_id": "DG122",
+                    "reason": "candidate_line_is_extension_witness_of_accepted_dimension",
+                }
+            ],
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 10,
+                    "text": "fl - 3 mmx",
+                    "bbox": [
+                        [70, 250],
+                        [180, 250],
+                        [180, 275],
+                        [70, 275],
+                    ],
+                    "primary_tokens": ["3"],
+                    "reason": "not_one_standalone_linear_token",
+                }
+            ],
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    targets = [
+        target
+        for query in plan.queries
+        for target in query.labeled_dimension_targets
+    ]
+    assert [
+        (item.source_item_index, item.source_text, item.value)
+        for item in targets
+    ] == [
+        (4, "S- 4.5 mm", 4.5),
+        (5, "H3 - 12 mm", 12.0),
+        (10, "fl - 3 mmx", 3.0),
+    ]
+
+
+def test_structural_query_builder_rejects_ambiguous_primary_token_fallback():
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 10,
+                    "text": "f1 - 3 mmx",
+                    "bbox": [
+                        [70, 250],
+                        [180, 250],
+                        [180, 275],
+                        [70, 275],
+                    ],
+                    "primary_tokens": ["3", "30"],
+                    "reason": "not_one_standalone_linear_token",
+                }
+            ]
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    assert all(
+        not query.labeled_dimension_targets
+        for query in plan.queries
+    )

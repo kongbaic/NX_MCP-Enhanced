@@ -49,7 +49,7 @@ class StructuralLabeledDimensionTarget(_StrictStructuralModel):
 
 _LABELED_MM_DIMENSION_RE = re.compile(
     r"(?i)(?P<label>[a-z][a-z0-9_]*)\s*[-=:]\s*"
-    r"(?P<value>\d+(?:[.,]\d+)?)\s*mm(?:\b|$)"
+    r"(?P<value>\d+(?:[.,]\d+)?)\s*mm[a-z]?(?:\b|$)"
 )
 
 
@@ -141,9 +141,15 @@ def _labeled_dimension_targets_by_region(
     coverage = hybrid_report.get("coverage")
     if not isinstance(coverage, dict):
         return {}
-    raw_items = coverage.get("unassigned_linear_observations")
-    if not isinstance(raw_items, list):
-        return {}
+    raw_items: list[object] = []
+    for bucket_name in (
+        "unassigned_linear_observations",
+        "unconfirmed_proposal_observations",
+        "routed_elsewhere_or_unclassified_observations",
+    ):
+        bucket = coverage.get(bucket_name)
+        if isinstance(bucket, list):
+            raw_items.extend(bucket)
 
     region_boxes: list[
         tuple[str, tuple[float, float, float, float]]
@@ -164,6 +170,10 @@ def _labeled_dimension_targets_by_region(
         source_index = item.get("source_item_index")
         text = item.get("text")
         token_value = _positive_number(item.get("token"))
+        if token_value is None:
+            primary_tokens = item.get("primary_tokens")
+            if isinstance(primary_tokens, list) and len(primary_tokens) == 1:
+                token_value = _positive_number(primary_tokens[0])
         center = _ocr_bbox_center(item.get("bbox"))
         if (
             not isinstance(source_index, int)

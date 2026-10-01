@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import math
 from typing import Any, Literal
 
@@ -145,7 +146,7 @@ def infer_short_dimension_visual_direction(
         return None
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        cv2: Any = importlib.import_module("cv2")
     except ImportError:
         return None
 

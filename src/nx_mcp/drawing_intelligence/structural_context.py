@@ -172,12 +172,12 @@ def _labeled_dimension_targets_by_region(
             if not isinstance(candidate, dict):
                 continue
             candidate_id = candidate.get("candidate_id")
-            region_id = candidate.get("region_id")
+            candidate_region_id = candidate.get("region_id")
             if (
                 not isinstance(candidate_id, str)
                 or not candidate_id
-                or not isinstance(region_id, str)
-                or region_id not in valid_region_ids
+                or not isinstance(candidate_region_id, str)
+                or candidate_region_id not in valid_region_ids
             ):
                 continue
             source_regions = candidate.get("source_region_ids")
@@ -187,13 +187,13 @@ def _labeled_dimension_targets_by_region(
                     for item in source_regions
                     if isinstance(item, str) and item
                 }
-                if unique_source_regions != {region_id}:
+                if unique_source_regions != {candidate_region_id}:
                     continue
             previous = candidate_region_by_id.get(candidate_id)
-            if previous is not None and previous != region_id:
+            if previous is not None and previous != candidate_region_id:
                 candidate_region_by_id.pop(candidate_id, None)
                 continue
-            candidate_region_by_id[candidate_id] = region_id
+            candidate_region_by_id[candidate_id] = candidate_region_id
 
     output: dict[str, list[StructuralLabeledDimensionTarget]] = {}
     seen_sources: set[int] = set()

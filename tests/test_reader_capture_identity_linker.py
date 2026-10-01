@@ -3278,6 +3278,9 @@ def test_symmetric_center_distance_bridge_anchors_span_center_and_mirror():
 
 def test_symmetric_intermediate_surface_bridge_preserves_virtual_span():
     capture = _symmetric_center_distance_bridge_capture()
+    capture.dimensions = [
+        item for item in capture.dimensions if item.id == "D_DISTANCE"
+    ]
     capture.observations = [
         observation
         for observation in capture.observations

@@ -48,8 +48,8 @@ class StructuralLabeledDimensionTarget(_StrictStructuralModel):
 
 
 _LABELED_MM_DIMENSION_RE = re.compile(
-    r"(?i)(?P<label>[a-z][a-z0-9_]*)\\s*[-=:]\\s*"
-    r"(?P<value>\\d+(?:[.,]\\d+)?)\\s*mm(?:\\b|$)"
+    r"(?i)(?P<label>[a-z][a-z0-9_]*)\s*[-=:]\s*"
+    r"(?P<value>\d+(?:[.,]\d+)?)\s*mm(?:\b|$)"
 )
 
 

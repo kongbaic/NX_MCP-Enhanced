@@ -1029,3 +1029,119 @@ def test_structural_query_builder_rejects_ambiguous_primary_token_fallback():
         not query.labeled_dimension_targets
         for query in plan.queries
     )
+
+
+def test_labeled_dimension_candidate_region_provenance_resolves_overlapping_regions():
+    reader_input = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R2",
+                "crop_path": "C:/work/R2.png",
+                "source_bbox_px": [337, 138, 793, 496],
+            },
+            {
+                "region_id": "R3",
+                "crop_path": "C:/work/R3.png",
+                "source_bbox_px": [432, 88, 592, 211],
+            },
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "candidates": [
+            {
+                "candidate_id": "DG122",
+                "region_id": "R3",
+                "source_region_ids": ["R3"],
+            }
+        ],
+        "coverage": {
+            "unconfirmed_proposal_observations": [
+                {
+                    "source_item_index": 4,
+                    "text": "S- 4.5 mm",
+                    "bbox": [
+                        [416.0, 162.0],
+                        [538.0, 162.0],
+                        [538.0, 192.0],
+                        [416.0, 192.0],
+                    ],
+                    "primary_tokens": ["4.5"],
+                    "token": "4.5",
+                    "candidate_id": "DG122",
+                    "reason": "candidate_line_is_extension_witness_of_accepted_dimension",
+                }
+            ]
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    by_region = {
+        query.region_id: query.labeled_dimension_targets
+        for query in plan.queries
+    }
+    assert by_region["R2"] == []
+    assert len(by_region["R3"]) == 1
+    assert by_region["R3"][0].target_id == "LD_0004"
+    assert by_region["R3"][0].value == 4.5
+
+
+def test_labeled_dimension_ambiguous_candidate_region_still_fails_closed():
+    reader_input = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R2",
+                "crop_path": "C:/work/R2.png",
+                "source_bbox_px": [337, 138, 793, 496],
+            },
+            {
+                "region_id": "R3",
+                "crop_path": "C:/work/R3.png",
+                "source_bbox_px": [432, 88, 592, 211],
+            },
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "candidates": [
+            {
+                "candidate_id": "DG122",
+                "region_id": "R3",
+                "source_region_ids": ["R2", "R3"],
+            }
+        ],
+        "coverage": {
+            "unconfirmed_proposal_observations": [
+                {
+                    "source_item_index": 4,
+                    "text": "S- 4.5 mm",
+                    "bbox": [
+                        [416.0, 162.0],
+                        [538.0, 162.0],
+                        [538.0, 192.0],
+                        [416.0, 192.0],
+                    ],
+                    "primary_tokens": ["4.5"],
+                    "token": "4.5",
+                    "candidate_id": "DG122",
+                    "reason": "candidate_line_is_extension_witness_of_accepted_dimension",
+                }
+            ]
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    assert all(
+        not query.labeled_dimension_targets
+        for query in plan.queries
+    )

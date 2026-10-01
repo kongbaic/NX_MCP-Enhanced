@@ -154,13 +154,46 @@ def _labeled_dimension_targets_by_region(
     region_boxes: list[
         tuple[str, tuple[float, float, float, float]]
     ] = []
+    valid_region_ids: set[str] = set()
     for region in regions:
         if not isinstance(region, dict):
             continue
         region_id = str(region.get("region_id") or "")
+        if region_id:
+            valid_region_ids.add(region_id)
         bbox = _region_source_bbox(region)
         if region_id and bbox is not None:
             region_boxes.append((region_id, bbox))
+
+    candidate_region_by_id: dict[str, str] = {}
+    candidates = hybrid_report.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = candidate.get("candidate_id")
+            region_id = candidate.get("region_id")
+            if (
+                not isinstance(candidate_id, str)
+                or not candidate_id
+                or not isinstance(region_id, str)
+                or region_id not in valid_region_ids
+            ):
+                continue
+            source_regions = candidate.get("source_region_ids")
+            if isinstance(source_regions, list) and source_regions:
+                unique_source_regions = {
+                    str(item)
+                    for item in source_regions
+                    if isinstance(item, str) and item
+                }
+                if unique_source_regions != {region_id}:
+                    continue
+            previous = candidate_region_by_id.get(candidate_id)
+            if previous is not None and previous != region_id:
+                candidate_region_by_id.pop(candidate_id, None)
+                continue
+            candidate_region_by_id[candidate_id] = region_id
 
     output: dict[str, list[StructuralLabeledDimensionTarget]] = {}
     seen_sources: set[int] = set()
@@ -198,27 +231,35 @@ def _labeled_dimension_targets_by_region(
         ):
             continue
 
-        distances: list[
-            tuple[float, str, tuple[float, float, float, float]]
-        ] = [
-            (_point_rect_distance(center, bbox), region_id, bbox)
-            for region_id, bbox in region_boxes
-        ]
-        distances.sort(key=lambda item: (item[0], item[1]))
-        if not distances:
-            continue
+        hinted_region_id: str | None = None
+        candidate_id = item.get("candidate_id")
+        if isinstance(candidate_id, str) and candidate_id:
+            hinted_region_id = candidate_region_by_id.get(candidate_id)
 
-        nearest_distance, region_id, nearest_bbox = distances[0]
-        region_scale = min(nearest_bbox[2], nearest_bbox[3])
-        if nearest_distance > max(32.0, region_scale * 0.50):
-            continue
-        if len(distances) > 1:
-            second_distance = distances[1][0]
-            if second_distance - nearest_distance < max(
-                8.0,
-                region_scale * 0.03,
-            ):
+        if hinted_region_id is not None:
+            region_id = hinted_region_id
+        else:
+            distances: list[
+                tuple[float, str, tuple[float, float, float, float]]
+            ] = [
+                (_point_rect_distance(center, bbox), region_id, bbox)
+                for region_id, bbox in region_boxes
+            ]
+            distances.sort(key=lambda item: (item[0], item[1]))
+            if not distances:
                 continue
+
+            nearest_distance, region_id, nearest_bbox = distances[0]
+            region_scale = min(nearest_bbox[2], nearest_bbox[3])
+            if nearest_distance > max(32.0, region_scale * 0.50):
+                continue
+            if len(distances) > 1:
+                second_distance = distances[1][0]
+                if second_distance - nearest_distance < max(
+                    8.0,
+                    region_scale * 0.03,
+                ):
+                    continue
 
         output.setdefault(region_id, []).append(
             StructuralLabeledDimensionTarget(

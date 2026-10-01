@@ -430,6 +430,62 @@ def test_unresolved_dimension_matching_independent_same_region_overall_is_adviso
     assert by_key["R1.DG12"].required_for_modeling is False
     assert by_key["R2.DG13"].required_for_modeling is True
 
+def test_adapter_preserves_labeled_dimension_facts_as_provenance_only():
+    context_payload = _context().model_dump(mode="json", by_alias=True)
+    context_payload["labeled_dimension_facts"] = [
+        {
+            "target_id": "LD_0004",
+            "source_item_index": 4,
+            "source_text": "S- 4.5 mm",
+            "region_id": "R1",
+            "value": 4.5,
+            "axis": "X",
+            "relation": "between_profile_boundaries",
+            "profile_transition_geometry": "orthogonal",
+            "symmetry_scope": "single",
+            "evidence": ["hybrid:whole:4", "structural:R1"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+    context = HybridAdapterContext.model_validate(context_payload)
+
+    baseline = adapt_hybrid_ocr_report(_report(), _context())
+    partial = adapt_hybrid_ocr_report(_report(), context)
+
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_labeled_dimension_relation_ledger"
+    )
+    assert ledger["schema"] == "1.0"
+    assert ledger["engineering_value_source"] == "hybrid_ocr"
+    assert ledger["relation_source"] == "bounded_structural_context"
+    assert ledger["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger["pixel_geometry_used_for_topology_only"] is True
+    assert ledger["items"] == [
+        {
+            "target_id": "LD_0004",
+            "source_item_index": 4,
+            "source_text": "S- 4.5 mm",
+            "region_id": "R1",
+            "value": 4.5,
+            "axis": "X",
+            "relation": "between_profile_boundaries",
+            "profile_transition_geometry": "orthogonal",
+            "symmetry_scope": "single",
+            "evidence": ["hybrid:whole:4", "structural:R1"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    assert partial.dimensions == baseline.dimensions
+    assert partial.values == baseline.values
+    assert partial.datum_alignments == baseline.datum_alignments
+    assert partial.unresolved == baseline.unresolved
+
+
 def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 

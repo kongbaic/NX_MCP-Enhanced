@@ -6785,6 +6785,18 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_identity_only": True,
         },
         {
+            "kind": "hybrid_labeled_dimension_relation_ledger",
+            "schema": "1.0",
+            "items": [
+                item.model_dump(mode="json")
+                for item in context.labeled_dimension_facts
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "engineering_value_source": "hybrid_ocr",
+            "relation_source": "bounded_structural_context",
+        },
+        {
             "kind": "hybrid_rotational_profile_topology_ledger",
             "schema": "1.0",
             "items": rotational_profile_topology_hints,

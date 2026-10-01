@@ -2035,6 +2035,44 @@ def _full_extent_roles_disagree_with_declared_overall(
     )
 
 
+def _reconcile_centered_symmetric_dimension_endpoint_roles(
+    candidate: dict[str, Any],
+    *,
+    endpoints: list[ObservationDimensionEndpoint],
+    unresolved_reason: str | None,
+    symmetric_dimension_pair: dict[str, Any] | None,
+    entity_keys: set[str],
+    profile_entity_by_ref: dict[str, str],
+    profile_vertex_entity_by_ref: dict[str, str] | None,
+    pattern_entity_by_ref: dict[str, str] | None,
+    evidence: list[str],
+) -> tuple[list[ObservationDimensionEndpoint], str | None]:
+    """Reject global-boundary roles that contradict a proven centered span.
+
+    A validated centered pair has a dimension strictly smaller than the overall
+    extent and both selected witnesses inside the independently observed overall
+    witness pair.  Therefore neither selected endpoint can simultaneously be an
+    overall_min/overall_max endpoint.  Re-run physical endpoint ownership
+    without region-local boundary-role promotion; if physical ownership cannot
+    be represented deterministically, the ordinary unresolved path remains.
+    """
+
+    if symmetric_dimension_pair is None or not any(
+        item.role in {"overall_min", "overall_max"} for item in endpoints
+    ):
+        return endpoints, unresolved_reason
+
+    return _dimension_endpoints_from_candidates(
+        candidate,
+        entity_keys=entity_keys,
+        boundary_roles={},
+        profile_entity_by_ref=profile_entity_by_ref,
+        profile_vertex_entity_by_ref=profile_vertex_entity_by_ref,
+        pattern_entity_by_ref=pattern_entity_by_ref,
+        evidence=evidence,
+    )
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
@@ -6362,17 +6400,6 @@ def adapt_hybrid_ocr_report(
                     )
                 )
 
-        projected_profile_level_records.extend(
-            _projected_profile_level_records(
-                candidate=raw_candidate,
-                dimension_key=dimension_key,
-                axis=axis,
-                dimension_endpoints=dimension_endpoints,
-                boundary_roles=boundary_roles,
-                profile_entity_by_ref=profile_entity_by_ref,
-            )
-        )
-
         symmetric_dimension_pair = _symmetric_dimension_pair_record(
             candidate=raw_candidate,
             dimension_key=dimension_key,
@@ -6385,6 +6412,31 @@ def adapt_hybrid_ocr_report(
             profile_inventory=profile_inventory,
             overall_dimensions=overall_dimensions,
         )
+        dimension_endpoints, unresolved_reason = (
+            _reconcile_centered_symmetric_dimension_endpoint_roles(
+                raw_candidate,
+                endpoints=dimension_endpoints,
+                unresolved_reason=unresolved_reason,
+                symmetric_dimension_pair=symmetric_dimension_pair,
+                entity_keys={item.key for item in entities},
+                profile_entity_by_ref=profile_entity_by_ref,
+                profile_vertex_entity_by_ref=profile_vertex_entity_by_ref,
+                pattern_entity_by_ref=pattern_entity_by_ref,
+                evidence=evidence,
+            )
+        )
+
+        projected_profile_level_records.extend(
+            _projected_profile_level_records(
+                candidate=raw_candidate,
+                dimension_key=dimension_key,
+                axis=axis,
+                dimension_endpoints=dimension_endpoints,
+                boundary_roles=boundary_roles,
+                profile_entity_by_ref=profile_entity_by_ref,
+            )
+        )
+
         if symmetric_dimension_pair is not None:
             symmetric_dimension_pair_records.append(symmetric_dimension_pair)
 

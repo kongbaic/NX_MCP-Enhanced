@@ -3274,6 +3274,122 @@ def test_cross_region_variant_selection_preserves_selected_region_boundary_roles
     ) is True
 
 
+def test_centered_symmetric_pair_rejects_mixed_local_overall_endpoint_role():
+    candidate = _cross_region_variant(
+        candidate_id="DG_SPAN",
+        region_id="R2",
+        first_anchor={
+            "kind": "profile_edge_candidate",
+            "ref": "R2.profile.left",
+        },
+        second_anchor={
+            "kind": "profile_edge_candidate",
+            "ref": "R2.profile.right",
+        },
+    )
+    entity_keys = {
+        "R2.PROFILE_BOUNDARY.LEFT",
+        "R2.PROFILE_BOUNDARY.RIGHT",
+    }
+    profile_entity_by_ref = {
+        "R2.profile.left": "R2.PROFILE_BOUNDARY.LEFT",
+        "R2.profile.right": "R2.PROFILE_BOUNDARY.RIGHT",
+    }
+
+    endpoints, unresolved = hybrid_adapter._dimension_endpoints_from_candidates(
+        candidate,
+        entity_keys=entity_keys,
+        boundary_roles={"R2.profile.right": "overall_max"},
+        profile_entity_by_ref=profile_entity_by_ref,
+        evidence=["test:centered-span"],
+    )
+    assert unresolved is None
+    assert [item.role for item in endpoints] == [
+        "profile_boundary",
+        "overall_max",
+    ]
+
+    endpoints, unresolved = (
+        hybrid_adapter._reconcile_centered_symmetric_dimension_endpoint_roles(
+            candidate,
+            endpoints=endpoints,
+            unresolved_reason=unresolved,
+            symmetric_dimension_pair={
+                "datum": "overall_center",
+                "dimension_value": 40.0,
+                "overall_dimension_value": 100.0,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            entity_keys=entity_keys,
+            profile_entity_by_ref=profile_entity_by_ref,
+            profile_vertex_entity_by_ref=None,
+            pattern_entity_by_ref=None,
+            evidence=["test:centered-span"],
+        )
+    )
+
+    assert unresolved is None
+    assert [item.role for item in endpoints] == [
+        "profile_boundary",
+        "profile_boundary",
+    ]
+    assert [item.entity_key for item in endpoints] == [
+        "R2.PROFILE_BOUNDARY.LEFT",
+        "R2.PROFILE_BOUNDARY.RIGHT",
+    ]
+
+
+def test_non_symmetric_dimension_keeps_valid_profile_to_overall_offset():
+    candidate = _cross_region_variant(
+        candidate_id="DG_OFFSET",
+        region_id="R2",
+        first_anchor={
+            "kind": "profile_edge_candidate",
+            "ref": "R2.profile.left",
+        },
+        second_anchor={
+            "kind": "profile_edge_candidate",
+            "ref": "R2.profile.right",
+        },
+    )
+    entity_keys = {
+        "R2.PROFILE_BOUNDARY.LEFT",
+        "R2.PROFILE_BOUNDARY.RIGHT",
+    }
+    profile_entity_by_ref = {
+        "R2.profile.left": "R2.PROFILE_BOUNDARY.LEFT",
+        "R2.profile.right": "R2.PROFILE_BOUNDARY.RIGHT",
+    }
+    endpoints, unresolved = hybrid_adapter._dimension_endpoints_from_candidates(
+        candidate,
+        entity_keys=entity_keys,
+        boundary_roles={"R2.profile.right": "overall_max"},
+        profile_entity_by_ref=profile_entity_by_ref,
+        evidence=["test:ordinary-offset"],
+    )
+
+    reconciled, reconciled_unresolved = (
+        hybrid_adapter._reconcile_centered_symmetric_dimension_endpoint_roles(
+            candidate,
+            endpoints=endpoints,
+            unresolved_reason=unresolved,
+            symmetric_dimension_pair=None,
+            entity_keys=entity_keys,
+            profile_entity_by_ref=profile_entity_by_ref,
+            profile_vertex_entity_by_ref=None,
+            pattern_entity_by_ref=None,
+            evidence=["test:ordinary-offset"],
+        )
+    )
+
+    assert reconciled_unresolved is None
+    assert [item.role for item in reconciled] == [
+        "profile_boundary",
+        "overall_max",
+    ]
+
+
 def test_symmetric_count_two_pattern_owner_uses_pixels_only_for_identity():
     candidate = {
         "candidate_id": "DG_PAIR",

@@ -754,3 +754,172 @@ def test_structural_query_plan_rejects_duplicate_query_and_region_ids():
         )
 
     StructuralRegionQuery.model_validate({"query_id": "S001", **query})
+
+
+def _reader_input_with_labeled_dimension_regions() -> dict:
+    payload = _reader_input()
+    payload["regions"][0]["source_bbox_px"] = [100, 100, 240, 220]
+    payload["regions"][1]["source_bbox_px"] = [500, 100, 220, 220]
+    return payload
+
+
+def _hybrid_report_with_labeled_unassigned_dimension() -> dict:
+    return {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 17,
+                    "text": "P2 - 12 mm",
+                    "bbox": [
+                        [52, 180],
+                        [132, 180],
+                        [132, 205],
+                        [52, 205],
+                    ],
+                    "primary_tokens": ["12"],
+                    "token": "12",
+                    "reason": "no_unique_DG_assignment",
+                },
+                {
+                    "source_item_index": 18,
+                    "text": "4",
+                    "bbox": [
+                        [70, 220],
+                        [82, 220],
+                        [82, 235],
+                        [70, 235],
+                    ],
+                    "primary_tokens": ["4"],
+                    "token": "4",
+                    "reason": "no_unique_DG_assignment",
+                },
+            ]
+        },
+    }
+
+
+def test_structural_query_builder_targets_only_explicit_labeled_mm_dimensions():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+
+    targets = [
+        target
+        for query in plan.queries
+        for target in query.labeled_dimension_targets
+    ]
+    assert len(targets) == 1
+    assert targets[0].target_id == "LD_0017"
+    assert targets[0].source_item_index == 17
+    assert targets[0].source_text == "P2 - 12 mm"
+    assert targets[0].value == 12
+    assert plan.queries[0].labeled_dimension_targets == targets
+    assert plan.queries[1].labeled_dimension_targets == []
+    assert plan.rules["labeled_dimension_value_from_hybrid_ocr_only"] is True
+    assert plan.rules["labeled_dimension_relation_only"] is True
+
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    decision = template.answers[0].labeled_dimension_decisions[0]
+    assert decision.target_id == "LD_0017"
+    assert decision.status == "unresolved"
+    assert decision.reason == "pending_labeled_dimension_relation_read"
+
+
+def test_structural_context_uses_ocr_value_for_labeled_dimension_fact():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "resolved",
+            "visual_direction": "vertical",
+            "relation": "overall_max_to_profile_transition",
+            "profile_transition_geometry": "non_orthogonal",
+            "symmetry_scope": "bilateral",
+            "evidence": ["structural:R1:crop"],
+            "reason": None,
+        }
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+
+    assert len(context.labeled_dimension_facts) == 1
+    fact = context.labeled_dimension_facts[0]
+    assert fact.target_id == "LD_0017"
+    assert fact.source_item_index == 17
+    assert fact.value == 12
+    assert fact.axis == "Z"
+    assert fact.relation == "overall_max_to_profile_transition"
+    assert fact.profile_transition_geometry == "non_orthogonal"
+    assert fact.symmetry_scope == "bilateral"
+    assert fact.engineering_coordinate_inferred_from_pixels is False
+    assert fact.pixel_geometry_used_for_topology_only is True
+    assert fact.evidence == ["hybrid:whole:17", "structural:R1:crop"]
+
+
+def test_structural_context_fails_closed_when_labeled_dimension_decision_missing():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+
+    with pytest.raises(
+        StructuralContextError,
+        match="labeled dimension decisions mismatch",
+    ):
+        assemble_structural_context(plan, _answers())
+
+
+def test_structural_context_fails_closed_when_labeled_dimension_relation_unresolved():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "unresolved",
+            "visual_direction": None,
+            "relation": None,
+            "profile_transition_geometry": None,
+            "symmetry_scope": None,
+            "evidence": ["structural:R1:crop"],
+            "reason": "relation is not uniquely visible",
+        }
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(
+        StructuralContextError,
+        match="labeled dimension 'LD_0017' remains unresolved",
+    ):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_labeled_dimension_answer_cannot_inject_numeric_value():
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    payload = plan.answer_template
+    payload["answers"][0]["labeled_dimension_decisions"][0] = {
+        "target_id": "LD_0017",
+        "status": "resolved",
+        "visual_direction": "vertical",
+        "relation": "between_profile_boundaries",
+        "profile_transition_geometry": "mixed",
+        "symmetry_scope": "single",
+        "evidence": ["structural:R1:crop"],
+        "reason": None,
+        "value": 999,
+    }
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        StructuralContextAnswers.model_validate(payload)

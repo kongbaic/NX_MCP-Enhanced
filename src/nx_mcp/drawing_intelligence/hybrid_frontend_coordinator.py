@@ -236,7 +236,10 @@ def start_hybrid_frontend(
     stage = "structural_query_plan"
     started = time.monotonic()
     try:
-        plan = build_structural_context_queries(_load_json(paths["reader_input"]))
+        plan = build_structural_context_queries(
+            _load_json(paths["reader_input"]),
+            hybrid_report=_load_json(paths["hybrid_report"]),
+        )
         _write_json(
             paths["structural_queries"],
             plan.model_dump(mode="json", by_alias=True),

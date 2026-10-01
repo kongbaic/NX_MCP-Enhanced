@@ -56,6 +56,32 @@ class HybridConfirmedStartSide(_StrictAdapterModel):
     evidence: list[str] = Field(min_length=1)
 
 
+class HybridLabeledDimensionFact(_StrictAdapterModel):
+    """OCR-authoritative value plus bounded visual relation semantics."""
+
+    target_id: str = Field(min_length=1)
+    source_item_index: int = Field(ge=0)
+    source_text: str = Field(min_length=1)
+    region_id: str = Field(min_length=1)
+    value: float = Field(gt=0)
+    axis: Axis
+    relation: Literal[
+        "overall_extent",
+        "overall_min_to_profile_transition",
+        "overall_max_to_profile_transition",
+        "between_profile_boundaries",
+    ]
+    profile_transition_geometry: Literal[
+        "orthogonal",
+        "non_orthogonal",
+        "mixed",
+    ] | None = None
+    symmetry_scope: Literal["single", "bilateral"] | None = None
+    evidence: list[str] = Field(min_length=1)
+    engineering_coordinate_inferred_from_pixels: Literal[False] = False
+    pixel_geometry_used_for_topology_only: Literal[True] = True
+
+
 class HybridAdapterContext(_StrictAdapterModel):
     schema_version: Literal["hybrid-adapter-context-v1"] = Field(
         default="hybrid-adapter-context-v1",
@@ -67,6 +93,9 @@ class HybridAdapterContext(_StrictAdapterModel):
         default_factory=list
     )
     confirmed_start_sides: list[HybridConfirmedStartSide] = Field(default_factory=list)
+    labeled_dimension_facts: list[HybridLabeledDimensionFact] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def _unique_regions(self) -> HybridAdapterContext:
@@ -78,6 +107,20 @@ class HybridAdapterContext(_StrictAdapterModel):
                 "confirmed_start_sides is legacy-only and cannot inject "
                 "production start_side truth"
             )
+        fact_ids = [item.target_id for item in self.labeled_dimension_facts]
+        source_indices = [
+            item.source_item_index for item in self.labeled_dimension_facts
+        ]
+        if len(fact_ids) != len(set(fact_ids)):
+            raise ValueError("labeled dimension target_ids must be unique")
+        if len(source_indices) != len(set(source_indices)):
+            raise ValueError("labeled dimension source_item_index values must be unique")
+        region_set = set(region_ids)
+        if any(
+            item.region_id not in region_set
+            for item in self.labeled_dimension_facts
+        ):
+            raise ValueError("labeled dimension fact references unknown region")
         return self
 
 

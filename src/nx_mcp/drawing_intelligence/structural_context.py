@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .evidence import Axis, ViewKind
-from .hybrid_capture_adapter import HybridAdapterContext, HybridRegionView
+from .hybrid_capture_adapter import (
+    HybridAdapterContext,
+    HybridLabeledDimensionFact,
+    HybridRegionView,
+)
 from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialRotationalSymmetryFact,
@@ -33,12 +38,202 @@ def _clean_evidence(value: list[str]) -> list[str]:
     return cleaned
 
 
+class StructuralLabeledDimensionTarget(_StrictStructuralModel):
+    """One OCR-read labeled linear value needing only visual relation semantics."""
+
+    target_id: str = Field(min_length=1)
+    source_item_index: int = Field(ge=0)
+    source_text: str = Field(min_length=1)
+    value: float = Field(gt=0)
+
+
+_LABELED_MM_DIMENSION_RE = re.compile(
+    r"(?i)(?P<label>[a-z][a-z0-9_]*)\\s*[-=:]\\s*"
+    r"(?P<value>\\d+(?:[.,]\\d+)?)\\s*mm(?:\\b|$)"
+)
+
+
+def _positive_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip().replace(",", "."))
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _ocr_bbox_center(raw: object) -> tuple[float, float] | None:
+    if not isinstance(raw, list):
+        return None
+    points = [
+        point
+        for point in raw
+        if (
+            isinstance(point, list)
+            and len(point) >= 2
+            and not isinstance(point[0], bool)
+            and not isinstance(point[1], bool)
+            and isinstance(point[0], (int, float))
+            and isinstance(point[1], (int, float))
+        )
+    ]
+    if len(points) < 2:
+        return None
+    return (
+        sum(float(point[0]) for point in points) / len(points),
+        sum(float(point[1]) for point in points) / len(points),
+    )
+
+
+def _region_source_bbox(region: dict) -> tuple[float, float, float, float] | None:
+    raw = region.get("source_bbox_px")
+    if not (
+        isinstance(raw, list)
+        and len(raw) == 4
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in raw
+        )
+    ):
+        return None
+    x, y, width, height = (float(value) for value in raw)
+    if width <= 0 or height <= 0:
+        return None
+    return x, y, width, height
+
+
+def _point_rect_distance(
+    point: tuple[float, float],
+    rect: tuple[float, float, float, float],
+) -> float:
+    px, py = point
+    x, y, width, height = rect
+    right = x + width
+    bottom = y + height
+    dx = max(x - px, 0.0, px - right)
+    dy = max(y - py, 0.0, py - bottom)
+    return math.hypot(dx, dy)
+
+
+def _labeled_dimension_targets_by_region(
+    regions: list[object],
+    hybrid_report: dict | None,
+) -> dict[str, list[StructuralLabeledDimensionTarget]]:
+    """Route only explicit labeled-mm OCR items to one unique nearby region.
+
+    Raster positions are used solely to choose which bounded structural query may
+    inspect the already OCR-read label.  They never define an engineering value
+    or coordinate.
+    """
+
+    if hybrid_report is None:
+        return {}
+    if hybrid_report.get("schema") != "dg-hybrid-ocr-bakeoff-v2":
+        raise StructuralContextError(
+            "labeled dimension targets require dg-hybrid-ocr-bakeoff-v2"
+        )
+    coverage = hybrid_report.get("coverage")
+    if not isinstance(coverage, dict):
+        return {}
+    raw_items = coverage.get("unassigned_linear_observations")
+    if not isinstance(raw_items, list):
+        return {}
+
+    region_boxes: list[
+        tuple[str, tuple[float, float, float, float]]
+    ] = []
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        region_id = str(region.get("region_id") or "")
+        bbox = _region_source_bbox(region)
+        if region_id and bbox is not None:
+            region_boxes.append((region_id, bbox))
+
+    output: dict[str, list[StructuralLabeledDimensionTarget]] = {}
+    seen_sources: set[int] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_item_index")
+        text = item.get("text")
+        token_value = _positive_number(item.get("token"))
+        center = _ocr_bbox_center(item.get("bbox"))
+        if (
+            not isinstance(source_index, int)
+            or isinstance(source_index, bool)
+            or source_index < 0
+            or source_index in seen_sources
+            or not isinstance(text, str)
+            or not text.strip()
+            or token_value is None
+            or center is None
+        ):
+            continue
+
+        match = _LABELED_MM_DIMENSION_RE.search(text)
+        if match is None:
+            continue
+        text_value = _positive_number(match.group("value"))
+        if text_value is None or not math.isclose(
+            text_value,
+            token_value,
+            abs_tol=max(abs(token_value) * 1e-6, 1e-9),
+        ):
+            continue
+
+        distances: list[
+            tuple[float, str, tuple[float, float, float, float]]
+        ] = [
+            (_point_rect_distance(center, bbox), region_id, bbox)
+            for region_id, bbox in region_boxes
+        ]
+        distances.sort(key=lambda item: (item[0], item[1]))
+        if not distances:
+            continue
+
+        nearest_distance, region_id, nearest_bbox = distances[0]
+        region_scale = min(nearest_bbox[2], nearest_bbox[3])
+        if nearest_distance > max(32.0, region_scale * 0.50):
+            continue
+        if len(distances) > 1:
+            second_distance = distances[1][0]
+            if second_distance - nearest_distance < max(
+                8.0,
+                region_scale * 0.03,
+            ):
+                continue
+
+        output.setdefault(region_id, []).append(
+            StructuralLabeledDimensionTarget(
+                target_id=f"LD_{source_index:04d}",
+                source_item_index=source_index,
+                source_text=text.strip(),
+                value=token_value,
+            )
+        )
+        seen_sources.add(source_index)
+
+    for values in output.values():
+        values.sort(key=lambda item: (item.source_item_index, item.target_id))
+    return output
+
+
 class StructuralRegionQuery(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     kind: Literal["structural_context"] = "structural_context"
     region_id: str = Field(min_length=1)
     image_path: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
+    labeled_dimension_targets: list[StructuralLabeledDimensionTarget] = Field(
+        default_factory=list
+    )
     deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None
     deterministic_profile_symmetry_method: Literal[
         "foreground_mirror_consensus_v1"
@@ -79,6 +274,20 @@ class StructuralContextQueryPlan(_StrictStructuralModel):
             raise ValueError("structural query ids must be unique")
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("structural query region ids must be unique")
+        target_ids = [
+            target.target_id
+            for query in self.queries
+            for target in query.labeled_dimension_targets
+        ]
+        source_indices = [
+            target.source_item_index
+            for query in self.queries
+            for target in query.labeled_dimension_targets
+        ]
+        if len(target_ids) != len(set(target_ids)):
+            raise ValueError("labeled dimension target ids must be unique")
+        if len(source_indices) != len(set(source_indices)):
+            raise ValueError("labeled dimension source indices must be unique")
         actual_axis_map = {
             view_kind: {
                 "horizontal": axes.horizontal,
@@ -130,12 +339,83 @@ class StructuralRotationalSymmetryDecision(_StrictStructuralModel):
         return self
 
 
+class StructuralLabeledDimensionDecision(_StrictStructuralModel):
+    target_id: str = Field(min_length=1)
+    status: Literal["resolved", "unresolved"]
+    visual_direction: Literal["horizontal", "vertical"] | None = None
+    relation: Literal[
+        "overall_extent",
+        "overall_min_to_profile_transition",
+        "overall_max_to_profile_transition",
+        "between_profile_boundaries",
+    ] | None = None
+    profile_transition_geometry: Literal[
+        "orthogonal",
+        "non_orthogonal",
+        "mixed",
+    ] | None = None
+    symmetry_scope: Literal["single", "bilateral"] | None = None
+    evidence: list[str] = Field(min_length=1)
+    reason: str | None = None
+
+    _validate_evidence = field_validator("evidence")(_clean_evidence)
+
+    @model_validator(mode="after")
+    def _shape(self) -> StructuralLabeledDimensionDecision:
+        if self.status == "unresolved":
+            if (
+                self.visual_direction is not None
+                or self.relation is not None
+                or self.profile_transition_geometry is not None
+                or self.symmetry_scope is not None
+            ):
+                raise ValueError(
+                    "unresolved labeled dimension relation forbids semantic fields"
+                )
+            if not isinstance(self.reason, str) or not self.reason.strip():
+                raise ValueError(
+                    "unresolved labeled dimension relation requires reason"
+                )
+            return self
+
+        if self.visual_direction is None or self.relation is None:
+            raise ValueError(
+                "resolved labeled dimension relation requires visual_direction "
+                "and relation"
+            )
+        if self.reason is not None:
+            raise ValueError(
+                "resolved labeled dimension relation forbids unresolved reason"
+            )
+        if self.relation == "overall_extent":
+            if (
+                self.profile_transition_geometry is not None
+                or self.symmetry_scope is not None
+            ):
+                raise ValueError(
+                    "overall_extent labeled dimension forbids profile topology fields"
+                )
+            return self
+        if (
+            self.profile_transition_geometry is None
+            or self.symmetry_scope is None
+        ):
+            raise ValueError(
+                "local labeled dimension relation requires profile topology "
+                "and symmetry scope"
+            )
+        return self
+
+
 class StructuralRegionAnswer(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     view_kind: ViewKind | None = None
     evidence: list[str] = Field(default_factory=list)
     overall_dimension_facts: list[StructuralOverallFact] = Field(default_factory=list)
     rotational_symmetry: StructuralRotationalSymmetryDecision | None = Field(...)
+    labeled_dimension_decisions: list[StructuralLabeledDimensionDecision] = Field(
+        default_factory=list
+    )
     unresolved: list[str] = Field(default_factory=list)
 
     @field_validator("evidence")
@@ -177,6 +457,7 @@ class StructuralContextAnswers(_StrictStructuralModel):
 def build_structural_context_queries(
     reader_input: dict,
     *,
+    hybrid_report: dict | None = None,
     max_region_queries: int = 4,
 ) -> StructuralContextQueryPlan:
     if reader_input.get("schema") != "reader-input-v1":
@@ -191,6 +472,11 @@ def build_structural_context_queries(
         raise StructuralContextError(
             f"region query count {len(regions)} exceeds bounded maximum {max_region_queries}"
         )
+
+    labeled_targets_by_region = _labeled_dimension_targets_by_region(
+        regions,
+        hybrid_report,
+    )
 
     queries: list[StructuralRegionQuery] = []
     seen_regions: set[str] = set()
@@ -237,6 +523,10 @@ def build_structural_context_queries(
                 region_id=region_id,
                 image_path=image_path,
                 evidence_label=evidence_label,
+                labeled_dimension_targets=labeled_targets_by_region.get(
+                    region_id,
+                    [],
+                ),
                 deterministic_profile_symmetry_axis=deterministic_axis,
                 deterministic_profile_symmetry_method=deterministic_method,
                 deterministic_profile_symmetry_overlay=(
@@ -280,6 +570,8 @@ def build_structural_context_queries(
             "feature_inventory": False,
             "dimension_endpoint_ownership": False,
             "local_feature_values": False,
+            "labeled_dimension_value_from_hybrid_ocr_only": True,
+            "labeled_dimension_relation_only": True,
             "pixel_measurement": False,
         },
         view_axis_map={
@@ -298,6 +590,19 @@ def build_structural_context_queries(
                     "evidence": [query.evidence_label],
                     "overall_dimension_facts": [],
                     "rotational_symmetry": None,
+                    "labeled_dimension_decisions": [
+                        {
+                            "target_id": target.target_id,
+                            "status": "unresolved",
+                            "visual_direction": None,
+                            "relation": None,
+                            "profile_transition_geometry": None,
+                            "symmetry_scope": None,
+                            "evidence": [query.evidence_label],
+                            "reason": "pending_labeled_dimension_relation_read",
+                        }
+                        for target in query.labeled_dimension_targets
+                    ],
                     "unresolved": ["pending_structural_visual_read"],
                 }
                 for query in queries
@@ -336,6 +641,7 @@ def assemble_structural_context(
     overall_facts: list[PartialOverallDimensionFact] = []
     rotational_facts: list[PartialRotationalSymmetryFact] = []
     rotational_counterevidence: list[str] = []
+    labeled_dimension_facts: list[HybridLabeledDimensionFact] = []
 
     for query in plan.queries:
         answer = answers_by_id[query.query_id]
@@ -365,6 +671,62 @@ def assemble_structural_context(
 
         view_axes = plan.view_axis_map[answer.view_kind]
         visible_axes = {view_axes.horizontal, view_axes.vertical}
+
+        target_by_id = {
+            item.target_id: item
+            for item in query.labeled_dimension_targets
+        }
+        decision_ids = [
+            item.target_id for item in answer.labeled_dimension_decisions
+        ]
+        if len(decision_ids) != len(set(decision_ids)):
+            raise StructuralContextError(
+                f"query {query.query_id!r} repeats labeled dimension decision"
+            )
+        decision_by_id = {
+            item.target_id: item
+            for item in answer.labeled_dimension_decisions
+        }
+        if set(decision_by_id) != set(target_by_id):
+            missing_targets = sorted(set(target_by_id) - set(decision_by_id))
+            extra_targets = sorted(set(decision_by_id) - set(target_by_id))
+            raise StructuralContextError(
+                f"query {query.query_id!r} labeled dimension decisions mismatch; "
+                f"missing={missing_targets}, extra={extra_targets}"
+            )
+        for target_id in sorted(target_by_id):
+            target = target_by_id[target_id]
+            decision = decision_by_id[target_id]
+            _assert_evidence(
+                decision.evidence,
+                query.evidence_label,
+                query_id=query.query_id,
+            )
+            if decision.status != "resolved":
+                raise StructuralContextError(
+                    f"query {query.query_id!r} labeled dimension "
+                    f"{target_id!r} remains unresolved: {decision.reason}"
+                )
+            assert decision.visual_direction is not None
+            assert decision.relation is not None
+            labeled_dimension_facts.append(
+                HybridLabeledDimensionFact(
+                    target_id=target.target_id,
+                    source_item_index=target.source_item_index,
+                    source_text=target.source_text,
+                    region_id=query.region_id,
+                    value=target.value,
+                    axis=getattr(view_axes, decision.visual_direction),
+                    relation=decision.relation,
+                    profile_transition_geometry=decision.profile_transition_geometry,
+                    symmetry_scope=decision.symmetry_scope,
+                    evidence=[
+                        f"hybrid:whole:{target.source_item_index}",
+                        query.evidence_label,
+                    ],
+                )
+            )
+
         rotation_decision = answer.rotational_symmetry
         if rotation_decision is None and not deferred_local_rotation:
             raise StructuralContextError(
@@ -512,4 +874,5 @@ def assemble_structural_context(
         overall_dimension_facts=overall_facts,
         rotational_symmetry_facts=merged_rotational_facts,
         confirmed_start_sides=[],
+        labeled_dimension_facts=labeled_dimension_facts,
     )

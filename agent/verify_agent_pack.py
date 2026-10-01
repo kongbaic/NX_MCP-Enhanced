@@ -275,6 +275,16 @@ def main() -> None:
         if token not in top:
             fail(f"Mode B current-request isolation regression: missing {token}")
     for token in (
+        "labeled_dimension_targets",
+        "labeled_dimension_decisions",
+        "禁止改写 OCR 给出的 value",
+        "pending_labeled_dimension_relation_read",
+        "between_profile_boundaries",
+    ):
+        if token not in top:
+            fail(f"bounded labeled-dimension structural contract missing: {token}")
+
+    for token in (
         "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
         "只能读取",
         "runtime configuration missing",

@@ -1004,8 +1004,7 @@ def assemble_structural_context(
         by_axis[overall_fact.axis].append(overall_fact.value)
 
     direct_values: dict[Axis, float] = {}
-    for raw_axis in ("X", "Y", "Z"):
-        axis = cast(Axis, raw_axis)
+    for axis in ("X", "Y", "Z"):
         values = by_axis[axis]
         if not values:
             continue

@@ -1630,10 +1630,47 @@ def test_overlapping_profile_associations_merge_exact_geometry_without_nondimens
             span=[383.0, 442.0],
             support=0,
         ),
+        # Two independently supported recurring edges prove that R1/R2 are
+        # overlapping crops of the same raster view. They are intentionally
+        # omitted from profile_entity_by_ref below so this test isolates the
+        # exact-geometry identity path for the support=0 edge.
+        _overlap_profile_edge(
+            "R1",
+            "R1.PROOF_H",
+            orientation="horizontal",
+            position=100.0,
+            span=[60.0, 180.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.PROOF_H",
+            orientation="horizontal",
+            position=100.0,
+            span=[60.0, 180.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.PROOF_V",
+            orientation="vertical",
+            position=120.0,
+            span=[20.0, 190.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.PROOF_V",
+            orientation="vertical",
+            position=120.0,
+            span=[20.0, 190.0],
+            support=1,
+        ),
     ]
     by_ref = {
         item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
         for item in inventory
+        if item["ref"].endswith(".EXACT")
     }
 
     associations = hybrid_adapter._overlapping_profile_associations(
@@ -1680,10 +1717,43 @@ def test_overlapping_profile_associations_keep_support_gate_for_approximate_geom
             span=[383.0, 442.0],
             support=0,
         ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.PROOF_H",
+            orientation="horizontal",
+            position=100.0,
+            span=[60.0, 180.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.PROOF_H",
+            orientation="horizontal",
+            position=100.0,
+            span=[60.0, 180.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R1",
+            "R1.PROOF_V",
+            orientation="vertical",
+            position=120.0,
+            span=[20.0, 190.0],
+            support=1,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.PROOF_V",
+            orientation="vertical",
+            position=120.0,
+            span=[20.0, 190.0],
+            support=1,
+        ),
     ]
     by_ref = {
         item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
         for item in inventory
+        if item["ref"].endswith(".APPROX")
     }
 
     associations = hybrid_adapter._overlapping_profile_associations(

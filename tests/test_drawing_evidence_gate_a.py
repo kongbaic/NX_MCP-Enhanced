@@ -451,7 +451,6 @@ def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
         DirectValueEvidence(id="NECK_R", target=neck_right, value=234.15),
         DirectValueEvidence(id="INNER_L", target=inner_left, value=70.35),
         DirectValueEvidence(id="Z_BOTTOM", target=z_bottom, value=0.0),
-        DirectValueEvidence(id="Z_FLANGE", target=z_flange, value=28.0),
         DirectValueEvidence(id="Z_TOP", target=z_top, value=75.0),
     ]
     dimensions = [

@@ -1078,15 +1078,15 @@ def _materialize_rotational_profile(
         clipped_segments: list[dict[str, Any]] = []
         for segment in segments:
             source_ref = str(segment.get("source_ref") or "")
-            edge = edges.get(source_ref)
-            if edge is None:
+            source_edge = edges.get(source_ref)
+            if source_edge is None:
                 valid = False
                 break
             first = dict(segment["start"])
             second = dict(segment["end"])
 
-            if edge["axis"] == radial_axis:
-                radial = float(edge["value"])
+            if source_edge["axis"] == radial_axis:
+                radial = float(source_edge["value"])
                 if radial <= axis_center + tolerance:
                     continue
             else:

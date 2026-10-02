@@ -187,22 +187,62 @@ def _merge_physical_rotational_topology_items(
                     != record.get("background_side_index")
                 )
             }
-            if len(polarity) == 1 and not any(
-                record.get("material_side_ambiguous") is True
+            axis_directions = {
+                (
+                    str(record["material_axis_direction"]),
+                    str(record["background_axis_direction"]),
+                )
                 for record in records
+                if (
+                    record.get("material_axis_direction")
+                    in {"negative", "positive"}
+                    and record.get("background_axis_direction")
+                    in {"negative", "positive"}
+                    and record.get("material_axis_direction")
+                    != record.get("background_axis_direction")
+                )
+            }
+            direction_conflict = len(axis_directions) > 1
+            if (
+                len(polarity) == 1
+                and not direction_conflict
+                and not any(
+                    record.get("material_side_ambiguous") is True
+                    for record in records
+                )
             ):
                 material_side_index, background_side_index = next(iter(polarity))
                 merged_edge["one_sided_boundary_candidate"] = True
                 merged_edge["material_side_index"] = material_side_index
                 merged_edge["background_side_index"] = background_side_index
+                if len(axis_directions) == 1:
+                    (
+                        material_axis_direction,
+                        background_axis_direction,
+                    ) = next(iter(axis_directions))
+                    merged_edge["material_axis_direction"] = (
+                        material_axis_direction
+                    )
+                    merged_edge["background_axis_direction"] = (
+                        background_axis_direction
+                    )
+                else:
+                    merged_edge.pop("material_axis_direction", None)
+                    merged_edge.pop("background_axis_direction", None)
                 merged_edge.pop("material_side_ambiguous", None)
-            elif polarity or any(
-                record.get("material_side_ambiguous") is True
-                for record in records
+            elif (
+                polarity
+                or direction_conflict
+                or any(
+                    record.get("material_side_ambiguous") is True
+                    for record in records
+                )
             ):
                 merged_edge.pop("one_sided_boundary_candidate", None)
                 merged_edge.pop("material_side_index", None)
                 merged_edge.pop("background_side_index", None)
+                merged_edge.pop("material_axis_direction", None)
+                merged_edge.pop("background_axis_direction", None)
                 merged_edge["material_side_ambiguous"] = True
             merged_edges.append(merged_edge)
 

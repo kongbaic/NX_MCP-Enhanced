@@ -1455,6 +1455,30 @@ _PROFILE_PLANE_BY_VIEW_KIND: dict[str, str] = {
 }
 
 
+def _orthogonal_boundary_axis_direction(
+    *,
+    orientation: str,
+    side_index: Any,
+) -> Literal["negative", "positive"] | None:
+    """Normalize raster side polarity into engineering-axis direction only.
+
+    Structural orthogonal source lines are canonicalized left-to-right for
+    horizontal lines and top-to-bottom for vertical lines. With the raster
+    sampler's (-normal, +normal) side ordering, side 0 therefore points toward
+    the positive engineering axis and side 1 toward the negative axis. This is
+    a topology/direction label only; it does not infer an engineering coordinate
+    or metric from pixels.
+    """
+
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or side_index not in {0, 1}
+        or isinstance(side_index, bool)
+    ):
+        return None
+    return "positive" if int(side_index) == 0 else "negative"
+
+
 def _profile_line_segment_px(
     item: dict[str, Any],
 ) -> tuple[str, float, float, float] | None:
@@ -1991,6 +2015,30 @@ def _rotational_profile_topology_hints(
                         edge_record["background_side_index"] = int(
                             background_side_index
                         )
+                        material_axis_direction = (
+                            _orthogonal_boundary_axis_direction(
+                                orientation=orientation,
+                                side_index=material_side_index,
+                            )
+                        )
+                        background_axis_direction = (
+                            _orthogonal_boundary_axis_direction(
+                                orientation=orientation,
+                                side_index=background_side_index,
+                            )
+                        )
+                        if (
+                            material_axis_direction is not None
+                            and background_axis_direction is not None
+                            and material_axis_direction
+                            != background_axis_direction
+                        ):
+                            edge_record["material_axis_direction"] = (
+                                material_axis_direction
+                            )
+                            edge_record["background_axis_direction"] = (
+                                background_axis_direction
+                            )
                 elif item.get("material_side_ambiguous") is True:
                     edge_record["material_side_ambiguous"] = True
                 edge_records.append(edge_record)

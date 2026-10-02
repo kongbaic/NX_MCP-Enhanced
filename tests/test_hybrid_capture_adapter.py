@@ -5064,6 +5064,9 @@ def _rotational_profile_inventory():
             "position_px": 20.0,
             "span_px": [20.0, 80.0],
             "axis_ink_run_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "material_side_index": 0,
+            "background_side_index": 1,
         },
         {
             "kind": "profile_edge_candidate",
@@ -5073,6 +5076,9 @@ def _rotational_profile_inventory():
             "position_px": 20.0,
             "span_px": [20.0, 50.0],
             "axis_ink_run_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
         },
         {
             "kind": "profile_edge_candidate",
@@ -5498,6 +5504,11 @@ def test_rotational_profile_topology_records_connectivity_without_pixel_metric()
         ["LEFT", "SHOULDER"],
         ["SHOULDER", "STEP"],
     ]
+    by_ref = {item["ref"]: item for item in hint["edges"]}
+    assert by_ref["LEFT"]["material_axis_direction"] == "positive"
+    assert by_ref["LEFT"]["background_axis_direction"] == "negative"
+    assert by_ref["SHOULDER"]["material_axis_direction"] == "negative"
+    assert by_ref["SHOULDER"]["background_axis_direction"] == "positive"
     assert hint["engineering_coordinate_inferred_from_pixels"] is False
     assert hint["pixel_geometry_used_for_topology_only"] is True
     assert "position_px" not in repr(hint)

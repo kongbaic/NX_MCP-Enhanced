@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 
 from nx_mcp.drawing_intelligence import (
+    DimensionEndpoint,
+    DimensionObservation,
     DirectValueEvidence,
     EvidenceGraph,
     OverallDimensions,
@@ -416,6 +418,294 @@ def test_branched_rotational_topology_stays_blocked_without_complete_polarity():
     graph = _branched_rotational_material_graph(
         omit_inner_right_polarity=True,
     )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
+def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
+    hub_left = "feature:F_HUB_LEFT.boundary.x"
+    hub_right = "feature:F_HUB_RIGHT.boundary.x"
+    neck_left = "feature:F_NECK_LEFT.boundary.x"
+    neck_right = "feature:F_NECK_RIGHT.boundary.x"
+    inner_left = "feature:F_INNER_LEFT.boundary.x"
+    z_bottom = "feature:F_Z_BOTTOM.boundary.z"
+    z_flange = "feature:F_Z_FLANGE.boundary.z"
+    z_top = "feature:F_Z_TOP.boundary.z"
+
+    direct = [
+        *_overall_values(length_x=300, width_y=300, height_z=75),
+        DirectValueEvidence(id="HUB_L", target=hub_left, value=41.0),
+        DirectValueEvidence(id="HUB_R", target=hub_right, value=259.0),
+        DirectValueEvidence(id="NECK_L", target=neck_left, value=65.85),
+        DirectValueEvidence(id="NECK_R", target=neck_right, value=234.15),
+        DirectValueEvidence(id="INNER_L", target=inner_left, value=70.35),
+        DirectValueEvidence(id="Z_BOTTOM", target=z_bottom, value=0.0),
+        DirectValueEvidence(id="Z_FLANGE", target=z_flange, value=28.0),
+        DirectValueEvidence(id="Z_TOP", target=z_top, value=75.0),
+    ]
+    dimensions = [
+        DimensionObservation(
+            id="D_HUB",
+            value=218.0,
+            axis="X",
+            endpoints=[
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=hub_left,
+                ),
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=hub_right,
+                ),
+            ],
+            direction=1,
+            source_ids=["dim:hub"],
+        ),
+        DimensionObservation(
+            id="D_NECK",
+            value=168.3,
+            axis="X",
+            endpoints=[
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=neck_left,
+                ),
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=neck_right,
+                ),
+            ],
+            direction=1,
+            source_ids=["dim:neck"],
+        ),
+        DimensionObservation(
+            id="D_WALL",
+            value=4.5,
+            axis="X",
+            endpoints=[
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=neck_left,
+                ),
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=inner_left,
+                ),
+            ],
+            direction=1,
+            source_ids=["dim:wall"],
+        ),
+    ]
+    relations = [
+        RelationEvidence(
+            id="R_FLANGE",
+            kind="edge_offset",
+            axis="Z",
+            targets=[z_flange],
+            value=28.0,
+            from_side="min",
+            source_ids=["dim:flange"],
+        ),
+    ]
+
+    fragments = []
+    raw_oblique_items = []
+    if include_oblique_pair:
+        fragments = [
+            {
+                "id": "P_OBL_LEFT",
+                "region_ids": ["R1", "R2"],
+                "material_side_index": 1,
+                "background_side_index": 0,
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "supporting_physical_feature_ids": [],
+                "supporting_physical_edges": [],
+                "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+                "source_ids": ["hybrid:oblique-line:0"],
+                "basis": "identity_linked_physical_oblique_profile_topology",
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+            {
+                "id": "P_OBL_RIGHT",
+                "region_ids": ["R1", "R2"],
+                "material_side_index": 1,
+                "background_side_index": 0,
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "supporting_physical_feature_ids": [],
+                "supporting_physical_edges": [],
+                "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+                "source_ids": ["hybrid:oblique-line:1"],
+                "basis": "identity_linked_physical_oblique_profile_topology",
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ]
+        raw_oblique_items = [
+            {
+                "id": "OBL_LEFT",
+                "region_id": "R1",
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[438.0, 425.0], [470.0, 332.0]],
+                "source_ids": ["hybrid:oblique-line:0"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+            {
+                "id": "OBL_RIGHT",
+                "region_id": "R1",
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[985.0, 331.0], [1017.0, 425.0]],
+                "source_ids": ["hybrid:oblique-line:1"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ]
+
+    observations = [
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "region_id": "PHYSICAL_TAPER",
+                    "region_ids": ["R1", "R2"],
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "INNER",
+                            "constant_axis": "X",
+                            "boundary_target": inner_left,
+                        },
+                        {
+                            "ref": "NECK",
+                            "constant_axis": "X",
+                            "boundary_target": neck_left,
+                        },
+                        {
+                            "ref": "BOTTOM",
+                            "constant_axis": "Z",
+                            "boundary_target": z_bottom,
+                        },
+                        {
+                            "ref": "FLANGE",
+                            "constant_axis": "Z",
+                            "boundary_target": z_flange,
+                        },
+                        {
+                            "ref": "TOP",
+                            "constant_axis": "Z",
+                            "boundary_target": z_top,
+                        },
+                    ],
+                    "junctions": [
+                        ["INNER", "BOTTOM"],
+                        ["INNER", "FLANGE"],
+                        ["INNER", "TOP"],
+                    ],
+                    "non_orthogonal_fragments": fragments,
+                    "source_ids": ["structural:R1:rotation"],
+                    "basis": (
+                        "identity_linked_physical_rotational_profile_topology"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": raw_oblique_items,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    return EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        direct_values=direct,
+        dimensions=dimensions,
+        relations=relations,
+        observations=observations,
+    )
+
+
+def test_symmetric_tapered_annular_profile_materializes_from_constraints_not_pixels():
+    graph = _symmetric_tapered_annular_graph()
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+    assert draft["profile"]["topology"] == "closed_polygon"
+
+    segments = draft["profile"]["segments"]
+    assert len(segments) == 6
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in segments
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in segments
+    }
+    assert points == {
+        (79.65, 0.0),
+        (150.0, 0.0),
+        (150.0, 28.0),
+        (109.0, 28.0),
+        (84.15, 75.0),
+        (79.65, 75.0),
+    }
+    assert all(
+        item.get("solver") == "rotational_taper_profile_solver"
+        for item in draft["source_ledger"]
+        if str(item.get("id", "")).startswith("ROTATIONAL_TAPER_PROFILE_")
+    )
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+    ]
+    assert R.check_drawing_json(draft) == []
+
+
+def test_symmetric_tapered_annular_profile_requires_bilateral_oblique_topology():
+    graph = _symmetric_tapered_annular_graph(include_oblique_pair=False)
     result = resolve_evidence_graph(graph)
     draft = build_semantic_draft(graph, result)
 

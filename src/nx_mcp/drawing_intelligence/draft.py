@@ -882,6 +882,480 @@ def _ordered_rotational_cycle_matches_material_polarity(
     return True
 
 
+def _bilateral_exterior_oblique_sources(
+    graph: EvidenceGraph,
+    item: dict[str, Any],
+) -> list[str] | None:
+    """Prove a bilateral exterior non-orthogonal transition from raster topology.
+
+    Pixel coordinates are used only to establish mirror identity/topology. They
+    never supply engineering coordinates, radii, axial levels, or taper slope.
+    """
+
+    fragments = item.get("non_orthogonal_fragments")
+    if not isinstance(fragments, list):
+        return None
+
+    fragment_sources: set[str] = set()
+    evidence: list[str] = []
+    for fragment in fragments:
+        if (
+            not isinstance(fragment, dict)
+            or fragment.get("connection_kind")
+            != "exterior_non_orthogonal_boundary_fragment"
+            or fragment.get("engineering_coordinate_inferred_from_pixels") is not False
+            or fragment.get("pixel_geometry_used_for_topology_only") is not True
+            or fragment.get("material_side_index") not in {0, 1}
+            or fragment.get("background_side_index") not in {0, 1}
+            or fragment.get("material_side_index")
+            == fragment.get("background_side_index")
+        ):
+            continue
+        sources = [
+            value
+            for value in fragment.get("source_ids", [])
+            if isinstance(value, str) and value
+        ]
+        oblique_sources = {
+            value
+            for value in sources
+            if value.startswith("hybrid:oblique-line:")
+        }
+        if len(oblique_sources) != 1:
+            return None
+        fragment_sources.update(oblique_sources)
+        evidence.extend(sources)
+
+    if len(fragment_sources) != 2:
+        return None
+
+    raw_by_source: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {}
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_oblique_profile_candidate_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        raw_items = observation.get("items")
+        if not isinstance(raw_items, list):
+            continue
+        for raw_item in raw_items:
+            if (
+                not isinstance(raw_item, dict)
+                or raw_item.get("plane") != item.get("plane")
+                or raw_item.get("rotation_axis") != item.get("rotation_axis")
+                or raw_item.get("view_kind") != item.get("view_kind")
+                or raw_item.get("exterior_boundary_candidate") is not True
+                or raw_item.get("one_sided_boundary_candidate") is not True
+            ):
+                continue
+            raw_sources = {
+                value
+                for value in raw_item.get("source_ids", [])
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            }
+            matched = raw_sources.intersection(fragment_sources)
+            if len(matched) != 1:
+                continue
+            source = next(iter(matched))
+            endpoints = raw_item.get("endpoints_px")
+            if not (
+                isinstance(endpoints, list)
+                and len(endpoints) == 2
+                and all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in point
+                    )
+                    for point in endpoints
+                )
+            ):
+                return None
+            ordered = tuple(
+                sorted(
+                    (
+                        (float(point[0]), float(point[1]))
+                        for point in endpoints
+                    ),
+                    key=lambda point: (point[1], point[0]),
+                )
+            )
+            if source in raw_by_source and raw_by_source[source] != ordered:
+                return None
+            raw_by_source[source] = ordered
+            evidence.extend(
+                value
+                for value in raw_item.get("source_ids", [])
+                if isinstance(value, str) and value
+            )
+
+    if set(raw_by_source) != fragment_sources:
+        return None
+
+    first, second = [raw_by_source[source] for source in sorted(fragment_sources)]
+    tolerance = 3.0
+    if any(abs(first[index][1] - second[index][1]) > tolerance for index in (0, 1)):
+        return None
+    mirror_sums = [
+        first[index][0] + second[index][0]
+        for index in (0, 1)
+    ]
+    if abs(mirror_sums[0] - mirror_sums[1]) > tolerance:
+        return None
+
+    return list(dict.fromkeys(evidence))
+
+
+def _materialize_symmetric_tapered_annular_profile(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+) -> set[tuple[str, str, str, int]]:
+    """Materialize a symmetric annular hub/taper profile from engineering constraints.
+
+    The supported pattern is intentionally strict: a Z-axis rotational view,
+    two globally centered radial profile spans, one local wall-thickness span
+    sharing the smaller centered span, one unique interior axial profile level,
+    a through inner-bore boundary, and bilateral exterior oblique topology.
+    All metric vertices come from Resolver/overall dimensions.
+    """
+
+    if draft.get("profile") not in (None, {}):
+        return set()
+
+    topology_items: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            isinstance(observation, dict)
+            and observation.get("kind")
+            == "hybrid_rotational_profile_topology_ledger"
+            and observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            and observation.get("pixel_geometry_used_for_topology_only") is True
+        ):
+            items = observation.get("items")
+            if isinstance(items, list):
+                topology_items.extend(
+                    value for value in items if isinstance(value, dict)
+                )
+
+    materialized: set[tuple[str, str, str, int]] = set()
+    for item in topology_items:
+        key = _rotational_profile_key(item)
+        if key is None:
+            continue
+        rotation_axis, plane, _region_id, _component_index = key
+        if rotation_axis != "Z" or plane not in {"XZ", "YZ"}:
+            continue
+        radial_axis = plane[0]
+        radial_extent = {
+            "X": float(graph.overall_dimensions.length_x),
+            "Y": float(graph.overall_dimensions.width_y),
+        }[radial_axis]
+        axial_extent = float(graph.overall_dimensions.height_z)
+        radial_center = radial_extent / 2.0
+        tolerance = 1e-7
+
+        oblique_evidence = _bilateral_exterior_oblique_sources(graph, item)
+        if oblique_evidence is None:
+            continue
+
+        centered_spans: list[dict[str, Any]] = []
+        radial_dimensions: list[dict[str, Any]] = []
+        for dimension in graph.dimensions:
+            if dimension.axis != radial_axis:
+                continue
+            endpoints = dimension.endpoints
+            if (
+                len(endpoints) != 2
+                or any(endpoint.role != "profile_boundary" for endpoint in endpoints)
+                or any(not endpoint.target for endpoint in endpoints)
+            ):
+                continue
+            targets = [str(endpoint.target) for endpoint in endpoints]
+            if any(target not in resolution.values for target in targets):
+                continue
+            values = [resolution.values[target] for target in targets]
+            if any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                for value in values
+            ):
+                continue
+            first, second = (float(value) for value in values)
+            span = abs(second - first)
+            if abs(span - float(dimension.value)) > tolerance:
+                continue
+            record = {
+                "dimension": dimension,
+                "targets": targets,
+                "values": [first, second],
+                "span": span,
+            }
+            radial_dimensions.append(record)
+            if abs(((first + second) / 2.0) - radial_center) <= tolerance:
+                centered_spans.append(record)
+
+        neck_candidates: list[tuple[dict[str, Any], dict[str, Any], str, float]] = []
+        for centered in centered_spans:
+            centered_targets = set(centered["targets"])
+            neck_radius = float(centered["span"]) / 2.0
+            for local in radial_dimensions:
+                if local is centered:
+                    continue
+                shared = centered_targets.intersection(local["targets"])
+                if len(shared) != 1:
+                    continue
+                shared_target = next(iter(shared))
+                other_targets = [
+                    target
+                    for target in local["targets"]
+                    if target != shared_target
+                ]
+                if len(other_targets) != 1:
+                    continue
+                other_target = other_targets[0]
+                other_value = float(
+                    resolution.values[other_target]
+                )
+                inner_radius = abs(other_value - radial_center)
+                shared_value = float(
+                    resolution.values[shared_target]
+                )
+                shared_radius = abs(shared_value - radial_center)
+                if (
+                    abs(shared_radius - neck_radius) > tolerance
+                    or not (0.0 < inner_radius < neck_radius)
+                    or abs(
+                        (neck_radius - inner_radius)
+                        - float(local["span"])
+                    ) > tolerance
+                ):
+                    continue
+                neck_candidates.append(
+                    (centered, local, other_target, inner_radius)
+                )
+
+        if len(neck_candidates) != 1:
+            continue
+        neck_span, wall_span, inner_target, inner_radius = neck_candidates[0]
+        neck_radius = float(neck_span["span"]) / 2.0
+
+        hub_candidates = [
+            candidate
+            for candidate in centered_spans
+            if (
+                candidate is not neck_span
+                and float(candidate["span"]) > float(neck_span["span"]) + tolerance
+                and float(candidate["span"]) < radial_extent - tolerance
+            )
+        ]
+        if len(hub_candidates) != 1:
+            continue
+        hub_span = hub_candidates[0]
+        hub_radius = float(hub_span["span"]) / 2.0
+        flange_radius = radial_extent / 2.0
+        if not (
+            0.0 < inner_radius < neck_radius < hub_radius < flange_radius
+        ):
+            continue
+
+        raw_edges = item.get("edges")
+        raw_junctions = item.get("junctions")
+        if not isinstance(raw_edges, list) or not isinstance(raw_junctions, list):
+            continue
+        edges = {
+            str(edge.get("ref") or ""): edge
+            for edge in raw_edges
+            if isinstance(edge, dict) and str(edge.get("ref") or "")
+        }
+        inner_refs = [
+            ref
+            for ref, edge in edges.items()
+            if (
+                str(edge.get("constant_axis") or "").upper() == radial_axis
+                and edge.get("boundary_target") == inner_target
+            )
+        ]
+        if len(inner_refs) != 1:
+            continue
+
+        adjacency: dict[str, set[str]] = {ref: set() for ref in edges}
+        valid_junctions = True
+        for pair in raw_junctions:
+            if (
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or not all(isinstance(ref, str) for ref in pair)
+                or pair[0] not in edges
+                or pair[1] not in edges
+            ):
+                valid_junctions = False
+                break
+            adjacency[pair[0]].add(pair[1])
+            adjacency[pair[1]].add(pair[0])
+        if not valid_junctions:
+            continue
+
+        inner_axial_values: set[float] = set()
+        for neighbor in adjacency.get(inner_refs[0], set()):
+            edge = edges[neighbor]
+            if str(edge.get("constant_axis") or "").upper() != rotation_axis:
+                continue
+            target = edge.get("boundary_target")
+            if not isinstance(target, str) or target not in resolution.values:
+                continue
+            value = resolution.values[target]
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                inner_axial_values.add(round(float(value), 9))
+        if (
+            round(0.0, 9) not in inner_axial_values
+            or round(axial_extent, 9) not in inner_axial_values
+        ):
+            continue
+
+        axial_edge_targets = {
+            str(edge.get("boundary_target"))
+            for edge in edges.values()
+            if str(edge.get("constant_axis") or "").upper() == rotation_axis
+            and isinstance(edge.get("boundary_target"), str)
+        }
+        interior_levels: list[tuple[float, RelationEvidence]] = []
+        for relation in graph.relations:
+            if (
+                relation.kind != "edge_offset"
+                or relation.axis != rotation_axis
+                or len(relation.targets) != 1
+                or relation.targets[0] not in axial_edge_targets
+                or relation.targets[0] not in resolution.values
+            ):
+                continue
+            raw_value = resolution.values[relation.targets[0]]
+            if (
+                not isinstance(raw_value, (int, float))
+                or isinstance(raw_value, bool)
+            ):
+                continue
+            level = float(raw_value)
+            if tolerance < level < axial_extent - tolerance:
+                interior_levels.append((level, relation))
+        unique_levels = {
+            round(level, 9)
+            for level, _relation in interior_levels
+        }
+        if len(unique_levels) != 1:
+            continue
+        flange_level = next(iter(unique_levels))
+        level_relations = [
+            relation
+            for level, relation in interior_levels
+            if round(level, 9) == flange_level
+        ]
+
+        points = [
+            {radial_axis: inner_radius, rotation_axis: 0.0},
+            {radial_axis: flange_radius, rotation_axis: 0.0},
+            {radial_axis: flange_radius, rotation_axis: flange_level},
+            {radial_axis: hub_radius, rotation_axis: flange_level},
+            {radial_axis: neck_radius, rotation_axis: axial_extent},
+            {radial_axis: inner_radius, rotation_axis: axial_extent},
+        ]
+        profile_segments: list[dict[str, Any]] = []
+        for index, start in enumerate(points):
+            end = points[(index + 1) % len(points)]
+            profile_segments.append(
+                {
+                    "type": "line",
+                    f"{radial_axis.lower()}1": float(start[radial_axis]),
+                    f"{rotation_axis.lower()}1": float(start[rotation_axis]),
+                    f"{radial_axis.lower()}2": float(end[radial_axis]),
+                    f"{rotation_axis.lower()}2": float(end[rotation_axis]),
+                }
+            )
+
+        source_ids = list(
+            dict.fromkeys(
+                [
+                    *[
+                        value
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *oblique_evidence,
+                    *neck_span["dimension"].source_ids,
+                    *wall_span["dimension"].source_ids,
+                    *hub_span["dimension"].source_ids,
+                    *[
+                        source
+                        for relation in level_relations
+                        for source in relation.source_ids
+                    ],
+                ]
+            )
+        )
+        draft["profile"] = {
+            "plane": plane,
+            "topology": "closed_polygon",
+            "rotation_axis": rotation_axis,
+            "segments": profile_segments,
+        }
+        for index, segment in enumerate(profile_segments):
+            for field, value in segment.items():
+                draft["source_ledger"].append(
+                    {
+                        "id": (
+                            "ROTATIONAL_TAPER_PROFILE_"
+                            f"{index}_{field.upper()}"
+                        ),
+                        "semantic": "profile_dimension",
+                        "value": copy.deepcopy(value),
+                        "target": f"profile.segments.{index}.{field}",
+                        "evidence": source_ids,
+                        "solver": "rotational_taper_profile_solver",
+                    }
+                )
+        draft["source_ledger"].extend(
+            [
+                {
+                    "id": "ROTATIONAL_TAPER_PROFILE_PLANE",
+                    "semantic": "profile_dimension",
+                    "value": plane,
+                    "target": "profile.plane",
+                    "evidence": source_ids,
+                    "solver": "rotational_taper_profile_solver",
+                },
+                {
+                    "id": "ROTATIONAL_TAPER_PROFILE_TOPOLOGY",
+                    "semantic": "profile_dimension",
+                    "value": "closed_polygon",
+                    "target": "profile.topology",
+                    "evidence": source_ids,
+                    "solver": "rotational_taper_profile_solver",
+                },
+                {
+                    "id": "ROTATIONAL_TAPER_PROFILE_AXIS",
+                    "semantic": "profile_dimension",
+                    "value": rotation_axis,
+                    "target": "profile.rotation_axis",
+                    "evidence": source_ids,
+                    "solver": "rotational_taper_profile_solver",
+                },
+            ]
+        )
+        materialized.add(key)
+        break
+
+    return materialized
+
+
 def _materialize_rotational_profile(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -1657,10 +2131,17 @@ def build_semantic_draft(
     if metric_profile is not None:
         _materialize_metric_profile(draft, graph, metric_profile)
 
-    rotational_profile_keys = _materialize_rotational_profile(
+    rotational_profile_keys = _materialize_symmetric_tapered_annular_profile(
         draft,
         graph,
         resolution,
+    )
+    rotational_profile_keys.update(
+        _materialize_rotational_profile(
+            draft,
+            graph,
+            resolution,
+        )
     )
 
     # Materialize all direct observations first so feature type is available

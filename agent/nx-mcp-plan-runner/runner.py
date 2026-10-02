@@ -4513,11 +4513,6 @@ def _rotational_profile_geometry(
             "capability_adapter_violation: canonical rotational meridian crosses "
             "the rotation axis"
         ]
-    if not any(abs(value) <= 1e-9 for value in radial_values):
-        return None, [
-            "capability_adapter_violation: canonical rotational meridian does not "
-            "close on the rotation axis"
-        ]
     if max(radial_values) <= 1e-9:
         return None, [
             "capability_adapter_violation: canonical rotational meridian has no "

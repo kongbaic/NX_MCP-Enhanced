@@ -167,6 +167,118 @@ def test_resolved_rotational_silhouette_materializes_max_radial_meridian():
     assert R.check_drawing_json(draft) == []
 
 
+def test_resolved_annular_rotational_meridian_materializes_without_axis_closure():
+    inner = "feature:F_INNER.boundary.x"
+    outer = "feature:F_OUTER.boundary.x"
+    bottom = "feature:F_BOTTOM.boundary.z"
+    top = "feature:F_TOP.boundary.z"
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=100,
+            height_z=60,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=100, height_z=60),
+            DirectValueEvidence(id="INNER", target=inner, value=70),
+            DirectValueEvidence(id="OUTER", target=outer, value=80),
+            DirectValueEvidence(id="BOTTOM", target=bottom, value=0),
+            DirectValueEvidence(id="TOP", target=top, value=60),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "INNER",
+                                "profile_entity_id": "E_INNER",
+                                "physical_feature_id": "F_INNER",
+                                "constant_axis": "X",
+                                "boundary_target": inner,
+                            },
+                            {
+                                "ref": "OUTER",
+                                "profile_entity_id": "E_OUTER",
+                                "physical_feature_id": "F_OUTER",
+                                "constant_axis": "X",
+                                "boundary_target": outer,
+                            },
+                            {
+                                "ref": "BOTTOM",
+                                "profile_entity_id": "E_BOTTOM",
+                                "physical_feature_id": "F_BOTTOM",
+                                "constant_axis": "Z",
+                                "boundary_target": bottom,
+                            },
+                            {
+                                "ref": "TOP",
+                                "profile_entity_id": "E_TOP",
+                                "physical_feature_id": "F_TOP",
+                                "constant_axis": "Z",
+                                "boundary_target": top,
+                            },
+                        ],
+                        "junctions": [
+                            ["INNER", "BOTTOM"],
+                            ["BOTTOM", "OUTER"],
+                            ["OUTER", "TOP"],
+                            ["TOP", "INNER"],
+                        ],
+                        "source_ids": ["structural:R1:rotation"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+    assert draft["profile"]["topology"] == "closed_polygon"
+
+    segments = draft["profile"]["segments"]
+    assert len(segments) == 4
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in segments
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in segments
+    }
+    assert points == {
+        (20.0, 0.0),
+        (30.0, 0.0),
+        (30.0, 60.0),
+        (20.0, 60.0),
+    }
+    assert all(point[0] > 0 for point in points)
+    geometry, errors = R._rotational_profile_geometry(draft)
+    assert errors == []
+    assert geometry is not None
+    assert geometry["representation"] == "canonical_rotational_profile"
+    assert R.check_drawing_json(draft) == []
+
+
 def test_rotational_profile_stays_blocked_when_one_engineering_boundary_is_unresolved():
     graph = _rotational_rectangle_graph(omit_top=True)
     result = resolve_evidence_graph(graph)

@@ -929,31 +929,32 @@ def _materialize_rotational_profile(
                 degrees[point_id] = degrees.get(point_id, 0) + 1
 
         endpoints = sorted(point for point, degree in degrees.items() if degree == 1)
-        if (
-            len(endpoints) != 2
-            or any(degree not in {1, 2} for degree in degrees.values())
-            or any(
-                abs(point_values[point][radial_axis] - axis_center) > tolerance
-                for point in endpoints
-            )
-        ):
+        if any(degree not in {1, 2} for degree in degrees.values()):
             continue
 
-        axis_sources: set[str] = set()
-        for segment in segments:
-            if (
-                _point_key(segment["start"], axes) in endpoints
-                or _point_key(segment["end"], axes) in endpoints
+        if len(endpoints) == 2:
+            if any(
+                abs(point_values[point][radial_axis] - axis_center) > tolerance
+                for point in endpoints
             ):
-                axis_sources.update(segment["source_targets"])
-        segments.append(
-            {
-                "start": dict(point_values[endpoints[0]]),
-                "end": dict(point_values[endpoints[1]]),
-                "source_targets": sorted(axis_sources),
-                "source_ref": "rotation_axis_closure",
-            }
-        )
+                continue
+            axis_sources: set[str] = set()
+            for segment in segments:
+                if (
+                    _point_key(segment["start"], axes) in endpoints
+                    or _point_key(segment["end"], axes) in endpoints
+                ):
+                    axis_sources.update(segment["source_targets"])
+            segments.append(
+                {
+                    "start": dict(point_values[endpoints[0]]),
+                    "end": dict(point_values[endpoints[1]]),
+                    "source_targets": sorted(axis_sources),
+                    "source_ref": "rotation_axis_closure",
+                }
+            )
+        elif endpoints:
+            continue
 
         by_vertex: dict[tuple[float, float], list[int]] = {}
         for index, segment in enumerate(segments):

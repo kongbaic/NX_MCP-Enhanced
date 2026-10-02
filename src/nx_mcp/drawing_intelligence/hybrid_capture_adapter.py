@@ -1970,7 +1970,7 @@ def _rotational_profile_topology_hints(
                 if len(constant_axes) != 1:
                     edge_records = []
                     break
-                edge_record = {
+                edge_record: dict[str, Any] = {
                     "ref": ref,
                     "profile_entity_key": profile_entity_by_ref[ref],
                     "source_orientation": orientation,

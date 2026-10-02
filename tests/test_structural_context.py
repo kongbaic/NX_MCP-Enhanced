@@ -184,6 +184,86 @@ def test_structural_query_builder_prefers_full_drawing_context_image():
     assert template.answers[1].evidence == ["structural:R2:crop"]
 
 
+def _hybrid_report_with_accepted_linear_span_bounds() -> dict:
+    return {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {},
+        "candidates": [
+            {
+                "candidate_id": "DG_INNER",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": "250",
+                "witness_positions_px": [20.0, 180.0],
+            },
+            {
+                "candidate_id": "DG_OUTER",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": "300",
+                "witness_positions_px": [10.0, 190.0],
+            },
+            {
+                "candidate_id": "DG_HEIGHT_LOCAL",
+                "region_id": "R1",
+                "orientation": "vertical",
+                "accepted_token": "28",
+                "witness_positions_px": [40.0, 100.0],
+            },
+        ],
+    }
+
+
+def test_structural_query_records_accepted_linear_span_lower_bounds():
+    plan = build_structural_context_queries(
+        _reader_input(),
+        hybrid_report=_hybrid_report_with_accepted_linear_span_bounds(),
+    )
+
+    bounds = {
+        item.visual_direction: item
+        for item in plan.queries[0].accepted_linear_span_lower_bounds
+    }
+    assert bounds["horizontal"].minimum_value == 300
+    assert bounds["horizontal"].candidate_ids == ["DG_OUTER"]
+    assert bounds["vertical"].minimum_value == 28
+    assert bounds["vertical"].candidate_ids == ["DG_HEIGHT_LOCAL"]
+    assert (
+        plan.rules["overall_dimension_must_cover_accepted_linear_spans"]
+        is True
+    )
+
+
+def test_structural_context_rejects_overall_smaller_than_accepted_linear_span():
+    plan = build_structural_context_queries(
+        _reader_input(),
+        hybrid_report=_hybrid_report_with_accepted_linear_span_bounds(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["overall_dimension_facts"][0]["value"] = 250
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(
+        StructuralContextError,
+        match="overall axis X=250 is smaller than accepted same-axis linear span 300",
+    ):
+        assemble_structural_context(plan, answers)
+
+
+def test_structural_context_accepts_overall_covering_accepted_linear_span():
+    plan = build_structural_context_queries(
+        _reader_input(),
+        hybrid_report=_hybrid_report_with_accepted_linear_span_bounds(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["overall_dimension_facts"][0]["value"] = 300
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    context = assemble_structural_context(plan, answers)
+    facts = {(item.axis, item.value) for item in context.overall_dimension_facts}
+    assert ("X", 300.0) in facts
+
+
 def test_structural_context_builds_independent_overall_facts():
     plan = build_structural_context_queries(_reader_input())
     context = assemble_structural_context(plan, _answers())

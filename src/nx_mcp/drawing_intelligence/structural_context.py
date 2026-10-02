@@ -294,6 +294,103 @@ def _labeled_dimension_targets_by_region(
     return output
 
 
+class StructuralAcceptedLinearSpanLowerBound(_StrictStructuralModel):
+    """OCR-confirmed same-direction span that any claimed overall must cover."""
+
+    visual_direction: Literal["horizontal", "vertical"]
+    minimum_value: float = Field(gt=0)
+    candidate_ids: list[str] = Field(min_length=1)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def _unique_candidate_ids(cls, value: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(item for item in value if item))
+        if not cleaned:
+            raise ValueError("candidate_ids must contain at least one non-empty id")
+        return cleaned
+
+
+def _accepted_linear_span_lower_bounds_by_region(
+    hybrid_report: dict | None,
+) -> dict[str, list[StructuralAcceptedLinearSpanLowerBound]]:
+    """Return the largest OCR-confirmed linear span per region/direction.
+
+    The bound is engineering-value evidence from accepted OCR dimensions only.
+    It does not infer an overall dimension and uses no pixel-to-mm conversion.
+    """
+
+    if hybrid_report is None:
+        return {}
+    candidates = hybrid_report.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+
+    grouped: dict[tuple[str, str], list[tuple[float, str]]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        region_id = str(candidate.get("region_id") or "")
+        candidate_id = str(candidate.get("candidate_id") or "")
+        visual_direction = str(candidate.get("orientation") or "")
+        accepted_token = candidate.get("accepted_token")
+        if (
+            not region_id
+            or not candidate_id
+            or visual_direction not in {"horizontal", "vertical"}
+            or accepted_token is None
+        ):
+            continue
+
+        if isinstance(accepted_token, str):
+            nominal_token = accepted_token.split("±", 1)[0]
+        else:
+            nominal_token = accepted_token
+        value = _positive_number(nominal_token)
+        if value is None:
+            continue
+
+        witnesses = candidate.get("witness_positions_px")
+        if not (
+            isinstance(witnesses, list)
+            and len(witnesses) == 2
+            and all(
+                isinstance(item, (int, float)) and not isinstance(item, bool)
+                for item in witnesses
+            )
+        ):
+            continue
+        grouped.setdefault(
+            (region_id, visual_direction),
+            [],
+        ).append((value, candidate_id))
+
+    output: dict[str, list[StructuralAcceptedLinearSpanLowerBound]] = {}
+    for (region_id, visual_direction), records in sorted(grouped.items()):
+        maximum = max(value for value, _candidate_id in records)
+        candidate_ids = sorted(
+            candidate_id
+            for value, candidate_id in records
+            if math.isclose(value, maximum, abs_tol=1e-9)
+        )
+        output.setdefault(region_id, []).append(
+            StructuralAcceptedLinearSpanLowerBound(
+                visual_direction=visual_direction,
+                minimum_value=maximum,
+                candidate_ids=candidate_ids,
+            )
+        )
+
+    for bounds in output.values():
+        bounds.sort(
+            key=lambda item: (
+                item.visual_direction,
+                item.minimum_value,
+                item.candidate_ids,
+            )
+        )
+    return output
+
+
 class StructuralRegionQuery(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     kind: Literal["structural_context"] = "structural_context"
@@ -303,6 +400,9 @@ class StructuralRegionQuery(_StrictStructuralModel):
     labeled_dimension_targets: list[StructuralLabeledDimensionTarget] = Field(
         default_factory=list
     )
+    accepted_linear_span_lower_bounds: list[
+        StructuralAcceptedLinearSpanLowerBound
+    ] = Field(default_factory=list)
     deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None
     deterministic_profile_symmetry_method: Literal[
         "foreground_mirror_consensus_v1"
@@ -542,6 +642,9 @@ def build_structural_context_queries(
         regions,
         hybrid_report,
     )
+    accepted_span_bounds_by_region = (
+        _accepted_linear_span_lower_bounds_by_region(hybrid_report)
+    )
 
     queries: list[StructuralRegionQuery] = []
     seen_regions: set[str] = set()
@@ -592,6 +695,9 @@ def build_structural_context_queries(
                     region_id,
                     [],
                 ),
+                accepted_linear_span_lower_bounds=(
+                    accepted_span_bounds_by_region.get(region_id, [])
+                ),
                 deterministic_profile_symmetry_axis=deterministic_axis,
                 deterministic_profile_symmetry_method=deterministic_method,
                 deterministic_profile_symmetry_overlay=(
@@ -641,6 +747,7 @@ def build_structural_context_queries(
             "labeled_dimension_direction_hint_must_be_preserved": True,
             "labeled_dimension_overall_relation_requires_actual_overall_boundary": True,
             "labeled_dimension_profile_topology_metadata_optional": True,
+            "overall_dimension_must_cover_accepted_linear_spans": True,
             "pixel_measurement": False,
         },
         view_axis_map={
@@ -843,6 +950,16 @@ def assemble_structural_context(
                 )
             )
 
+        lower_bound_by_axis: dict[Axis, StructuralAcceptedLinearSpanLowerBound] = {}
+        for bound in query.accepted_linear_span_lower_bounds:
+            axis = getattr(view_axes, bound.visual_direction)
+            previous = lower_bound_by_axis.get(axis)
+            if (
+                previous is None
+                or bound.minimum_value > previous.minimum_value
+            ):
+                lower_bound_by_axis[axis] = bound
+
         seen_axes: set[Axis] = set()
         for fact in answer.overall_dimension_facts:
             if fact.axis not in visible_axes:
@@ -860,6 +977,17 @@ def assemble_structural_context(
                 query.evidence_label,
                 query_id=query.query_id,
             )
+            lower_bound = lower_bound_by_axis.get(fact.axis)
+            if (
+                lower_bound is not None
+                and fact.value < lower_bound.minimum_value - 1e-9
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} overall axis {fact.axis}="
+                    f"{fact.value:g} is smaller than accepted same-axis linear "
+                    f"span {lower_bound.minimum_value:g} from "
+                    f"{lower_bound.candidate_ids}"
+                )
             overall_facts.append(
                 PartialOverallDimensionFact(
                     axis=fact.axis,

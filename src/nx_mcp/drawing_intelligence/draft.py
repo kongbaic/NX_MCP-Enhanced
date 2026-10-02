@@ -734,6 +734,154 @@ def _point_key(point: dict[str, float], axes: tuple[str, str]) -> tuple[float, f
     )
 
 
+def _branched_rotational_material_segments(
+    edges: dict[str, dict[str, Any]],
+    adjacency: dict[str, set[str]],
+    axes: tuple[str, str],
+) -> list[dict[str, Any]] | None:
+    """Split a branched physical boundary graph into material-only segments.
+
+    Each physical boundary line may intersect more than two perpendicular
+    boundaries after crop-local aliases are merged. Engineering coordinates
+    order those intersections; material-side direction determines whether each
+    interval is material or a void gap. No raster distance supplies metric
+    geometry.
+    """
+
+    if not any(len(neighbors) > 2 for neighbors in adjacency.values()):
+        return None
+    if any(len(neighbors) < 2 for neighbors in adjacency.values()):
+        return None
+
+    segments: list[dict[str, Any]] = []
+    for ref, edge in sorted(edges.items()):
+        if edge.get("material_axis_direction") not in {"negative", "positive"}:
+            return None
+
+        varying_axis = axes[1] if edge["axis"] == axes[0] else axes[0]
+        neighbors = sorted(
+            adjacency[ref],
+            key=lambda neighbor: (
+                float(edges[neighbor]["value"]),
+                neighbor,
+            ),
+        )
+        if any(
+            edges[neighbor]["axis"] != varying_axis
+            or edges[neighbor].get("material_axis_direction")
+            not in {"negative", "positive"}
+            for neighbor in neighbors
+        ):
+            return None
+
+        for index in range(len(neighbors) - 1):
+            lower_ref = neighbors[index]
+            upper_ref = neighbors[index + 1]
+            lower = edges[lower_ref]
+            upper = edges[upper_ref]
+            lower_value = float(lower["value"])
+            upper_value = float(upper["value"])
+            if upper_value - lower_value <= 1e-9:
+                return None
+
+            directions = (
+                lower["material_axis_direction"],
+                upper["material_axis_direction"],
+            )
+            if directions == ("negative", "positive"):
+                # Both crossing boundaries point material away from the
+                # interval, so this span is a deterministic void gap.
+                continue
+            if directions != ("positive", "negative"):
+                # Same-direction or otherwise inconsistent boundaries do not
+                # prove either material or void; preserve fail-closed behavior.
+                return None
+
+            first = {
+                edge["axis"]: float(edge["value"]),
+                varying_axis: lower_value,
+            }
+            second = {
+                edge["axis"]: float(edge["value"]),
+                varying_axis: upper_value,
+            }
+            segments.append(
+                {
+                    "start": first,
+                    "end": second,
+                    "source_targets": sorted(
+                        {
+                            edge["target"],
+                            lower["target"],
+                            upper["target"],
+                        }
+                    ),
+                    "source_ref": ref,
+                }
+            )
+
+    return segments or None
+
+
+def _ordered_rotational_cycle_matches_material_polarity(
+    ordered: list[dict[str, Any]],
+    edges: dict[str, dict[str, Any]],
+    axes: tuple[str, str],
+) -> bool:
+    """Require every decomposed boundary normal to point into the material cycle."""
+
+    if len(ordered) < 3:
+        return False
+
+    area2 = 0.0
+    for segment in ordered:
+        start = segment["start"]
+        end = segment["end"]
+        area2 += (
+            float(start[axes[0]]) * float(end[axes[1]])
+            - float(end[axes[0]]) * float(start[axes[1]])
+        )
+    if abs(area2) <= 1e-9:
+        return False
+    counter_clockwise = area2 > 0.0
+
+    for segment in ordered:
+        ref = str(segment.get("source_ref") or "")
+        edge = edges.get(ref)
+        if edge is None:
+            return False
+        material_direction = edge.get("material_axis_direction")
+        if material_direction not in {"negative", "positive"}:
+            return False
+
+        start = segment["start"]
+        end = segment["end"]
+        delta_u = float(end[axes[0]]) - float(start[axes[0]])
+        delta_v = float(end[axes[1]]) - float(start[axes[1]])
+
+        if edge["axis"] == axes[0]:
+            if abs(delta_u) > 1e-9 or abs(delta_v) <= 1e-9:
+                return False
+            if counter_clockwise:
+                interior_direction = "negative" if delta_v > 0.0 else "positive"
+            else:
+                interior_direction = "positive" if delta_v > 0.0 else "negative"
+        elif edge["axis"] == axes[1]:
+            if abs(delta_v) > 1e-9 or abs(delta_u) <= 1e-9:
+                return False
+            if counter_clockwise:
+                interior_direction = "positive" if delta_u > 0.0 else "negative"
+            else:
+                interior_direction = "negative" if delta_u > 0.0 else "positive"
+        else:
+            return False
+
+        if material_direction != interior_direction:
+            return False
+
+    return True
+
+
 def _materialize_rotational_profile(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -815,6 +963,16 @@ def _materialize_rotational_profile(
                 "value": float(
                     _planner_value_for_target(graph, target, raw_value)
                 ),
+                **(
+                    {
+                        "material_axis_direction": str(
+                            raw_edge["material_axis_direction"]
+                        )
+                    }
+                    if raw_edge.get("material_axis_direction")
+                    in {"negative", "positive"}
+                    else {}
+                ),
             }
         if not valid:
             continue
@@ -839,7 +997,7 @@ def _materialize_rotational_profile(
                 break
             adjacency[left].add(right)
             adjacency[right].add(left)
-        if not valid or any(len(neighbors) != 2 for neighbors in adjacency.values()):
+        if not valid:
             continue
 
         seen: set[str] = set()
@@ -853,48 +1011,87 @@ def _materialize_rotational_profile(
         if seen != set(edges):
             continue
 
-        junction_points: dict[tuple[str, str], dict[str, float]] = {}
-        for left in sorted(edges):
-            for right in sorted(adjacency[left]):
-                if left >= right:
-                    continue
-                point = {
-                    edges[left]["axis"]: edges[left]["value"],
-                    edges[right]["axis"]: edges[right]["value"],
-                }
-                if set(point) != set(axes):
+        branched_topology = any(
+            len(neighbors) != 2
+            for neighbors in adjacency.values()
+        )
+        segments: list[dict[str, Any]]
+        if branched_topology:
+            decomposed = _branched_rotational_material_segments(
+                edges,
+                adjacency,
+                axes,
+            )
+            if decomposed is None:
+                continue
+            segments = decomposed
+        else:
+            junction_points: dict[tuple[str, str], dict[str, float]] = {}
+            for left in sorted(edges):
+                for right in sorted(adjacency[left]):
+                    if left >= right:
+                        continue
+                    point = {
+                        edges[left]["axis"]: edges[left]["value"],
+                        edges[right]["axis"]: edges[right]["value"],
+                    }
+                    if set(point) != set(axes):
+                        valid = False
+                        break
+                    junction_points[(left, right)] = point
+                if not valid:
+                    break
+            if not valid:
+                continue
+
+            segments = []
+            for ref, edge in sorted(edges.items()):
+                neighbors = sorted(adjacency[ref])
+                if len(neighbors) != 2:
                     valid = False
                     break
-                junction_points[(left, right)] = point
-            if not valid:
-                break
-        if not valid:
-            continue
-
-        segments: list[dict[str, Any]] = []
-        for ref, edge in sorted(edges.items()):
-            neighbors = sorted(adjacency[ref])
-            points = [
-                junction_points[
-                    (ref, neighbor) if ref < neighbor else (neighbor, ref)
+                points = [
+                    junction_points[
+                        (ref, neighbor)
+                        if ref < neighbor
+                        else (neighbor, ref)
+                    ]
+                    for neighbor in neighbors
                 ]
-                for neighbor in neighbors
-            ]
-            first = dict(points[0])
-            second = dict(points[1])
-            sources = {
-                edge["target"],
-                edges[neighbors[0]]["target"],
-                edges[neighbors[1]]["target"],
-            }
+                segments.append(
+                    {
+                        "start": dict(points[0]),
+                        "end": dict(points[1]),
+                        "source_targets": sorted(
+                            {
+                                edge["target"],
+                                edges[neighbors[0]]["target"],
+                                edges[neighbors[1]]["target"],
+                            }
+                        ),
+                        "source_ref": ref,
+                    }
+                )
+            if not valid:
+                continue
+
+        clipped_segments: list[dict[str, Any]] = []
+        for segment in segments:
+            source_ref = str(segment.get("source_ref") or "")
+            edge = edges.get(source_ref)
+            if edge is None:
+                valid = False
+                break
+            first = dict(segment["start"])
+            second = dict(segment["end"])
 
             if edge["axis"] == radial_axis:
-                radial = edge["value"]
+                radial = float(edge["value"])
                 if radial <= axis_center + tolerance:
                     continue
             else:
-                first_radial = first[radial_axis]
-                second_radial = second[radial_axis]
+                first_radial = float(first[radial_axis])
+                second_radial = float(second[radial_axis])
                 if (
                     first_radial < axis_center - tolerance
                     and second_radial < axis_center - tolerance
@@ -907,14 +1104,16 @@ def _materialize_rotational_profile(
 
             if _point_key(first, axes) == _point_key(second, axes):
                 continue
-            segments.append(
+            clipped_segments.append(
                 {
+                    **segment,
                     "start": first,
                     "end": second,
-                    "source_targets": sorted(sources),
-                    "source_ref": ref,
                 }
             )
+        if not valid:
+            continue
+        segments = clipped_segments
 
         if len(segments) < 3:
             continue
@@ -1017,6 +1216,15 @@ def _materialize_rotational_profile(
             not valid
             or len(used) != len(segments)
             or current_vertex != start_vertex
+        ):
+            continue
+        if (
+            branched_topology
+            and not _ordered_rotational_cycle_matches_material_polarity(
+                ordered,
+                edges,
+                axes,
+            )
         ):
             continue
 

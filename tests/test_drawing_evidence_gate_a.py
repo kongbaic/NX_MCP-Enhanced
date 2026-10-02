@@ -279,6 +279,158 @@ def test_resolved_annular_rotational_meridian_materializes_without_axis_closure(
     assert R.check_drawing_json(draft) == []
 
 
+def _branched_rotational_material_graph(*, omit_inner_right_polarity=False):
+    targets = {
+        "LEFT": "feature:F_LEFT.boundary.x",
+        "INNER_LEFT": "feature:F_INNER_LEFT.boundary.x",
+        "INNER_RIGHT": "feature:F_INNER_RIGHT.boundary.x",
+        "RIGHT": "feature:F_RIGHT.boundary.x",
+        "BOTTOM": "feature:F_BOTTOM.boundary.z",
+        "TOP": "feature:F_TOP.boundary.z",
+    }
+    raw_values = {
+        "LEFT": 20,
+        "INNER_LEFT": 45,
+        "INNER_RIGHT": 55,
+        "RIGHT": 80,
+        "BOTTOM": 0,
+        "TOP": 60,
+    }
+    material_directions = {
+        "LEFT": "positive",
+        "INNER_LEFT": "negative",
+        "INNER_RIGHT": "positive",
+        "RIGHT": "negative",
+        "BOTTOM": "positive",
+        "TOP": "negative",
+    }
+    edges = []
+    for ref in (
+        "LEFT",
+        "INNER_LEFT",
+        "INNER_RIGHT",
+        "RIGHT",
+        "BOTTOM",
+        "TOP",
+    ):
+        axis = "X" if ref not in {"BOTTOM", "TOP"} else "Z"
+        edge = {
+            "ref": ref,
+            "profile_entity_id": f"E_{ref}",
+            "physical_feature_id": f"F_{ref}",
+            "constant_axis": axis,
+            "boundary_target": targets[ref],
+        }
+        if not (omit_inner_right_polarity and ref == "INNER_RIGHT"):
+            edge["material_axis_direction"] = material_directions[ref]
+            edge["background_axis_direction"] = (
+                "negative"
+                if material_directions[ref] == "positive"
+                else "positive"
+            )
+        edges.append(edge)
+
+    junctions = [
+        [vertical, horizontal]
+        for vertical in ("LEFT", "INNER_LEFT", "INNER_RIGHT", "RIGHT")
+        for horizontal in ("BOTTOM", "TOP")
+    ]
+    return EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=100,
+            height_z=60,
+        ),
+        direct_values=[
+            *_overall_values(length_x=100, width_y=100, height_z=60),
+            *[
+                DirectValueEvidence(
+                    id=ref,
+                    target=targets[ref],
+                    value=value,
+                )
+                for ref, value in raw_values.items()
+            ],
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "PHYSICAL_BRANCH",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": edges,
+                        "junctions": junctions,
+                        "source_ids": ["structural:branched:rotation"],
+                        "basis": (
+                            "identity_linked_physical_rotational_profile_topology"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+
+def test_branched_rotational_topology_decomposes_material_away_from_void_gap():
+    graph = _branched_rotational_material_graph()
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+    assert draft["profile"]["topology"] == "closed_polygon"
+
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in draft["profile"]["segments"]
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in draft["profile"]["segments"]
+    }
+    assert points == {
+        (5.0, 0.0),
+        (30.0, 0.0),
+        (30.0, 60.0),
+        (5.0, 60.0),
+    }
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+    ]
+    assert R.check_drawing_json(draft) == []
+
+
+def test_branched_rotational_topology_stays_blocked_without_complete_polarity():
+    graph = _branched_rotational_material_graph(
+        omit_inner_right_polarity=True,
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_rotational_profile_stays_blocked_when_one_engineering_boundary_is_unresolved():
     graph = _rotational_rectangle_graph(omit_top=True)
     result = resolve_evidence_graph(graph)

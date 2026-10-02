@@ -979,15 +979,14 @@ def _bilateral_exterior_oblique_sources(
                 )
             ):
                 return None
-            ordered = tuple(
-                sorted(
-                    (
-                        (float(point[0]), float(point[1]))
-                        for point in endpoints
-                    ),
-                    key=lambda point: (point[1], point[0]),
-                )
+            ordered_points = sorted(
+                (
+                    (float(point[0]), float(point[1]))
+                    for point in endpoints
+                ),
+                key=lambda point: (point[1], point[0]),
             )
+            ordered = (ordered_points[0], ordered_points[1])
             if source in raw_by_source and raw_by_source[source] != ordered:
                 return None
             raw_by_source[source] = ordered
@@ -1038,7 +1037,7 @@ def _materialize_symmetric_tapered_annular_profile(
             and observation.get("kind")
             == "hybrid_rotational_profile_topology_ledger"
             and observation.get("engineering_coordinate_inferred_from_pixels")
-            is not False
+            is False
             and observation.get("pixel_geometry_used_for_topology_only") is True
         ):
             items = observation.get("items")

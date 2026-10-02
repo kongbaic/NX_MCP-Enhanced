@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -374,7 +374,10 @@ def _accepted_linear_span_lower_bounds_by_region(
         )
         output.setdefault(region_id, []).append(
             StructuralAcceptedLinearSpanLowerBound(
-                visual_direction=visual_direction,
+                visual_direction=cast(
+                    Literal["horizontal", "vertical"],
+                    visual_direction,
+                ),
                 minimum_value=maximum,
                 candidate_ids=candidate_ids,
             )
@@ -1001,7 +1004,8 @@ def assemble_structural_context(
         by_axis[overall_fact.axis].append(overall_fact.value)
 
     direct_values: dict[Axis, float] = {}
-    for axis in ("X", "Y", "Z"):
+    for raw_axis in ("X", "Y", "Z"):
+        axis = cast(Axis, raw_axis)
         values = by_axis[axis]
         if not values:
             continue

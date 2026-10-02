@@ -5786,9 +5786,10 @@ def _overlapping_profile_associations(
     """Merge only mutually unique structural edges from proven overlapping crops.
 
     Raster geometry proves identity only.  It never supplies an engineering
-    coordinate.  Candidate pairs must agree in orientation and global-raster
-    axis position, overlap most of the shorter observed span, and be mutually
-    unique within each region pair.
+    coordinate. Exact same-raster line geometry may establish identity even
+    when the line was exposed only through dimension witnesses. Approximate
+    overlap still requires independent structural support, and every match
+    must remain mutually unique within its region pair.
     """
 
     eligible_by_region: dict[str, list[dict[str, Any]]] = {}
@@ -5819,7 +5820,7 @@ def _overlapping_profile_associations(
             )
             or not isinstance(support, int)
             or isinstance(support, bool)
-            or support <= 0
+            or support < 0
         ):
             continue
         low, high = sorted(float(value) for value in span)
@@ -5838,6 +5839,27 @@ def _overlapping_profile_associations(
             return False
         left_position = float(left["position_px"])
         right_position = float(right["position_px"])
+        left_low, left_high = sorted(float(value) for value in left["span_px"])
+        right_low, right_high = sorted(float(value) for value in right["span_px"])
+
+        exact_same_raster_geometry = (
+            abs(left_position - right_position) <= 1e-9
+            and abs(left_low - right_low) <= 1e-9
+            and abs(left_high - right_high) <= 1e-9
+        )
+        if exact_same_raster_geometry:
+            return True
+
+        # Approximate overlap is intentionally stricter. It may bridge
+        # independently detected structural lines from overlapping crops, but
+        # dimension-only exposure is not enough unless the underlying raster
+        # segment is exactly the same.
+        if (
+            int(left.get("non_dimension_crossing_source_count", 0)) <= 0
+            or int(right.get("non_dimension_crossing_source_count", 0)) <= 0
+        ):
+            return False
+
         left_tolerance = float(left.get("axis_tolerance_px", 0.0) or 0.0)
         right_tolerance = float(right.get("axis_tolerance_px", 0.0) or 0.0)
         if abs(left_position - right_position) > max(
@@ -5847,8 +5869,6 @@ def _overlapping_profile_associations(
         ):
             return False
 
-        left_low, left_high = sorted(float(value) for value in left["span_px"])
-        right_low, right_high = sorted(float(value) for value in right["span_px"])
         overlap = min(left_high, right_high) - max(left_low, right_low)
         shorter = min(left_high - left_low, right_high - right_low)
         if shorter <= 0 or overlap <= 0:

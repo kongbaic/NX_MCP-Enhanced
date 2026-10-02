@@ -1515,6 +1515,7 @@ def _overlap_profile_edge(
     orientation,
     position,
     span,
+    support=1,
 ):
     return {
         "kind": "profile_edge_candidate",
@@ -1524,7 +1525,7 @@ def _overlap_profile_edge(
         "position_px": float(position),
         "span_px": [float(span[0]), float(span[1])],
         "axis_tolerance_px": 1.0,
-        "non_dimension_crossing_source_count": 1,
+        "non_dimension_crossing_source_count": support,
     }
 
 
@@ -1595,6 +1596,104 @@ def test_overlapping_profile_associations_merge_only_mutual_unique_edges():
         association.basis == ["shared_raster_profile_identity"]
         for association in associations
     )
+
+
+def test_overlapping_profile_associations_merge_exact_geometry_without_nondimension_support():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+            {"region_id": "R2", "bbox_px": [50, 0, 200, 200]},
+        ]
+    }
+    view_lookup = {
+        region_id: hybrid_adapter.HybridRegionView(
+            region_id=region_id,
+            view_kind="front",
+            evidence=[f"structural:{region_id}"],
+        )
+        for region_id in ("R1", "R2")
+    }
+    inventory = [
+        _overlap_profile_edge(
+            "R1",
+            "R1.EXACT",
+            orientation="vertical",
+            position=386.0,
+            span=[383.0, 442.0],
+            support=0,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.EXACT",
+            orientation="vertical",
+            position=386.0,
+            span=[383.0, 442.0],
+            support=0,
+        ),
+    ]
+    by_ref = {
+        item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
+        for item in inventory
+    }
+
+    associations = hybrid_adapter._overlapping_profile_associations(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        profile_entity_by_ref=by_ref,
+    )
+
+    assert len(associations) == 1
+    assert sorted(associations[0].entity_keys) == sorted(by_ref.values())
+    assert associations[0].basis == ["shared_raster_profile_identity"]
+
+
+def test_overlapping_profile_associations_keep_support_gate_for_approximate_geometry():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+            {"region_id": "R2", "bbox_px": [50, 0, 200, 200]},
+        ]
+    }
+    view_lookup = {
+        region_id: hybrid_adapter.HybridRegionView(
+            region_id=region_id,
+            view_kind="front",
+            evidence=[f"structural:{region_id}"],
+        )
+        for region_id in ("R1", "R2")
+    }
+    inventory = [
+        _overlap_profile_edge(
+            "R1",
+            "R1.APPROX",
+            orientation="vertical",
+            position=386.0,
+            span=[383.0, 442.0],
+            support=0,
+        ),
+        _overlap_profile_edge(
+            "R2",
+            "R2.APPROX",
+            orientation="vertical",
+            position=386.5,
+            span=[383.0, 442.0],
+            support=0,
+        ),
+    ]
+    by_ref = {
+        item["ref"]: f"{item['region_id']}.PROFILE.{item['ref']}"
+        for item in inventory
+    }
+
+    associations = hybrid_adapter._overlapping_profile_associations(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        profile_entity_by_ref=by_ref,
+    )
+
+    assert associations == []
 
 
 def test_overlapping_profile_associations_fail_closed_on_one_to_many_match():

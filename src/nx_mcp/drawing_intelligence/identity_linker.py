@@ -173,6 +173,37 @@ def _merge_physical_rotational_topology_items(
             merged_edge = copy.deepcopy(representative)
             merged_edge["ref"] = refs[0]
             merged_edge["source_refs"] = refs
+            polarity = {
+                (
+                    int(record["material_side_index"]),
+                    int(record["background_side_index"]),
+                )
+                for record in records
+                if (
+                    record.get("one_sided_boundary_candidate") is True
+                    and record.get("material_side_index") in {0, 1}
+                    and record.get("background_side_index") in {0, 1}
+                    and record.get("material_side_index")
+                    != record.get("background_side_index")
+                )
+            }
+            if len(polarity) == 1 and not any(
+                record.get("material_side_ambiguous") is True
+                for record in records
+            ):
+                material_side_index, background_side_index = next(iter(polarity))
+                merged_edge["one_sided_boundary_candidate"] = True
+                merged_edge["material_side_index"] = material_side_index
+                merged_edge["background_side_index"] = background_side_index
+                merged_edge.pop("material_side_ambiguous", None)
+            elif polarity or any(
+                record.get("material_side_ambiguous") is True
+                for record in records
+            ):
+                merged_edge.pop("one_sided_boundary_candidate", None)
+                merged_edge.pop("material_side_index", None)
+                merged_edge.pop("background_side_index", None)
+                merged_edge["material_side_ambiguous"] = True
             merged_edges.append(merged_edge)
 
         junctions: set[tuple[str, str]] = set()
@@ -368,6 +399,8 @@ def _physical_rotational_oblique_profile_items(
                 {
                     "region_id": region_id,
                     "source_ids": source_ids,
+                    "material_side_index": item.get("material_side_index"),
+                    "background_side_index": item.get("background_side_index"),
                 }
             )
 
@@ -411,10 +444,34 @@ def _physical_rotational_oblique_profile_items(
                 ]
             ).encode("utf-8")
         ).hexdigest()[:12].upper()
+        polarity = {
+            (
+                int(record["material_side_index"]),
+                int(record["background_side_index"]),
+            )
+            for record in records
+            if (
+                record.get("material_side_index") in {0, 1}
+                and record.get("background_side_index") in {0, 1}
+                and record.get("material_side_index")
+                != record.get("background_side_index")
+            )
+        }
+        polarity_fields: dict[str, Any] = {}
+        if len(polarity) == 1:
+            material_side_index, background_side_index = next(iter(polarity))
+            polarity_fields = {
+                "material_side_index": material_side_index,
+                "background_side_index": background_side_index,
+            }
+        elif polarity:
+            polarity_fields = {"material_side_ambiguous": True}
+
         output.append(
             {
                 "id": f"PHYSICAL_OBLIQUE_{digest}",
                 "region_ids": region_ids,
+                **polarity_fields,
                 "view_kind": view_kind,
                 "plane": plane,
                 "rotation_axis": rotation_axis,

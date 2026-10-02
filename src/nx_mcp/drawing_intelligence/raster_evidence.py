@@ -175,6 +175,8 @@ def _one_sided_boundary_evidence(
             "side_background_fraction": [],
             "near_side_background_fraction": [],
             "mean_gray_delta": 0.0,
+            "background_side_index": None,
+            "material_side_index": None,
         }
 
     normal_x = -dy / length
@@ -216,6 +218,8 @@ def _one_sided_boundary_evidence(
             "side_background_fraction": [],
             "near_side_background_fraction": [],
             "mean_gray_delta": 0.0,
+            "background_side_index": None,
+            "material_side_index": None,
         }
 
     side_means = [
@@ -238,6 +242,19 @@ def _one_sided_boundary_evidence(
         and min(near_background_fractions) <= 0.25
         and mean_delta >= 30.0
     )
+    background_side_index: int | None = None
+    material_side_index: int | None = None
+    if one_sided:
+        background_side_index = max(
+            range(2),
+            key=lambda index: (
+                background_fractions[index],
+                near_background_fractions[index],
+                side_means[index],
+            ),
+        )
+        material_side_index = 1 - background_side_index
+
     return {
         "one_sided_boundary_candidate": one_sided,
         "sample_offset_px": sample_offset,
@@ -256,6 +273,8 @@ def _one_sided_boundary_evidence(
             for value in near_background_fractions
         ],
         "mean_gray_delta": round(mean_delta, 3),
+        "background_side_index": background_side_index,
+        "material_side_index": material_side_index,
     }
 
 
@@ -1060,6 +1079,17 @@ def _witness_line_evidence(
                 )
                 record["axis_ink_fraction"] = ink_fraction
                 record["axis_ink_run_fraction"] = ink_run_fraction
+                if orientation == "horizontal":
+                    boundary_first = (int(start), int(round(float(axis))))
+                    boundary_second = (int(end), int(round(float(axis))))
+                else:
+                    boundary_first = (int(round(float(axis))), int(start))
+                    boundary_second = (int(round(float(axis))), int(end))
+                record["boundary_evidence"] = _one_sided_boundary_evidence(
+                    gray,
+                    boundary_first,
+                    boundary_second,
+                )
             matched.append(record)
         matched.sort(
             key=lambda item: (

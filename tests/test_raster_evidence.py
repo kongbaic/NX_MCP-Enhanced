@@ -307,6 +307,13 @@ def test_one_sided_boundary_evidence_rejects_interior_line():
     )
 
     assert boundary["one_sided_boundary_candidate"] is True
+    assert boundary["background_side_index"] in {0, 1}
+    assert boundary["material_side_index"] in {0, 1}
+    assert boundary["background_side_index"] != boundary["material_side_index"]
+    assert (
+        boundary["side_background_fraction"][boundary["background_side_index"]]
+        > boundary["side_background_fraction"][boundary["material_side_index"]]
+    )
     assert max(boundary["side_background_fraction"]) >= 0.70
     assert min(boundary["side_background_fraction"]) <= 0.25
     assert max(boundary["near_side_background_fraction"]) >= 0.60

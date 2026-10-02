@@ -108,6 +108,32 @@ def test_structural_profile_anchors_preserve_axis_ink_continuity():
     assert by_position[20.0]["axis_ink_run_fraction"] == 0.77
 
 
+def test_structural_profile_anchors_preserve_unambiguous_material_side_polarity():
+    raw = _raw()
+    source_lines = raw["dimension_geometry_candidates"][0][
+        "witness_line_evidence"
+    ][0]["source_lines"]
+    source_lines[0]["boundary_evidence"] = {
+        "one_sided_boundary_candidate": True,
+        "material_side_index": 1,
+        "background_side_index": 0,
+    }
+
+    anchors = derive_structural_profile_anchors(
+        raw,
+        "R1",
+        "horizontal",
+    )
+    by_position = {
+        round(float(anchor["position_px"]), 3): anchor
+        for anchor in anchors
+    }
+
+    assert by_position[20.0]["one_sided_boundary_candidate"] is True
+    assert by_position[20.0]["material_side_index"] == 1
+    assert by_position[20.0]["background_side_index"] == 0
+
+
 def test_structural_profile_anchors_reject_low_axis_ink_continuity():
     raw = _raw()
     source_lines = raw["dimension_geometry_candidates"][0][

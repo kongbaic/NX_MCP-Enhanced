@@ -93,9 +93,43 @@ def _collect_source_lines(
                             float(record.get(field, 0.0)),
                             float(raw_value),
                         )
+                boundary = source.get("boundary_evidence")
+                if (
+                    isinstance(boundary, dict)
+                    and boundary.get("one_sided_boundary_candidate") is True
+                    and boundary.get("material_side_index") in {0, 1}
+                    and boundary.get("background_side_index") in {0, 1}
+                    and boundary.get("material_side_index")
+                    != boundary.get("background_side_index")
+                ):
+                    record.setdefault("_material_side_votes", []).append(
+                        int(boundary["material_side_index"])
+                    )
+                    record.setdefault("_background_side_votes", []).append(
+                        int(boundary["background_side_index"])
+                    )
+
+    normalized: list[dict[str, Any]] = []
+    for record in lines.values():
+        material_votes = record.pop("_material_side_votes", [])
+        background_votes = record.pop("_background_side_votes", [])
+        if material_votes or background_votes:
+            if (
+                material_votes
+                and background_votes
+                and len(set(material_votes)) == 1
+                and len(set(background_votes)) == 1
+                and material_votes[0] != background_votes[0]
+            ):
+                record["one_sided_boundary_candidate"] = True
+                record["material_side_index"] = material_votes[0]
+                record["background_side_index"] = background_votes[0]
+            else:
+                record["material_side_ambiguous"] = True
+        normalized.append(record)
 
     return sorted(
-        lines.values(),
+        normalized,
         key=lambda item: (
             str(item["orientation"]),
             float(item["axis_px"]),
@@ -193,6 +227,31 @@ def _merge_near_duplicate_lines(
             ]
             if values:
                 merged_record[field] = round(max(values), 5)
+        polarity = {
+            (
+                int(item["material_side_index"]),
+                int(item["background_side_index"]),
+            )
+            for item in group
+            if (
+                item.get("one_sided_boundary_candidate") is True
+                and item.get("material_side_index") in {0, 1}
+                and item.get("background_side_index") in {0, 1}
+            )
+        }
+        if len(polarity) == 1 and not any(
+            item.get("material_side_ambiguous") is True
+            for item in group
+        ):
+            material_side_index, background_side_index = next(iter(polarity))
+            merged_record["one_sided_boundary_candidate"] = True
+            merged_record["material_side_index"] = material_side_index
+            merged_record["background_side_index"] = background_side_index
+        elif polarity or any(
+            item.get("material_side_ambiguous") is True
+            for item in group
+        ):
+            merged_record["material_side_ambiguous"] = True
         merged.append(merged_record)
 
     merged.sort(
@@ -561,6 +620,19 @@ def derive_structural_profile_anchors(
                 and not isinstance(raw_value, bool)
             ):
                 anchor[field] = float(raw_value)
+        if line.get("one_sided_boundary_candidate") is True:
+            material_side_index = line.get("material_side_index")
+            background_side_index = line.get("background_side_index")
+            if (
+                material_side_index in {0, 1}
+                and background_side_index in {0, 1}
+                and material_side_index != background_side_index
+            ):
+                anchor["one_sided_boundary_candidate"] = True
+                anchor["material_side_index"] = int(material_side_index)
+                anchor["background_side_index"] = int(background_side_index)
+        elif line.get("material_side_ambiguous") is True:
+            anchor["material_side_ambiguous"] = True
         if at_minimum:
             anchor["relative_extreme_side"] = "min"
         elif at_maximum:

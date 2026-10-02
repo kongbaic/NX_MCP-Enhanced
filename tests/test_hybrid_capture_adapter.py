@@ -5265,6 +5265,11 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
                 "length_px": 88.5,
                 "candidate_only": True,
                 "one_sided_boundary_candidate": True,
+                "boundary_evidence": {
+                    "one_sided_boundary_candidate": True,
+                    "material_side_index": 1,
+                    "background_side_index": 0,
+                },
                 "exterior_boundary_candidate": True,
             }
         ],
@@ -5295,6 +5300,8 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
     assert hints[0]["supporting_profile_constant_axes"] == ["X"]
     assert hints[0]["support_status"] == "verified"
     assert hints[0]["one_sided_boundary_candidate"] is True
+    assert hints[0]["material_side_index"] == 1
+    assert hints[0]["background_side_index"] == 0
     assert hints[0]["basis"] == (
         "established_rotational_symmetry_plus_"
         "one_sided_boundary_plus_unique_structural_contact"

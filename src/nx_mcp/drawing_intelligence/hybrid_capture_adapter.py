@@ -1808,6 +1808,34 @@ def _rotational_oblique_profile_hints(
                     "one_sided_boundary_candidate": (
                         candidate.get("one_sided_boundary_candidate") is True
                     ),
+                    **(
+                        {
+                            "material_side_index": int(
+                                candidate["boundary_evidence"]["material_side_index"]
+                            ),
+                            "background_side_index": int(
+                                candidate["boundary_evidence"]["background_side_index"]
+                            ),
+                        }
+                        if (
+                            isinstance(candidate.get("boundary_evidence"), dict)
+                            and candidate["boundary_evidence"].get(
+                                "material_side_index"
+                            )
+                            in {0, 1}
+                            and candidate["boundary_evidence"].get(
+                                "background_side_index"
+                            )
+                            in {0, 1}
+                            and candidate["boundary_evidence"].get(
+                                "material_side_index"
+                            )
+                            != candidate["boundary_evidence"].get(
+                                "background_side_index"
+                            )
+                        )
+                        else {}
+                    ),
                     "exterior_boundary_candidate": True,
                     "basis": basis,
                     "engineering_coordinate_inferred_from_pixels": False,
@@ -1942,14 +1970,30 @@ def _rotational_profile_topology_hints(
                 if len(constant_axes) != 1:
                     edge_records = []
                     break
-                edge_records.append(
-                    {
-                        "ref": ref,
-                        "profile_entity_key": profile_entity_by_ref[ref],
-                        "source_orientation": orientation,
-                        "constant_axis": constant_axes[0],
-                    }
-                )
+                edge_record = {
+                    "ref": ref,
+                    "profile_entity_key": profile_entity_by_ref[ref],
+                    "source_orientation": orientation,
+                    "constant_axis": constant_axes[0],
+                }
+                if item.get("one_sided_boundary_candidate") is True:
+                    material_side_index = item.get("material_side_index")
+                    background_side_index = item.get("background_side_index")
+                    if (
+                        material_side_index in {0, 1}
+                        and background_side_index in {0, 1}
+                        and material_side_index != background_side_index
+                    ):
+                        edge_record["one_sided_boundary_candidate"] = True
+                        edge_record["material_side_index"] = int(
+                            material_side_index
+                        )
+                        edge_record["background_side_index"] = int(
+                            background_side_index
+                        )
+                elif item.get("material_side_ambiguous") is True:
+                    edge_record["material_side_ambiguous"] = True
+                edge_records.append(edge_record)
             if not edge_records:
                 continue
 

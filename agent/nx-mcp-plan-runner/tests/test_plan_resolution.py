@@ -387,6 +387,56 @@ def test_frozen_plan_loads():
     assert len(plan["operations"]) == 59
 
 
+def test_build_executable_plan_preserves_geometry_and_operation_order():
+    with open(FROZEN_PLAN, encoding="utf-8") as f:
+        plan = json.load(f)
+
+    executable = R.build_executable_plan(plan)
+
+    assert R._build_geometry_conservation_errors(plan, executable) == []
+
+
+def test_build_geometry_conservation_rejects_geometry_argument_mutation():
+    frozen = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_sketch_circle",
+                "tool_args": {
+                    "sketch_id": "sketch_main",
+                    "center": {"x": 0.0, "y": 0.0},
+                    "diameter": 10.0,
+                },
+            }
+        ]
+    }
+    executable = R.build_executable_plan(frozen)
+    executable["operations"][0]["tool_args"]["diameter"] = 12.0
+
+    errors = R._build_geometry_conservation_errors(frozen, executable)
+
+    assert errors == [
+        "build conservation violation: step 1 changed tool_args.diameter"
+    ]
+
+
+def test_build_geometry_conservation_rejects_operation_loss():
+    frozen = {
+        "operations": [
+            {"step": 1, "tool": "nx_status", "tool_args": {}},
+            {"step": 2, "tool": "nx_save_part", "tool_args": {}},
+        ]
+    }
+    executable = R.build_executable_plan(frozen)
+    executable["operations"].pop()
+
+    errors = R._build_geometry_conservation_errors(frozen, executable)
+
+    assert errors == [
+        "build conservation violation: operation count changed 2 -> 1"
+    ]
+
+
 def test_build_executable_plan_resolves_all_references():
     with open(FROZEN_PLAN, encoding="utf-8") as f:
         plan = json.load(f)

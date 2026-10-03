@@ -1530,6 +1530,117 @@ def _refs_in(args: dict, kind: str) -> list[str]:
     return out
 
 
+def _build_geometry_conservation_errors(
+    frozen: dict,
+    executable: dict,
+) -> list[str]:
+    """Prove build changed bindings only, never modeled geometry."""
+
+    errors: list[str] = []
+    frozen_ops = frozen.get("operations")
+    executable_ops = executable.get("operations")
+    if not isinstance(frozen_ops, list) or not isinstance(executable_ops, list):
+        return ["build conservation requires operation lists"]
+    if len(frozen_ops) != len(executable_ops):
+        return [
+            "build conservation violation: operation count changed "
+            f"{len(frozen_ops)} -> {len(executable_ops)}"
+        ]
+
+    generated_root_fields = {"result_bindings", "selection_binding", "retry"}
+    logical_scalar_keys = {"sketch_id", "body_id", "target_body_id"}
+
+    def expected_arg_value(key: str, value: Any) -> Any:
+        if key in logical_scalar_keys:
+            if isinstance(value, str) and (
+                value.startswith("sketch_") or value.startswith("body_")
+            ):
+                return "$" + value
+            return value
+        if key == "tool_body_ids" and isinstance(value, list):
+            return [
+                "$" + item
+                if isinstance(item, str) and item.startswith("body_")
+                else item
+                for item in value
+            ]
+        if isinstance(value, str):
+            match = re.match(r"<step(\d+)[^>]*>", value)
+            if match:
+                return "$selection.sel_" + match.group(1)
+        return value
+
+    for index, (before, after) in enumerate(
+        zip(frozen_ops, executable_ops, strict=False)
+    ):
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            errors.append(
+                f"build conservation violation: operation[{index}] must remain an object"
+            )
+            continue
+
+        step = before.get("step", index + 1)
+        for field in ("step", "tool"):
+            if after.get(field) != before.get(field):
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed {field}"
+                )
+
+        extra_root = set(after) - set(before) - generated_root_fields
+        if extra_root:
+            errors.append(
+                "build conservation violation: "
+                f"step {step} added undeclared operation fields "
+                f"{sorted(extra_root)}"
+            )
+
+        for field, value in before.items():
+            if field == "tool_args":
+                continue
+            if after.get(field) != value:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed operation field {field!r}"
+                )
+
+        if "retry" not in before and "retry" in after:
+            expected_retry = {
+                "max": 1,
+                "if_error_contains": ["撤消"],
+            }
+            if before.get("tool") != "nx_save_part" or after.get("retry") != expected_retry:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} added an undeclared retry contract"
+                )
+
+        before_args = before.get("tool_args") or {}
+        after_args = after.get("tool_args") or {}
+        if not isinstance(before_args, dict) or not isinstance(after_args, dict):
+            errors.append(
+                "build conservation violation: "
+                f"step {step} tool_args must remain objects"
+            )
+            continue
+        if set(before_args) != set(after_args):
+            errors.append(
+                "build conservation violation: "
+                f"step {step} tool_args key set changed"
+            )
+            continue
+
+        for key, value in before_args.items():
+            expected_value = expected_arg_value(key, value)
+            if after_args.get(key) != expected_value:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed tool_args.{key}"
+                )
+
+    return errors
+
+
 def build_executable_plan(plan: dict) -> dict:
     """Convert a frozen planner plan into the executable form:
     - explicit top-level plan_format marker,
@@ -7871,6 +7982,18 @@ def _cmd_build(args: argparse.Namespace) -> int:
         return 1
 
     exe = build_executable_plan(plan)
+    build_conservation_errors = _build_geometry_conservation_errors(plan, exe)
+    if build_conservation_errors:
+        result = {
+            "built": None,
+            "operations": len(exe.get("operations") or []),
+            "check_errors": build_conservation_errors,
+            "ok": False,
+        }
+        _attach_command_timing(result, timing_state)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
     if drawing_path:
         exe["thread_surrogates"] = recipes
         exe["thread_drawing_geometries"] = geometries

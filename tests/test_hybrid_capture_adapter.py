@@ -1484,6 +1484,65 @@ def test_adapter_does_not_transport_unbound_callout_without_unique_view_region()
     assert unresolved[0].kind == "feature_inventory"
 
 
+def test_secondary_linear_assignments_block_when_no_unique_global_proposal_exists():
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "unconfirmed_proposal_observations": [],
+            "secondary_assignment_observations": [
+                {
+                    "candidate_id": "DG10",
+                    "source_item_index": 10,
+                    "token": "24",
+                    "selected_proposal_token": None,
+                },
+                {
+                    "candidate_id": "DG10",
+                    "source_item_index": 11,
+                    "token": "32",
+                    "selected_proposal_token": None,
+                },
+            ],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [],
+        }
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG10": {
+                "candidate_id": "DG10",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": None,
+            }
+        },
+        {
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    blockers = [
+        item
+        for item in unresolved
+        if item.required_for_modeling
+        and item.field == "secondary_linear_assignment"
+    ]
+    assert len(blockers) == 2
+    assert all(
+        "no unique selected global proposal" in item.reason
+        for item in blockers
+    )
+
+
 def test_unconfirmed_global_linear_proposal_stays_blocking_until_consumed():
     report = {
         "coverage": {

@@ -595,23 +595,30 @@ def _coverage_unresolved(
         if not isinstance(item, dict):
             continue
         candidate_id = str(item.get("candidate_id") or "")
-        evidence = (
-            _candidate_evidence(candidate_id)
-            if candidate_id
-            else [f"hybrid:whole:{item.get('source_item_index')}"]
+        candidate = candidate_lookup.get(candidate_id)
+        if candidate is None:
+            raise HybridCaptureAdapterError(
+                f"secondary assignment references unknown candidate {candidate_id!r}"
+            )
+        selected_proposal = item.get("selected_proposal_token")
+        no_unique_proposal = selected_proposal is None
+        reason = (
+            "Whole OCR linear observation was associated with a DG "
+            "but was not selected as that DG's global proposal: "
+            f"token={item.get('token')!r}, selected={selected_proposal!r}."
         )
+        if no_unique_proposal:
+            reason += (
+                " The DG has no unique selected global proposal, so competing "
+                "assigned engineering values remain modeling-blocking."
+            )
         unresolved.append(
             ObservationUnresolved(
                 kind="unsupported_representation",
-                reason=(
-                    "Whole OCR linear observation was associated with a DG "
-                    "but was not selected as that DG's global proposal: "
-                    f"token={item.get('token')!r}, "
-                    f"selected={item.get('selected_proposal_token')!r}."
-                ),
+                reason=reason,
                 field="secondary_linear_assignment",
-                evidence=evidence,
-                required_for_modeling=False,
+                evidence=_candidate_evidence(candidate_id),
+                required_for_modeling=no_unique_proposal,
             )
         )
 

@@ -1306,7 +1306,7 @@ def _materialize_symmetric_tapered_annular_profile(
                     *[
                         source
                         for relation in level_relations
-                        for source in relation.source_ids
+                        for source in [relation.id, *relation.source_ids]
                     ],
                 ]
             )
@@ -1867,6 +1867,81 @@ def _rotational_profile_topology_unresolved(
     return output
 
 
+def _unconsumed_profile_transition_unresolved(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+) -> list[dict[str, Any]]:
+    """Block required profile-transition constraints that never affect geometry.
+
+    Resolver/canonical relation consumption is not sufficient for Gate A closure:
+    a required profile transition must be explicitly cited by materialized
+    profile geometry. This prevents provenance-only constraint values from being
+    mistaken for a modeled transition.
+    """
+
+    geometry_relation_ids: set[str] = set()
+    for source in draft.get("source_ledger", []):
+        if not isinstance(source, dict):
+            continue
+        target = source.get("target")
+        evidence = source.get("evidence")
+        if not (
+            isinstance(target, str)
+            and target.startswith("profile.")
+            and isinstance(evidence, list)
+        ):
+            continue
+        geometry_relation_ids.update(
+            value
+            for value in evidence
+            if isinstance(value, str) and value
+        )
+
+    output: list[dict[str, Any]] = []
+    for relation in graph.relations:
+        if (
+            not relation.required_for_modeling
+            or relation.metadata.get("basis")
+            != "labeled_overall_to_profile_transition"
+            or not relation.targets
+            or not all(
+                isinstance(target, str)
+                and target.startswith("constraints.profile_transitions.")
+                for target in relation.targets
+            )
+            or relation.id in geometry_relation_ids
+        ):
+            continue
+
+        output.append(
+            {
+                "id": (
+                    "U_PROFILE_TRANSITION_UNCONSUMED_"
+                    f"{_stable_fragment(relation.id)}"
+                ),
+                "kind": "unsupported_representation",
+                "field": "profile_transition",
+                "axis": relation.axis,
+                "reason": (
+                    "required labeled profile-transition constraint was resolved "
+                    "canonically but was not consumed by materialized profile "
+                    "geometry"
+                ),
+                "target": relation.targets[0],
+                "source_ids": list(
+                    dict.fromkeys([relation.id, *relation.source_ids])
+                ),
+                "required_for_modeling": True,
+                "metadata": {
+                    "relation_id": relation.id,
+                    "basis": relation.metadata.get("basis"),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                },
+            }
+        )
+    return output
+
+
 def _auto_metric_profile_spec(
     graph: EvidenceGraph,
     resolution: ResolutionResult,
@@ -2213,6 +2288,12 @@ def build_semantic_draft(
         _rotational_profile_topology_unresolved(
             graph,
             materialized=rotational_profile_keys,
+        )
+    )
+    draft["unresolved"].extend(
+        _unconsumed_profile_transition_unresolved(
+            draft,
+            graph,
         )
     )
 

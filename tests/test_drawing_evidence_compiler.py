@@ -1087,6 +1087,78 @@ def test_labeled_overall_profile_transitions_compile_and_resolve_without_pixels(
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def test_unmaterialized_labeled_profile_transition_keeps_gate_a_incomplete():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=80,
+            height_z=75,
+        ),
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_TRANSITION",
+                        "source_item_index": 5,
+                        "source_text": "H - 12 mm",
+                        "region_id": "R1",
+                        "value": 12.0,
+                        "axis": "Z",
+                        "relation": "overall_max_to_profile_transition",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": [
+                            "hybrid:whole:5",
+                            "structural:R1:context",
+                            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    assert not compiled.unresolved_evidence
+
+    relation = next(
+        item
+        for item in compiled.relations
+        if item.id == "LPT_LD_TRANSITION"
+    )
+    assert relation.targets == [
+        "constraints.profile_transitions.LD_TRANSITION.z"
+    ]
+
+    resolved = resolve_evidence_graph(compiled)
+    assert resolved.values[
+        "constraints.profile_transitions.LD_TRANSITION.z"
+    ] == 63
+
+    draft = build_semantic_draft(compiled, resolved)
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("id")
+        == "U_PROFILE_TRANSITION_UNCONSUMED_LPT_LD_TRANSITION"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["required_for_modeling"] is True
+    assert blockers[0]["target"] == (
+        "constraints.profile_transitions.LD_TRANSITION.z"
+    )
+    assert "LPT_LD_TRANSITION" in blockers[0]["source_ids"]
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_labeled_profile_span_is_accounted_when_compiled_dimension_consumes_source():
     graph = EvidenceGraph(
         overall_dimensions=OverallDimensions(

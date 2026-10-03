@@ -4580,6 +4580,56 @@ def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
     assert "angle_deg" not in repr(item)
 
 
+def test_physical_oblique_profile_preserves_verified_line_primitive():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_LINE",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X", "E_Z"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:oblique-line:7",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "verified_continuous_straight_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "line_edge_support_fraction": 0.96,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X": "F_X",
+            "E_Z": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["connection_kind"] == "non_orthogonal_profile_connection"
+    assert items[0]["primitive_kind"] == "line"
+    assert items[0]["primitive_kind_basis"] == (
+        "verified_continuous_straight_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert "line_edge_support_fraction" not in repr(items[0])
+
+
 def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
     observations = [
         {

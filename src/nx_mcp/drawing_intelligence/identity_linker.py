@@ -441,6 +441,8 @@ def _physical_rotational_oblique_profile_items(
                     "source_ids": source_ids,
                     "material_side_index": item.get("material_side_index"),
                     "background_side_index": item.get("background_side_index"),
+                    "primitive_kind": item.get("primitive_kind"),
+                    "primitive_kind_basis": item.get("primitive_kind_basis"),
                 }
             )
 
@@ -497,6 +499,38 @@ def _physical_rotational_oblique_profile_items(
                 != record.get("background_side_index")
             )
         }
+        primitive_records = {
+            (
+                str(record.get("primitive_kind") or ""),
+                str(record.get("primitive_kind_basis") or ""),
+            )
+            for record in records
+            if str(record.get("primitive_kind") or "")
+            in {"line", "arc", "unresolved"}
+            and str(record.get("primitive_kind_basis") or "")
+        }
+        primitive_fields: dict[str, Any]
+        if len(primitive_records) == 1:
+            primitive_kind, primitive_kind_basis = next(iter(primitive_records))
+            primitive_fields = {
+                "primitive_kind": primitive_kind,
+                "primitive_kind_basis": primitive_kind_basis,
+            }
+        elif primitive_records:
+            primitive_fields = {
+                "primitive_kind": "unresolved",
+                "primitive_kind_basis": (
+                    "conflicting_crop_local_primitive_classification"
+                ),
+            }
+        else:
+            primitive_fields = {
+                "primitive_kind": "unresolved",
+                "primitive_kind_basis": (
+                    "missing_deterministic_primitive_classification"
+                ),
+            }
+
         polarity_fields: dict[str, Any] = {}
         if len(polarity) == 1:
             material_side_index, background_side_index = next(iter(polarity))
@@ -512,6 +546,7 @@ def _physical_rotational_oblique_profile_items(
                 "id": f"PHYSICAL_OBLIQUE_{digest}",
                 "region_ids": region_ids,
                 **polarity_fields,
+                **primitive_fields,
                 "view_kind": view_kind,
                 "plane": plane,
                 "rotation_axis": rotation_axis,

@@ -5324,6 +5324,7 @@ def test_rotational_oblique_profile_candidate_records_only_topology_evidence():
                 "endpoints_px": [[42, 60], [120, 138]],
                 "angle_deg": 45.0,
                 "length_px": 110.0,
+                "line_edge_support_fraction": 0.96,
                 "candidate_only": True,
                 "exterior_boundary_candidate": True,
             }
@@ -5354,9 +5355,70 @@ def test_rotational_oblique_profile_candidate_records_only_topology_evidence():
     ]
     assert hint["engineering_coordinate_inferred_from_pixels"] is False
     assert hint["pixel_geometry_used_for_topology_only"] is True
+    assert hint["primitive_kind"] == "line"
+    assert hint["primitive_kind_basis"] == (
+        "verified_continuous_straight_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert hint["line_edge_support_fraction"] == 0.96
     assert hint["basis"] == (
         "established_rotational_symmetry_plus_"
         "unique_independent_structural_contacts"
+    )
+
+
+def test_rotational_oblique_profile_direct_contacts_stay_unresolved_without_line_continuity():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_B",
+            orientation="horizontal",
+            position=140,
+            span=[40, 180],
+        ),
+    ]
+    report = {
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 200, 200]}],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42, 60], [120, 138]],
+                "angle_deg": 45.0,
+                "length_px": 110.0,
+                "line_edge_support_fraction": 0.42,
+                "candidate_only": True,
+                "exterior_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert len(hints) == 1
+    assert hints[0]["supporting_profile_refs"] == [
+        "VERTICAL_A",
+        "HORIZONTAL_B",
+    ]
+    assert hints[0]["primitive_kind"] == "unresolved"
+    assert hints[0]["primitive_kind_basis"] == (
+        "two_structural_contacts_without_continuous_"
+        "straight_raster_support"
     )
 
 
@@ -5474,6 +5536,10 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
     ]
     assert hints[0]["supporting_profile_constant_axes"] == ["X"]
     assert hints[0]["support_status"] == "verified"
+    assert hints[0]["primitive_kind"] == "unresolved"
+    assert hints[0]["primitive_kind_basis"] == (
+        "fragment_without_verified_full_straight_support"
+    )
     assert hints[0]["one_sided_boundary_candidate"] is True
     assert hints[0]["material_side_index"] == 1
     assert hints[0]["background_side_index"] == 0

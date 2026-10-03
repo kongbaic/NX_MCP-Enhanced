@@ -1690,6 +1690,16 @@ def _rotational_oblique_profile_hints(
             )
             support_refs: list[str]
             basis: str
+            primitive_kind = "unresolved"
+            primitive_kind_basis = (
+                "fragment_without_verified_full_straight_support"
+            )
+            line_support = candidate.get("line_edge_support_fraction")
+            continuous_straight_support = (
+                isinstance(line_support, (int, float))
+                and not isinstance(line_support, bool)
+                and float(line_support) >= 0.85
+            )
 
             if direct_contact:
                 support_refs = [
@@ -1700,6 +1710,17 @@ def _rotational_oblique_profile_hints(
                     "established_rotational_symmetry_plus_"
                     "unique_independent_structural_contacts"
                 )
+                if continuous_straight_support:
+                    primitive_kind = "line"
+                    primitive_kind_basis = (
+                        "verified_continuous_straight_raster_segment_"
+                        "between_structural_contacts"
+                    )
+                else:
+                    primitive_kind_basis = (
+                        "two_structural_contacts_without_continuous_"
+                        "straight_raster_support"
+                    )
             elif candidate.get("one_sided_boundary_candidate") is True:
                 strict_endpoint_matches: list[list[str]] = []
                 for point in (first, second):
@@ -1811,6 +1832,21 @@ def _rotational_oblique_profile_hints(
                     "supporting_profile_constant_axes": support_constant_axes,
                     "support_status": (
                         "verified" if support_refs else "unresolved"
+                    ),
+                    "primitive_kind": primitive_kind,
+                    "primitive_kind_basis": primitive_kind_basis,
+                    **(
+                        {
+                            "line_edge_support_fraction": round(
+                                float(line_support),
+                                3,
+                            )
+                        }
+                        if (
+                            isinstance(line_support, (int, float))
+                            and not isinstance(line_support, bool)
+                        )
+                        else {}
                     ),
                     "endpoints_px": [
                         [round(first[0], 3), round(first[1], 3)],

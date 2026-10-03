@@ -439,7 +439,7 @@ def _point_to_curve_distance(
 ) -> float:
     return min(
         _point_to_segment_distance(point, first, second)
-        for first, second in zip(trace, trace[1:], strict=True)
+        for first, second in zip(trace, trace[1:])
     )
 
 

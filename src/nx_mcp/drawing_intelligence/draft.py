@@ -908,13 +908,10 @@ def _bilateral_exterior_oblique_sources(
             != "non_orthogonal_profile_connection"
             or fragment.get("primitive_kind") != "line"
             or fragment.get("primitive_kind_basis")
-            not in {
-                "explicit_straight_profile_semantics",
-                (
-                    "verified_continuous_straight_raster_segment_"
-                    "between_structural_contacts"
-                ),
-            }
+            != (
+                "verified_continuous_straight_raster_segment_"
+                "between_structural_contacts"
+            )
             or not isinstance(fragment.get("supporting_physical_edges"), list)
             or len(fragment["supporting_physical_edges"]) < 2
             or fragment.get("engineering_coordinate_inferred_from_pixels") is not False

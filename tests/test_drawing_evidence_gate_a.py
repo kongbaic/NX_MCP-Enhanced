@@ -437,6 +437,10 @@ def _symmetric_tapered_annular_graph(
     *,
     include_oblique_pair=True,
     verified_straight_primitive=False,
+    primitive_kind_basis=(
+        "verified_continuous_straight_raster_segment_"
+        "between_structural_contacts"
+    ),
 ):
     hub_left = "feature:F_HUB_LEFT.boundary.x"
     hub_right = "feature:F_HUB_RIGHT.boundary.x"
@@ -564,9 +568,7 @@ def _symmetric_tapered_annular_graph(
                 **(
                     {
                         "primitive_kind": "line",
-                        "primitive_kind_basis": (
-                            "explicit_straight_profile_semantics"
-                        ),
+                        "primitive_kind_basis": primitive_kind_basis,
                     }
                     if verified_straight_primitive
                     else {}
@@ -602,9 +604,7 @@ def _symmetric_tapered_annular_graph(
                 **(
                     {
                         "primitive_kind": "line",
-                        "primitive_kind_basis": (
-                            "explicit_straight_profile_semantics"
-                        ),
+                        "primitive_kind_basis": primitive_kind_basis,
                     }
                     if verified_straight_primitive
                     else {}
@@ -720,6 +720,26 @@ def _symmetric_tapered_annular_graph(
         relations=relations,
         observations=observations,
     )
+
+
+def test_symmetric_tapered_annular_profile_rejects_legacy_straight_basis():
+    graph = _symmetric_tapered_annular_graph(
+        verified_straight_primitive=True,
+        primitive_kind_basis="explicit_straight_profile_semantics",
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
 def test_symmetric_tapered_annular_profile_materializes_only_with_verified_straight_primitive():

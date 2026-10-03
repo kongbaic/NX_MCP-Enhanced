@@ -4630,6 +4630,102 @@ def test_physical_oblique_profile_preserves_verified_line_primitive():
     assert "line_edge_support_fraction" not in repr(items[0])
 
 
+def test_physical_oblique_profile_conflicting_crop_classification_fails_closed():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X_R1", "E_Z_R1"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:7"],
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "verified_continuous_straight_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X_R2", "E_Z_R2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:7"],
+                    "primitive_kind": "unresolved",
+                    "primitive_kind_basis": (
+                        "two_structural_contacts_without_continuous_"
+                        "straight_raster_support"
+                    ),
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X_R1": "F_X",
+            "E_Z_R1": "F_Z",
+            "E_X_R2": "F_X",
+            "E_Z_R2": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "unresolved"
+    assert items[0]["primitive_kind_basis"] == (
+        "conflicting_crop_local_primitive_classification"
+    )
+
+
+def test_physical_oblique_profile_missing_classification_fails_closed():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_UNCLASSIFIED",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X", "E_Z"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:8"],
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X": "F_X",
+            "E_Z": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "unresolved"
+    assert items[0]["primitive_kind_basis"] == (
+        "missing_deterministic_primitive_classification"
+    )
+
+
 def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
     observations = [
         {

@@ -1245,6 +1245,77 @@ def test_adapter_materializes_circle_geometry_and_parsed_callouts_without_guessi
     assert all(item.required_for_modeling for item in callout_unresolved)
 
 
+def test_radius_callout_records_verified_profile_arc_candidate_binding():
+    report = {
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 7,
+                    "text": "R5",
+                    "bbox": [
+                        [20, 20],
+                        [100, 20],
+                        [100, 50],
+                        [20, 50],
+                    ],
+                    "confidence": 0.99,
+                }
+            ]
+        },
+        "regions": [],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[95, 45], [160, 130]],
+                "candidate_only": True,
+            }
+        ],
+        "annotation_curve_candidates": [
+            {
+                "kind": "curved_boundary_candidate",
+                "curve_trace_px": [
+                    [160, 130],
+                    [170, 140],
+                    [181, 149],
+                    [193, 157],
+                    [206, 164],
+                ],
+                "candidate_only": True,
+                "exterior_boundary_candidate": True,
+                "curve_classification_basis": (
+                    "stable_cocircular_exterior_contour_turning"
+                ),
+            }
+        ],
+    }
+
+    ledger, entities, values, unresolved = (
+        hybrid_adapter._engineering_callout_routing(
+            report,
+            [],
+            {},
+            hidden_pattern_owner_by_index={},
+            existing_entity_keys=set(),
+            profile_inventory=[],
+            verified_profile_arc_sources={
+                "hybrid:curve-boundary:0",
+            },
+        )
+    )
+
+    assert entities == []
+    assert values == []
+    assert unresolved == []
+    assert ledger[0]["facts"] == {"radius": 5.0}
+    binding = ledger[0]["profile_arc_radius_binding"]
+    assert binding["status"] == "profile_arc_candidate_backed"
+    assert binding["curve_source_id"] == "hybrid:curve-boundary:0"
+    assert binding["engineering_radius"] == 5.0
+    assert binding["engineering_value_source"] == "hybrid_ocr"
+    assert binding["engineering_coordinate_inferred_from_pixels"] is False
+    assert binding["pixel_geometry_used_for_identity_only"] is True
+
+
 def test_adapter_writes_values_only_with_explicit_callout_geometry_binding():
     report = _report()
     report["regions"] = [

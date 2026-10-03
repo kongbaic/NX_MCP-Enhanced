@@ -10,7 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .circle_datum_alignment import derive_circle_overall_center_alignments
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
-from .engineering_callout_binding import bind_callout_to_circle_entity
+from .engineering_callout_binding import (
+    bind_callout_to_circle_entity,
+    bind_callout_to_curve_candidate,
+)
 from .engineering_callouts import parse_engineering_callout
 from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
@@ -3586,6 +3589,7 @@ def _engineering_callout_routing(
     hidden_pattern_owner_by_index: dict[tuple[str, int], str],
     existing_entity_keys: set[str],
     profile_inventory: list[dict[str, Any]] | None = None,
+    verified_profile_arc_sources: set[str] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -3597,8 +3601,10 @@ def _engineering_callout_routing(
         return [], [], [], []
 
     profile_inventory = profile_inventory or []
+    verified_profile_arc_sources = verified_profile_arc_sources or set()
     regions = report.get("regions", [])
     annotation_lines = report.get("annotation_line_candidates", [])
+    annotation_curves = report.get("annotation_curve_candidates", [])
     region_boxes: list[tuple[str, list[Any]]] = []
     if isinstance(regions, list):
         for region in regions:
@@ -3649,6 +3655,29 @@ def _engineering_callout_routing(
             annotation_lines,
             regions,
         )
+        profile_arc_radius_binding: dict[str, Any] | None = None
+        radius_value = parsed["facts"].get("radius")
+        if (
+            isinstance(radius_value, (int, float))
+            and not isinstance(radius_value, bool)
+            and isinstance(annotation_curves, list)
+        ):
+            curve_binding = bind_callout_to_curve_candidate(
+                binding_bbox,
+                annotation_lines,
+                annotation_curves,
+                allowed_curve_source_ids=verified_profile_arc_sources,
+            )
+            if curve_binding.get("status") == "bound":
+                profile_arc_radius_binding = {
+                    **curve_binding,
+                    "status": "profile_arc_candidate_backed",
+                    "engineering_radius": float(radius_value),
+                    "engineering_value_source": "hybrid_ocr",
+                }
+            else:
+                profile_arc_radius_binding = curve_binding
+
         linear_pattern_binding: dict[str, Any] | None = None
         linear_pattern_ambiguity: dict[str, Any] | None = None
         if any(
@@ -3902,9 +3931,22 @@ def _engineering_callout_routing(
             "confidence": item.get("confidence"),
             "region_candidates": region_candidates,
             "binding": binding,
+            **(
+                {
+                    "profile_arc_radius_binding": profile_arc_radius_binding,
+                }
+                if profile_arc_radius_binding is not None
+                else {}
+            ),
             **parsed,
         }
         ledger.append(record)
+
+        radius_arc_bound = (
+            isinstance(profile_arc_radius_binding, dict)
+            and profile_arc_radius_binding.get("status")
+            == "profile_arc_candidate_backed"
+        )
 
         safe_facts = {
             key: value
@@ -3924,6 +3966,9 @@ def _engineering_callout_routing(
                 "recessed_hole",
             }
         }
+
+        if radius_arc_bound and set(parsed["facts"]) == {"radius"}:
+            continue
 
         if binding.get("status") not in {"bound", "dimension_backed", "pattern_backed"}:
             if len(region_candidates) == 1 and safe_facts:
@@ -4055,7 +4100,12 @@ def _engineering_callout_routing(
             )
 
         unsupported_explicit_facts = {
-            key: value for key, value in parsed["facts"].items() if key not in safe_facts
+            key: value
+            for key, value in parsed["facts"].items()
+            if (
+                key not in safe_facts
+                and not (key == "radius" and radius_arc_bound)
+            )
         }
         for field, value in sorted(unsupported_explicit_facts.items()):
             unresolved.append(
@@ -7064,6 +7114,27 @@ def adapt_hybrid_ocr_report(
         hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
         existing_entity_keys={item.key for item in entities},
         profile_inventory=profile_inventory,
+        verified_profile_arc_sources={
+            source
+            for hint in rotational_oblique_profile_hints
+            if (
+                hint.get("primitive_kind") == "arc"
+                and hint.get("support_status") == "verified"
+                and hint.get("primitive_kind_basis")
+                == (
+                    "verified_continuous_curved_raster_segment_"
+                    "between_structural_contacts"
+                )
+                and hint.get("engineering_coordinate_inferred_from_pixels")
+                is False
+                and hint.get("pixel_geometry_used_for_topology_only") is True
+            )
+            for source in hint.get("source_ids", [])
+            if (
+                isinstance(source, str)
+                and source.startswith("hybrid:curve-boundary:")
+            )
+        },
     )
     entities.extend(callout_entities)
     unresolved.extend(callout_unresolved)

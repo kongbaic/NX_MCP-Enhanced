@@ -313,6 +313,20 @@ def test_curved_annotation_candidates_classify_exterior_curve_without_metric_geo
         and 20.0 <= float(item["sweep_deg_px"]) <= 200.0
         for item in candidates
     )
+    assert all(
+        isinstance(item.get("curve_trace_px"), list)
+        and len(item["curve_trace_px"]) >= 5
+        for item in candidates
+    )
+    assert all(
+        all(
+            isinstance(point, list)
+            and len(point) == 2
+            and all(isinstance(value, (int, float)) for value in point)
+            for point in item["curve_trace_px"]
+        )
+        for item in candidates
+    )
     assert all("center_px" not in item for item in candidates)
     assert all("radius_px" not in item for item in candidates)
 

@@ -550,6 +550,13 @@ def _curved_annotation_candidates(
                                 round(float(ys[-1]), 3),
                             ],
                         ],
+                        "curve_trace_px": [
+                            [
+                                round(float(point[0]), 3),
+                                round(float(point[1]), 3),
+                            ]
+                            for point in sample
+                        ],
                         "curve_fit_residual_fraction": round(
                             residual_fraction,
                             4,

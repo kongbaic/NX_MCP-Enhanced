@@ -1,5 +1,6 @@
 from nx_mcp.drawing_intelligence.engineering_callout_binding import (
     bind_callout_to_circle_entity,
+    bind_callout_to_curve_candidate,
 )
 
 
@@ -17,6 +18,74 @@ def _regions():
             ],
         }
     ]
+
+
+def _curve_candidates():
+    return [
+        {
+            "kind": "curved_boundary_candidate",
+            "curve_trace_px": [
+                [160, 130],
+                [170, 140],
+                [181, 149],
+                [193, 157],
+                [206, 164],
+            ],
+            "candidate_only": True,
+            "exterior_boundary_candidate": True,
+            "curve_classification_basis": (
+                "stable_cocircular_exterior_contour_turning"
+            ),
+        }
+    ]
+
+
+def test_callout_binds_only_to_one_allowed_curve_trace_through_leader():
+    result = bind_callout_to_curve_candidate(
+        [[20, 20], [100, 20], [100, 50], [20, 50]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[95, 45], [160, 130]],
+                "candidate_only": True,
+            }
+        ],
+        _curve_candidates(),
+        allowed_curve_source_ids={"hybrid:curve-boundary:0"},
+    )
+
+    assert result["status"] == "bound"
+    assert result["curve_source_id"] == "hybrid:curve-boundary:0"
+    assert (
+        result["basis"]
+        == "callout_bbox_to_collinear_segment_chain_to_curve_trace"
+    )
+    assert result["engineering_coordinate_inferred_from_pixels"] is False
+    assert result["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_curve_callout_does_not_bind_disallowed_or_nearby_curve_without_leader():
+    disallowed = bind_callout_to_curve_candidate(
+        [[20, 20], [100, 20], [100, 50], [20, 50]],
+        [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[95, 45], [160, 130]],
+                "candidate_only": True,
+            }
+        ],
+        _curve_candidates(),
+        allowed_curve_source_ids={"hybrid:curve-boundary:9"},
+    )
+    nearby_without_leader = bind_callout_to_curve_candidate(
+        [[120, 90], [155, 90], [155, 120], [120, 120]],
+        [],
+        _curve_candidates(),
+        allowed_curve_source_ids={"hybrid:curve-boundary:0"},
+    )
+
+    assert disallowed["status"] == "unresolved"
+    assert nearby_without_leader["status"] == "unresolved"
 
 
 def test_callout_binds_only_when_one_line_bridges_text_and_circle_ring():

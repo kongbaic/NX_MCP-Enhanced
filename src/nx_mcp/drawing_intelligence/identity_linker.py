@@ -845,7 +845,16 @@ def _physical_profile_arc_radius_direct_values(
             if not isinstance(item, dict):
                 continue
             physical_arc_id = str(item.get("physical_arc_id") or "")
-            radius = item.get("engineering_radius")
+            raw_radius = item.get("engineering_radius")
+            radius = (
+                float(raw_radius)
+                if (
+                    isinstance(raw_radius, (int, float))
+                    and not isinstance(raw_radius, bool)
+                    and float(raw_radius) > 0.0
+                )
+                else None
+            )
             source_ids = [
                 source_id
                 for source_id in item.get("source_ids", [])
@@ -853,9 +862,7 @@ def _physical_profile_arc_radius_direct_values(
             ]
             valid = (
                 physical_arc_id
-                and isinstance(radius, (int, float))
-                and not isinstance(radius, bool)
-                and float(radius) > 0.0
+                and radius is not None
                 and item.get("engineering_value_source") == "hybrid_ocr"
                 and item.get("basis")
                 == (
@@ -904,14 +911,14 @@ def _physical_profile_arc_radius_direct_values(
                             "|".join(
                                 [
                                     physical_arc_id,
-                                    str(float(radius)),
+                                    str(radius),
                                     *source_ids,
                                 ]
                             ).encode("utf-8")
                         ).hexdigest()[:16].upper()
                     ),
                     target=target,
-                    value=float(radius),
+                    value=radius,
                     semantic="radius",
                     source_ids=[
                         *source_ids,

@@ -5682,8 +5682,8 @@ def test_rotational_oblique_profile_direct_contacts_stay_unresolved_without_line
     ]
     assert hints[0]["primitive_kind"] == "unresolved"
     assert hints[0]["primitive_kind_basis"] == (
-        "two_structural_contacts_without_continuous_"
-        "straight_raster_support"
+        "two_structural_contacts_without_verified_"
+        "primitive_support"
     )
 
 

@@ -433,7 +433,11 @@ def test_branched_rotational_topology_stays_blocked_without_complete_polarity():
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
-def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
+def _symmetric_tapered_annular_graph(
+    *,
+    include_oblique_pair=True,
+    verified_straight_primitive=False,
+):
     hub_left = "feature:F_HUB_LEFT.boundary.x"
     hub_right = "feature:F_HUB_RIGHT.boundary.x"
     neck_left = "feature:F_NECK_LEFT.boundary.x"
@@ -521,6 +525,18 @@ def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
     fragments = []
     raw_oblique_items = []
     if include_oblique_pair:
+        verified_edges = [
+            {
+                "physical_feature_id": "F_HUB",
+                "constant_axis": "Z",
+                "boundary_target": z_flange,
+            },
+            {
+                "physical_feature_id": "F_NECK",
+                "constant_axis": "X",
+                "boundary_target": neck_left,
+            },
+        ]
         fragments = [
             {
                 "id": "P_OBL_LEFT",
@@ -530,9 +546,31 @@ def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
                 "view_kind": "front",
                 "plane": "XZ",
                 "rotation_axis": "Z",
-                "supporting_physical_feature_ids": [],
-                "supporting_physical_edges": [],
-                "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+                "supporting_physical_feature_ids": (
+                    ["F_HUB", "F_NECK"]
+                    if verified_straight_primitive
+                    else []
+                ),
+                "supporting_physical_edges": (
+                    verified_edges
+                    if verified_straight_primitive
+                    else []
+                ),
+                "connection_kind": (
+                    "non_orthogonal_profile_connection"
+                    if verified_straight_primitive
+                    else "exterior_non_orthogonal_boundary_fragment"
+                ),
+                **(
+                    {
+                        "primitive_kind": "line",
+                        "primitive_kind_basis": (
+                            "explicit_straight_profile_semantics"
+                        ),
+                    }
+                    if verified_straight_primitive
+                    else {}
+                ),
                 "source_ids": ["hybrid:oblique-line:0"],
                 "basis": "identity_linked_physical_oblique_profile_topology",
                 "engineering_coordinate_inferred_from_pixels": False,
@@ -546,9 +584,31 @@ def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
                 "view_kind": "front",
                 "plane": "XZ",
                 "rotation_axis": "Z",
-                "supporting_physical_feature_ids": [],
-                "supporting_physical_edges": [],
-                "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+                "supporting_physical_feature_ids": (
+                    ["F_HUB", "F_NECK"]
+                    if verified_straight_primitive
+                    else []
+                ),
+                "supporting_physical_edges": (
+                    verified_edges
+                    if verified_straight_primitive
+                    else []
+                ),
+                "connection_kind": (
+                    "non_orthogonal_profile_connection"
+                    if verified_straight_primitive
+                    else "exterior_non_orthogonal_boundary_fragment"
+                ),
+                **(
+                    {
+                        "primitive_kind": "line",
+                        "primitive_kind_basis": (
+                            "explicit_straight_profile_semantics"
+                        ),
+                    }
+                    if verified_straight_primitive
+                    else {}
+                ),
                 "source_ids": ["hybrid:oblique-line:1"],
                 "basis": "identity_linked_physical_oblique_profile_topology",
                 "engineering_coordinate_inferred_from_pixels": False,
@@ -662,8 +722,10 @@ def _symmetric_tapered_annular_graph(*, include_oblique_pair=True):
     )
 
 
-def test_symmetric_tapered_annular_profile_materializes_from_constraints_not_pixels():
-    graph = _symmetric_tapered_annular_graph()
+def test_symmetric_tapered_annular_profile_materializes_only_with_verified_straight_primitive():
+    graph = _symmetric_tapered_annular_graph(
+        verified_straight_primitive=True,
+    )
     result = resolve_evidence_graph(graph)
     draft = build_semantic_draft(graph, result)
 
@@ -701,6 +763,23 @@ def test_symmetric_tapered_annular_profile_materializes_from_constraints_not_pix
         if item.get("field") == "rotational_profile"
     ]
     assert R.check_drawing_json(draft) == []
+
+
+def test_symmetric_tapered_annular_profile_blocks_unresolved_exterior_fragments():
+    graph = _symmetric_tapered_annular_graph()
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
 def test_symmetric_tapered_annular_profile_requires_bilateral_oblique_topology():

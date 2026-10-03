@@ -886,10 +886,13 @@ def _bilateral_exterior_oblique_sources(
     graph: EvidenceGraph,
     item: dict[str, Any],
 ) -> list[str] | None:
-    """Prove a bilateral exterior non-orthogonal transition from raster topology.
+    """Prove a bilateral straight exterior transition without raster-to-metric inference.
 
-    Pixel coordinates are used only to establish mirror identity/topology. They
-    never supply engineering coordinates, radii, axial levels, or taper slope.
+    Raster coordinates may confirm bilateral topology only. They cannot prove a
+    canonical primitive type. Materialization therefore requires each physical
+    fragment to already carry verified straight-profile semantics and verified
+    structural contacts; unresolved exterior fragments are blockers, never
+    authority to synthesize a line.
     """
 
     fragments = item.get("non_orthogonal_fragments")
@@ -902,7 +905,12 @@ def _bilateral_exterior_oblique_sources(
         if (
             not isinstance(fragment, dict)
             or fragment.get("connection_kind")
-            != "exterior_non_orthogonal_boundary_fragment"
+            != "non_orthogonal_profile_connection"
+            or fragment.get("primitive_kind") != "line"
+            or fragment.get("primitive_kind_basis")
+            != "explicit_straight_profile_semantics"
+            or not isinstance(fragment.get("supporting_physical_edges"), list)
+            or len(fragment["supporting_physical_edges"]) < 2
             or fragment.get("engineering_coordinate_inferred_from_pixels") is not False
             or fragment.get("pixel_geometry_used_for_topology_only") is not True
             or fragment.get("material_side_index") not in {0, 1}

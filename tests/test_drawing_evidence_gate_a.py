@@ -379,6 +379,25 @@ def test_rotational_profile_materializes_verified_engineering_arc():
     )
     assert R.check_drawing_json(draft) == []
 
+    dispatches, errors = R.resolve_drawing_capability_dispatches(draft)
+    assert errors == []
+    assert len(dispatches) == 1
+    contracts = dispatches[0]["payload"]["operation_contracts"]
+    assert len(contracts) == 1
+    arc_operations = [
+        operation
+        for operation in contracts[0]["operations"]
+        if operation["tool"] == "nx_sketch_arc"
+    ]
+    assert len(arc_operations) == 1
+    assert arc_operations[0]["fixed_args"] == {
+        "center": {"x": 25.0, "y": 55.0},
+        "radius": 5.0,
+        "start_angle": 0.0,
+        "end_angle": 90.0,
+    }
+    assert arc_operations[0]["requires"] == ["sketch_id"]
+
 
 def test_rotational_profile_keeps_arc_blocking_when_radius_does_not_fit():
     graph = _rotational_rectangle_with_arc(radius=40.0)

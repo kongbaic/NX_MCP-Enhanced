@@ -54,6 +54,14 @@ def test_radius_can_coexist_with_other_explicit_engineering_semantics():
     assert parsed["geometry_binding"] == "unresolved"
 
 
+def test_radius_requires_an_explicit_token_boundary():
+    parsed = parse_engineering_callout("M6R3")
+
+    assert parsed is not None
+    assert parsed["facts"] == {"thread_spec": "M6R3"}
+    assert "radius" not in parsed["facts"]
+
+
 def test_leading_zero_through_hole_does_not_invent_diameter():
     parsed = parse_engineering_callout("2-06.6通孔")
 

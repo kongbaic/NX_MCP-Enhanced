@@ -251,6 +251,156 @@ def test_rotational_profile_blocks_verified_non_orthogonal_primitive_not_consume
         assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def _rotational_rectangle_with_arc(*, radius=5.0):
+    graph = _rotational_rectangle_graph()
+    right_target = "feature:F_RIGHT.boundary.x"
+    top_target = "feature:F_TOP.boundary.z"
+    topology = graph.observations[0]["items"][0]
+    for edge in topology["edges"]:
+        if edge["ref"] == "RIGHT":
+            edge["material_axis_direction"] = "negative"
+            edge["background_axis_direction"] = "positive"
+        elif edge["ref"] == "TOP":
+            edge["material_axis_direction"] = "negative"
+            edge["background_axis_direction"] = "positive"
+
+    fragment = {
+        "id": "PHYSICAL_ARC_TOP_RIGHT",
+        "region_ids": ["R1"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": ["F_RIGHT", "F_TOP"],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": "F_RIGHT",
+                "constant_axis": "X",
+                "boundary_target": right_target,
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+            {
+                "physical_feature_id": "F_TOP",
+                "constant_axis": "Z",
+                "boundary_target": top_target,
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+        ],
+        "connection_kind": "non_orthogonal_profile_connection",
+        "primitive_kind": "arc",
+        "primitive_kind_basis": (
+            "verified_continuous_curved_raster_segment_"
+            "between_structural_contacts"
+        ),
+        "source_ids": ["hybrid:curve-boundary:7"],
+        "basis": "identity_linked_physical_oblique_profile_topology",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+    topology["non_orthogonal_fragments"] = [fragment]
+    graph.observations.append(
+        {
+            "kind": (
+                "hybrid_physical_rotational_oblique_profile_"
+                "topology_ledger"
+            ),
+            "schema": "1.0",
+            "items": [fragment],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    )
+
+    radius_target = (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_ARC_TOP_RIGHT.radius"
+    )
+    graph.direct_values.append(
+        DirectValueEvidence(
+            id="ARC_RADIUS",
+            target=radius_target,
+            value=radius,
+            semantic="radius",
+            source_ids=[
+                "hybrid:whole:7",
+                "hybrid:curve-boundary:7",
+            ],
+        )
+    )
+    graph.required_targets.append(radius_target)
+    return graph
+
+
+def test_rotational_profile_materializes_verified_engineering_arc():
+    graph = _rotational_rectangle_with_arc(radius=5.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    arcs = [
+        segment
+        for segment in draft["profile"]["segments"]
+        if segment["type"] == "arc"
+    ]
+    assert len(arcs) == 1
+    assert arcs[0]["center"] == {"x": 25.0, "z": 55.0}
+    assert arcs[0]["radius"] == 5.0
+    assert arcs[0]["start_angle"] == 0.0
+    assert arcs[0]["end_angle"] == 90.0
+
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile_primitive"
+    ]
+    assert blockers == []
+
+    arc_sources = [
+        item
+        for item in draft["source_ledger"]
+        if item.get("target", "").startswith("profile.segments.")
+        and item.get("solver") == "rotational_profile_arc_solver"
+    ]
+    assert arc_sources
+    assert all(
+        "hybrid:curve-boundary:7" in item["evidence"]
+        for item in arc_sources
+    )
+    assert any(
+        item["target"].endswith(".radius")
+        and (
+            "constraints.profile_arc_radii."
+            "PHYSICAL_ARC_TOP_RIGHT.radius"
+        )
+        in item["source_targets"]
+        for item in arc_sources
+    )
+    assert R.check_drawing_json(draft) == []
+
+
+def test_rotational_profile_keeps_arc_blocking_when_radius_does_not_fit():
+    graph = _rotational_rectangle_with_arc(radius=40.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert all(
+        segment["type"] == "line"
+        for segment in draft["profile"]["segments"]
+    )
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile_primitive"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["metadata"]["primitive_kind"] == "arc"
+    assert blockers[0]["required_for_modeling"] is True
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_resolved_annular_rotational_meridian_materializes_without_axis_closure():
     inner = "feature:F_INNER.boundary.x"
     outer = "feature:F_OUTER.boundary.x"

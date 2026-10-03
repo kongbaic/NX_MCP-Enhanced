@@ -305,6 +305,37 @@ def _exterior_edge_mask(
     return cv2.bitwise_and(edges, near_background)
 
 
+def _segment_edge_support_fraction(
+    edge_mask: Any,
+    first: tuple[int, int],
+    second: tuple[int, int],
+    np: Any,
+    *,
+    radius: int = 1,
+) -> float:
+    """Measure candidate straight-line raster support without metric inference."""
+
+    length = math.hypot(
+        float(second[0] - first[0]),
+        float(second[1] - first[1]),
+    )
+    sample_count = max(2, int(round(length)) + 1)
+    xs = np.rint(np.linspace(first[0], second[0], sample_count)).astype(int)
+    ys = np.rint(np.linspace(first[1], second[1], sample_count)).astype(int)
+    height, width = edge_mask.shape[:2]
+
+    hits = 0
+    for x, y in zip(xs, ys, strict=True):
+        x0 = max(0, int(x) - radius)
+        x1 = min(width, int(x) + radius + 1)
+        y0 = max(0, int(y) - radius)
+        y1 = min(height, int(y) + radius + 1)
+        if x0 < x1 and y0 < y1 and np.any(edge_mask[y0:y1, x0:x1] > 0):
+            hits += 1
+
+    return hits / sample_count
+
+
 def _oblique_annotation_lines(
     edges: Any,
     image_width: int,
@@ -365,6 +396,12 @@ def _oblique_annotation_lines(
             if second < first:
                 first, second = second, first
 
+            line_edge_support_fraction = _segment_edge_support_fraction(
+                source_edges,
+                first,
+                second,
+                np,
+            )
             candidate = {
                 "kind": "oblique_line_candidate",
                 "endpoints_px": [
@@ -373,6 +410,10 @@ def _oblique_annotation_lines(
                 ],
                 "angle_deg": round(float(normalized), 3),
                 "length_px": round(float(length), 2),
+                "line_edge_support_fraction": round(
+                    float(line_edge_support_fraction),
+                    3,
+                ),
                 "candidate_only": True,
                 "exterior_boundary_candidate": exterior_boundary_candidate,
             }
@@ -397,6 +438,10 @@ def _oblique_annotation_lines(
                 ):
                     if exterior_boundary_candidate:
                         previous["exterior_boundary_candidate"] = True
+                    previous["line_edge_support_fraction"] = max(
+                        float(previous.get("line_edge_support_fraction", 0.0)),
+                        float(candidate["line_edge_support_fraction"]),
+                    )
                     duplicate = True
                     break
             if not duplicate:

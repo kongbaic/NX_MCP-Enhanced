@@ -282,6 +282,14 @@ def test_oblique_annotation_lines_stay_geometry_only():
     assert all(item["kind"] == "oblique_line_candidate" for item in candidates)
     assert all(item["candidate_only"] is True for item in candidates)
     assert all(8 < item["angle_deg"] < 82 for item in candidates)
+    assert all(
+        0.0 <= float(item["line_edge_support_fraction"]) <= 1.0
+        for item in candidates
+    )
+    assert max(
+        float(item["line_edge_support_fraction"])
+        for item in candidates
+    ) >= 0.85
 
 
 def test_one_sided_boundary_evidence_rejects_interior_line():

@@ -8,7 +8,7 @@
 **输出**：一份可直接执行的 NX_MCP 建模计划 JSON（`mode` + `operations` +
 `final_validation` + `fallbacks`），以及执行阶段的硬性规则。
 
-Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功生成的canonical `drawing.json`，并重新生成frozen plan。禁止消费`semantic-draft.json`、previous/latest/first-matching drawing、Agent手写或仅经独立`validate-drawing`通过的drawing；禁止读取、复用或参考工作区旧frozen/executable/report/PRT/STEP。build必须使用`--drawing <current-drawing>`绑定本轮输入。
+Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功生成的canonical `drawing.json`，并重新生成frozen plan。禁止消费`semantic-draft.json`、previous/latest/first-matching drawing、Agent手写或仅经独立`validate-drawing`通过的drawing；禁止读取、复用或参考工作区旧frozen/executable/report/PRT/STEP。执行 `plan-contracts <current-drawing>` 后，必须把其结果顶层 `drawing` 原样复制为 frozen 顶层 `source_drawing`；build/check 必须使用同一 `--drawing <current-drawing>`，Runner 会做 canonical absolute-path 精确匹配，禁止跨轮换图。
 
 **本模块 不做**：
 - 图片识别、OCR、工程图读取（由工程图读取模块 负责，完成后把结构化 JSON 交给本模块）
@@ -88,6 +88,30 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
 7. 拆分实体建模只允许用于**真实分离且面积接触**的特征（凸台坐落于板面、
    耳板与主体面接触等），且 Unite 前确认接触面积 > 0。
 
+### 3.1 连续切除相切规则（Subtract Tangency / Zero-Wall Rule，强制）
+
+当两个或多个减料特征在同一实体上形成一个连续开口/孔槽组合时，Planner 在拆成
+多次 `Subtract` 之前必须检查它们的切除体之间是否只有**单点相切、单线相切或
+零面积接触**。
+
+1. 若相邻切除体只有点/线相切，**禁止依赖两次独立 Boolean Subtract**。NX 可能
+   在第二次减料时报“工具和目标未形成完全相交或者其接触状况将导致区域零壁厚”。
+2. 若工程图语义明确表示一个连续切除轮廓（例如圆孔与通顶开槽组成 keyhole、
+   圆弧槽与直槽连续相接），必须把它们合并成**一个连续闭合 cut profile**，
+   再执行一次 subtract。
+3. 合并轮廓的连接点必须由 canonical engineering dimensions / datum /
+   symmetry / tangent relation **解析求解**。例如圆 `(x-cx)^2+(z-cz)^2=r^2`
+   与槽壁 `x=x_slot` 的连接 Z 必须由该方程求解；禁止从像素换算。
+4. **禁止 geometry/numeric nudge**：不得通过 `±0.001`、人为扩大孔径、加深槽、
+   增加重叠量等方式绕过 NX 零壁厚错误；这会改变工程图几何。
+5. drawing 中原始 feature 语义不得删除或改写。Planner 仅允许在建模表达层把多个
+   已确认、连续相接的 cut feature 合成为一个 executable profile；Gate A 的尺寸、
+   centerline、axis、depth/range 与 ownership 仍保持原值。Mode B 若属于
+   deterministic point-tangent hole+slot 组合，合并后的草图弧/线连接几何必须由
+   `plan-contracts` 的 Adapter operation contract 给出；Planner 不得自行重算
+   切点或退回两个独立 subtract。
+6. 若无法仅由工程尺寸唯一求得连接几何，则 fail-closed，报告缺口；不得猜连接点。
+
 推荐总体顺序（具体任务可调整，但必须优先减少拓扑反复变化）：
 
 ```
@@ -123,7 +147,7 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
   - `axis=Y` → XZ sketch → 沿 Y subtract；
   - `axis=Z` → XY sketch / Z 轴孔工具。
 - **Metric thread surrogate** 只替代当前工具无法表达的真实螺纹牙型：通用解析 `metric designation → nominal diameter → pitch → tap-drill diameter = nominal - pitch`。裸 M 使用项目支持的 coarse-pitch metadata subset，显式 pitch 使用图纸值；无法解析则 fail closed。
-- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
+- surrogate 必须保持 Gate A 的 axis、transverse center、depth、axial range、count、side 和 feature ownership。thread 的 axial range 优先使用 drawing 显式值；若缺失，优先消费 `material_side=min|max` + `entry_endpoint=min|max`：前者只选择 canonical material interval，后者只选择该 interval 的加工入口端。二者不同时表示从被中断材料段的内侧端面进入，Runner 必须先证明该中心线上存在多个 canonical material intervals，否则 fail closed。旧 `start_side/side=min|max` 仅作向后兼容简写，等价于 material_side 与 entry_endpoint 同值。任何派生仍要求正 depth（含 `thread_depth`）与完整 overall dimensions，禁止使用像素换算。若且仅若存在唯一同轴、同 transverse center、through=true 且孔径不小于 resolved tap-drill diameter 的非线程孔，并且 thread 与 covering feature 都提供明确 axial range、covering axial range 完整覆盖 thread axial range，Gate B 才可将该 thread surrogate 标记为 `subsumed_by_coaxial_through_hole` 并要求 0 个额外切除 operation；仅凭 `through=true` 不足以证明轴向材料区间覆盖；drawing 中的 thread 语义不得删除或改写。`build/check --drawing` 在 Gate B 对最终 hole/subtract operation 做结构化核对，禁止借 surrogate 修正 Reader 几何。
 - **slot/cut 的 through_axis 固定映射**：
   - `through_axis=X` → YZ sketch → 沿 X subtract；
   - `through_axis=Y` → XZ sketch → 沿 Y subtract；
@@ -133,7 +157,7 @@ Mode B 每个新工程图请求必须只消费本轮`canonicalize-drawing`成功
 - Planner只能消费本轮canonicalizer以exit code = 0、`written=true`、`output_exists=true`生成的drawing，并原样消费其中已闭合的HARD几何。若canonical drawing不存在，或bbox、中心距、对称、count、evidence检查失败，必须停止且不得回退到任何其它drawing。
 - 禁止 Planner 纠正 Reader 坐标：不得平移、自动居中、使用 `abs()`、改正负号、自动镜像，或以“看起来合理”为由改写 profile、axis、center、start/end/range。
 - 图纸明确的左/右对齐或偏置 profile 必须保留；source `count` 已是总数，禁止因 symmetry/mirror 再翻倍。
-- 同轴组成员若需要分别从轴线两侧加工，Planner 必须从 Reader 给出的 side / axial range 生成；这些字段缺失且会改变实体时停止规划，禁止“一个放中心高、一个放 E 派生高”式二次猜测。
+- 同轴组成员若需要分别从轴线两侧加工，优先原样消费 Reader 给出的 side / axial range。若 axial range 缺失，只允许使用 deterministic `resolve_axis_material_intervals`：由 canonical closed body profile 先求查询轴线上的 solid intervals，再由注册的 canonical subtractive-feature void providers 做区间差集，得到真实 material intervals；start_side 只选择对应外侧材料段，through/depth 再从该段确定范围。不得把 overall bbox 直接当作局部材料厚度，不得针对某个零件或某一种 slot 写尺寸特判。派生后必须由 `check/build --drawing` 对实际 implementation 的 axis、center、diameter、signed axial range 做结构化核对。禁止 pixel→mm、自由猜测；profile/void geometry 不能唯一求解时停止规划。
 - frozen plan 发布前必须检查：同一 `coaxial_hole_group` 展开的所有 member operation 的非轴向中心坐标完全一致；若不一致，B 阶段前直接判为规划错误。
 - **Chamfer 不得由参数名拼接生成**：只有 Reader 已输出具有明确 target edge/edge semantics 的 chamfer feature，Planner 才能创建 Chamfer operation。孤立参数 `C=2`、表格字段 C 或没有边绑定的数值不得被 Planner 转写成“C2 倒角”。
 - **圆角 / 倒角一律放最后**：完成主体几何 → 完成孔 → 完成 Boolean →
@@ -350,15 +374,48 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 读取本轮 canonical drawing.json（Mode B）或已确认结构化意图（Mode A）
 → 检查 unresolved / dimension closure
 → 读取本地冻结契约（runner-contract.md + certified-tool-contract.json）
+→ Mode B 调用已安装 Runner：
+  `plan-contracts <current-drawing.json>`
+→ 直接消费返回的 selected implementation + geometries + operation_contracts + planner_contract；
+  每个 contract operation：
+  `tool` 原样；
+  `fixed_args` 完整 key set 与 value 原样复制到 tool_args（含 false / 0 / 空对象）；
+  `operation_fields` 若存在则逐 key 原样展开到 frozen operation 顶层，禁止放入 tool_args；
+  Planner 只补 `requires` 指定的 symbol wiring 与步骤顺序
+→ Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
+  `capabilities --feature-kind <kind> --axis <X|Y|Z>`
+→ 无 capability / adapter / operation materialization 时 fail closed
 → 生成 FAST plan（含版本号）
 → 发布前静态自检 selection_criteria
 → frozen plan 落盘
-→ 调用 runner build
-→ 调用 runner check
+→ 调用 runner build --drawing <current-drawing.json>（Mode B）
+→ 调用 runner check --drawing <current-drawing.json>（Mode B）
 → 输出结果
 ```
 
 **禁止**在正常路径中插入源码研究步骤。
+
+Capability 边界：
+- canonical drawing / Feature Contract 保存工程真值，不得写入具体 NX 工具实现。
+- `modeling_capabilities.json` 是静态 implementation 接入缝隙，不是 active registry，
+  不记录 task、hash、运行状态或 repair lineage。
+- 新增 Thread / Helix / Sweep / Loft 或其它真实 NX 工具时，应新增 capability
+  implementation + Planner adapter + Gate B validator；不得要求 Reader/Resolver
+  重写同一 Feature Contract。
+- exact implementation 与 surrogate 同时存在时，Capability Resolver 优先 exact；
+  required certified tool 缺失、axis 不支持或没有 validator 时必须 fail closed。
+- Gate B 校验的是 implementation 最终工程几何是否等于 Feature Contract，不得把
+  某个具体工具名本身当成几何真值。
+- Mode B 的 Planner Adapter 必须通过 `plan-contracts` 暴露
+  `operation_contracts`：工程真值到 NX 几何关键参数（如 axis/range →
+  plane/reverse/start_offset/distance）的转换归 deterministic Adapter 所有。
+  Planner 不得自行重新解释这些参数；每个 operation 必须保留 fixed_args 的
+  **完整字段集合和完整值**，包括 `reverse:false`、数值 `0` 和空对象，禁止依赖
+  certified tool/NX 的默认参数而省略字段。operation contract 若携带
+  `operation_fields`，其中字段同样是 deterministic Adapter 输出，必须原样展开到
+  frozen operation 顶层（如 `thread_surrogate_use`），不能放进 tool_args 或丢弃。
+  只允许按 `requires` 补 symbol binding、安排合法 step 顺序以及非工程真值的执行编排。
+
 
 ## 13. 输出格式（默认 FAST，强制）
 

@@ -23,6 +23,7 @@ REQUIRED = [
     "references/runner-contract.md",
     "references/certified-tool-contract.json",
     "references/pipeline-contract.md",
+    "references/reader-bounded-query-contract.md",
     "references/chinese-output.md",
     "examples/example-output.json",
     "examples/modeling-plan-example.json",
@@ -65,6 +66,17 @@ def main() -> None:
 
     sys.path.insert(0, str(RUNNER))
     import runner  # type: ignore  # noqa: E402
+
+    capability_path = RUNNER / "modeling_capabilities.json"
+    if not capability_path.is_file():
+        fail("missing Runner modeling_capabilities.json")
+    capabilities = json.loads(capability_path.read_text(encoding="utf-8"))
+    capability_errors = runner.capability_registry_errors(capabilities)
+    if capability_errors:
+        fail(
+            "invalid Runner modeling capability registry: "
+            + "; ".join(capability_errors)
+        )
 
     contract = json.loads((SKILL / "references" / "certified-tool-contract.json").read_text(encoding="utf-8"))
     tools = set(contract["tools"])
@@ -209,35 +221,82 @@ def main() -> None:
             fail(f"SKILL Mode A Fast Path regression: missing {token}")
 
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
+    reader_runtime = (SKILL / "references" / "reader-runtime-contract.md").read_text(
+        encoding="utf-8"
+    )
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
+    runner_contract = (SKILL / "references" / "runner-contract.md").read_text(encoding="utf-8")
     for token in (
         "当前上传工程图",
-        "唯一几何输入",
-        "Reader 只能一次写出 `semantic-draft.json`",
-        "Reader 不得直接创建、覆盖或手写 `drawing.json`",
-        "process exit code = 0",
-        "`written=true`",
-        "`output_exists=true`",
-        "单独调用 `validate-drawing` 绕过 canonicalizer",
-        "从零生成新的 frozen plan",
-        "不得跳过 Planner",
-        "--drawing <current-drawing>",
-        "禁止主动读取或把工作区中的旧 frozen/executable plan",
-        "禁止扫描工作区寻找“可复用”的历史 plan",
+        "唯一权威几何输入",
+        "runtime-local raster 路径",
+        "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+        "在执行该命令前禁止打开、查看或视觉解读整张工程图",
+        "禁止先创建目录、再删除目录",
+        "awaiting_structural_context",
+        "answer_template",
+        "原样复制 answer_template",
+        "view_axis_map",
+        "front horizontal=X / vertical=Z",
+        "pending_structural_visual_read",
+        "structural-context-answers-v1",
+        "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+        "fresh 直接子级 prefix",
+        "mode-b-runs",
+        "禁止“修正路径后重试”",
+        "Hybrid Adapter",
+        "mode_b_gate_a_pass",
+        "mode_b_awaiting_confirmation",
+        "fallback semantic Reader",
+        "mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>",
+        "禁止第二轮确认",
+        "runner.py plan-contracts <current-drawing.json>",
+        "operation_contracts",
+        "planner_contract",
+        "完整 key set + 完整 value",
+        "显式 `false`",
+        "operation_fields",
+        "frozen operation 顶层",
+        "requires",
+        "不得执行第二次 build/check",
+        "B 阶段不属于 Controlled Self-Healing",
+        "unrelated_part_open",
+        "新建零件任务",
+        "nx_status",
+        "Work Part",
+        "严禁创建、生成或执行任何关闭用户零件的计划",
+        "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "runner.py check <current-executable> --drawing <current-drawing>",
+        "从零写本轮新的 frozen plan",
+        "mode-b-state",
+        "禁止扫描工作区寻找可复用历史 plan",
     ):
         if token not in top:
             fail(f"Mode B current-request isolation regression: missing {token}")
+    for token in (
+        "labeled_dimension_targets",
+        "labeled_dimension_decisions",
+        "禁止改写 OCR 给出的 value",
+        "pending_labeled_dimension_relation_read",
+        "between_profile_boundaries",
+        "deterministic_visual_direction",
+        "尺寸箭头从一端到另一端的方向",
+        "整件 overall 外包边界",
+    ):
+        if token not in top:
+            fail(f"bounded labeled-dimension structural contract missing: {token}")
+
     for token in (
         "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
         "只能读取",
         "runtime configuration missing",
         "禁止自动寻找其它 runtime-config",
-        "禁止 fallback 到 `python` / `python3` / `py`",
-        "`workspace_root` 与 `NX_MCP_WORKSPACE` 规范化后必须相同",
-        "`nx_mcp_src` 只能取自当前 runtime-config",
+        "禁止 fallback 到 python / python3 / py",
+        "workspace_root 与 NX_MCP_WORKSPACE 规范化后必须相同",
+        "nx_mcp_src 只能取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json` / `drawing.json` / frozen plan / executable plan / report / PRT / STEP",
+        "当前 raw-evidence.json / reader-visual-aid.json / reader-input.json / reader-contact-sheet.png / reader-crops / reader-observations.json / reader-capture.json / drawing-evidence.json / semantic-draft.json / drawing.json / frozen plan / executable plan / report / PRT / STEP",
     ):
         if token not in top:
             fail(f"Mode B deterministic runtime regression: missing {token}")
@@ -248,39 +307,542 @@ def main() -> None:
         "exit code = 0",
         "`written=true`",
         "`output_exists=true`",
-        "--drawing <current-drawing>",
+        "`plan-contracts <current-drawing.json>`",
+        "operation_contracts + planner_contract",
+        "完整 key set 与 value 原样复制",
+        "`reverse:false`",
+        "`operation_fields`",
+        "frozen operation 顶层",
+        "`requires`",
+        "runner build --drawing <current-drawing.json>",
+        "runner check --drawing <current-drawing.json>",
     ):
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
     for token in (
-        "当前上传工程图 → 当前 semantic-draft.json → canonicalize-drawing → 当前 drawing.json",
-        "Reader只从当前上传工程图生成一次`semantic-draft.json`",
-        "只有process exit code = 0、`written=true`、`output_exists=true`同时成立才PASS",
-        "Reader存在blocking unresolved",
-        "draft只有白名单内安全schema/path差异",
-        "draft存在真实semantic/ownership错误",
-        "不能直接 build/run 或进入 Runner",
-        "不得扫描工作区判断是否存在“可用计划”",
-        "build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "part-entry tool=`nx_create_part`",
+        "不是 blocker",
+        "Runner history",
+        "不调用 `nx_close_part`",
+        "`nx_status`",
+        "真实 Work Part",
+        "part-entry tool=`nx_open_part`",
+        "unrelated_part_open",
+        "不属于 Controlled Self-Healing",
     ):
         if token not in pipeline_contract:
-            fail(f"Mode B stale-workspace contract regression: missing {token}")
+            fail(f"Stage C create-new work-part safety regression: missing {token}")
+
+    for token in (
+        "unrelated_part_preserved_for_create",
+        "Runner history",
+        "`nx_create_part`",
+        "`nx_status`",
+        "active/Work Part",
+        "`nx_open_part`",
+        "unrelated_part_open",
+    ):
+        if token not in runner_contract:
+            fail(f"Runner create-new work-part contract regression: missing {token}")
+
+    for token in (
+        "Hybrid raster 路径下，本阶段由 Hybrid Adapter + Reader Observation Finalizer",
+        "reader-observations.json",
+        "assemble-reader-capture <reader-observations.json> <reader-capture.json>",
+        "immutable compiled first-pass visual evidence artifact",
+        "Reader 不得直接写 drawing-evidence.json、semantic-draft.json 或 drawing.json",
+        "check-capture <reader-capture.json>",
+        "link-capture <reader-capture.json> <drawing-evidence.json>",
+        "resolve <drawing-evidence.json> <semantic-draft.json>",
+        "A4.1 Human Confirmation Gate（最多一次）",
+        "request-confirmations <drawing-evidence.json> <confirmation-request.json>",
+        "eligible_for_user_confirmation = true",
+        "apply-confirmations <drawing-evidence.json> <user-confirmations.json> <drawing-evidence-confirmed.json>",
+        "resolve <drawing-evidence-confirmed.json> <semantic-draft-confirmed.json>",
+        "禁止第二轮用户确认",
+        "canonicalize-drawing <semantic-draft.json> <drawing.json>",
+        "runner plan-contracts <current-drawing.json>",
+        "selected implementation + geometries + operation_contracts",
+        "fixed_args",
+        "requires",
+        "runner build <current-frozen> <current-executable> --drawing <current-drawing>",
+        "runner check <current-executable> --drawing <current-drawing>",
+        "禁止打开、",
+        "fresh-hybrid-run-directory 必须在调用前不存在",
+        "answer_template",
+        "原样复制该模板",
+        "view_axis_map",
+        "front horizontal=X /",
+        "pending_structural_visual_read",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json",
+    ):
+        if token not in pipeline_contract:
+            fail(f"Mode B evidence pipeline regression: missing {token}")
     for token in (
         "一次且仅一次 runtime discovery",
         "<NX_MCP_WORKSPACE>\\nx-mcp-plan-runner\\runtime-config.json",
         "只能读取这一份",
         "runtime configuration missing",
         "规范化后必须相同",
-        "禁止 fallback 到 `python`、`python3`、`py`",
-        "`nx_mcp_src` 必须原样取自当前 runtime-config",
+        "禁止 fallback 到 python、python3、py",
+        "nx_mcp_src 必须原样取自当前 runtime-config",
         "本轮不得重新发现或切换 runtime",
-        "semantic-draft.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
+        "当前 Mode B 的 raw-evidence.json、reader-visual-aid.json、reader-input.json、reader-contact-sheet.png、reader-crops、reader-observations.json、reader-capture.json、drawing-evidence.json、confirmation-request.json、user-confirmations.json、drawing-evidence-confirmed.json、semantic-draft.json、semantic-draft-confirmed.json、drawing.json、frozen plan、executable plan、report、PRT 和 STEP",
     ):
         if token not in pipeline_contract:
             fail(f"Mode B runtime contract regression: missing {token}")
 
+    stage_c_contracts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "runner-contract.md": runner_contract,
+    }
+    for name, contract_text in stage_c_contracts.items():
+        for token in (
+            "正常 attempt 1",
+            "python_exe runner.py run <current-executable.json>",
+            "--workspace <workspace_root>",
+            "--report <attempt1-report.json>",
+            "--mode normal",
+            "--repair-attempt 0",
+            "禁止 `--allow-overwrite`",
+        ):
+            if token not in contract_text:
+                fail(f"Stage C normal Runner entry regression in {name}: missing {token}")
+
+    for token in (
+        "fixed_args",
+        "完整 key set",
+        "false",
+        "`0`",
+        "operation_fields",
+        "frozen operation",
+        "thread_surrogate_use",
+        "requires",
+    ):
+        if token not in runner_contract:
+            fail(f"Mode B exact fixed_args copy regression: missing {token}")
+
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_doc = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+    reader_prep_contracts = {
+        "SKILL.md": (
+            "唯一权威几何输入",
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "awaiting_structural_context",
+            "structural-context-queries.json",
+            "structural-context-answers-v1",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "fresh 直接子级 prefix",
+            "mode-b-runs",
+            "禁止“修正路径后重试”",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "局部尺寸不得冒充 `overall_dimension_facts`",
+            "`rotational_symmetry`",
+            '"status":"established"',
+            '"basis":"centerline"',
+            '"basis":"axial_section_symmetry"',
+            '"status":"not_established"',
+            "rotational_symmetry_not_visible_in_region",
+            "deterministic_profile_symmetry_axis",
+            "Agent **禁止填写 X/Y/Z 回转轴，也禁止填写无中心线轴向剖视",
+            "不要求图纸额外打印 X/Y/Z 轴名",
+            "front horizontal→X / vertical→Z",
+            "无中心线轴向剖视依据",
+            "连续实线的物体轮廓/边界绝不能冒充中心线",
+            "not_established 不是“没看出来”的兜底值",
+            "只有中心线但无成对同轴回转轮廓",
+            "rotation Z ⇒ X=Y",
+            "Agent 禁止据此手工补第三轴 overall",
+            "terminal 后禁止二次诊断",
+            "must_stop=true",
+            "may_retry=false",
+            "may_edit_structural_answers=false",
+            "重开 fresh / fallback / 修正后重试",
+            "terminal 回复在失败报告后必须立即结束",
+            "模式 A",
+            "发起新任务",
+            "fallback semantic Reader",
+        ),
+        "pipeline-contract.md": (
+            "### A0.5. Hybrid Frontend raster preparation",
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "awaiting_structural_context",
+            "bounded Structural Reader answers",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "fresh 直接子级 prefix",
+            "mode-b-runs",
+            "禁止修正路径重试",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "局部尺寸不得冒充",
+            "`rotational_symmetry`",
+            '"status":"established"',
+            '"basis":"centerline"',
+            '"basis":"axial_section_symmetry"',
+            '"status":"not_established"',
+            "rotational_symmetry_not_visible_in_region",
+            "deterministic_profile_symmetry_axis",
+            "Agent 禁止直接填写 X/Y/Z 回转轴，也禁止填写无中心线轴向剖视",
+            "不要求图纸额外打印 X/Y/Z 轴名",
+            "front horizontal→X / vertical→Z",
+            "无中心线轴向剖视依据",
+            "连续实线的物体轮廓/边界绝不能冒充中心线",
+            "not_established 不是不确定性的兜底",
+            "只有中心线但无成对同轴回转轮廓",
+            "rotation Z ⇒ X=Y",
+            "Agent 禁止手工补第三轴 overall",
+            "terminal 后禁止二次诊断",
+            "重开 fresh / fallback / 修正后重试",
+            "失败报告写完后必须立即结束回复",
+            "模式 A",
+            "发起新任务",
+            "fallback semantic Reader",
+        ),
+        "reader-runtime-contract.md": (
+            "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+            "phase=awaiting_structural_context",
+            "Structural Reader",
+            "structural-context-answers-v1",
+            "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+            "The box is only a region-to-view locator, not an annotation-reading",
+            "even when its dimension line or text",
+            "Local dimensions must never be promoted to `overall_dimension_facts`",
+            "`rotational_symmetry`",
+            '"status":"established"',
+            '"basis":"centerline"',
+            '"basis":"axial_section_symmetry"',
+            '"status":"not_established"',
+            "rotational_symmetry_not_visible_in_region",
+            "deterministic_profile_symmetry_axis=horizontal|vertical",
+            "The Agent must not report X/Y/Z",
+            "Omitting the field is not equivalent to `not_established`",
+            "The template may carry `rotational_symmetry:null` only while",
+            "A printed X/Y/Z axis name is",
+            "not required. Two visual bases are allowed.",
+            "Centerline-omitted axial-section basis",
+            "A solid continuous object/profile boundary is",
+            "`not_established` is not",
+            "an uncertainty fallback: use it only",
+            "front horizontal=>X / vertical=>Z",
+            "Mirror symmetry alone",
+            "rotation Z =>",
+            "The Agent must never synthesize the missing overall extent",
+            "Machine stop fields are authoritative",
+            "`must_stop=true`",
+            "`may_retry=false`",
+            "`may_edit_structural_answers=false`",
+            "do not rewrite structural answers and do not issue",
+            "After a terminal/blocked result, do not inspect OCR reports or Reader inputs",
+            "do not offer restart/fallback/retry as recovery",
+            "End the user-facing reply",
+            "do not append recommendations, next steps",
+            "the Agent must not prompt or steer the user",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "fallback semantic Reader",
+            "sole authoritative geometry source",
+        ),
+    }
+    reader_input_prep_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def _structural_bilateral_symmetry_hint(",
+        '"foreground_mirror_consensus_v1"',
+        '"bilateral_symmetry_hint": bilateral_symmetry_hint',
+    ):
+        if token not in reader_input_prep_source:
+            fail(f"Reader prep deterministic symmetry regression: missing {token}")
+
+    reader_prep_texts = {
+        "SKILL.md": top,
+        "pipeline-contract.md": pipeline_contract,
+        "reader-runtime-contract.md": reader_runtime,
+    }
+    for name, tokens in reader_prep_contracts.items():
+        for token in tokens:
+            if token not in reader_prep_texts[name]:
+                fail(f"Reader preparation contract regression in {name}: missing {token}")
+
+
+    hybrid_frontend_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def start_hybrid_frontend(",
+        "def resume_hybrid_frontend(",
+        '"awaiting_structural_context"',
+        '"mode_b_gate_a_pass"',
+        '"mode_b_awaiting_confirmation"',
+        '"must_stop": manifest.get("must_stop")',
+        '"may_retry": manifest.get("may_retry")',
+        '"may_edit_structural_answers": manifest.get("may_edit_structural_answers")',
+        "run_hybrid_ocr(",
+        "build_structural_context_queries(",
+        "adapt_hybrid_ocr_report(",
+        "finalize_partial_reader_observations(",
+        "run_mode_b_coordinator(",
+    ):
+        if token not in hybrid_frontend_source:
+            fail(f"Hybrid Frontend implementation regression: missing {token}")
+
+    structural_context_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "structural_context.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'region.get("structural_context_path")',
+        'evidence_label = f"structural:{region_id}:context"',
+        "class StructuralRotationalSymmetryDecision",
+        'status: Literal["established", "not_established"]',
+        '"rotational_symmetry_not_visible_in_region"',
+        'basis: Literal["centerline", "axial_section_symmetry"] | None = None',
+        'centerline_direction: Literal["horizontal", "vertical"] | None = None',
+        'deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None',
+        "rotational_symmetry: StructuralRotationalSymmetryDecision | None = Field(...)",
+        "resolved structural answer requires explicit rotational symmetry decision",
+        '"report_only_visual_rotational_symmetry_basis": True',
+        '"agent_must_not_report_engineering_rotation_axis": True',
+        '"agent_must_not_report_axial_section_symmetry_direction": True',
+        '"axial_section_axis_from_deterministic_profile_symmetry": True',
+        "require_explicit_rotational_symmetry_decision",
+        '"allow_nonsection_longitudinal_revolved_profile": True',
+        '"allow_axial_section_without_drawn_centerline": True',
+        '"require_centerline_for_nonsection_rotation": True',
+        '"require_unique_section_symmetry_axis_without_centerline": True',
+        '"solid_profile_line_is_not_centerline": True',
+        '"mirror_symmetry_alone_insufficient": True',
+        '"not_established_requires_counterevidence": True',
+        '"insufficient_rotation_evidence_is_unresolved": True',
+        '"region_local_rotation_unobservable_may_defer": True',
+        '"global_rotation_closure_remains_fail_closed": True',
+        "PartialRotationalSymmetryFact",
+        "rotational_symmetry_facts=merged_rotational_facts",
+        "requires crop_path or structural_context_path",
+    ):
+        if token not in structural_context_source:
+            fail(f"Structural context implementation regression: missing {token}")
+
+    finalizer_source = (
+        ROOT
+        / "src"
+        / "nx_mcp"
+        / "drawing_intelligence"
+        / "reader_observation_finalizer.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "rotational_symmetry_equal_transverse_extents",
+        "overall_dimension_derivation_ledger",
+        "partial.rotational_symmetry_facts",
+    ):
+        if token not in finalizer_source:
+            fail(f"Reader finalizer rotational symmetry regression: missing {token}")
+
+    compiler_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "compiler.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "def _compile_overall_dimension_derivations(",
+        "overall_dimension_derivation_ledger",
+        'kind="alignment"',
+        "rotation_axis",
+    ):
+        if token not in compiler_source:
+            fail(f"Compiler rotational symmetry provenance regression: missing {token}")
+
+    coordinator_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "mode_b_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'STATE_SCHEMA = "mode-b-coordinator-state-v1"',
+        '"reader_submitted"',
+        '"capture_pass"',
+        '"awaiting_confirmation"',
+        '"confirmation_submitted"',
+        '"second_resolve"',
+        '"gate_a_pass"',
+        '"terminal_failed"',
+        "def resume_mode_b_coordinator(",
+    ):
+        if token not in coordinator_source:
+            fail(f"Mode B coordinator implementation regression: missing {token}")
+
+    runner_source = (RUNNER / "runner.py").read_text(encoding="utf-8")
+    for token in (
+        "def derive_part_entry_tool(",
+        '"unrelated_part_preserved_for_create"',
+        'preserve_active = payload.get("state") == "unrelated_part_preserved_for_create"',
+        "async def verify_created_work_part(",
+        '"nx_create_part did not become active work part: "',
+        '"nx_create_part did not preserve pre-existing displayed part: "',
+        "preserved_displayed_part",
+        'if tool == "nx_create_part":',
+        "await verify_created_work_part(",
+    ):
+        if token not in runner_source:
+            fail(f"Runner create-new work-part implementation regression: missing {token}")
+
+    for token in (
+        "def _cmd_plan_contracts(",
+        '"plan-contracts"',
+        "pcontracts.set_defaults(func=_cmd_plan_contracts)",
+        "operation_contracts",
+        '"fixed_args_policy": "copy_exact_key_set_and_values"',
+        '"operation_fields_policy": "copy_exact_to_frozen_operation_root"',
+        '"must_stop_after_first_stage_b_failure": True',
+        '"may_retry_stage_b": False',
+        '"stage_b_failure_policy": "stop_no_retry_no_source_inspection"',
+        "dispatch_planner_adapter(",
+        "capability_plan_errors(",
+    ):
+        if token not in runner_source:
+            fail(f"Mode B plan-contract implementation regression: missing {token}")
+
+    loader_source = (ROOT / "loader" / "NX_MCP_Loader.cs").read_text(encoding="utf-8")
+    for token in (
+        "_session.Parts.FileNew()",
+        "DisplayPartOption.AllowAdditional",
+        "fileNew.MakeDisplayedPart = true",
+        "_session.Parts.SetWork(part)",
+        "GetDisplayedParts()",
+        '\\"displayed_parts\\"',
+        "part file already exists; overwrite must be authorized by Runner preflight",
+        "new part replaced a pre-existing displayed part",
+    ):
+        if token not in loader_source:
+            fail(f"Loader multi-display preservation regression: missing {token}")
+    create_part_source = loader_source.split(
+        "private static string CreatePart(string[] parts)", 1
+    )[1].split("private static void ResetTaskState()", 1)[0]
+    if "_session.Parts.NewDisplay(" in create_part_source:
+        fail("Loader create-part must not use NewDisplay")
+    if "File.Delete(path)" in create_part_source:
+        fail("Loader create-part must never delete an existing target file")
+
+    plan_tests = (RUNNER / "tests" / "test_plan_resolution.py").read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        '"reason": "planned_part_exists"',
+        "controlled_overwrite",
+        "os.remove(planned)",
+        "test_run_preflight_create_new_blocks_existing_disk_target_without_repair",
+        "test_run_preflight_controlled_repair_removes_only_planned_disk_target",
+    ):
+        if token not in runner_source and token not in plan_tests:
+            fail(f"Runner planned-part overwrite safety regression: missing {token}")
+
+    loader_bridge_source = (
+        ROOT / "src" / "nx_mcp" / "loader_bridge.py"
+    ).read_text(encoding="utf-8")
+    if '"displayed_parts": displayed_parts' not in loader_bridge_source:
+        fail("Loader bridge displayed_parts propagation regression")
+
+    hybrid_frontend_source = (
+        ROOT
+        / "src"
+        / "nx_mcp"
+        / "drawing_intelligence"
+        / "hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        '"structural_answers": run_dir / "structural-context-answers.json"',
+        "structural answers must be the current Hybrid Frontend run artifact",
+    ):
+        if token not in hybrid_frontend_source:
+            fail(f"Hybrid Frontend structural-answer isolation regression: missing {token}")
+    hybrid_frontend_tests = (
+        ROOT / "tests" / "test_hybrid_frontend_coordinator.py"
+    ).read_text(encoding="utf-8")
+    if "test_resume_rejects_structural_answers_from_another_run" not in hybrid_frontend_tests:
+        fail("Hybrid Frontend cross-run structural-answer regression test missing")
+
+    drawing_cli_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "cli.py"
+    ).read_text(encoding="utf-8")
+    if "prepare-reader-input" not in drawing_cli_source:
+        fail("Reader preparation CLI regression: missing prepare-reader-input")
+    if "run-hybrid-ocr" not in drawing_cli_source:
+        fail("Hybrid OCR CLI regression: missing run-hybrid-ocr")
+    if "run-hybrid-frontend" not in drawing_cli_source:
+        fail("Hybrid Frontend CLI regression: missing run-hybrid-frontend")
+    if "resume-hybrid-frontend" not in drawing_cli_source:
+        fail("Hybrid Frontend CLI regression: missing resume-hybrid-frontend")
+    if "assemble-reader-capture" not in drawing_cli_source:
+        fail("Reader observation assembly CLI regression: missing assemble-reader-capture")
+    if "build-reader-semantic-queries" not in drawing_cli_source:
+        fail("bounded Reader query CLI regression: missing build-reader-semantic-queries")
+    if "merge-reader-semantic-answers" not in drawing_cli_source:
+        fail("bounded Reader merge CLI regression: missing merge-reader-semantic-answers")
+
+    reader_observation_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_observations.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'class ReaderObservations',
+        'def assemble_reader_capture',
+        'ReaderCapture.model_validate(payload)',
+        'validate_reader_capture_contract(capture)',
+        '"required_targets": []',
+    ):
+        if token not in reader_observation_source:
+            fail(f"Reader observation assembler regression: missing {token}")
+
+    bounded_query_contract = (
+        SKILL / "references" / "reader-bounded-query-contract.md"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "build-reader-semantic-queries",
+        "reader-semantic-answers-v1",
+        "merge-reader-semantic-answers",
+        "reader-partial-observations.json",
+        "Hard stop at 3 minutes",
+        "do not perform cross-view identity",
+    ):
+        if token not in bounded_query_contract:
+            fail(f"bounded Reader contract regression: missing {token}")
+
+    reader_prep_source = (
+        ROOT / "src" / "nx_mcp" / "drawing_intelligence" / "reader_input_prep.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        '"schema": "reader-input-v1"',
+        '"contact_sheet_path": str(contact_sheet_path)',
+        '"structural_context_path": str(structural_context_path)',
+        '"structural_context_image_count": len(region_entries)',
+        '"may_read_contact_sheet": True',
+        '"prefer_contact_sheet": True',
+        '"scan_workspace": False',
+        '"scan_history": False',
+        '"create_additional_crops": False',
+        '"numeric_pixel_scale_matching": False',
+        '"visual_aid_decides_endpoint_ownership": False',
+        '"agent_output_schema": "reader-observations-v1"',
+        '"agent_writes_reader_capture_directly": False',
+        '"assembler_decides_engineering_semantics": False',
+    ):
+        if token not in reader_prep_source:
+            fail(f"Reader preparation implementation regression: missing {token}")
+
+    for legacy in (
+        "extract-raster-evidence <current-raster-path>",
+        "build-reader-visual-aid <workspace_root>\\raw-evidence.json",
+    ):
+        if legacy in top or legacy in pipeline_contract or legacy in reader_runtime:
+            fail(f"legacy multi-step Reader preparation remains in runtime contract: {legacy}")
+
+    for token in (
+        "import cv2, numpy, rapidocr, onnxruntime",
+        "numpy + opencv-python-headless + rapidocr + onnxruntime",
+        'pip install -e "$RepoRoot[drawing]"',
+        "工程图依赖验证失败",
+    ):
+        if token not in install_agent:
+            fail(f"Reader drawing dependency install regression: missing {token}")
+
     for token in ("所有 `Doubao.exe` 进程", "安装器不会自动终止 Doubao 进程"):
         if token not in readme:
             fail(f"Agent Pack deployment restart note missing: {token}")
@@ -309,29 +871,54 @@ def main() -> None:
     ):
         fail("Mode B pre-interpretation simulation permits a stale artifact")
 
-    mode_b_canonicalizer_tokens = {
+    mode_b_evidence_tokens = {
         "SKILL.md": (
-            "immutable first-pass semantic artifact",
-            "禁止 retry、第二版 draft、Edit/Rewrite draft",
-            "`drawing.json` 不存在",
-            "Canonicalizer 不补 geometry、ownership、relation 或 unresolved",
+            "run-hybrid-frontend",
+            "awaiting_structural_context",
+            "structural-context-answers-v1",
+            "完整工程图 + 当前 target region 矩形框选",
+            "deterministic region 假设成独立 view",
+            "矩形框只用于 region→view 归属，不是尺寸标注读取边界",
+            "即使尺寸文字或尺寸线画在红框外",
+            "resume-hybrid-frontend",
+            "Hybrid Adapter",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "fallback semantic Reader",
+            "禁止第二轮确认",
         ),
         "pipeline-contract.md": (
-            "immutable first-pass semantic artifact",
-            "semantic token/schema retry",
-            "手写drawing",
-            "单独`validate-drawing`绕过canonicalizer",
-            "其它结果`BLOCKED / STOP`",
+            "### 3.0 正常 Mode B 唯一生产入口",
+            "run-hybrid-frontend",
+            "awaiting_structural_context",
+            "bounded Structural Reader answers",
+            "deterministic structural context image",
+            "region 只是视觉连通区域",
+            "矩形框只负责",
+            "不得因为标注在框外就丢弃",
+            "resume-hybrid-frontend",
+            "Hybrid Adapter",
+            "Reader Observation Finalizer",
+            "mode_b_gate_a_pass",
+            "mode_b_awaiting_confirmation",
+            "deterministic Mode B coordinator",
+            "A1–A5 的 assemble/check/link/resolve/confirmation/canonicalize 细节仅描述",
+            "不得由 Agent 逐条手动执行",
+            "### A1. Reader semantic observations + deterministic Capture assembly",
+            "该阶段只允许解决**尺寸端点 ownership**",
+            "最多一次",
+            "禁止第二轮用户确认",
+            "其它结果 BLOCKED / STOP",
         ),
     }
-    mode_b_canonicalizer_texts = {
+    mode_b_evidence_texts = {
         "SKILL.md": top,
         "pipeline-contract.md": pipeline_contract,
     }
-    for name, tokens in mode_b_canonicalizer_tokens.items():
+    for name, tokens in mode_b_evidence_tokens.items():
         for token in tokens:
-            if token not in mode_b_canonicalizer_texts[name]:
-                fail(f"Mode B canonicalizer workflow regression in {name}: missing {token}")
+            if token not in mode_b_evidence_texts[name]:
+                fail(f"Mode B evidence workflow regression in {name}: missing {token}")
 
     for forbidden in (
         "直接覆盖写入当前 `drawing.json`",
@@ -389,11 +976,78 @@ def main() -> None:
     plan_tests = (RUNNER / "tests" / "test_plan_resolution.py").read_text(encoding="utf-8")
     if "test_transport_ping_error_passthrough" not in plan_tests:
         fail("Runner Loader ping diagnostic test missing")
+    if "test_load_plan_accepts_utf8_bom_from_powershell_51" not in plan_tests:
+        fail("Runner PowerShell 5.1 plan BOM regression test missing")
+    if 'def _load_plan(path: str) -> dict:' not in runner_source or 'encoding="utf-8-sig"' not in runner_source:
+        fail("Runner plan loader must accept UTF-8 BOM")
+    for token in (
+        "test_preflight_runner_history_part_preserved_for_create_new",
+        "test_run_preflight_create_new_does_not_close_unrelated_part",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner create-new preservation regression test missing: {token}")
+
+    source_drawing_tokens = (
+        "def _mode_b_source_drawing_errors(",
+        '"source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level"',
+        "Mode B plan missing source_drawing copied from plan-contracts output",
+        "Mode B source_drawing mismatch:",
+        "errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))",
+        "frozen_errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))",
+    )
+    for token in source_drawing_tokens:
+        if token not in runner_source:
+            fail(f"Runner Mode B drawing-path binding regression: missing {token}")
 
     for token in (
+        "test_mode_b_source_drawing_binding_requires_exact_current_path",
+        "test_mode_b_build_and_check_accept_matching_source_drawing",
+        "test_mode_b_build_rejects_mismatched_source_drawing",
+        "test_mode_b_check_rejects_mismatched_source_drawing",
+        "test_mode_b_build_and_check_require_source_drawing",
+        "test_text_mode_build_and_check_allow_missing_source_drawing",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner Mode B drawing-path binding test missing: {token}")
+
+    plan_schema_text = (RUNNER / "plan_schema.json").read_text(encoding="utf-8")
+    if '"name": "source_drawing"' not in plan_schema_text:
+        fail("Runner plan schema source_drawing field missing")
+    for token in (
+        "source_drawing",
+        "plan-contracts <current-drawing.json>",
+        "--drawing <current-drawing.json>",
+        "纯文字模式",
+    ):
+        if token not in runner_contract:
+            fail(f"Runner contract source_drawing regression: missing {token}")
+
+    for token in (
+        'pr.add_argument("--drawing", default=None,',
+        'drawing_path = getattr(args, "drawing", None)',
+        'errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))',
+    ):
+        if token not in runner_source:
+            fail(f"Runner Mode B Stage C drawing binding regression: missing {token}")
+
+    for token in (
+        "test_mode_b_run_rejects_mismatched_source_drawing_before_loader",
+        "test_mode_b_run_requires_source_drawing_before_loader",
+        "test_mode_b_run_matching_source_drawing_reaches_loader",
+        "test_text_mode_run_allows_missing_source_drawing",
+    ):
+        if token not in plan_tests:
+            fail(f"Runner Mode B Stage C drawing binding test missing: {token}")
+
+    for token in (
+        'out["plan_format"] = "executable-v1"',
+        'plan.get("plan_format") == "executable-v1"',
+        "frozen plan must not contain executable top-level field 'plan_format'",
         "frozen plan must not contain executable field",
         "frozen plan must not contain executable reference",
-        "frozen_errs = check_plan(plan, executable=False)",
+        "frozen_errs = check_plan(",
+        "executable=False",
+        "validate_embedded_thread_contract=not bool(drawing_path)",
     ):
         if token not in runner_source:
             fail(f"Runner frozen/executable boundary regression: missing {token}")
@@ -402,6 +1056,7 @@ def main() -> None:
     for token in (
         "test_frozen_check_rejects_executable_only_fields",
         "test_frozen_check_rejects_dollar_references",
+        "test_build_marks_binding_free_plan_executable",
     ):
         if token not in plan_tests:
             fail(f"Runner frozen-boundary test missing: {token}")
@@ -427,21 +1082,29 @@ def main() -> None:
     if "<stepN ...>" not in text_fast or "禁止写裸语义名" not in text_fast:
         fail("text-mode selection consumer placeholder rule missing")
 
-    if "纯计划表达错误" not in pipeline_contract or "result_bindings" not in pipeline_contract:
-        fail("pipeline contract does not allow safe one-shot repair of binding-only plan errors")
+    for token in (
+        "frozen/executable 边界污染等纯计划表达错误",
+        "不改变尺寸、特征、选择几何或建模顺序",
+        "不改变已冻结设计几何语义的确定性 plan-level / selection-level 技术修复",
+        "生成 repair plan v1，只修改已确认的计划级问题",
+    ):
+        if token not in pipeline_contract:
+            fail(f"pipeline safe one-shot plan repair regression: missing {token}")
 
     for token in (
         "禁止数值 nudge / epsilon 修复",
-        "drawing、derived、frozen plan",
-        "Z=50 → Z=49",
+        "需要猜尺寸、改尺寸、改孔位、改特征数量",
+        "若精确相切/共面导致 NX kernel Boolean 失败",
         "geometry-preserving",
+        "无法确定修复是否改变最终几何",
     ):
         if token not in pipeline_contract:
             fail(f"pipeline numeric-nudge repair regression: missing {token}")
     for token in (
         "禁止 geometry / numeric nudge",
-        "Z=50 → Z=49",
-        "精确相切/共面",
+        "只允许修复根因明确、且不改变尺寸/位置/特征数量/几何语义的计划级问题",
+        "禁止：重新看图、修改 reader-capture/drawing-evidence、猜尺寸、改图纸、改变主体结构",
+        "修复后必须重新 build/check",
     ):
         if token not in top:
             fail(f"top-level numeric-nudge repair regression: missing {token}")
@@ -449,31 +1112,22 @@ def main() -> None:
     drawing_reader = (SKILL / "references" / "drawing-reader.md").read_text(encoding="utf-8")
     drawing_rules = (SKILL / "references" / "nx-drawing-rules.md").read_text(encoding="utf-8")
     for token in (
-        "唯一 semantic decision chain",
-        "Annotation / same-feature projection association",
-        "Physical endpoint ownership",
-        "Direct coordinate / evidence-backed relation lock",
-        "Eligible derived",
-        "Required HARD feature inventory",
-        "Semantic draft assembly",
-        "First-write semantic check",
-        "association 本身不建立不同 feature 之间的数值关系",
-        "不得在全局坐标转换时重分类",
-        "distinct-feature relation必须有证据",
-        "dimension-bearing number 必须通过 `source`",
-        "不得把图纸尺寸脱离 provenance 后降级成裸 numeric `const`",
-        "无法唯一表达的必需feature写blocking",
-        "pattern/symmetry/spacing不得删除该ownership",
-        "逐项核对该 identity 的全部正交视图记录",
-        "annotation 的数值不得进入后续任何 geometry completion 或 concrete coordinate",
-        "不得作为裸 numeric operand 或 mental arithmetic 输入",
-        "start face 只能在 axis 锁定后解释",
-        "coordinate 正确不能替代该 ownership",
-        "这些 centers 不要求位于同一个 feature object",
-        "每个 dimension-bearing annotation 在 numeric use 前已有 identity",
+        "二维工程图 Reader Capture v2",
+        "view-local evidence capture",
+        "对跨视图候选只记录结构化 association visual basis",
+        "由 deterministic linker 决定是否 merge",
+        "对 entity_center endpoint 记录 centerline / center_mark / explicit_midline basis",
+        "structured unresolved_evidence",
+        "新 capture 的 required_targets 固定写空数组",
+        "创建任何最终 physical feature ID",
+        "根据 linker / Gate 0 / Resolver / Gate A 错误第二次看图修答案",
+        "同一个 entity 只能属于一个 association claim",
+        "一个 association claim 在同一个 view 中最多只能包含一个 entity",
+        "如果 endpoint 不能唯一归属",
+        "linker 会 deterministic 地把含 unresolved endpoint 的 dimension 转成 blocking",
     ):
         if token not in drawing_reader:
-            fail(f"consolidated Reader decision contract regression: missing {token}")
+            fail(f"ReaderCapture decision contract regression: missing {token}")
     for token in (
         "只提供视觉识别与制图符号词典",
         "本文件不得建立第二套 inference policy",
@@ -576,40 +1230,22 @@ def main() -> None:
         fail("equal-value fixture merges endpoint-specific ownership")
 
     for token in (
-        "Semantic draft contract",
-        "现有drawing结构",
-        "稳定 feature、annotation、source、relation 与 unresolved identity",
-        "measured quantity与physical endpoint ownership",
-        "dimension-bearing数值只能通过已识别的source",
-        "Reader必须按draft中真实字段发出可解析路径",
-        "feature:<id>.centerline.<axis>",
-        "feature:<id>.explicit_centers.<index>.<coordinate-index>",
-        "不得把歧义path交给canonicalizer猜测",
-        "canonicalizer只修representation",
-        "`edge_offset` 不得作为 derived expression",
-        "known opposite endpoint target",
-        "`from=min`: `coordinate = min_edge + value`；`from=max`: `coordinate = max_edge - value`",
-        "First-write semantic check",
-        "HARD inventory无静默遗漏",
-        "不得生成第二版draft",
-        "`X=[-length_x/2,+length_x/2]`",
-        "局部 profile/body/step boundary 不得套 overall bbox",
-        "用 `alignment` 保存共享中心坐标",
-        "只描述 drawing semantic，不规定具有非零 width 的实体 cut realization",
-        "其它 feature 的 depth、spec、diameter、center、start/end 或 nominal size 不得成为当前 feature position 的自由 operand",
-        "direct witness 优先于所有 arithmetic",
-        "view→projection geometry→annotation endpoints",
-        "不得在同一draft中混入 `0..extent` X/Y frame",
-        "只写 `connected_to / notes / reason / evidence` 不构成 relation coverage",
-        "`upper_tangent` 或 `lower_tangent`",
-        "`center_spacing/center_distance`使用`value + between=[两个真实center coordinate paths]`",
-        "`edge_offset`使用`value + axis + from + targets`",
-        "看见孔位所在的面也不能代替 orthographic axis evidence",
-        "blocking unresolved不得同时带猜测的concrete value",
+        "ReaderCapture.model_validate(payload)",
+        "不第二次看图修复",
+        "生产 schema 校验通过后，才允许执行唯一一次文件写入",
+        "每个 view-local entity 是否只属于一个 view",
+        "associated / unresolved / single_view 是否和 association / unresolved evidence 自洽",
+        "每个 modeling-critical dimension endpoint 是否有自己的非空 source_ids",
+        "dimension endpoint 是否由真实标注 geometry 支持",
+        "不确定 endpoint 是否使用 role=\"unresolved\" + unresolved_kind +",
+        "required_targets 是否为 []",
+        "modeling-critical 缺失语义是否进入 structured unresolved_evidence",
+        "blocking unresolved 是否使用明确 kind",
+        "没有 final feature ID",
         "Closure is validation only",
     ):
         if token not in drawing_reader and token != "Closure is validation only":
-            fail(f"consolidated Reader canonical contract regression: missing {token}")
+            fail(f"ReaderCapture first-pass contract regression: missing {token}")
         if token == "Closure is validation only" and token not in drawing_rules:
             fail(f"quick closure boundary regression: missing {token}")
 

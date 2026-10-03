@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, Literal, cast
 
 from .evidence import (
+    Axis,
     DatumAlignmentEvidence,
     DimensionObservation,
     DirectValueEvidence,
@@ -91,6 +92,416 @@ def _append_relation(
     relations.append(relation)
 
 
+def _compile_overall_dimension_facts(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    expected = {
+        "X": ("overall_dimensions.length_x", graph.overall_dimensions.length_x),
+        "Y": ("overall_dimensions.width_y", graph.overall_dimensions.width_y),
+        "Z": ("overall_dimensions.height_z", graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("kind") != "overall_dimension_fact_ledger":
+            continue
+        facts = observation.get("facts")
+        if not isinstance(facts, list):
+            continue
+
+        for fact_index, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                continue
+            axis = str(fact.get("axis") or "").upper()
+            if axis not in expected:
+                continue
+            value = fact.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            target, expected_value = expected[axis]
+            source_ids = [
+                item
+                for item in fact.get("evidence", [])
+                if isinstance(item, str) and item
+            ]
+            if abs(float(value) - float(expected_value)) > 1e-9:
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_FACT_{axis}_{observation_index}_{fact_index}",
+                    reason=(
+                        f"overall dimension fact for axis {axis} disagrees with "
+                        f"canonical overall_dimensions: {value!r} vs {expected_value!r}"
+                    ),
+                    target=target,
+                    evidence=source_ids,
+                )
+                continue
+
+            _append_direct(
+                direct,
+                unresolved,
+                DirectValueEvidence(
+                    id=f"ODF_{axis}_{observation_index}_{fact_index}",
+                    target=target,
+                    value=float(value),
+                    semantic="overall_dimension",
+                    source_ids=source_ids,
+                ),
+            )
+
+
+def _compile_overall_dimension_derivations(
+    graph: EvidenceGraph,
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    expected = {
+        "X": ("overall_dimensions.length_x", graph.overall_dimensions.length_x),
+        "Y": ("overall_dimensions.width_y", graph.overall_dimensions.width_y),
+        "Z": ("overall_dimensions.height_z", graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if observation.get("kind") != "overall_dimension_derivation_ledger":
+            continue
+        facts = observation.get("facts")
+        if not isinstance(facts, list):
+            continue
+
+        for fact_index, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                continue
+            axis = str(fact.get("axis") or "").upper()
+            source_axis = str(fact.get("source_axis") or "").upper()
+            rotation_axis = str(fact.get("rotation_axis") or "").upper()
+            basis = str(fact.get("basis") or "")
+            value = fact.get("value")
+            source_ids = [
+                item
+                for item in fact.get("evidence", [])
+                if isinstance(item, str) and item
+            ]
+
+            valid_axes = {"X", "Y", "Z"}
+            if (
+                axis not in valid_axes
+                or source_axis not in valid_axes
+                or rotation_axis not in valid_axes
+                or basis != "rotational_symmetry_equal_transverse_extents"
+                or axis == source_axis
+                or rotation_axis in {axis, source_axis}
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_DERIVATION_{observation_index}_{fact_index}",
+                    reason="invalid rotational-symmetry overall derivation contract",
+                    evidence=source_ids,
+                )
+                continue
+
+            axis_typed = cast(Axis, axis)
+            source_axis_typed = cast(Axis, source_axis)
+            rotation_axis_typed = cast(Axis, rotation_axis)
+
+            target, expected_value = expected[axis_typed]
+            source_target, expected_source_value = expected[source_axis_typed]
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or abs(float(value) - float(expected_value)) > 1e-9
+                or abs(float(value) - float(expected_source_value)) > 1e-9
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=f"U_OVERALL_DERIVATION_{axis}_{observation_index}_{fact_index}",
+                    reason=(
+                        "rotational-symmetry overall derivation disagrees with "
+                        "canonical overall_dimensions"
+                    ),
+                    target=target,
+                    evidence=source_ids,
+                )
+                continue
+
+            _append_relation(
+                relations,
+                RelationEvidence(
+                    id=f"ODR_{axis}_{observation_index}_{fact_index}",
+                    kind="alignment",
+                    axis=axis_typed,
+                    targets=[source_target, target],
+                    source_ids=source_ids,
+                    required_for_modeling=True,
+                    metadata={
+                        "basis": basis,
+                        "rotation_axis": rotation_axis_typed,
+                        "source_axis": source_axis_typed,
+                    },
+                ),
+            )
+
+
+def _labeled_profile_transition_boundary_targets(
+    graph: EvidenceGraph,
+    *,
+    target_id: str,
+    axis: str,
+) -> list[str]:
+    """Resolve transition identity to physical profile boundary targets only."""
+
+    identity_records: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_profile_transition_boundary_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        identity_records.extend(
+            item
+            for item in items
+            if (
+                isinstance(item, dict)
+                and str(item.get("target_id") or "") == target_id
+                and str(item.get("axis") or "").upper() == axis
+                and item.get("basis")
+                == (
+                    "labeled_overall_offset_plus_unique_"
+                    "transition_level_profile_identity"
+                )
+            )
+        )
+
+    if len(identity_records) != 1:
+        return []
+    raw_refs = identity_records[0].get("profile_refs")
+    if not isinstance(raw_refs, list):
+        return []
+    profile_refs = {
+        str(ref)
+        for ref in raw_refs
+        if isinstance(ref, str) and ref
+    }
+    if not profile_refs:
+        return []
+
+    targets: set[str] = set()
+    matched_refs: set[str] = set()
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_profile_topology_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            edges = item.get("edges")
+            if not isinstance(edges, list):
+                continue
+            for edge in edges:
+                if (
+                    not isinstance(edge, dict)
+                    or str(edge.get("constant_axis") or "").upper() != axis
+                ):
+                    continue
+                edge_refs = {
+                    str(ref)
+                    for ref in edge.get("source_refs", [])
+                    if isinstance(ref, str) and ref
+                }
+                edge_ref = edge.get("ref")
+                if isinstance(edge_ref, str) and edge_ref:
+                    edge_refs.add(edge_ref)
+                overlap = profile_refs.intersection(edge_refs)
+                if not overlap:
+                    continue
+                target = edge.get("boundary_target")
+                if not (
+                    isinstance(target, str)
+                    and target.endswith(f".boundary.{axis.lower()}")
+                ):
+                    continue
+                matched_refs.update(overlap)
+                targets.add(target)
+
+    if matched_refs != profile_refs:
+        return []
+    return sorted(targets)
+
+
+def _compile_labeled_profile_transitions(
+    graph: EvidenceGraph,
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Compile only deterministic overall-to-profile transition offsets.
+
+    The OCR value remains authoritative. Structural Context supplies the bounded
+    relation semantic, while raster geometry is provenance-only and never
+    becomes an engineering coordinate. Profile-to-profile dimensions remain
+    provenance-only until both endpoint identities are deterministically known.
+    """
+
+    overall_by_axis = {
+        "X": float(graph.overall_dimensions.length_x),
+        "Y": float(graph.overall_dimensions.width_y),
+        "Z": float(graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_dimension_relation_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_value_source") != "hybrid_ocr"
+            or observation.get("relation_source") != "bounded_structural_context"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+
+            relation = str(item.get("relation") or "")
+            if relation not in {
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+            }:
+                continue
+
+            target_id = str(item.get("target_id") or "")
+            axis = str(item.get("axis") or "").upper()
+            value = item.get("value")
+            source_ids = [
+                source
+                for source in item.get("evidence", [])
+                if isinstance(source, str) and source
+            ]
+
+            if (
+                not target_id
+                or axis not in {"X", "Y", "Z"}
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or float(value) <= 0.0
+                or float(value) >= overall_by_axis[axis]
+                or item.get("engineering_coordinate_inferred_from_pixels") is not False
+                or item.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_PROFILE_TRANSITION_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "invalid labeled overall-to-profile transition contract"
+                    ),
+                    evidence=source_ids,
+                )
+                continue
+
+            region_id = str(item.get("region_id") or "")
+            expected_overall_role = (
+                "overall_min"
+                if relation == "overall_min_to_profile_transition"
+                else "overall_max"
+            )
+            expected_contact_marker = (
+                "hybrid:labeled-overall-boundary-contact:"
+                f"{region_id}:{axis}:{expected_overall_role}"
+            )
+            if not region_id or expected_contact_marker not in source_ids:
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_PROFILE_TRANSITION_CONTACT_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "labeled overall-to-profile relation lacks deterministic "
+                        "overall-boundary contact evidence"
+                    ),
+                    evidence=source_ids,
+                )
+                continue
+
+            axis_typed = cast(Axis, axis)
+            side: Literal["min", "max"] = (
+                "min"
+                if relation == "overall_min_to_profile_transition"
+                else "max"
+            )
+            physical_targets = (
+                _labeled_profile_transition_boundary_targets(
+                    graph,
+                    target_id=target_id,
+                    axis=axis,
+                )
+            )
+            target = (
+                "constraints.profile_transitions."
+                f"{target_id}.{axis.lower()}"
+            )
+            relation_targets = physical_targets or [target]
+            relation_id = f"LPT_{target_id}"
+
+            _append_relation(
+                relations,
+                RelationEvidence(
+                    id=relation_id,
+                    kind="edge_offset",
+                    axis=axis_typed,
+                    targets=relation_targets,
+                    value=float(value),
+                    from_side=side,
+                    source_ids=source_ids,
+                    required_for_modeling=True,
+                    metadata={
+                        "basis": "labeled_overall_to_profile_transition",
+                        "labeled_target_id": target_id,
+                        "relation": relation,
+                        "profile_transition_geometry": item.get(
+                            "profile_transition_geometry"
+                        ),
+                        "symmetry_scope": item.get("symmetry_scope"),
+                        "transition_identity": (
+                            "physical_profile_boundary"
+                            if physical_targets
+                            else "unbound_transition_constraint"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                ),
+            )
+
+
 def _compile_axis_evidence(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -172,9 +583,9 @@ def _target_axis(target: str) -> str | None:
 
 
 def _overall_center_value(graph: EvidenceGraph, axis: str) -> float:
-    if axis in {"X", "Y"}:
-        return 0.0
-    return graph.overall_dimensions.height_z / 2.0
+    """Return the center in Reader-local 0..overall engineering coordinates."""
+
+    return _overall_value(graph, axis) / 2.0
 
 
 def _compile_datum_alignments(
@@ -261,15 +672,15 @@ def _compile_edge_offset(
         ),
         None,
     )
-    center = next(
+    measured = next(
         (
             endpoint
             for endpoint in observation.endpoints
-            if endpoint.role == "feature_center"
+            if endpoint.role in {"feature_center", "profile_boundary"}
         ),
         None,
     )
-    if boundary is None or center is None or not center.target:
+    if boundary is None or measured is None or not measured.target:
         return False
     _append_relation(
         relations,
@@ -279,7 +690,7 @@ def _compile_edge_offset(
             axis=observation.axis,
             value=observation.value,
             from_side="min" if boundary.role == "overall_min" else "max",
-            targets=[center.target],
+            targets=[measured.target],
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),
@@ -294,11 +705,16 @@ def _compile_center_distance(
     if not all(endpoint.role == "feature_center" for endpoint in observation.endpoints):
         return False
     targets = [endpoint.target for endpoint in observation.endpoints]
-    if not all(isinstance(target, str) and target for target in targets):
+    typed_targets = [
+        target
+        for target in targets
+        if isinstance(target, str) and target
+    ]
+    if len(typed_targets) != 2:
         return False
-    first_feature = _feature_id(targets[0])
-    second_feature = _feature_id(targets[1])
-    kind = (
+    first_feature = _feature_id(typed_targets[0])
+    second_feature = _feature_id(typed_targets[1])
+    kind: Literal["center_spacing", "center_distance"] = (
         "center_spacing"
         if first_feature is not None and first_feature == second_feature
         else "center_distance"
@@ -311,7 +727,39 @@ def _compile_center_distance(
             axis=observation.axis,
             value=observation.value,
             direction=observation.direction,
-            targets=[targets[0], targets[1]],
+            targets=typed_targets,
+            source_ids=observation.source_ids,
+            required_for_modeling=observation.required_for_modeling,
+        ),
+    )
+    return True
+
+
+def _compile_coordinate_distance(
+    observation: DimensionObservation,
+    relations: list[RelationEvidence],
+) -> bool:
+    roles = {endpoint.role for endpoint in observation.endpoints}
+    if not roles.issubset({"feature_center", "profile_boundary"}):
+        return False
+    if roles == {"feature_center"}:
+        return False
+    targets = [
+        endpoint.target
+        for endpoint in observation.endpoints
+        if isinstance(endpoint.target, str) and endpoint.target
+    ]
+    if len(targets) != 2:
+        return False
+    _append_relation(
+        relations,
+        RelationEvidence(
+            id=observation.id,
+            kind="coordinate_distance",
+            axis=observation.axis,
+            value=observation.value,
+            direction=observation.direction,
+            targets=targets,
             source_ids=observation.source_ids,
             required_for_modeling=observation.required_for_modeling,
         ),
@@ -332,6 +780,8 @@ def _compile_dimensions(
             continue
         if _compile_center_distance(observation, relations):
             continue
+        if _compile_coordinate_distance(observation, relations):
+            continue
         _append_unresolved(
             unresolved,
             uid=f"U_{observation.id}",
@@ -339,6 +789,149 @@ def _compile_dimensions(
             required=observation.required_for_modeling,
             evidence=[observation.id, *observation.source_ids],
         )
+
+
+def _audit_labeled_dimension_consumption(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Require every validated labeled engineering dimension to be accounted for.
+
+    A labeled dimension is accounted for only when its unique Hybrid OCR source
+    is consumed by canonical direct/relation evidence, is already represented by
+    a modeling blocker, or is an overall-extent fact that exactly matches the
+    canonical overall dimension.  Provenance-only observations must never let
+    Gate A report a false-positive closed geometry.
+    """
+
+    consumed_source_ids = {
+        source_id
+        for item in direct
+        for source_id in item.source_ids
+        if source_id
+    }
+    consumed_source_ids.update(
+        source_id
+        for item in relations
+        for source_id in item.source_ids
+        if source_id
+    )
+    blocking_source_ids: set[str] = set()
+    for item in unresolved:
+        if not item.get("required_for_modeling", True):
+            continue
+        for key in ("evidence", "source_ids"):
+            values = item.get(key)
+            if isinstance(values, list):
+                blocking_source_ids.update(
+                    value
+                    for value in values
+                    if isinstance(value, str) and value
+                )
+
+    overall_by_axis = {
+        "X": float(graph.overall_dimensions.length_x),
+        "Y": float(graph.overall_dimensions.width_y),
+        "Z": float(graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_dimension_relation_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_value_source") != "hybrid_ocr"
+            or observation.get("relation_source") != "bounded_structural_context"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            source_index = item.get("source_item_index")
+            evidence = [
+                value
+                for value in item.get("evidence", [])
+                if isinstance(value, str) and value
+            ]
+            target_id = str(item.get("target_id") or "")
+            relation = str(item.get("relation") or "")
+            axis = str(item.get("axis") or "").upper()
+            value = item.get("value")
+
+            if (
+                not isinstance(source_index, int)
+                or isinstance(source_index, bool)
+                or source_index < 0
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_DIMENSION_SOURCE_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "validated labeled engineering dimension lacks a stable "
+                        "Hybrid OCR source item index"
+                    ),
+                    evidence=evidence,
+                )
+                continue
+
+            source_marker = f"hybrid:whole:{source_index}"
+            if source_marker not in evidence:
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_DIMENSION_SOURCE_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "validated labeled engineering dimension lacks its "
+                        "stable Hybrid OCR source marker"
+                    ),
+                    evidence=evidence,
+                )
+                continue
+
+            if (
+                source_marker in consumed_source_ids
+                or source_marker in blocking_source_ids
+            ):
+                continue
+
+            if (
+                relation == "overall_extent"
+                and axis in overall_by_axis
+                and not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and abs(float(value) - overall_by_axis[axis]) <= 1e-9
+            ):
+                continue
+
+            stable_target = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "_",
+                target_id,
+            ).strip("_") or f"{observation_index}_{item_index}"
+            _append_unresolved(
+                unresolved,
+                uid=f"U_LABELED_DIMENSION_UNCONSUMED_{stable_target}",
+                reason=(
+                    "validated labeled engineering dimension has no canonical "
+                    "direct/relation consumer and no existing modeling blocker"
+                ),
+                evidence=evidence,
+            )
 
 
 def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
@@ -353,9 +946,18 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     relations = [item.model_copy(deep=True) for item in graph.relations]
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
+    _compile_overall_dimension_facts(graph, direct, unresolved)
+    _compile_overall_dimension_derivations(graph, relations, unresolved)
+    _compile_labeled_profile_transitions(graph, relations, unresolved)
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
+    _audit_labeled_dimension_consumption(
+        graph,
+        direct,
+        relations,
+        unresolved,
+    )
 
     # Preserve deterministic ordering for byte/logical repeatability.
     direct.sort(key=lambda item: (item.target, item.id))

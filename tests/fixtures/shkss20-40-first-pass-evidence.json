@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "coordinate_system": "part_center_xy_bottom_z0",
+  "coordinate_system": "overall_min_xyz",
   "overall_dimensions": {
     "length_x": 40,
     "width_y": 32,
@@ -163,40 +163,6 @@
       ],
       "source_ids": [
         "IMG_MOUNT_CENTER_SPACING_X24"
-      ]
-    },
-    {
-      "id": "D_MOUNT_Y24_A",
-      "value": 24,
-      "axis": "Y",
-      "endpoints": [
-        {
-          "role": "overall_max"
-        },
-        {
-          "role": "feature_center",
-          "target": "feature:F_MOUNT_PAIR.explicit_centers.0.1"
-        }
-      ],
-      "source_ids": [
-        "IMG_RIGHT_EDGE_TO_MOUNT_ROW_24"
-      ]
-    },
-    {
-      "id": "D_MOUNT_Y24_B",
-      "value": 24,
-      "axis": "Y",
-      "endpoints": [
-        {
-          "role": "overall_max"
-        },
-        {
-          "role": "feature_center",
-          "target": "feature:F_MOUNT_PAIR.explicit_centers.1.1"
-        }
-      ],
-      "source_ids": [
-        "IMG_RIGHT_EDGE_TO_MOUNT_ROW_24"
       ]
     }
   ],

@@ -5740,10 +5740,20 @@ def resolve_drawing_capability_dispatches(
             continue
 
         feature_kind = _capability_feature_kind(feature)
+        fid = str(feature.get("id") or "?")
+        known_subtractive = (
+            feature_kind in _SUBTRACTIVE_MODELING_FEATURE_TYPES
+            or "hole" in feature_kind
+        )
         if feature_kind not in supported_feature_kinds:
+            if known_subtractive:
+                errors.append(
+                    "capability_selection_violation: "
+                    f"feature {fid!r}: no modeling capability for "
+                    f"required feature_kind={feature_kind!r}"
+                )
             continue
 
-        fid = str(feature.get("id") or "?")
         axis = str(feature.get("axis") or "").upper()
         candidates, resolution_errors = resolve_modeling_capabilities(
             feature_kind,

@@ -2030,6 +2030,96 @@ def test_thread_operation_contract_operation_fields_round_trip():
     )
 
 
+def test_required_slot_without_capability_fails_closed_instead_of_being_ignored():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 30,
+            "height_z": 20,
+        },
+        "profile": _rect_profile("XY", -20, 20, -15, 15),
+        "features": [
+            {
+                "id": "SLOT1",
+                "type": "slot",
+                "width": 6,
+                "width_axis": "X",
+                "through_axis": "Z",
+                "top_z": 20,
+                "bottom_z": 0,
+                "required_for_modeling": True,
+            }
+        ],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert dispatches == []
+    assert errors == [
+        "capability_selection_violation: feature 'SLOT1': "
+        "no modeling capability for required feature_kind='slot'"
+    ]
+
+
+def test_required_recessed_hole_without_capability_fails_closed():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 30,
+            "height_z": 20,
+        },
+        "profile": _rect_profile("XY", -20, 20, -15, 15),
+        "features": [
+            {
+                "id": "R1",
+                "type": "recessed_hole",
+                "axis": "Z",
+                "diameter": 6,
+                "recess_diameter": 10,
+                "recess_depth": 3,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "required_for_modeling": True,
+            }
+        ],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert dispatches == []
+    assert errors == [
+        "capability_selection_violation: feature 'R1': "
+        "no modeling capability for required feature_kind='recessed_hole'"
+    ]
+
+
+def test_reference_boundary_without_capability_remains_nonphysical_advisory():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 40,
+            "width_y": 30,
+            "height_z": 20,
+        },
+        "profile": _rect_profile("XY", -20, 20, -15, 15),
+        "features": [
+            {
+                "id": "REF1",
+                "type": "reference_boundary",
+                "boundary": {"x": 0},
+                "required_for_modeling": True,
+            }
+        ],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert errors == []
+    assert [
+        item["capability"]["implementation_id"]
+        for item in dispatches
+    ] == []
+
+
 def test_unified_capability_dispatch_selects_native_z_hole():
     drawing = {
         "overall_dimensions": {

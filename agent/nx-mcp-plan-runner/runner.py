@@ -5708,6 +5708,7 @@ def resolve_drawing_capability_dispatches(
         if isinstance(item, dict)
     }
     selected: dict[str, dict] = {}
+    required_supported_features: dict[str, str] = {}
     errors: list[str] = []
 
     profile = drawing.get("profile")
@@ -5753,6 +5754,8 @@ def resolve_drawing_capability_dispatches(
                     f"required feature_kind={feature_kind!r}"
                 )
             continue
+
+        required_supported_features[fid] = feature_kind
 
         axis = str(feature.get("axis") or "").upper()
         candidates, resolution_errors = resolve_modeling_capabilities(
@@ -5804,7 +5807,41 @@ def resolve_drawing_capability_dispatches(
             }
         )
 
-    return dispatches, errors
+    geometry_feature_ids: set[str] = set()
+    operation_feature_ids: set[str] = set()
+    for dispatch in dispatches:
+        payload = dispatch.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        geometry_feature_ids.update(
+            str(item.get("feature_id") or "")
+            for item in payload.get("geometries") or []
+            if isinstance(item, dict) and item.get("feature_id")
+        )
+        operation_feature_ids.update(
+            str(item.get("feature_id") or "")
+            for item in payload.get("operation_contracts") or []
+            if isinstance(item, dict) and item.get("feature_id")
+        )
+
+    for fid, feature_kind in sorted(required_supported_features.items()):
+        if fid not in geometry_feature_ids:
+            errors.append(
+                "capability_materialization_violation: "
+                f"required feature {fid!r} ({feature_kind}) is missing from "
+                "adapter geometry payload"
+            )
+            continue
+        if fid not in operation_feature_ids:
+            errors.append(
+                "capability_materialization_violation: "
+                f"required feature {fid!r} ({feature_kind}) is missing from "
+                "operation contracts"
+            )
+
+    if errors:
+        return [], errors
+    return dispatches, []
 
 
 def capability_plan_errors(

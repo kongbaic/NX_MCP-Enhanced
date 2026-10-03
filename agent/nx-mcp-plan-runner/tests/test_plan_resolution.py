@@ -2030,6 +2030,103 @@ def test_thread_operation_contract_operation_fields_round_trip():
     )
 
 
+def test_required_supported_feature_must_survive_adapter_geometry_payload(monkeypatch):
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "count": 1,
+            }
+        ],
+    }
+
+    original = R.dispatch_planner_adapter
+
+    def drop_geometry(capability, source_drawing):
+        if capability.get("feature_kind") == "hole":
+            return (
+                {
+                    "implementation_id": capability.get("implementation_id"),
+                    "planner_adapter": capability.get("planner_adapter"),
+                    "gate_b_validator": capability.get("gate_b_validator"),
+                    "feature_kind": capability.get("feature_kind"),
+                    "supported_axes": list(capability.get("supported_axes") or []),
+                    "geometries": [],
+                    "operation_contracts": [],
+                },
+                [],
+            )
+        return original(capability, source_drawing)
+
+    monkeypatch.setattr(R, "dispatch_planner_adapter", drop_geometry)
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert dispatches == []
+    assert errors == [
+        "capability_materialization_violation: required feature 'H1' (hole) "
+        "is missing from adapter geometry payload"
+    ]
+
+
+def test_required_supported_feature_must_survive_operation_contract_materialization(
+    monkeypatch,
+):
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 20,
+            "width_y": 20,
+            "height_z": 10,
+        },
+        "profile": _rect_profile("XY", -10, 10, -10, 10),
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 6,
+                "through": True,
+                "centerline": {"x": 0, "y": 0},
+                "count": 1,
+            }
+        ],
+    }
+
+    original = R.dispatch_planner_adapter
+
+    def drop_contract(capability, source_drawing):
+        payload, errors = original(capability, source_drawing)
+        if (
+            not errors
+            and payload is not None
+            and capability.get("feature_kind") == "hole"
+        ):
+            payload = dict(payload)
+            payload["operation_contracts"] = []
+        return payload, errors
+
+    monkeypatch.setattr(R, "dispatch_planner_adapter", drop_contract)
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert dispatches == []
+    assert errors == [
+        "capability_materialization_violation: required feature 'H1' (hole) "
+        "is missing from operation contracts"
+    ]
+
+
 def test_required_slot_without_capability_fails_closed_instead_of_being_ignored():
     drawing = {
         "overall_dimensions": {

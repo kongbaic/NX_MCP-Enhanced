@@ -4760,6 +4760,90 @@ def test_physical_arc_radius_links_to_one_verified_physical_arc_identity():
     assert "center_px" not in repr(item)
 
 
+def test_physical_arc_radius_becomes_standard_resolver_direct_value():
+    observations = [
+        {
+            "kind": "hybrid_physical_profile_arc_radius_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "PHYSICAL_ARC_RADIUS_A",
+                    "physical_arc_id": "PHYSICAL_OBLIQUE_ARC",
+                    "curve_source_id": "hybrid:curve-boundary:3",
+                    "engineering_radius": 5.0,
+                    "engineering_value_source": "hybrid_ocr",
+                    "source_ids": [
+                        "hybrid:whole:7",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "basis": (
+                        "explicit_engineering_radius_callout_plus_"
+                        "unique_physical_arc_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+
+    values, unresolved = (
+        identity_linker_module._physical_profile_arc_radius_direct_values(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(values) == 1
+    assert values[0].target == (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_OBLIQUE_ARC.radius"
+    )
+    assert values[0].value == 5.0
+    assert values[0].semantic == "radius"
+    assert "hybrid:curve-boundary:3" in values[0].source_ids
+    assert "PHYSICAL_ARC_RADIUS_A" in values[0].source_ids
+
+
+def test_physical_arc_radius_direct_values_merge_equal_and_block_conflict():
+    def value(radius: float, suffix: str):
+        return identity_linker.DirectValueEvidence(
+            id=f"RADIUS_{suffix}",
+            target=(
+                "constraints.profile_arc_radii."
+                "PHYSICAL_OBLIQUE_ARC.radius"
+            ),
+            value=radius,
+            semantic="radius",
+            source_ids=[f"callout:{suffix}"],
+        )
+
+    merged, merged_unresolved = identity_linker_module._normalize_direct_values(
+        [value(5.0, "A"), value(5.0, "B")]
+    )
+    assert merged_unresolved == []
+    assert len(merged) == 1
+    assert merged[0].value == 5.0
+    assert set(merged[0].source_ids) >= {
+        "RADIUS_A",
+        "RADIUS_B",
+        "callout:A",
+        "callout:B",
+    }
+
+    conflicted, conflict_unresolved = (
+        identity_linker_module._normalize_direct_values(
+            [value(5.0, "A"), value(6.0, "B")]
+        )
+    )
+    assert conflicted == []
+    assert len(conflict_unresolved) == 1
+    assert conflict_unresolved[0]["kind"] == "direct_value_conflict"
+    assert conflict_unresolved[0]["required_for_modeling"] is True
+
+
 def test_physical_arc_radius_fails_closed_when_curve_identity_is_not_unique():
     observations = [
         {

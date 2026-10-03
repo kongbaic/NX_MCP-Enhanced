@@ -818,6 +818,111 @@ def _linked_physical_profile_arc_radius_observations(
     ], unresolved
 
 
+def _physical_profile_arc_radius_direct_values(
+    observations: list[dict[str, Any]],
+) -> tuple[list[DirectValueEvidence], list[dict[str, Any]]]:
+    """Expose identity-linked engineering arc radii to the Resolver.
+
+    The target lives under constraints until center/endpoints are solved, so
+    radius evidence cannot masquerade as a complete canonical profile arc.
+    """
+
+    values: list[DirectValueEvidence] = []
+    unresolved: list[dict[str, Any]] = []
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _PHYSICAL_PROFILE_ARC_RADIUS_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            physical_arc_id = str(item.get("physical_arc_id") or "")
+            radius = item.get("engineering_radius")
+            source_ids = [
+                source_id
+                for source_id in item.get("source_ids", [])
+                if isinstance(source_id, str) and source_id
+            ]
+            valid = (
+                physical_arc_id
+                and isinstance(radius, (int, float))
+                and not isinstance(radius, bool)
+                and float(radius) > 0.0
+                and item.get("engineering_value_source") == "hybrid_ocr"
+                and item.get("basis")
+                == (
+                    "explicit_engineering_radius_callout_plus_"
+                    "unique_physical_arc_identity"
+                )
+                and item.get("engineering_coordinate_inferred_from_pixels")
+                is False
+                and item.get("pixel_geometry_used_for_identity_only") is True
+            )
+            stable = hashlib.sha256(
+                "|".join(
+                    [
+                        physical_arc_id,
+                        str(radius),
+                        *source_ids,
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()[:12].upper()
+            if not valid:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_VALUE_{stable}",
+                        "kind": "feature_value",
+                        "field": "profile_arc_radius",
+                        "reason": (
+                            "identity-linked profile arc radius does not satisfy "
+                            "the engineering-value provenance contract"
+                        ),
+                        "physical_arc_id": physical_arc_id or None,
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            target = (
+                "constraints.profile_arc_radii."
+                f"{physical_arc_id}.radius"
+            )
+            values.append(
+                DirectValueEvidence(
+                    id=(
+                        "L_PROFILE_ARC_RADIUS_"
+                        + hashlib.sha256(
+                            "|".join(
+                                [
+                                    physical_arc_id,
+                                    str(float(radius)),
+                                    *source_ids,
+                                ]
+                            ).encode("utf-8")
+                        ).hexdigest()[:16].upper()
+                    ),
+                    target=target,
+                    value=float(radius),
+                    semantic="radius",
+                    source_ids=[
+                        *source_ids,
+                        str(item.get("id") or ""),
+                    ],
+                )
+            )
+
+    return values, unresolved
+
+
 def _oblique_dimension_projection_relations(
     capture: ReaderCapture,
     entity_to_feature: dict[str, str],
@@ -4295,6 +4400,22 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
     ) = _linked_physical_profile_arc_radius_observations(
         linked_rotational_observations,
     )
+    (
+        physical_arc_radius_values,
+        physical_arc_radius_value_unresolved,
+    ) = _physical_profile_arc_radius_direct_values(
+        linked_physical_arc_radius_observations,
+    )
+    direct_values, physical_arc_radius_direct_unresolved = (
+        _normalize_direct_values(
+            [
+                *direct_values,
+                *physical_arc_radius_values,
+            ]
+        )
+    )
+    unresolved.extend(physical_arc_radius_value_unresolved)
+    unresolved.extend(physical_arc_radius_direct_unresolved)
 
     required_targets = {
         item.target

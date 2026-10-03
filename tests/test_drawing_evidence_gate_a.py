@@ -1443,6 +1443,50 @@ def test_centered_span_constraint_round_trips_through_gate_a():
     assert R.check_drawing_json(draft) == []
 
 
+def test_profile_arc_radius_constraint_round_trips_without_materializing_arc():
+    graph = _rotational_rectangle_graph()
+    target = (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_OBLIQUE_ARC.radius"
+    )
+    graph.direct_values.append(
+        DirectValueEvidence(
+            id="ARC_RADIUS_R5",
+            target=target,
+            value=5.0,
+            semantic="radius",
+            source_ids=[
+                "hybrid:whole:7",
+                "hybrid:curve-boundary:3",
+            ],
+        )
+    )
+    graph.required_targets.append(target)
+
+    resolved = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, resolved)
+
+    assert resolved.values[target] == 5.0
+    assert (
+        draft["constraints"]["profile_arc_radii"]
+        ["PHYSICAL_OBLIQUE_ARC"]["radius"]
+        == 5.0
+    )
+    source = next(
+        item
+        for item in draft["source_ledger"]
+        if item["id"] == "ARC_RADIUS_R5"
+    )
+    assert source["semantic"] == "radius"
+    assert source["target"] == target
+    assert source["value"] == 5.0
+    assert all(
+        segment["type"] == "line"
+        for segment in draft["profile"]["segments"]
+    )
+    assert R.check_drawing_json(draft) == []
+
+
 def test_coordinate_distance_is_audited_as_formal_relation():
     left = "feature:F_LEFT.boundary.x"
     right = "feature:F_RIGHT.boundary.x"

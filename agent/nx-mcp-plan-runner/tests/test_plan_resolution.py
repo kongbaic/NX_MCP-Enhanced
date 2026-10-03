@@ -1710,6 +1710,86 @@ def test_rotational_profile_arc_materializes_exact_sketch_arc_operation():
     assert R.capability_plan_errors(plan, dispatches) == []
 
 
+def test_rotational_profile_gate_rejects_arc_fixed_arg_drift():
+    drawing = {
+        "profile": {
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "topology": "closed_polygon",
+            "segments": [
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 0.0,
+                    "x2": 5.0,
+                    "z2": 0.0,
+                },
+                {
+                    "type": "arc",
+                    "center": {"x": 5.0, "z": 2.0},
+                    "radius": 2.0,
+                    "start_angle": -90.0,
+                    "end_angle": 0.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 2.0,
+                    "x2": 7.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 0.0,
+                },
+            ],
+        },
+        "features": [],
+    }
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    assert errors == []
+    assert len(dispatches) == 1
+    contract = dispatches[0]["payload"]["operation_contracts"][0]
+
+    mutations = [
+        ("center.x", lambda args: args["center"].__setitem__("x", 5.25)),
+        ("radius", lambda args: args.__setitem__("radius", 2.25)),
+        (
+            "start_angle",
+            lambda args: args.__setitem__("start_angle", -89.0),
+        ),
+        (
+            "end_angle",
+            lambda args: args.__setitem__("end_angle", 1.0),
+        ),
+    ]
+    for field, mutate in mutations:
+        plan = _plan_from_operation_contract(contract)
+        arc = next(
+            item
+            for item in plan["operations"]
+            if item["tool"] == "nx_sketch_arc"
+        )
+        mutate(arc["tool_args"])
+
+        gate_errors = R.capability_plan_errors(plan, dispatches)
+
+        assert any(
+            "exact revolve operation count must be 1, got 0" in item
+            for item in gate_errors
+        ), (field, gate_errors)
+
+
 def test_rotational_profile_arc_fails_closed_without_engineering_radius():
     drawing = {
         "profile": {

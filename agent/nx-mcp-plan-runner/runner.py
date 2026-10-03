@@ -784,6 +784,29 @@ def run_selection(items: list, criteria: dict, kind: str, tol: float = DEFAULT_T
             "extents": compute_extents(flat, kind), "items": flat}
 
 
+def _require_raw_loader_success(tool: str, resp: Any) -> dict:
+    """Reject raw Loader responses that did not explicitly succeed."""
+
+    if not isinstance(resp, dict):
+        raise PlanError(
+            f"{tool}: raw loader response must be an object"
+        )
+    if resp.get("ok") is not True:
+        raw_error = resp.get("error")
+        if isinstance(raw_error, dict):
+            detail = str(
+                raw_error.get("message")
+                or raw_error.get("code")
+                or json.dumps(raw_error, ensure_ascii=False, sort_keys=True)
+            )
+        else:
+            detail = str(raw_error or "loader returned ok=false")
+        raise PlanError(
+            f"{tool}: raw loader command failed: {detail}"
+        )
+    return resp
+
+
 def _parse_done(resp: dict) -> int | None:
     for key in ("result", "message"):
         m = re.search(r"done=(\d+)", str(resp.get(key, "")))
@@ -1323,7 +1346,10 @@ async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
             while True:
                 try:
                     if tool in RAW_PIPE_TOOLS:
-                        resp = await transport.call_raw(tool, args)
+                        resp = _require_raw_loader_success(
+                            tool,
+                            await transport.call_raw(tool, args),
+                        )
                     else:
                         resp = await transport.call(tool, args)
                     break

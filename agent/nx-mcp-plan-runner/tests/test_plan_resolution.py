@@ -308,6 +308,66 @@ def test_hole_face_verification_by_explicit_centroid_groups():
 # --------------------------------------------------------------------------
 # 7. topology cache invalidation
 # --------------------------------------------------------------------------
+def test_raw_loader_ok_false_stops_runner_before_following_operations():
+    import asyncio
+
+    calls = []
+
+    class T:
+        async def call_raw(self, tool, args):
+            calls.append(("raw", tool))
+            return {
+                "ok": False,
+                "error": {
+                    "code": "NX_OPERATION_FAILED",
+                    "message": "synthetic blend failure",
+                },
+            }
+
+        async def call(self, tool, args):
+            calls.append(("normal", tool))
+            return {"status": "success"}
+
+    plan = {
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_edge_blend",
+                "tool_args": {
+                    "body_id": "BODY1",
+                    "radius": 5,
+                    "edge_indices": [1],
+                },
+                "topology_changes": True,
+            },
+            {
+                "step": 2,
+                "tool": "nx_status",
+                "tool_args": {},
+                "topology_changes": False,
+            },
+        ]
+    }
+
+    report = asyncio.run(R.run_plan(plan, T()))
+
+    assert report["status"] == "failed"
+    assert report["failed_step"] == 1
+    assert report["operations_completed"] == 0
+    assert calls == [("raw", "nx_edge_blend")]
+    assert "synthetic blend failure" in report["steps"][0]["error"]
+
+
+def test_raw_loader_success_preserves_done_response():
+    response = R._require_raw_loader_success(
+        "nx_chamfer",
+        {"ok": True, "result": "done=4"},
+    )
+
+    assert response == {"ok": True, "result": "done=4"}
+    assert R._parse_done(response) == 4
+
+
 def test_topology_invalidation():
     topo = R.TopologyState()
     assert topo.edges_valid and topo.faces_valid

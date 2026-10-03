@@ -5198,10 +5198,10 @@ def _continuous_hole_slot_operation_contract(
 
 def _contract_value_equal(actual: Any, expected: Any) -> bool:
     if isinstance(expected, dict):
-        if not isinstance(actual, dict):
+        if not isinstance(actual, dict) or set(actual) != set(expected):
             return False
         return all(
-            key in actual and _contract_value_equal(actual[key], value)
+            _contract_value_equal(actual[key], value)
             for key, value in expected.items()
         )
     if isinstance(expected, (int, float)) and not isinstance(expected, bool):
@@ -5217,7 +5217,22 @@ def _operation_matches_fixed_args(
         return False
     actual_args = op.get("tool_args") or {}
     fixed_args = expected.get("fixed_args") or {}
-    return _contract_value_equal(actual_args, fixed_args)
+    requires = expected.get("requires") or []
+    if (
+        not isinstance(actual_args, dict)
+        or not isinstance(fixed_args, dict)
+        or not isinstance(requires, list)
+        or not all(isinstance(item, str) and item for item in requires)
+    ):
+        return False
+    allowed_keys = set(fixed_args) | set(requires)
+    if set(actual_args) != allowed_keys:
+        return False
+    actual_fixed = {
+        key: actual_args[key]
+        for key in fixed_args
+    }
+    return _contract_value_equal(actual_fixed, fixed_args)
 
 
 def _continuous_hole_slot_plan_errors(

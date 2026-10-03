@@ -1369,6 +1369,64 @@ def _plan_from_operation_contract(contract):
     return {"operations": operations}
 
 
+def test_operation_contract_match_rejects_undeclared_optional_tool_arg():
+    expected = {
+        "tool": "nx_create_sketch",
+        "fixed_args": {"plane": "XZ"},
+    }
+    actual = {
+        "tool": "nx_create_sketch",
+        "tool_args": {
+            "plane": "XZ",
+            "name": "planner-added-name",
+        },
+    }
+
+    assert R._operation_matches_fixed_args(actual, expected) is False
+
+
+def test_operation_contract_match_rejects_extra_nested_fixed_arg_key():
+    expected = {
+        "tool": "nx_sketch_circle",
+        "fixed_args": {
+            "center": {"x": 4.0, "y": 5.0},
+            "diameter": 6.0,
+        },
+        "requires": ["sketch_id"],
+    }
+    actual = {
+        "tool": "nx_sketch_circle",
+        "tool_args": {
+            "sketch_id": "S1",
+            "center": {"x": 4.0, "y": 5.0, "z": 0.0},
+            "diameter": 6.0,
+        },
+    }
+
+    assert R._operation_matches_fixed_args(actual, expected) is False
+
+
+def test_operation_contract_match_allows_only_declared_symbolic_wiring():
+    expected = {
+        "tool": "nx_sketch_line",
+        "fixed_args": {
+            "start": {"x": 1.0, "y": 2.0},
+            "end": {"x": 3.0, "y": 4.0},
+        },
+        "requires": ["sketch_id"],
+    }
+    actual = {
+        "tool": "nx_sketch_line",
+        "tool_args": {
+            "sketch_id": "S1",
+            "start": {"x": 1.0, "y": 2.0},
+            "end": {"x": 3.0, "y": 4.0},
+        },
+    }
+
+    assert R._operation_matches_fixed_args(actual, expected) is True
+
+
 def test_rotational_profile_selects_exact_revolve_capability_and_contract():
     drawing = _rotational_body_drawing()
 

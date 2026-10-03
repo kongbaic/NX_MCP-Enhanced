@@ -692,10 +692,16 @@ def _audit_labeled_dimension_consumption(
 
     consumed_source_ids = {
         source_id
-        for item in [*direct, *relations]
+        for item in direct
         for source_id in item.source_ids
         if source_id
     }
+    consumed_source_ids.update(
+        source_id
+        for item in relations
+        for source_id in item.source_ids
+        if source_id
+    )
     blocking_source_ids: set[str] = set()
     for item in unresolved:
         if not item.get("required_for_modeling", True):

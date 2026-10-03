@@ -316,6 +316,86 @@ def _observation_ref(
     }
 
 
+def _bare_glyph_dimension_endpoint_owner(
+    item: dict[str, Any],
+    candidate_results: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Classify OCR glyphs that geometrically cover a proven dimension arrow tip.
+
+    Bare one-token OCR is intentionally fail-closed unless topology proves that
+    the glyph sits on an endpoint of an already accepted dimension line.  This
+    prevents arrowheads misread as digits from becoming fake engineering values
+    without using pixel geometry as an engineering measurement.
+    """
+
+    if _linear_text_strength(str(item.get("text") or "")) != 1:
+        return None
+
+    points = item.get("bbox", [])
+    if not isinstance(points, list) or len(points) < 4:
+        return None
+    try:
+        xs = [float(point[0]) for point in points]
+        ys = [float(point[1]) for point in points]
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+    item_orientation = _item_orientation(item)
+
+    owners: list[dict[str, Any]] = []
+    for candidate in candidate_results:
+        if candidate.get("accepted_token") is None:
+            continue
+        orientation = candidate.get("orientation")
+        axis = candidate.get("axis_px")
+        span = candidate.get("line_span_px")
+        if (
+            orientation not in {"horizontal", "vertical"}
+            or not isinstance(axis, (int, float))
+            or isinstance(axis, bool)
+            or not isinstance(span, list)
+            or len(span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+        ):
+            continue
+        if item_orientation == orientation:
+            continue
+
+        endpoint_positions = sorted(float(value) for value in span)
+        if orientation == "horizontal":
+            if not top <= float(axis) <= bottom:
+                continue
+            covered = [
+                endpoint for endpoint in endpoint_positions if left <= endpoint <= right
+            ]
+        else:
+            if not left <= float(axis) <= right:
+                continue
+            covered = [
+                endpoint for endpoint in endpoint_positions if top <= endpoint <= bottom
+            ]
+        if not covered:
+            continue
+
+        owners.append(
+            {
+                "candidate_id": str(candidate.get("candidate_id") or ""),
+                "orientation": str(orientation),
+                "axis_px": float(axis),
+                "line_endpoint_px": covered[0],
+            }
+        )
+
+    if len(owners) != 1 or not owners[0]["candidate_id"]:
+        return None
+    return owners[0]
+
+
 def _coverage_ledger(
     whole_items: list[dict[str, Any]],
     candidate_results: list[dict[str, Any]],
@@ -325,6 +405,7 @@ def _coverage_ledger(
     unconfirmed_proposals: list[dict[str, Any]] = []
     secondary_assignments: list[dict[str, Any]] = []
     unassigned_linear: list[dict[str, Any]] = []
+    non_modeling_dimension_arrow_glyphs: list[dict[str, Any]] = []
     routed_elsewhere: list[dict[str, Any]] = []
     local_only_linear: list[dict[str, Any]] = []
 
@@ -371,6 +452,21 @@ def _coverage_ledger(
         whole_linear_count += 1
         assigned = assignments_by_index.get(source_item_index)
         if assigned is None:
+            arrow_owner = _bare_glyph_dimension_endpoint_owner(
+                item,
+                candidate_results,
+            )
+            if arrow_owner is not None:
+                non_modeling_dimension_arrow_glyphs.append(
+                    {
+                        **observation,
+                        "token": next(iter(linear)),
+                        **arrow_owner,
+                        "reason": "covers_accepted_dimension_line_endpoint",
+                    }
+                )
+                categorized_indices.add(source_item_index)
+                continue
             unassigned_linear.append(
                 {
                     **observation,
@@ -440,6 +536,9 @@ def _coverage_ledger(
         "unconfirmed_proposal_observations": unconfirmed_proposals,
         "secondary_assignment_observations": secondary_assignments,
         "unassigned_linear_observations": unassigned_linear,
+        "non_modeling_dimension_arrow_glyph_observations": (
+            non_modeling_dimension_arrow_glyphs
+        ),
         "routed_elsewhere_or_unclassified_observations": routed_elsewhere,
         "local_only_linear_observations": local_only_linear,
         "observed_silent_drop_count": len(dropped_indices),

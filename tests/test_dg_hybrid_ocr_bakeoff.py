@@ -392,6 +392,97 @@ def test_global_proposal_prefers_structured_scalar_over_bare_glyph():
     assert reason == "strongest_unique_global_linear_token"
 
 
+
+def test_coverage_classifies_only_bare_glyphs_covering_accepted_dimension_endpoints():
+    module = _load_module()
+    accepted = {
+        "candidate_id": "DG3",
+        "accepted_token": "168.3",
+        "orientation": "horizontal",
+        "axis_px": 146.0,
+        "line_span_px": [470.0, 974.0],
+        "global_assignments": [
+            {
+                "source_item_index": 0,
+                "text": "A - 168,3 mm",
+                "token": "168.3",
+                "perpendicular_distance_px": 19.25,
+            }
+        ],
+        "global_proposal_token": "168.3",
+        "decision_reason": "global_geometry_assignment_confirmed_by_local_roi",
+        "wide_local_linear_tokens": ["168.3"],
+    }
+    whole_items = [
+        {
+            "text": "A - 168,3 mm",
+            "bbox": [[654, 110], [802, 113], [801, 143], [653, 141]],
+        },
+        {
+            "text": "4",
+            "bbox": [[468, 138], [486, 138], [486, 154], [468, 154]],
+        },
+        {
+            "text": "4",
+            "bbox": [[970, 137], [987, 137], [987, 155], [970, 155]],
+        },
+        {
+            "text": "4",
+            "bbox": [[700, 138], [718, 138], [718, 154], [700, 154]],
+        },
+    ]
+
+    coverage = module._coverage_ledger(whole_items, [accepted])
+
+    endpoint_glyphs = coverage[
+        "non_modeling_dimension_arrow_glyph_observations"
+    ]
+    assert [item["source_item_index"] for item in endpoint_glyphs] == [1, 2]
+    assert all(
+        item["reason"] == "covers_accepted_dimension_line_endpoint"
+        for item in endpoint_glyphs
+    )
+    assert [
+        item["source_item_index"]
+        for item in coverage["unassigned_linear_observations"]
+    ] == [3]
+
+
+def test_bare_glyph_endpoint_classifier_is_orientation_generic_and_fail_closed():
+    module = _load_module()
+    accepted_vertical = {
+        "candidate_id": "DGV",
+        "accepted_token": "12",
+        "orientation": "vertical",
+        "axis_px": 220.0,
+        "line_span_px": [100.0, 300.0],
+    }
+
+    endpoint_glyph = {
+        "text": "4",
+        "bbox": [[212, 94], [228, 94], [228, 106], [212, 106]],
+    }
+    midline_glyph = {
+        "text": "4",
+        "bbox": [[212, 190], [228, 190], [228, 202], [212, 202]],
+    }
+
+    owner = module._bare_glyph_dimension_endpoint_owner(
+        endpoint_glyph,
+        [accepted_vertical],
+    )
+    assert owner is not None
+    assert owner["candidate_id"] == "DGV"
+    assert owner["line_endpoint_px"] == 100.0
+    assert (
+        module._bare_glyph_dimension_endpoint_owner(
+            midline_glyph,
+            [accepted_vertical],
+        )
+        is None
+    )
+
+
 def test_dimension_role_conflict_gate_rejects_extension_line_candidate():
     module = _load_module()
     strong = {

@@ -4613,7 +4613,12 @@ def _thread_surrogate_operation_fields(geometry: dict) -> dict:
 def _rotational_profile_geometry(
     drawing: dict,
 ) -> tuple[dict | None, list[str]]:
-    """Normalize one canonical rotational body profile for exact revolve."""
+    """Normalize one canonical rotational body profile for exact revolve.
+
+    Line and arc primitives are accepted only from canonical engineering
+    geometry.  Arc center/radius/angles are never inferred from raster pixels
+    here; they must already exist in the canonical drawing.
+    """
 
     profile = drawing.get("profile")
     if not isinstance(profile, dict):
@@ -4633,65 +4638,203 @@ def _rotational_profile_geometry(
             f"profile plane {plane!r}"
         ]
 
-    axes, polygon, polygon_errors = _profile_line_polygon(drawing)
-    if polygon_errors or axes is None:
-        return None, polygon_errors
-    if len(polygon) < 3:
+    raw_segments = profile.get("segments")
+    if not isinstance(raw_segments, list) or len(raw_segments) < 3:
         return None, [
-            "capability_adapter_violation: rotational profile requires a closed "
-            "polygon with at least three vertices"
+            "capability_adapter_violation: rotational profile requires at least "
+            "three canonical primitives"
         ]
 
+    axes = (plane[0], plane[1])
     axis_index = 0 if axes[0] == axis else 1
     radial_index = 1 - axis_index
-    radial_values = [point[radial_index] for point in polygon]
-    if min(radial_values) < -1e-9:
-        return None, [
-            "capability_adapter_violation: canonical rotational meridian crosses "
-            "the rotation axis"
-        ]
-    if max(radial_values) <= 1e-9:
-        return None, [
-            "capability_adapter_violation: canonical rotational meridian has no "
-            "positive radial extent"
-        ]
-
-    raw_segments = profile.get("segments")
-    assert isinstance(raw_segments, list)
-    local_segments: list[dict[str, dict[str, float]]] = []
-    axial_values: list[float] = []
     first_axis = axes[0].lower()
     second_axis = axes[1].lower()
+    tolerance = 1e-7
+
+    local_segments: list[dict[str, Any]] = []
+    axial_values: list[float] = []
+    radial_lower_bounds: list[float] = []
+    radial_upper_bounds: list[float] = []
+    first_start: tuple[float, float] | None = None
+    previous_end: tuple[float, float] | None = None
+
     for index, segment in enumerate(raw_segments):
         if not isinstance(segment, dict):
             return None, [
                 f"capability_adapter_violation: profile segment {index} is not an object"
             ]
-        values = [
-            _num(segment.get(f"{first_axis}1")),
-            _num(segment.get(f"{second_axis}1")),
-            _num(segment.get(f"{first_axis}2")),
-            _num(segment.get(f"{second_axis}2")),
-        ]
-        if any(value is None for value in values):
-            return None, [
-                f"capability_adapter_violation: profile segment {index} has "
-                "incomplete numeric coordinates"
+
+        segment_type = str(segment.get("type") or "").lower()
+        if segment_type == "line":
+            values = [
+                _num(segment.get(f"{first_axis}1")),
+                _num(segment.get(f"{second_axis}1")),
+                _num(segment.get(f"{first_axis}2")),
+                _num(segment.get(f"{second_axis}2")),
             ]
-        x1, y1, x2, y2 = (float(value) for value in values)
-        local_segments.append(
-            {
-                "start": {"x": x1, "y": y1},
-                "end": {"x": x2, "y": y2},
-            }
+            if any(value is None for value in values):
+                return None, [
+                    f"capability_adapter_violation: profile segment {index} has "
+                    "incomplete numeric coordinates"
+                ]
+            first, second, third, fourth = (
+                float(value) for value in values
+            )
+            start = (first, second)
+            end = (third, fourth)
+            if math.hypot(
+                end[0] - start[0],
+                end[1] - start[1],
+            ) <= tolerance:
+                return None, [
+                    f"capability_adapter_violation: profile segment {index} "
+                    "has zero length"
+                ]
+            local_segments.append(
+                {
+                    "type": "line",
+                    "start": {"x": start[0], "y": start[1]},
+                    "end": {"x": end[0], "y": end[1]},
+                }
+            )
+            radial_values = [start[radial_index], end[radial_index]]
+            axial_values.extend(
+                [start[axis_index], end[axis_index]]
+            )
+
+        elif segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if not isinstance(center, dict):
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} requires "
+                    "an engineering center in profile-plane coordinates"
+                ]
+            center_first = _num(center.get(first_axis))
+            center_second = _num(center.get(second_axis))
+            if (
+                center_first is None
+                or center_second is None
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+                or not all(
+                    math.isfinite(float(value))
+                    for value in (
+                        center_first,
+                        center_second,
+                        radius,
+                        start_angle,
+                        end_angle,
+                    )
+                )
+            ):
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} has "
+                    "incomplete engineering center/radius/angle parameters"
+                ]
+
+            center_point = (
+                float(center_first),
+                float(center_second),
+            )
+            radius_value = float(radius)
+            start_angle_value = float(start_angle)
+            end_angle_value = float(end_angle)
+            start_radians = math.radians(start_angle_value)
+            end_radians = math.radians(end_angle_value)
+            start = (
+                center_point[0] + radius_value * math.cos(start_radians),
+                center_point[1] + radius_value * math.sin(start_radians),
+            )
+            end = (
+                center_point[0] + radius_value * math.cos(end_radians),
+                center_point[1] + radius_value * math.sin(end_radians),
+            )
+            if math.hypot(
+                end[0] - start[0],
+                end[1] - start[1],
+            ) <= tolerance:
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} has "
+                    "zero/full-circle sweep and is not a bounded arc primitive"
+                ]
+
+            local_segments.append(
+                {
+                    "type": "arc",
+                    "center": {
+                        "x": center_point[0],
+                        "y": center_point[1],
+                    },
+                    "radius": radius_value,
+                    "start_angle": start_angle_value,
+                    "end_angle": end_angle_value,
+                }
+            )
+            radial_center = center_point[radial_index]
+            radial_values = [
+                radial_center - radius_value,
+                radial_center + radius_value,
+            ]
+            axial_center = center_point[axis_index]
+            axial_values.extend(
+                [
+                    axial_center - radius_value,
+                    axial_center + radius_value,
+                ]
+            )
+
+        else:
+            return None, [
+                f"capability_adapter_violation: profile segment {index} uses "
+                f"unsupported primitive type {segment_type!r}"
+            ]
+
+        if first_start is None:
+            first_start = start
+        elif previous_end is None or any(
+            abs(left - right) > tolerance
+            for left, right in zip(previous_end, start, strict=False)
+        ):
+            return None, [
+                f"capability_adapter_violation: profile segment {index} is not "
+                "continuous with the previous primitive"
+            ]
+        previous_end = end
+        radial_lower_bounds.append(min(radial_values))
+        radial_upper_bounds.append(max(radial_values))
+
+    if (
+        first_start is None
+        or previous_end is None
+        or any(
+            abs(left - right) > tolerance
+            for left, right in zip(previous_end, first_start, strict=False)
         )
-        axial_values.extend(
-            [x1, x2] if axis_index == 0 else [y1, y2]
-        )
+    ):
+        return None, [
+            "capability_adapter_violation: rotational profile is not closed"
+        ]
+
+    if min(radial_lower_bounds) < -tolerance:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian crosses "
+            "the rotation axis"
+        ]
+    if max(radial_upper_bounds) <= tolerance:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian has no "
+            "positive radial extent"
+        ]
 
     axis_min = min(axial_values)
     axis_max = max(axial_values)
-    if axis_max - axis_min <= 1e-9:
+    if axis_max - axis_min <= tolerance:
         return None, [
             "capability_adapter_violation: rotational profile has zero axial span"
         ]
@@ -4748,29 +4891,74 @@ def _rotational_profile_operation_contract(
             "fixed_args": {"plane": plane},
         }
     ]
-    for segment in segments:
+    for segment_index, segment in enumerate(segments):
         if not isinstance(segment, dict):
             return None, [
                 f"capability_materialization_violation: rotational body "
                 f"{feature_id!r} has malformed profile segment"
             ]
-        start = segment.get("start")
-        end = segment.get("end")
-        if not isinstance(start, dict) or not isinstance(end, dict):
-            return None, [
-                f"capability_materialization_violation: rotational body "
-                f"{feature_id!r} has malformed profile coordinates"
-            ]
-        operations.append(
-            {
-                "tool": "nx_sketch_line",
-                "fixed_args": {
-                    "start": copy.deepcopy(start),
-                    "end": copy.deepcopy(end),
-                },
-                "requires": ["sketch_id"],
-            }
-        )
+
+        segment_type = str(segment.get("type") or "").lower()
+        if segment_type == "line":
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                return None, [
+                    f"capability_materialization_violation: rotational body "
+                    f"{feature_id!r} has malformed line coordinates"
+                ]
+            operations.append(
+                {
+                    "tool": "nx_sketch_line",
+                    "fixed_args": {
+                        "start": copy.deepcopy(start),
+                        "end": copy.deepcopy(end),
+                    },
+                    "requires": ["sketch_id"],
+                }
+            )
+            continue
+
+        if segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if (
+                not isinstance(center, dict)
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+                or not all(
+                    _num(center.get(key)) is not None
+                    for key in ("x", "y")
+                )
+            ):
+                return None, [
+                    f"capability_materialization_violation: rotational body "
+                    f"{feature_id!r} arc {segment_index} is incomplete"
+                ]
+            operations.append(
+                {
+                    "tool": "nx_sketch_arc",
+                    "fixed_args": {
+                        "center": copy.deepcopy(center),
+                        "radius": float(radius),
+                        "start_angle": float(start_angle),
+                        "end_angle": float(end_angle),
+                    },
+                    "requires": ["sketch_id"],
+                }
+            )
+            continue
+
+        return None, [
+            f"capability_materialization_violation: rotational body "
+            f"{feature_id!r} uses unsupported profile primitive "
+            f"{segment_type!r}"
+        ]
+
     operations.extend(
         [
             {
@@ -5489,7 +5677,7 @@ def _rotational_profile_plan_errors(
         ]
 
     expected_create = expected_operations[0]
-    expected_lines = expected_operations[1:-2]
+    expected_profile_ops = expected_operations[1:-2]
     expected_finish = expected_operations[-2]
     expected_revolve = expected_operations[-1]
     operations = plan.get("operations") or []
@@ -5519,25 +5707,29 @@ def _rotational_profile_plan_errors(
         if not _operation_matches_fixed_args(finish_op, expected_finish):
             continue
 
-        line_ops = [
+        profile_ops = [
             candidate
             for candidate in prior[:finish_index]
             if isinstance(candidate, dict)
-            and candidate.get("tool") == "nx_sketch_line"
+            and candidate.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
             and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
         ]
-        if len(line_ops) != len(expected_lines):
+        if len(profile_ops) != len(expected_profile_ops):
             continue
         if any(
             not _operation_matches_fixed_args(actual, expected)
-            for actual, expected in zip(line_ops, expected_lines, strict=False)
+            for actual, expected in zip(
+                profile_ops,
+                expected_profile_ops,
+                strict=False,
+            )
         ):
             continue
 
-        first_line_index = prior.index(line_ops[0])
+        first_profile_index = prior.index(profile_ops[0])
         creates = [
             candidate
-            for candidate in prior[:first_line_index]
+            for candidate in prior[:first_profile_index]
             if isinstance(candidate, dict)
             and candidate.get("tool") == "nx_create_sketch"
         ]

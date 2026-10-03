@@ -1537,6 +1537,125 @@ def test_operation_contract_match_allows_only_declared_symbolic_wiring():
     assert R._operation_matches_fixed_args(actual, expected) is True
 
 
+def test_rotational_profile_arc_materializes_exact_sketch_arc_operation():
+    drawing = {
+        "profile": {
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "topology": "closed_polygon",
+            "segments": [
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 0.0,
+                    "x2": 5.0,
+                    "z2": 0.0,
+                },
+                {
+                    "type": "arc",
+                    "center": {"x": 5.0, "z": 2.0},
+                    "radius": 2.0,
+                    "start_angle": -90.0,
+                    "end_angle": 0.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 2.0,
+                    "x2": 7.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 0.0,
+                },
+            ],
+        },
+        "features": [],
+    }
+
+    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+
+    assert errors == []
+    assert len(dispatches) == 1
+    contract = dispatches[0]["payload"]["operation_contracts"][0]
+    assert [item["tool"] for item in contract["operations"]] == [
+        "nx_create_sketch",
+        "nx_sketch_line",
+        "nx_sketch_arc",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_sketch_line",
+        "nx_finish_sketch",
+        "nx_revolve",
+    ]
+    arc = contract["operations"][2]
+    assert arc["fixed_args"] == {
+        "center": {"x": 5.0, "y": 2.0},
+        "radius": 2.0,
+        "start_angle": -90.0,
+        "end_angle": 0.0,
+    }
+    assert arc["requires"] == ["sketch_id"]
+
+    plan = _plan_from_operation_contract(contract)
+    assert R.capability_plan_errors(plan, dispatches) == []
+
+
+def test_rotational_profile_arc_fails_closed_without_engineering_radius():
+    drawing = {
+        "profile": {
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "segments": [
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 0.0,
+                    "x2": 5.0,
+                    "z2": 0.0,
+                },
+                {
+                    "type": "arc",
+                    "center": {"x": 5.0, "z": 2.0},
+                    "start_angle": -90.0,
+                    "end_angle": 0.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 2.0,
+                    "x2": 2.0,
+                    "z2": 0.0,
+                },
+            ],
+        },
+        "features": [],
+    }
+    capability = R.resolve_modeling_capabilities(
+        "rotational_body",
+        "Z",
+    )[0][0]
+
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    assert payload is None
+    assert any(
+        "incomplete engineering center/radius/angle parameters" in item
+        for item in errors
+    )
+
+
 def test_rotational_profile_selects_exact_revolve_capability_and_contract():
     drawing = _rotational_body_drawing()
 

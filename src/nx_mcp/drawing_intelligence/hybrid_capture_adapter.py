@@ -1042,6 +1042,203 @@ def _reconcile_labeled_dimension_relations(
     return output
 
 
+def _labeled_profile_transition_boundary_records(
+    *,
+    report: dict[str, Any],
+    facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Bind a labeled overall-offset transition to structural profile levels.
+
+    OCR remains authoritative for the engineering offset. Raster geometry is
+    used only to identify which already-observed profile boundary shares the
+    non-overall witness level. Ambiguous or missing identity stays unbound.
+    """
+
+    source_raster = report.get("source_raster")
+    if not isinstance(source_raster, str) or not source_raster:
+        return []
+
+    output: list[dict[str, Any]] = []
+    for fact in facts:
+        if fact.relation not in {
+            "overall_min_to_profile_transition",
+            "overall_max_to_profile_transition",
+        }:
+            continue
+
+        overall_role = (
+            "overall_min"
+            if fact.relation == "overall_min_to_profile_transition"
+            else "overall_max"
+        )
+        contact_marker = (
+            "hybrid:labeled-overall-boundary-contact:"
+            f"{fact.region_id}:{fact.axis}:{overall_role}"
+        )
+        if contact_marker not in fact.evidence:
+            continue
+
+        region_view = view_lookup.get(fact.region_id)
+        expected_direction = (
+            _visual_direction_for_axis(region_view.view_kind, fact.axis)
+            if region_view is not None
+            else None
+        )
+        raw_bbox = _coverage_bbox_for_source_index(
+            report,
+            fact.source_item_index,
+        )
+        if region_view is None or expected_direction is None or raw_bbox is None:
+            continue
+
+        topology = infer_short_dimension_visual_topology(
+            source_raster,
+            raw_bbox,
+        )
+        if topology is None or topology[0] != expected_direction:
+            continue
+
+        overall_positions: list[float] = []
+        for boundary in boundaries:
+            if (
+                not isinstance(boundary, dict)
+                or boundary.get("status") != "resolved"
+                or str(boundary.get("region_id") or "") != fact.region_id
+                or str(boundary.get("axis") or "") != fact.axis
+            ):
+                continue
+            for anchor in boundary.get("anchors", []):
+                if (
+                    isinstance(anchor, dict)
+                    and str(anchor.get("role") or "") == overall_role
+                    and isinstance(anchor.get("position_px"), (int, float))
+                    and not isinstance(anchor.get("position_px"), bool)
+                ):
+                    overall_positions.append(float(anchor["position_px"]))
+        if not overall_positions:
+            continue
+
+        tolerance = _region_profile_match_tolerance(
+            report,
+            fact.region_id,
+        )
+        transition_positions: list[float] = []
+        for pair in topology[1]:
+            if len(pair) != 2:
+                continue
+            flags = [
+                any(
+                    abs(float(position) - overall_position) <= tolerance
+                    for overall_position in overall_positions
+                )
+                for position in pair
+            ]
+            if flags.count(True) != 1:
+                continue
+            transition_positions.append(
+                float(pair[1] if flags[0] else pair[0])
+            )
+
+        if not transition_positions:
+            continue
+        if (
+            max(transition_positions) - min(transition_positions)
+            > tolerance
+        ):
+            continue
+        transition_position = (
+            sum(transition_positions) / len(transition_positions)
+        )
+
+        expected_profile_orientation = (
+            "horizontal"
+            if expected_direction == "vertical"
+            else "vertical"
+        )
+        matched_refs: set[str] = set()
+        for profile in profile_inventory:
+            if (
+                not isinstance(profile, dict)
+                or profile.get("kind") != "profile_edge_candidate"
+                or str(profile.get("source_orientation") or "")
+                != expected_profile_orientation
+            ):
+                continue
+            profile_region_id = str(profile.get("region_id") or "")
+            profile_view = view_lookup.get(profile_region_id)
+            if (
+                profile_view is None
+                or profile_view.view_kind != region_view.view_kind
+            ):
+                continue
+            ref = str(profile.get("ref") or "")
+            position = profile.get("position_px")
+            if (
+                not ref
+                or ref not in profile_entity_by_ref
+                or not isinstance(position, (int, float))
+                or isinstance(position, bool)
+            ):
+                continue
+            raw_axis_tolerance = profile.get("axis_tolerance_px")
+            axis_tolerance = (
+                float(raw_axis_tolerance)
+                if isinstance(raw_axis_tolerance, (int, float))
+                and not isinstance(raw_axis_tolerance, bool)
+                else 0.0
+            )
+            if (
+                abs(float(position) - transition_position)
+                <= max(tolerance, axis_tolerance)
+            ):
+                matched_refs.add(ref)
+
+        if not matched_refs:
+            continue
+        profile_refs = sorted(matched_refs)
+        output.append(
+            {
+                "target_id": fact.target_id,
+                "source_item_index": fact.source_item_index,
+                "region_id": fact.region_id,
+                "axis": fact.axis,
+                "overall_role": overall_role,
+                "profile_refs": profile_refs,
+                "profile_entity_keys": [
+                    profile_entity_by_ref[ref]
+                    for ref in profile_refs
+                ],
+                "selected_transition_position_px": round(
+                    transition_position,
+                    3,
+                ),
+                "source_ids": list(
+                    dict.fromkeys(
+                        [
+                            *fact.evidence,
+                            *[
+                                f"hybrid:profile-edge:{ref}"
+                                for ref in profile_refs
+                            ],
+                        ]
+                    )
+                ),
+                "basis": (
+                    "labeled_overall_offset_plus_unique_"
+                    "transition_level_profile_identity"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return output
+
+
 def _recover_labeled_profile_span_dimensions(
     *,
     report: dict[str, Any],
@@ -7036,6 +7233,17 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
 
+    labeled_profile_transition_boundary_ledger = (
+        _labeled_profile_transition_boundary_records(
+            report=report,
+            facts=labeled_dimension_facts,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref=profile_entity_by_ref,
+        )
+    )
+
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
         entity_key = str(record.get("entity_key") or "")
@@ -7745,6 +7953,13 @@ def adapt_hybrid_ocr_report(
             "pixel_geometry_used_for_topology_only": True,
             "engineering_value_source": "hybrid_ocr",
             "relation_source": "bounded_structural_context",
+        },
+        {
+            "kind": "hybrid_labeled_profile_transition_boundary_ledger",
+            "schema": "1.0",
+            "items": labeled_profile_transition_boundary_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
         },
         {
             "kind": "hybrid_rotational_profile_topology_ledger",

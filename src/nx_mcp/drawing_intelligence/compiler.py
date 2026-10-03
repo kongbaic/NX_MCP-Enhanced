@@ -244,6 +244,109 @@ def _compile_overall_dimension_derivations(
             )
 
 
+def _labeled_profile_transition_boundary_targets(
+    graph: EvidenceGraph,
+    *,
+    target_id: str,
+    axis: str,
+) -> list[str]:
+    """Resolve transition identity to physical profile boundary targets only."""
+
+    identity_records: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_profile_transition_boundary_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        identity_records.extend(
+            item
+            for item in items
+            if (
+                isinstance(item, dict)
+                and str(item.get("target_id") or "") == target_id
+                and str(item.get("axis") or "").upper() == axis
+                and item.get("basis")
+                == (
+                    "labeled_overall_offset_plus_unique_"
+                    "transition_level_profile_identity"
+                )
+            )
+        )
+
+    if len(identity_records) != 1:
+        return []
+    raw_refs = identity_records[0].get("profile_refs")
+    if not isinstance(raw_refs, list):
+        return []
+    profile_refs = {
+        str(ref)
+        for ref in raw_refs
+        if isinstance(ref, str) and ref
+    }
+    if not profile_refs:
+        return []
+
+    targets: set[str] = set()
+    matched_refs: set[str] = set()
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_profile_topology_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            edges = item.get("edges")
+            if not isinstance(edges, list):
+                continue
+            for edge in edges:
+                if (
+                    not isinstance(edge, dict)
+                    or str(edge.get("constant_axis") or "").upper() != axis
+                ):
+                    continue
+                edge_refs = {
+                    str(ref)
+                    for ref in edge.get("source_refs", [])
+                    if isinstance(ref, str) and ref
+                }
+                edge_ref = edge.get("ref")
+                if isinstance(edge_ref, str) and edge_ref:
+                    edge_refs.add(edge_ref)
+                overlap = profile_refs.intersection(edge_refs)
+                if not overlap:
+                    continue
+                target = edge.get("boundary_target")
+                if not (
+                    isinstance(target, str)
+                    and target.endswith(f".boundary.{axis.lower()}")
+                ):
+                    continue
+                matched_refs.update(overlap)
+                targets.add(target)
+
+    if matched_refs != profile_refs:
+        return []
+    return sorted(targets)
+
+
 def _compile_labeled_profile_transitions(
     graph: EvidenceGraph,
     relations: list[RelationEvidence],
@@ -354,10 +457,18 @@ def _compile_labeled_profile_transitions(
                 if relation == "overall_min_to_profile_transition"
                 else "max"
             )
+            physical_targets = (
+                _labeled_profile_transition_boundary_targets(
+                    graph,
+                    target_id=target_id,
+                    axis=axis,
+                )
+            )
             target = (
                 "constraints.profile_transitions."
                 f"{target_id}.{axis.lower()}"
             )
+            relation_targets = physical_targets or [target]
             relation_id = f"LPT_{target_id}"
 
             _append_relation(
@@ -366,7 +477,7 @@ def _compile_labeled_profile_transitions(
                     id=relation_id,
                     kind="edge_offset",
                     axis=axis_typed,
-                    targets=[target],
+                    targets=relation_targets,
                     value=float(value),
                     from_side=side,
                     source_ids=source_ids,
@@ -379,6 +490,11 @@ def _compile_labeled_profile_transitions(
                             "profile_transition_geometry"
                         ),
                         "symmetry_scope": item.get("symmetry_scope"),
+                        "transition_identity": (
+                            "physical_profile_boundary"
+                            if physical_targets
+                            else "unbound_transition_constraint"
+                        ),
                         "engineering_coordinate_inferred_from_pixels": False,
                         "pixel_geometry_used_for_topology_only": True,
                     },

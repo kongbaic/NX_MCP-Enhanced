@@ -486,6 +486,104 @@ def test_adapter_preserves_labeled_dimension_facts_as_provenance_only():
     assert partial.unresolved == baseline.unresolved
 
 
+def test_labeled_overall_transition_records_profile_boundary_identity(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_TRANSITION",
+        source_item_index=5,
+        source_text="f1 - 3 mm",
+        region_id="R1",
+        value=3,
+        axis="Z",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=[
+            "hybrid:whole:5",
+            "structural:R1:context",
+            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_min",
+        ],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 1000, 400]},
+            {"region_id": "R2", "bbox_px": [100, 0, 700, 400]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "bbox": [[20, 280], [140, 280], [140, 310], [20, 310]],
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(250.0, 300.0)]),
+    )
+    records = hybrid_adapter._labeled_profile_transition_boundary_records(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            ),
+            "R2": hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="front",
+                evidence=["structural:R2:context"],
+            ),
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "Z",
+                "anchors": [
+                    {"role": "overall_max", "position_px": 100.0},
+                    {"role": "overall_min", "position_px": 300.0},
+                ],
+            }
+        ],
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "region_id": "R2",
+                "source_orientation": "horizontal",
+                "position_px": 251.5,
+                "axis_tolerance_px": 4.0,
+                "ref": "R2.structural.horizontal.004",
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "region_id": "R2",
+                "source_orientation": "horizontal",
+                "position_px": 210.0,
+                "axis_tolerance_px": 4.0,
+                "ref": "R2.structural.horizontal.003",
+            },
+        ],
+        profile_entity_by_ref={
+            "R2.structural.horizontal.004": "R2.PROFILE.004",
+            "R2.structural.horizontal.003": "R2.PROFILE.003",
+        },
+    )
+
+    assert len(records) == 1
+    assert records[0]["profile_refs"] == [
+        "R2.structural.horizontal.004"
+    ]
+    assert records[0]["selected_transition_position_px"] == 250.0
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert records[0]["pixel_geometry_used_for_identity_only"] is True
+
+
 def test_labeled_dimension_relation_reconciles_unique_overall_boundary_contact(
     monkeypatch,
 ):

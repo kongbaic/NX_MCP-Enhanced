@@ -1087,6 +1087,100 @@ def test_labeled_overall_profile_transitions_compile_and_resolve_without_pixels(
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def test_labeled_profile_transition_targets_identity_linked_profile_boundary():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_TRANSITION",
+                        "source_item_index": 10,
+                        "source_text": "f1 - 3 mm",
+                        "region_id": "R1",
+                        "value": 3.0,
+                        "axis": "Z",
+                        "relation": "overall_min_to_profile_transition",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": [
+                            "hybrid:whole:10",
+                            "structural:R1:context",
+                            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_min",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            },
+            {
+                "kind": "hybrid_labeled_profile_transition_boundary_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_TRANSITION",
+                        "axis": "Z",
+                        "profile_refs": [
+                            "R2.structural.horizontal.004",
+                        ],
+                        "basis": (
+                            "labeled_overall_offset_plus_unique_"
+                            "transition_level_profile_identity"
+                        ),
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "items": [
+                    {
+                        "edges": [
+                            {
+                                "ref": "R2.structural.horizontal.004",
+                                "source_refs": [
+                                    "R2.structural.horizontal.004",
+                                ],
+                                "constant_axis": "Z",
+                                "boundary_target": (
+                                    "feature:F_TRANSITION.boundary.z"
+                                ),
+                            }
+                        ]
+                    }
+                ],
+            },
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+    relation = next(
+        item
+        for item in compiled.relations
+        if item.id == "LPT_LD_TRANSITION"
+    )
+    assert relation.targets == ["feature:F_TRANSITION.boundary.z"]
+    assert relation.metadata["transition_identity"] == (
+        "physical_profile_boundary"
+    )
+
+    resolved = resolve_evidence_graph(compiled)
+    assert resolved.values["feature:F_TRANSITION.boundary.z"] == 3
+
+
 def test_unmaterialized_labeled_profile_transition_keeps_gate_a_incomplete():
     graph = EvidenceGraph(
         overall_dimensions=OverallDimensions(

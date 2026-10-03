@@ -1063,6 +1063,14 @@ def test_labeled_overall_profile_transitions_compile_and_resolve_without_pixels(
         "LD_0004" in relation.id
         for relation in compiled.relations
     )
+    labeled_blockers = [
+        item
+        for item in compiled.unresolved_evidence
+        if item.get("id") == "U_LABELED_DIMENSION_UNCONSUMED_LD_0004"
+    ]
+    assert len(labeled_blockers) == 1
+    assert labeled_blockers[0]["required_for_modeling"] is True
+    assert "hybrid:whole:4" in labeled_blockers[0]["evidence"]
 
     resolved = resolve_evidence_graph(compiled)
     assert resolved.conflicts == []
@@ -1076,6 +1084,83 @@ def test_labeled_overall_profile_transitions_compile_and_resolve_without_pixels(
     draft = build_semantic_draft(compiled, resolved)
     assert draft["constraints"]["profile_transitions"]["LD_0005"]["z"] == 63
     assert draft["constraints"]["profile_transitions"]["LD_0010"]["z"] == 3
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
+def test_labeled_profile_span_is_accounted_when_compiled_dimension_consumes_source():
+    graph = EvidenceGraph(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        dimensions=[
+            DimensionObservation(
+                id="D_PROFILE_SPAN",
+                value=4.5,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target="feature:F_LEFT.boundary.x",
+                    ),
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target="feature:F_RIGHT.boundary.x",
+                    ),
+                ],
+                direction=1,
+                source_ids=["hybrid:whole:4"],
+                required_for_modeling=True,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_0004",
+                        "source_item_index": 4,
+                        "source_text": "S - 4.5 mm",
+                        "region_id": "R3",
+                        "value": 4.5,
+                        "axis": "X",
+                        "relation": "between_profile_boundaries",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": [
+                            "hybrid:whole:4",
+                            "structural:R3:context",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    assert not [
+        item
+        for item in compiled.unresolved_evidence
+        if str(item.get("id") or "").startswith(
+            "U_LABELED_DIMENSION_UNCONSUMED_"
+        )
+    ]
+    relation = next(
+        item
+        for item in compiled.relations
+        if item.id == "D_PROFILE_SPAN"
+    )
+    assert relation.kind == "coordinate_distance"
+    assert "hybrid:whole:4" in relation.source_ids
 
 
 def test_agent_only_labeled_overall_relation_without_contact_fails_closed():

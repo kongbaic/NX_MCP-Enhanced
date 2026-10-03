@@ -675,6 +675,143 @@ def _compile_dimensions(
         )
 
 
+def _audit_labeled_dimension_consumption(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Require every validated labeled engineering dimension to be accounted for.
+
+    A labeled dimension is accounted for only when its unique Hybrid OCR source
+    is consumed by canonical direct/relation evidence, is already represented by
+    a modeling blocker, or is an overall-extent fact that exactly matches the
+    canonical overall dimension.  Provenance-only observations must never let
+    Gate A report a false-positive closed geometry.
+    """
+
+    consumed_source_ids = {
+        source_id
+        for item in [*direct, *relations]
+        for source_id in item.source_ids
+        if source_id
+    }
+    blocking_source_ids: set[str] = set()
+    for item in unresolved:
+        if not item.get("required_for_modeling", True):
+            continue
+        for key in ("evidence", "source_ids"):
+            values = item.get(key)
+            if isinstance(values, list):
+                blocking_source_ids.update(
+                    value
+                    for value in values
+                    if isinstance(value, str) and value
+                )
+
+    overall_by_axis = {
+        "X": float(graph.overall_dimensions.length_x),
+        "Y": float(graph.overall_dimensions.width_y),
+        "Z": float(graph.overall_dimensions.height_z),
+    }
+
+    for observation_index, observation in enumerate(graph.observations):
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_dimension_relation_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_value_source") != "hybrid_ocr"
+            or observation.get("relation_source") != "bounded_structural_context"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            source_index = item.get("source_item_index")
+            evidence = [
+                value
+                for value in item.get("evidence", [])
+                if isinstance(value, str) and value
+            ]
+            target_id = str(item.get("target_id") or "")
+            relation = str(item.get("relation") or "")
+            axis = str(item.get("axis") or "").upper()
+            value = item.get("value")
+
+            if (
+                not isinstance(source_index, int)
+                or isinstance(source_index, bool)
+                or source_index < 0
+            ):
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_DIMENSION_SOURCE_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "validated labeled engineering dimension lacks a stable "
+                        "Hybrid OCR source item index"
+                    ),
+                    evidence=evidence,
+                )
+                continue
+
+            source_marker = f"hybrid:whole:{source_index}"
+            if source_marker not in evidence:
+                _append_unresolved(
+                    unresolved,
+                    uid=(
+                        "U_LABELED_DIMENSION_SOURCE_"
+                        f"{observation_index}_{item_index}"
+                    ),
+                    reason=(
+                        "validated labeled engineering dimension lacks its "
+                        "stable Hybrid OCR source marker"
+                    ),
+                    evidence=evidence,
+                )
+                continue
+
+            if (
+                source_marker in consumed_source_ids
+                or source_marker in blocking_source_ids
+            ):
+                continue
+
+            if (
+                relation == "overall_extent"
+                and axis in overall_by_axis
+                and not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and abs(float(value) - overall_by_axis[axis]) <= 1e-9
+            ):
+                continue
+
+            stable_target = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "_",
+                target_id,
+            ).strip("_") or f"{observation_index}_{item_index}"
+            _append_unresolved(
+                unresolved,
+                uid=f"U_LABELED_DIMENSION_UNCONSUMED_{stable_target}",
+                reason=(
+                    "validated labeled engineering dimension has no canonical "
+                    "direct/relation consumer and no existing modeling blocker"
+                ),
+                evidence=evidence,
+            )
+
+
 def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     """Compile raw view/dimension evidence into formal deterministic evidence.
 
@@ -693,6 +830,12 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
+    _audit_labeled_dimension_consumption(
+        graph,
+        direct,
+        relations,
+        unresolved,
+    )
 
     # Preserve deterministic ordering for byte/logical repeatability.
     direct.sort(key=lambda item: (item.target, item.id))

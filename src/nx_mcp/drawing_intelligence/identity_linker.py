@@ -659,8 +659,25 @@ def _linked_physical_profile_arc_radius_observations(
                 continue
 
             curve_source_id = str(binding.get("curve_source_id") or "")
-            radius = facts.get("radius")
-            bound_radius = binding.get("engineering_radius")
+            raw_radius = facts.get("radius")
+            raw_bound_radius = binding.get("engineering_radius")
+            radius = (
+                float(raw_radius)
+                if (
+                    isinstance(raw_radius, (int, float))
+                    and not isinstance(raw_radius, bool)
+                    and float(raw_radius) > 0.0
+                )
+                else None
+            )
+            bound_radius = (
+                float(raw_bound_radius)
+                if (
+                    isinstance(raw_bound_radius, (int, float))
+                    and not isinstance(raw_bound_radius, bool)
+                )
+                else None
+            )
             source_item_index = record.get("source_item_index")
             source_ids = list(
                 dict.fromkeys(
@@ -676,12 +693,9 @@ def _linked_physical_profile_arc_radius_observations(
             )
             valid_contract = (
                 curve_source_id.startswith("hybrid:curve-boundary:")
-                and isinstance(radius, (int, float))
-                and not isinstance(radius, bool)
-                and float(radius) > 0.0
-                and isinstance(bound_radius, (int, float))
-                and not isinstance(bound_radius, bool)
-                and abs(float(radius) - float(bound_radius)) <= 1e-9
+                and radius is not None
+                and bound_radius is not None
+                and abs(radius - bound_radius) <= 1e-9
                 and binding.get("engineering_value_source") == "hybrid_ocr"
                 and binding.get("engineering_coordinate_inferred_from_pixels")
                 is False
@@ -757,7 +771,7 @@ def _linked_physical_profile_arc_radius_observations(
                     "id": f"PHYSICAL_ARC_RADIUS_{digest}",
                     "physical_arc_id": physical_arc_id,
                     "curve_source_id": curve_source_id,
-                    "engineering_radius": float(radius),
+                    "engineering_radius": radius,
                     "engineering_value_source": "hybrid_ocr",
                     "plane": physical_arc.get("plane"),
                     "rotation_axis": physical_arc.get("rotation_axis"),

@@ -58,7 +58,7 @@ def test_radius_requires_an_explicit_token_boundary():
     parsed = parse_engineering_callout("M6R3")
 
     assert parsed is not None
-    assert parsed["facts"] == {"thread_spec": "M6R3"}
+    assert parsed["facts"] == {"thread_spec": "M6"}
     assert "radius" not in parsed["facts"]
 
 

@@ -169,6 +169,88 @@ def test_resolved_rotational_silhouette_materializes_max_radial_meridian():
     assert R.check_drawing_json(draft) == []
 
 
+def test_rotational_profile_blocks_verified_non_orthogonal_primitive_not_consumed():
+    cases = [
+        (
+            "line",
+            (
+                "verified_continuous_straight_raster_segment_"
+                "between_structural_contacts"
+            ),
+            "hybrid:oblique-line:7",
+        ),
+        (
+            "arc",
+            (
+                "verified_continuous_curved_raster_segment_"
+                "between_structural_contacts"
+            ),
+            "hybrid:curve-boundary:7",
+        ),
+    ]
+
+    for primitive_kind, primitive_basis, primitive_source in cases:
+        graph = _rotational_rectangle_graph()
+        fragment = {
+            "id": f"P_{primitive_kind.upper()}",
+            "region_ids": ["R1"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_feature_ids": ["F_RIGHT", "F_TOP"],
+            "supporting_physical_edges": [
+                {
+                    "physical_feature_id": "F_RIGHT",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_RIGHT.boundary.x",
+                },
+                {
+                    "physical_feature_id": "F_TOP",
+                    "constant_axis": "Z",
+                    "boundary_target": "feature:F_TOP.boundary.z",
+                },
+            ],
+            "connection_kind": "non_orthogonal_profile_connection",
+            "primitive_kind": primitive_kind,
+            "primitive_kind_basis": primitive_basis,
+            "source_ids": [primitive_source],
+            "basis": "identity_linked_physical_oblique_profile_topology",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+        graph.observations[0]["items"][0]["non_orthogonal_fragments"] = [
+            fragment
+        ]
+        graph.observations.append(
+            {
+                "kind": (
+                    "hybrid_physical_rotational_oblique_profile_"
+                    "topology_ledger"
+                ),
+                "schema": "1.0",
+                "items": [fragment],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
+
+        result = resolve_evidence_graph(graph)
+        draft = build_semantic_draft(graph, result)
+
+        assert result.ok
+        assert "profile" in draft
+        blockers = [
+            item
+            for item in draft["unresolved"]
+            if item.get("field") == "rotational_profile_primitive"
+        ]
+        assert len(blockers) == 1
+        assert blockers[0]["metadata"]["primitive_kind"] == primitive_kind
+        assert primitive_source in blockers[0]["source_ids"]
+        assert blockers[0]["required_for_modeling"] is True
+        assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_resolved_annular_rotational_meridian_materializes_without_axis_closure():
     inner = "feature:F_INNER.boundary.x"
     outer = "feature:F_OUTER.boundary.x"

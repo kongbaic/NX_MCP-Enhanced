@@ -1867,6 +1867,162 @@ def _rotational_profile_topology_unresolved(
     return output
 
 
+def _unconsumed_rotational_profile_primitive_unresolved(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+) -> list[dict[str, Any]]:
+    """Block verified non-orthogonal profile primitives absent from geometry.
+
+    Raster evidence may classify a physical boundary as a line or arc, but that
+    topology is modeling-critical only when canonical profile geometry actually
+    consumes the same physical primitive evidence.  This gate never derives a
+    metric coordinate from raster data.
+    """
+
+    geometry_evidence: set[str] = set()
+    for source in draft.get("source_ledger", []):
+        if not isinstance(source, dict):
+            continue
+        target = source.get("target")
+        evidence = source.get("evidence")
+        if not (
+            isinstance(target, str)
+            and target.startswith("profile.")
+            and isinstance(evidence, list)
+        ):
+            continue
+        geometry_evidence.update(
+            value
+            for value in evidence
+            if isinstance(value, str) and value
+        )
+
+    fragments: dict[str, dict[str, Any]] = {}
+    for observation in graph.observations:
+        if not isinstance(observation, dict):
+            continue
+        kind = observation.get("kind")
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        raw_fragments: list[dict[str, Any]] = []
+        if kind == "hybrid_physical_rotational_oblique_profile_topology_ledger":
+            raw_fragments.extend(
+                item for item in items if isinstance(item, dict)
+            )
+        elif kind == "hybrid_rotational_profile_topology_ledger":
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                attached = item.get("non_orthogonal_fragments")
+                if not isinstance(attached, list):
+                    continue
+                raw_fragments.extend(
+                    fragment
+                    for fragment in attached
+                    if isinstance(fragment, dict)
+                )
+        else:
+            continue
+
+        for fragment in raw_fragments:
+            fragment_id = str(fragment.get("id") or "")
+            if fragment_id:
+                fragments.setdefault(fragment_id, fragment)
+
+    basis_by_kind = {
+        "line": (
+            "verified_continuous_straight_raster_segment_"
+            "between_structural_contacts"
+        ),
+        "arc": (
+            "verified_continuous_curved_raster_segment_"
+            "between_structural_contacts"
+        ),
+    }
+    prefix_by_kind = {
+        "line": "hybrid:oblique-line:",
+        "arc": "hybrid:curve-boundary:",
+    }
+
+    output: list[dict[str, Any]] = []
+    for fragment_id, fragment in sorted(fragments.items()):
+        primitive_kind = str(fragment.get("primitive_kind") or "")
+        if primitive_kind not in basis_by_kind:
+            continue
+        if (
+            fragment.get("primitive_kind_basis")
+            != basis_by_kind[primitive_kind]
+            or fragment.get("connection_kind")
+            != "non_orthogonal_profile_connection"
+            or fragment.get("engineering_coordinate_inferred_from_pixels") is not False
+            or fragment.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+
+        supporting_edges = fragment.get("supporting_physical_edges")
+        if not isinstance(supporting_edges, list) or len(supporting_edges) < 2:
+            continue
+
+        source_ids = [
+            value
+            for value in fragment.get("source_ids", [])
+            if isinstance(value, str) and value
+        ]
+        primitive_sources = sorted(
+            {
+                value
+                for value in source_ids
+                if value.startswith(prefix_by_kind[primitive_kind])
+            }
+        )
+        consumed = (
+            fragment_id in geometry_evidence
+            or (
+                bool(primitive_sources)
+                and all(
+                    source in geometry_evidence
+                    for source in primitive_sources
+                )
+            )
+        )
+        if consumed:
+            continue
+
+        output.append(
+            {
+                "id": (
+                    "U_ROTATIONAL_PRIMITIVE_UNCONSUMED_"
+                    f"{_stable_fragment(fragment_id)}"
+                ),
+                "kind": "unsupported_representation",
+                "field": "rotational_profile_primitive",
+                "axis": fragment.get("rotation_axis"),
+                "reason": (
+                    f"verified rotational profile {primitive_kind} primitive "
+                    "was not consumed by canonical profile geometry"
+                ),
+                "source_ids": list(
+                    dict.fromkeys([fragment_id, *source_ids])
+                ),
+                "required_for_modeling": True,
+                "metadata": {
+                    "primitive_kind": primitive_kind,
+                    "primitive_kind_basis": fragment.get(
+                        "primitive_kind_basis"
+                    ),
+                    "plane": fragment.get("plane"),
+                    "primitive_sources": primitive_sources,
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                },
+            }
+        )
+
+    return output
+
+
 def _unconsumed_profile_transition_unresolved(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -2288,6 +2444,12 @@ def build_semantic_draft(
         _rotational_profile_topology_unresolved(
             graph,
             materialized=rotational_profile_keys,
+        )
+    )
+    draft["unresolved"].extend(
+        _unconsumed_rotational_profile_primitive_unresolved(
+            draft,
+            graph,
         )
     )
     draft["unresolved"].extend(

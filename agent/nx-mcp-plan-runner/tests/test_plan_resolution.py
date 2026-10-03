@@ -2030,7 +2030,7 @@ def test_thread_operation_contract_operation_fields_round_trip():
     )
 
 
-def test_required_supported_feature_must_survive_adapter_geometry_payload(monkeypatch):
+def test_required_supported_feature_must_survive_adapter_geometry_payload():
     drawing = {
         "overall_dimensions": {
             "length_x": 20,
@@ -2069,9 +2069,11 @@ def test_required_supported_feature_must_survive_adapter_geometry_payload(monkey
             )
         return original(capability, source_drawing)
 
-    monkeypatch.setattr(R, "dispatch_planner_adapter", drop_geometry)
-
-    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    R.dispatch_planner_adapter = drop_geometry
+    try:
+        dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    finally:
+        R.dispatch_planner_adapter = original
 
     assert dispatches == []
     assert errors == [
@@ -2080,9 +2082,7 @@ def test_required_supported_feature_must_survive_adapter_geometry_payload(monkey
     ]
 
 
-def test_required_supported_feature_must_survive_operation_contract_materialization(
-    monkeypatch,
-):
+def test_required_supported_feature_must_survive_operation_contract_materialization():
     drawing = {
         "overall_dimensions": {
             "length_x": 20,
@@ -2116,9 +2116,11 @@ def test_required_supported_feature_must_survive_operation_contract_materializat
             payload["operation_contracts"] = []
         return payload, errors
 
-    monkeypatch.setattr(R, "dispatch_planner_adapter", drop_contract)
-
-    dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    R.dispatch_planner_adapter = drop_contract
+    try:
+        dispatches, errors = R.resolve_drawing_capability_dispatches(drawing)
+    finally:
+        R.dispatch_planner_adapter = original
 
     assert dispatches == []
     assert errors == [

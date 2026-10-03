@@ -551,6 +551,46 @@ def _coverage_unresolved(
             )
         )
 
+    for item in coverage.get("unconfirmed_proposal_observations", []):
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_item_index")
+        if source_index in excluded_source_indices:
+            continue
+        candidate_id = str(item.get("candidate_id") or "")
+        candidate = candidate_lookup.get(candidate_id)
+        if candidate is None:
+            raise HybridCaptureAdapterError(
+                f"unconfirmed proposal references unknown candidate {candidate_id!r}"
+            )
+        region_id = str(candidate.get("region_id") or "")
+        region_view = view_lookup.get(region_id)
+        if region_view is None:
+            raise HybridCaptureAdapterError(
+                f"missing view context for region {region_id!r}"
+            )
+        axis = _axis_for(
+            region_view.view_kind,
+            str(candidate.get("orientation") or ""),
+        )
+        unresolved.append(
+            ObservationUnresolved(
+                kind="unsupported_representation",
+                reason=(
+                    "Whole OCR linear observation is the selected global proposal "
+                    "for one DG but was not accepted as an engineering dimension: "
+                    f"token={item.get('token')!r}, "
+                    f"reason={item.get('reason')!r}. The proposal remains "
+                    "modeling-blocking until a deterministic consumer or explicit "
+                    "non-modeling classification exists."
+                ),
+                field="unconfirmed_linear_proposal",
+                axis=axis,
+                evidence=_candidate_evidence(candidate_id),
+                required_for_modeling=True,
+            )
+        )
+
     for item in coverage.get("secondary_assignment_observations", []):
         if not isinstance(item, dict):
             continue

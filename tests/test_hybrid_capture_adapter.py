@@ -1484,6 +1484,106 @@ def test_adapter_does_not_transport_unbound_callout_without_unique_view_region()
     assert unresolved[0].kind == "feature_inventory"
 
 
+def test_unconfirmed_global_linear_proposal_stays_blocking_until_consumed():
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "unconfirmed_proposal_observations": [
+                {
+                    "candidate_id": "DG10",
+                    "source_item_index": 10,
+                    "token": "24",
+                    "reason": "insufficient_deterministic_acceptance_evidence",
+                }
+            ],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [],
+        }
+    }
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG10": {
+                "candidate_id": "DG10",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": None,
+            }
+        },
+        {
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    blockers = [
+        item
+        for item in unresolved
+        if item.required_for_modeling
+        and item.field == "unconfirmed_linear_proposal"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0].axis == "X"
+    assert blockers[0].evidence == [
+        "hybrid:DG10:whole",
+        "hybrid:DG10:wide",
+    ]
+
+
+def test_unconfirmed_global_linear_proposal_is_not_double_blocked_when_consumed():
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "unconfirmed_proposal_observations": [
+                {
+                    "candidate_id": "DG10",
+                    "source_item_index": 10,
+                    "token": "24",
+                    "reason": "insufficient_deterministic_acceptance_evidence",
+                }
+            ],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [],
+            "local_only_linear_observations": [],
+        }
+    }
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        {
+            "DG10": {
+                "candidate_id": "DG10",
+                "region_id": "R1",
+                "orientation": "horizontal",
+                "accepted_token": None,
+            }
+        },
+        {
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1"],
+            )
+        },
+        boundaries=[],
+        overall_dimension_facts=[],
+        excluded_source_item_indices={10},
+    )
+
+    assert not [
+        item
+        for item in unresolved
+        if item.field == "unconfirmed_linear_proposal"
+    ]
+
+
 def test_local_only_linear_stays_blocking_for_unresolved_nonconflicting_candidate():
     report = _report()
     report["candidates"].append(

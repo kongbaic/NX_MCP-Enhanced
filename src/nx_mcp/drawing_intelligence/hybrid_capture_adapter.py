@@ -2047,7 +2047,24 @@ def _rotational_oblique_profile_hints(
                                 )
                             )
                             is not None
-                            and distance <= strict_contact_tolerance
+                            and distance
+                            <= max(
+                                strict_contact_tolerance,
+                                (
+                                    float(item["axis_tolerance_px"])
+                                    if (
+                                        isinstance(
+                                            item.get("axis_tolerance_px"),
+                                            (int, float),
+                                        )
+                                        and not isinstance(
+                                            item.get("axis_tolerance_px"),
+                                            bool,
+                                        )
+                                    )
+                                    else 0.0
+                                ),
+                            )
                         )
                     )
                     strict_endpoint_matches.append(

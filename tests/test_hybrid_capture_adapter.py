@@ -5985,6 +5985,67 @@ def test_rotational_oblique_profile_candidate_accepts_one_sided_boundary_continu
     assert hints[0]["pixel_geometry_used_for_topology_only"] is True
 
 
+def test_rotational_oblique_one_sided_contact_honors_structural_axis_tolerance():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_FAR",
+            orientation="horizontal",
+            position=180,
+            span=[120, 190],
+        ),
+    ]
+    inventory[0]["axis_tolerance_px"] = 4.0
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_line_candidates": [
+            {
+                "kind": "oblique_line_candidate",
+                "endpoints_px": [[42.25, 40], [80, 120]],
+                "angle_deg": 64.6,
+                "length_px": 88.5,
+                "candidate_only": True,
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            "VERTICAL_A": "R1.PROFILE.VERTICAL_A",
+            "HORIZONTAL_FAR": "R1.PROFILE.HORIZONTAL_FAR",
+        },
+    )
+
+    assert len(hints) == 1
+    assert hints[0]["supporting_profile_refs"] == ["VERTICAL_A"]
+    assert hints[0]["support_status"] == "verified"
+    assert hints[0]["basis"] == (
+        "established_rotational_symmetry_plus_"
+        "one_sided_boundary_plus_unique_structural_contact"
+    )
+    assert hints[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert hints[0]["pixel_geometry_used_for_topology_only"] is True
+
+
 def test_rotational_oblique_profile_candidate_rejects_ambiguous_one_sided_contact():
     inventory = [
         _independent_profile_edge(

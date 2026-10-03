@@ -5566,6 +5566,72 @@ def test_rotational_oblique_profile_candidate_records_only_topology_evidence():
     )
 
 
+def test_rotational_curved_profile_direct_contacts_classify_arc_topology_only():
+    inventory = [
+        _independent_profile_edge(
+            "VERTICAL_A",
+            orientation="vertical",
+            position=40,
+            span=[20, 170],
+        ),
+        _independent_profile_edge(
+            "HORIZONTAL_B",
+            orientation="horizontal",
+            position=140,
+            span=[40, 180],
+        ),
+    ]
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 200, 200]},
+        ],
+        "annotation_curve_candidates": [
+            {
+                "kind": "curved_boundary_candidate",
+                "endpoints_px": [[42, 60], [120, 138]],
+                "curve_fit_residual_fraction": 0.01,
+                "turn_consistency_fraction": 1.0,
+                "turn_magnitude_cv": 0.10,
+                "sweep_deg_px": 75.0,
+                "curve_classification_basis": (
+                    "stable_cocircular_exterior_contour_turning"
+                ),
+                "candidate_only": True,
+                "exterior_boundary_candidate": True,
+            }
+        ],
+    }
+
+    hints = hybrid_adapter._rotational_oblique_profile_hints(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+    )
+
+    assert len(hints) == 1
+    hint = hints[0]
+    assert hint["supporting_profile_refs"] == [
+        "VERTICAL_A",
+        "HORIZONTAL_B",
+    ]
+    assert hint["primitive_kind"] == "arc"
+    assert hint["primitive_kind_basis"] == (
+        "verified_continuous_curved_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert hint["engineering_coordinate_inferred_from_pixels"] is False
+    assert hint["pixel_geometry_used_for_topology_only"] is True
+    assert "angle_deg" not in hint
+    assert "hybrid:curve-boundary:0" in hint["source_ids"]
+
+
 def test_rotational_oblique_profile_direct_contacts_stay_unresolved_without_line_continuity():
     inventory = [
         _independent_profile_edge(

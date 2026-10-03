@@ -4630,6 +4630,55 @@ def test_physical_oblique_profile_preserves_verified_line_primitive():
     assert "line_edge_support_fraction" not in repr(items[0])
 
 
+def test_physical_oblique_profile_preserves_verified_arc_primitive_without_pixel_metrics():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E1", "E2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "support_status": "verified",
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "curve_fit_residual_fraction": 0.01,
+                    "sweep_deg_px": 75.0,
+                }
+            ],
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E1": "F1",
+            "E2": "F2",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "arc"
+    assert items[0]["primitive_kind_basis"] == (
+        "verified_continuous_curved_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert "curve_fit_residual_fraction" not in repr(items[0])
+    assert "sweep_deg_px" not in repr(items[0])
+
+
 def test_physical_oblique_profile_conflicting_crop_classification_fails_closed():
     observations = [
         {

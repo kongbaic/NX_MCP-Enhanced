@@ -1613,8 +1613,22 @@ def _rotational_oblique_profile_hints(
     establishes topology/identity only and never becomes an engineering value.
     """
 
-    raw_candidates = report.get("annotation_line_candidates")
-    if not isinstance(raw_candidates, list):
+    line_candidates = report.get("annotation_line_candidates")
+    curve_candidates = report.get("annotation_curve_candidates")
+    raw_candidates: list[tuple[str, int, dict[str, Any]]] = []
+    if isinstance(line_candidates, list):
+        raw_candidates.extend(
+            ("hybrid:oblique-line", index, candidate)
+            for index, candidate in enumerate(line_candidates)
+            if isinstance(candidate, dict)
+        )
+    if isinstance(curve_candidates, list):
+        raw_candidates.extend(
+            ("hybrid:curve-boundary", index, candidate)
+            for index, candidate in enumerate(curve_candidates)
+            if isinstance(candidate, dict)
+        )
+    if not raw_candidates:
         return []
 
     hints: list[dict[str, Any]] = []
@@ -1670,15 +1684,17 @@ def _rotational_oblique_profile_hints(
             strict_contact_tolerance * 2.0,
         )
 
-        for candidate_index, candidate in enumerate(raw_candidates):
+        for source_prefix, candidate_index, candidate in raw_candidates:
+            candidate_kind = str(candidate.get("kind") or "")
             if (
-                not isinstance(candidate, dict)
-                or candidate.get("kind") != "oblique_line_candidate"
-                or candidate.get("candidate_only") is not True
+                candidate.get("candidate_only") is not True
+                or candidate_kind not in {
+                    "oblique_line_candidate",
+                    "curved_boundary_candidate",
+                }
             ):
                 continue
             endpoints = candidate.get("endpoints_px")
-            angle = candidate.get("angle_deg")
             if (
                 not isinstance(endpoints, list)
                 or len(endpoints) != 2
@@ -1692,13 +1708,47 @@ def _rotational_oblique_profile_hints(
                     )
                     for point in endpoints
                 )
-                or not isinstance(angle, (int, float))
-                or isinstance(angle, bool)
             ):
                 continue
-            angle_value = float(angle)
-            if not 10.0 <= angle_value <= 80.0:
-                continue
+
+            angle_value: float | None = None
+            verified_curve_support = False
+            if candidate_kind == "oblique_line_candidate":
+                angle = candidate.get("angle_deg")
+                if (
+                    not isinstance(angle, (int, float))
+                    or isinstance(angle, bool)
+                ):
+                    continue
+                angle_value = float(angle)
+                if not 10.0 <= angle_value <= 80.0:
+                    continue
+            else:
+                residual = candidate.get("curve_fit_residual_fraction")
+                turn_consistency = candidate.get(
+                    "turn_consistency_fraction"
+                )
+                turn_cv = candidate.get("turn_magnitude_cv")
+                sweep = candidate.get("sweep_deg_px")
+                verified_curve_support = (
+                    candidate.get("curve_classification_basis")
+                    == "stable_cocircular_exterior_contour_turning"
+                    and isinstance(residual, (int, float))
+                    and not isinstance(residual, bool)
+                    and float(residual) <= 0.025
+                    and isinstance(turn_consistency, (int, float))
+                    and not isinstance(turn_consistency, bool)
+                    and float(turn_consistency) >= 0.90
+                    and isinstance(turn_cv, (int, float))
+                    and not isinstance(turn_cv, bool)
+                    and float(turn_cv) <= 0.25
+                    and isinstance(sweep, (int, float))
+                    and not isinstance(sweep, bool)
+                    and 20.0 <= float(sweep) <= 200.0
+                )
+                if not verified_curve_support:
+                    continue
+
             if candidate.get("exterior_boundary_candidate") is not True:
                 continue
 
@@ -1745,7 +1795,8 @@ def _rotational_oblique_profile_hints(
             )
             line_support = candidate.get("line_edge_support_fraction")
             continuous_straight_support = (
-                isinstance(line_support, (int, float))
+                candidate_kind == "oblique_line_candidate"
+                and isinstance(line_support, (int, float))
                 and not isinstance(line_support, bool)
                 and float(line_support) >= 0.85
             )
@@ -1765,12 +1816,24 @@ def _rotational_oblique_profile_hints(
                         "verified_continuous_straight_raster_segment_"
                         "between_structural_contacts"
                     )
+                elif (
+                    candidate_kind == "curved_boundary_candidate"
+                    and verified_curve_support
+                ):
+                    primitive_kind = "arc"
+                    primitive_kind_basis = (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    )
                 else:
                     primitive_kind_basis = (
-                        "two_structural_contacts_without_continuous_"
-                        "straight_raster_support"
+                        "two_structural_contacts_without_verified_"
+                        "primitive_support"
                     )
-            elif candidate.get("one_sided_boundary_candidate") is True:
+            elif (
+                candidate_kind == "oblique_line_candidate"
+                and candidate.get("one_sided_boundary_candidate") is True
+            ):
                 strict_endpoint_matches: list[list[str]] = []
                 for point in (first, second):
                     matches = sorted(
@@ -1862,6 +1925,7 @@ def _rotational_oblique_profile_hints(
                 "|".join(
                     [
                         region_id,
+                        source_prefix,
                         str(candidate_index),
                         *support_refs,
                         f"{first[0]:.3f},{first[1]:.3f}",
@@ -1897,16 +1961,45 @@ def _rotational_oblique_profile_hints(
                         )
                         else {}
                     ),
+                    **(
+                        {
+                            "curve_fit_residual_fraction": round(
+                                float(candidate["curve_fit_residual_fraction"]),
+                                4,
+                            ),
+                            "turn_consistency_fraction": round(
+                                float(candidate["turn_consistency_fraction"]),
+                                4,
+                            ),
+                            "turn_magnitude_cv": round(
+                                float(candidate["turn_magnitude_cv"]),
+                                4,
+                            ),
+                            "sweep_deg_px": round(
+                                float(candidate["sweep_deg_px"]),
+                                3,
+                            ),
+                        }
+                        if (
+                            candidate_kind == "curved_boundary_candidate"
+                            and verified_curve_support
+                        )
+                        else {}
+                    ),
                     "endpoints_px": [
                         [round(first[0], 3), round(first[1], 3)],
                         [round(second[0], 3), round(second[1], 3)],
                     ],
-                    "angle_deg": round(angle_value, 3),
+                    **(
+                        {"angle_deg": round(angle_value, 3)}
+                        if angle_value is not None
+                        else {}
+                    ),
                     "source_ids": list(
                         dict.fromkeys(
                             [
                                 *region_view.evidence,
-                                f"hybrid:oblique-line:{candidate_index}",
+                                f"{source_prefix}:{candidate_index}",
                                 *[
                                     f"hybrid:profile-edge:{ref}"
                                     for ref in support_refs

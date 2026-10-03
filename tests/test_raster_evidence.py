@@ -3,6 +3,7 @@ from __future__ import annotations
 from nx_mcp.drawing_intelligence.raster_evidence import (
     _axis_ink_continuity,
     _compact_fragments,
+    _curved_annotation_candidates,
     _radial_gradient_alignment,
     _adapt_probe,
     _oblique_annotation_lines,
@@ -259,6 +260,82 @@ def test_witness_line_evidence_excludes_same_axis_lines_from_other_region():
             ],
         }
     ]
+
+
+def test_curved_annotation_candidates_classify_exterior_curve_without_metric_geometry():
+    import cv2
+    import numpy as np
+
+    image = np.full((280, 320), 255, np.uint8)
+    points = [
+        [40, 240],
+        [40, 60],
+        [140, 60],
+    ]
+    for angle in np.linspace(-90.0, 0.0, 40):
+        radians = np.deg2rad(angle)
+        points.append(
+            [
+                int(round(140 + 60 * np.cos(radians))),
+                int(round(120 + 60 * np.sin(radians))),
+            ]
+        )
+    points.append([200, 240])
+    polygon = np.asarray(points, dtype=np.int32)
+    cv2.fillPoly(image, [polygon], 150)
+    cv2.polylines(image, [polygon], True, 0, 3)
+
+    candidates = _curved_annotation_candidates(
+        image,
+        cv2,
+        np,
+    )
+
+    assert candidates
+    assert all(
+        item["kind"] == "curved_boundary_candidate"
+        for item in candidates
+    )
+    assert all(item["candidate_only"] is True for item in candidates)
+    assert all(
+        item["exterior_boundary_candidate"] is True
+        for item in candidates
+    )
+    assert all(
+        item["curve_classification_basis"]
+        == "stable_cocircular_exterior_contour_turning"
+        for item in candidates
+    )
+    assert any(
+        float(item["curve_fit_residual_fraction"]) <= 0.025
+        and float(item["turn_consistency_fraction"]) >= 0.90
+        and float(item["turn_magnitude_cv"]) <= 0.25
+        and 20.0 <= float(item["sweep_deg_px"]) <= 200.0
+        for item in candidates
+    )
+    assert all("center_px" not in item for item in candidates)
+    assert all("radius_px" not in item for item in candidates)
+
+
+def test_curved_annotation_candidates_reject_straight_polygon_edges():
+    import cv2
+    import numpy as np
+
+    image = np.full((240, 300), 255, np.uint8)
+    polygon = np.asarray(
+        [[40, 200], [40, 40], [240, 40], [240, 200]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(image, [polygon], 150)
+    cv2.polylines(image, [polygon], True, 0, 3)
+
+    candidates = _curved_annotation_candidates(
+        image,
+        cv2,
+        np,
+    )
+
+    assert candidates == []
 
 
 def test_oblique_annotation_lines_stay_geometry_only():

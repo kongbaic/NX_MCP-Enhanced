@@ -336,6 +336,286 @@ def _segment_edge_support_fraction(
     return hits / sample_count
 
 
+def _curved_annotation_candidates(
+    gray: Any,
+    cv2: Any,
+    np: Any,
+) -> list[dict[str, Any]]:
+    """Return conservative exterior curved-boundary candidates.
+
+    The fitted circle is used only to classify local raster curvature. Pixel
+    center/radius values are intentionally discarded and never exposed as
+    engineering geometry.
+    """
+
+    image_height, image_width = gray.shape[:2]
+    ink = np.where(gray < 245, 255, 0).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, kernel)
+
+    padded = cv2.copyMakeBorder(
+        ink,
+        1,
+        1,
+        1,
+        1,
+        cv2.BORDER_CONSTANT,
+        value=0,
+    )
+    open_space = cv2.bitwise_not(padded)
+    flooded = open_space.copy()
+    flood_mask = np.zeros(
+        (flooded.shape[0] + 2, flooded.shape[1] + 2),
+        dtype=np.uint8,
+    )
+    cv2.floodFill(
+        flooded,
+        flood_mask,
+        (0, 0),
+        128,
+    )
+    enclosed = (open_space == 255) & (flooded != 128)
+    silhouette = np.where(
+        (padded > 0) | enclosed,
+        255,
+        0,
+    ).astype(np.uint8)[1:-1, 1:-1]
+
+    contours, _ = cv2.findContours(
+        silhouette,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_NONE,
+    )
+    minimum_area = float(image_width * image_height) * 0.002
+    candidates: list[dict[str, Any]] = []
+
+    for contour_index, contour in enumerate(contours):
+        if cv2.contourArea(contour) < minimum_area:
+            continue
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter < 40.0:
+            continue
+
+        epsilon = max(0.8, min(2.0, perimeter * 0.0015))
+        approximated = cv2.approxPolyDP(
+            contour,
+            epsilon,
+            True,
+        )
+        points = [
+            (float(point[0][0]), float(point[0][1]))
+            for point in approximated
+        ]
+        point_count = len(points)
+        if point_count < 5:
+            continue
+
+        passing: list[dict[str, Any]] = []
+        maximum_window = min(12, point_count)
+        for start_index in range(point_count):
+            for window_size in range(5, maximum_window + 1):
+                indices = [
+                    (start_index + offset) % point_count
+                    for offset in range(window_size)
+                ]
+                if len(set(indices)) != window_size:
+                    continue
+                sample = np.asarray(
+                    [points[index] for index in indices],
+                    dtype=float,
+                )
+                vectors = np.diff(sample, axis=0)
+                segment_lengths = np.hypot(
+                    vectors[:, 0],
+                    vectors[:, 1],
+                )
+                if (
+                    np.any(segment_lengths <= 1e-6)
+                    or float(np.max(segment_lengths))
+                    / max(float(np.median(segment_lengths)), 1e-6)
+                    > 3.0
+                ):
+                    continue
+
+                directions = np.unwrap(
+                    np.arctan2(vectors[:, 1], vectors[:, 0])
+                )
+                turns = np.diff(directions)
+                turns = (turns + np.pi) % (2.0 * np.pi) - np.pi
+                significant_turns = turns[
+                    np.abs(turns) >= math.radians(1.0)
+                ]
+                if len(significant_turns) < 3:
+                    continue
+                turn_sign = (
+                    1.0
+                    if float(np.median(significant_turns)) > 0.0
+                    else -1.0
+                )
+                turn_consistency = float(
+                    np.mean(significant_turns * turn_sign > 0.0)
+                )
+                turn_magnitudes = np.abs(significant_turns)
+                mean_turn = float(np.mean(turn_magnitudes))
+                turn_cv = float(
+                    np.std(turn_magnitudes)
+                    / max(mean_turn, 1e-9)
+                )
+                mean_turn_deg = math.degrees(mean_turn)
+                if (
+                    turn_consistency < 0.90
+                    or not 3.0 <= mean_turn_deg <= 40.0
+                    or turn_cv > 0.25
+                ):
+                    continue
+
+                xs = sample[:, 0]
+                ys = sample[:, 1]
+                matrix = np.column_stack(
+                    (2.0 * xs, 2.0 * ys, np.ones(len(sample)))
+                )
+                target = xs * xs + ys * ys
+                try:
+                    solution, _, _, _ = np.linalg.lstsq(
+                        matrix,
+                        target,
+                        rcond=None,
+                    )
+                except np.linalg.LinAlgError:
+                    continue
+                center_x, center_y, constant = (
+                    float(value)
+                    for value in solution
+                )
+                radius_squared = (
+                    constant
+                    + center_x * center_x
+                    + center_y * center_y
+                )
+                if radius_squared <= 1e-6:
+                    continue
+                radius = math.sqrt(radius_squared)
+                distances = np.hypot(
+                    xs - center_x,
+                    ys - center_y,
+                )
+                residual_fraction = float(
+                    np.max(np.abs(distances - radius))
+                    / radius
+                )
+                if residual_fraction > 0.025:
+                    continue
+
+                angles = np.unwrap(
+                    np.arctan2(
+                        ys - center_y,
+                        xs - center_x,
+                    )
+                )
+                sweep_deg = abs(
+                    math.degrees(
+                        float(angles[-1] - angles[0])
+                    )
+                )
+                if not 20.0 <= sweep_deg <= 200.0:
+                    continue
+
+                chord = math.hypot(
+                    float(xs[-1] - xs[0]),
+                    float(ys[-1] - ys[0]),
+                )
+                if chord <= 1e-6:
+                    continue
+                deviations = np.abs(
+                    (ys[-1] - ys[0]) * xs
+                    - (xs[-1] - xs[0]) * ys
+                    + xs[-1] * ys[0]
+                    - ys[-1] * xs[0]
+                ) / chord
+                if float(np.max(deviations)) / chord < 0.03:
+                    continue
+
+                passing.append(
+                    {
+                        "_indices": set(indices),
+                        "_window_size": window_size,
+                        "kind": "curved_boundary_candidate",
+                        "endpoints_px": [
+                            [
+                                round(float(xs[0]), 3),
+                                round(float(ys[0]), 3),
+                            ],
+                            [
+                                round(float(xs[-1]), 3),
+                                round(float(ys[-1]), 3),
+                            ],
+                        ],
+                        "curve_fit_residual_fraction": round(
+                            residual_fraction,
+                            4,
+                        ),
+                        "turn_consistency_fraction": round(
+                            turn_consistency,
+                            4,
+                        ),
+                        "turn_magnitude_cv": round(
+                            turn_cv,
+                            4,
+                        ),
+                        "sweep_deg_px": round(
+                            sweep_deg,
+                            3,
+                        ),
+                        "candidate_only": True,
+                        "exterior_boundary_candidate": True,
+                        "curve_classification_basis": (
+                            "stable_cocircular_exterior_contour_turning"
+                        ),
+                        "_contour_index": contour_index,
+                    }
+                )
+
+        selected: list[dict[str, Any]] = []
+        for candidate in sorted(
+            passing,
+            key=lambda item: (
+                -int(item["_window_size"]),
+                float(item["curve_fit_residual_fraction"]),
+                item["endpoints_px"],
+            ),
+        ):
+            indices = candidate["_indices"]
+            if any(
+                len(indices.intersection(previous["_indices"]))
+                / max(
+                    1,
+                    min(
+                        len(indices),
+                        len(previous["_indices"]),
+                    ),
+                )
+                >= 0.80
+                for previous in selected
+            ):
+                continue
+            selected.append(candidate)
+
+        for candidate in selected:
+            candidate.pop("_indices", None)
+            candidate.pop("_window_size", None)
+            candidate.pop("_contour_index", None)
+            candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda item: (
+            float(item["curve_fit_residual_fraction"]),
+            -float(item["sweep_deg_px"]),
+            item["endpoints_px"],
+        )
+    )
+    return candidates[:128]
+
+
 def _oblique_annotation_lines(
     edges: Any,
     image_width: int,
@@ -942,6 +1222,10 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
             "oblique_annotation_lines",
             [],
         ),
+        "annotation_curve_candidates": probe.get(
+            "curved_annotation_candidates",
+            [],
+        ),
         "regions": regions,
         "summary": {
             "region_count": len(regions),
@@ -953,6 +1237,9 @@ def _adapt_probe(probe: dict[str, Any]) -> dict[str, Any]:
                 len(region["linear_pattern_candidates"]) for region in regions
             ),
             "annotation_line_candidate_count": len(probe.get("oblique_annotation_lines", [])),
+            "annotation_curve_candidate_count": len(
+                probe.get("curved_annotation_candidates", [])
+            ),
         },
     }
 
@@ -1443,6 +1730,11 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
             cv2,
             np,
             gray=gray,
+        ),
+        "curved_annotation_candidates": _curved_annotation_candidates(
+            gray,
+            cv2,
+            np,
         ),
         "regions": probe_regions,
     }

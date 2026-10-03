@@ -369,7 +369,12 @@ def _physical_rotational_oblique_profile_items(
             oblique_sources = sorted(
                 value
                 for value in source_ids
-                if value.startswith("hybrid:oblique-line:")
+                if value.startswith(
+                    (
+                        "hybrid:oblique-line:",
+                        "hybrid:curve-boundary:",
+                    )
+                )
             )
             if (
                 not region_id

@@ -585,11 +585,13 @@ def _coverage_unresolved(
                 kind="unsupported_representation",
                 reason=(
                     "Whole OCR found a standalone linear token with no unique "
-                    f"DG assignment: token={item.get('token')!r}."
+                    f"DG assignment: token={item.get('token')!r}. The engineering "
+                    "value remains modeling-blocking until a deterministic "
+                    "consumer or explicit non-modeling classification exists."
                 ),
                 field="unassigned_linear_text",
                 evidence=[f"hybrid:whole:{item.get('source_item_index')}"],
-                required_for_modeling=False,
+                required_for_modeling=True,
             )
         )
 
@@ -7308,6 +7310,38 @@ def adapt_hybrid_ocr_report(
         identity_ledger=labeled_profile_span_ledger,
     )
 
+    claimed_unassigned_source_indices: set[Any] = set(
+        slot_claimed_source_indices
+    )
+    for record in symmetric_chain_ledger:
+        if not isinstance(record, dict):
+            continue
+        claimed_unassigned_source_indices.update(
+            record.get(key)
+            for key in (
+                "half_source_item_index",
+                "total_source_item_index",
+            )
+        )
+    for record in profile_offset_ledger:
+        if isinstance(record, dict):
+            claimed_unassigned_source_indices.add(
+                record.get("source_item_index")
+            )
+    claimed_unassigned_source_indices.update(
+        fact.source_item_index
+        for fact in labeled_dimension_facts
+    )
+    claimed_unassigned_source_indices = {
+        source_index
+        for source_index in claimed_unassigned_source_indices
+        if (
+            isinstance(source_index, int)
+            and not isinstance(source_index, bool)
+            and source_index >= 0
+        )
+    }
+
     unresolved.extend(
         _coverage_unresolved(
             report,
@@ -7315,7 +7349,7 @@ def adapt_hybrid_ocr_report(
             view_lookup,
             boundaries=boundaries,
             overall_dimension_facts=context.overall_dimension_facts,
-            excluded_source_item_indices=slot_claimed_source_indices,
+            excluded_source_item_indices=claimed_unassigned_source_indices,
         )
     )
 

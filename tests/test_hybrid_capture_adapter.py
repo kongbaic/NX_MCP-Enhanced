@@ -1063,7 +1063,7 @@ def test_adapter_preserves_tolerance_without_claiming_endpoint_ownership():
     assert tolerance[0].required_for_modeling is False
 
 
-def test_adapter_preserves_coverage_evidence_without_overblocking_bookkeeping():
+def test_adapter_preserves_coverage_evidence_and_blocks_unconsumed_linear_tokens():
     partial = adapt_hybrid_ocr_report(_report(), _context())
 
     fields = [item.field for item in partial.unresolved]
@@ -1074,16 +1074,56 @@ def test_adapter_preserves_coverage_evidence_without_overblocking_bookkeeping():
 
     blocking = [item for item in partial.unresolved if item.required_for_modeling]
     assert [(item.kind, item.field) for item in blocking] == [
-        ("unsupported_representation", "dimension_value_candidate")
+        ("unsupported_representation", "dimension_value_candidate"),
+        ("unsupported_representation", "unassigned_linear_text"),
     ]
 
     advisory_fields = {item.field for item in partial.unresolved if not item.required_for_modeling}
     assert {
         "secondary_linear_assignment",
-        "unassigned_linear_text",
         "local_only_linear_text",
     } <= advisory_fields
+    assert "unassigned_linear_text" not in advisory_fields
     assert partial.observations[0]["kind"] == "hybrid_ocr_coverage_ledger"
+
+
+def test_adapter_does_not_double_block_unassigned_source_claimed_by_labeled_fact():
+    context_payload = _context().model_dump(mode="json", by_alias=True)
+    context_payload["labeled_dimension_facts"] = [
+        {
+            "target_id": "LD_0000",
+            "source_item_index": 0,
+            "source_text": "16",
+            "region_id": "R1",
+            "value": 16,
+            "axis": "X",
+            "relation": "between_profile_boundaries",
+            "profile_transition_geometry": "orthogonal",
+            "symmetry_scope": "single",
+            "evidence": ["hybrid:whole:0", "structural:R1"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+    partial = adapt_hybrid_ocr_report(
+        _report(),
+        HybridAdapterContext.model_validate(context_payload),
+    )
+
+    assert not [
+        item
+        for item in partial.unresolved
+        if (
+            item.field == "unassigned_linear_text"
+            and "hybrid:whole:0" in item.evidence
+        )
+    ]
+    ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_labeled_dimension_relation_ledger"
+    )
+    assert ledger["items"][0]["source_item_index"] == 0
 
 
 def test_adapter_rejects_silent_drop_report():

@@ -456,6 +456,104 @@ def test_build_executable_plan_preserves_geometry_and_operation_order():
     assert R._build_geometry_conservation_errors(plan, executable) == []
 
 
+def test_arc_geometry_is_conserved_from_frozen_to_executable():
+    frozen = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_sketch",
+                "tool_args": {"plane": "XZ"},
+                "topology_changes": False,
+            },
+            {
+                "step": 2,
+                "tool": "nx_sketch_arc",
+                "tool_args": {
+                    "sketch_id": "sketch_profile",
+                    "center": {"x": 25.0, "y": 55.0},
+                    "radius": 5.0,
+                    "start_angle": 0.0,
+                    "end_angle": 90.0,
+                },
+                "topology_changes": False,
+            },
+        ],
+    }
+
+    executable = R.build_executable_plan(frozen)
+
+    assert R._build_geometry_conservation_errors(
+        frozen,
+        executable,
+    ) == []
+    assert executable["operations"][0]["result_bindings"] == {
+        "object": "sketch_profile"
+    }
+    arc_args = executable["operations"][1]["tool_args"]
+    assert arc_args == {
+        "sketch_id": "$sketch_profile",
+        "center": {"x": 25.0, "y": 55.0},
+        "radius": 5.0,
+        "start_angle": 0.0,
+        "end_angle": 90.0,
+    }
+
+
+def test_runner_dispatches_executable_arc_geometry_without_mutation():
+    import asyncio
+
+    frozen = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_sketch",
+                "tool_args": {"plane": "XZ"},
+                "topology_changes": False,
+            },
+            {
+                "step": 2,
+                "tool": "nx_sketch_arc",
+                "tool_args": {
+                    "sketch_id": "sketch_profile",
+                    "center": {"x": 25.0, "y": 55.0},
+                    "radius": 5.0,
+                    "start_angle": 0.0,
+                    "end_angle": 90.0,
+                },
+                "topology_changes": False,
+            },
+        ],
+    }
+    executable = R.build_executable_plan(frozen)
+    calls = []
+
+    class Transport:
+        async def call(self, tool, args):
+            calls.append((tool, args))
+            if tool == "nx_create_sketch":
+                return {"object": "S_PROFILE", "message": "created"}
+            return {"message": "ok"}
+
+    report = asyncio.run(R.run_plan(executable, Transport()))
+
+    assert report["status"] == "success"
+    assert calls == [
+        ("nx_create_sketch", {"plane": "XZ"}),
+        (
+            "nx_sketch_arc",
+            {
+                "sketch_id": "S_PROFILE",
+                "center": {"x": 25.0, "y": 55.0},
+                "radius": 5.0,
+                "start_angle": 0.0,
+                "end_angle": 90.0,
+            },
+        ),
+    ]
+
+
 def test_build_geometry_conservation_rejects_geometry_argument_mutation():
     frozen = {
         "operations": [

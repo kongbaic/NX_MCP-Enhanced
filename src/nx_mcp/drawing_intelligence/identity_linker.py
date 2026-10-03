@@ -329,6 +329,75 @@ def _physical_rotational_oblique_profile_items(
     in the source candidate ledger and never become engineering coordinates.
     """
 
+    physical_edge_directions: dict[
+        tuple[str, str, str, str, str],
+        set[tuple[str, str]],
+    ] = defaultdict(set)
+    physical_edge_direction_ambiguous: set[
+        tuple[str, str, str, str, str]
+    ] = set()
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ROTATIONAL_PROFILE_TOPOLOGY_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            plane = str(item.get("plane") or "").upper()
+            rotation_axis = str(item.get("rotation_axis") or "").upper()
+            view_kind = str(item.get("view_kind") or "")
+            edges = item.get("edges")
+            if (
+                plane not in {"XY", "XZ", "YZ"}
+                or rotation_axis not in set(plane)
+                or not view_kind
+                or not isinstance(edges, list)
+            ):
+                continue
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                feature_id = str(edge.get("physical_feature_id") or "")
+                axis = str(edge.get("constant_axis") or "").upper()
+                if (
+                    not feature_id
+                    or axis not in {"X", "Y", "Z"}
+                    or edge.get("boundary_target")
+                    != f"feature:{feature_id}.boundary.{axis.lower()}"
+                ):
+                    continue
+                key = (
+                    plane,
+                    rotation_axis,
+                    view_kind,
+                    feature_id,
+                    axis,
+                )
+                if edge.get("material_side_ambiguous") is True:
+                    physical_edge_direction_ambiguous.add(key)
+                    continue
+                material_direction = edge.get("material_axis_direction")
+                background_direction = edge.get("background_axis_direction")
+                if (
+                    material_direction in {"negative", "positive"}
+                    and background_direction in {"negative", "positive"}
+                    and material_direction != background_direction
+                ):
+                    physical_edge_directions[key].add(
+                        (
+                            str(material_direction),
+                            str(background_direction),
+                        )
+                    )
+
     grouped: dict[
         tuple[
             str,
@@ -569,6 +638,86 @@ def _physical_rotational_oblique_profile_items(
                         "constant_axis": axis,
                         "boundary_target": (
                             f"feature:{feature_id}.boundary.{axis.lower()}"
+                        ),
+                        **(
+                            {
+                                "material_axis_direction": next(
+                                    iter(
+                                        physical_edge_directions[
+                                            (
+                                                plane,
+                                                rotation_axis,
+                                                view_kind,
+                                                feature_id,
+                                                axis,
+                                            )
+                                        ]
+                                    )
+                                )[0],
+                                "background_axis_direction": next(
+                                    iter(
+                                        physical_edge_directions[
+                                            (
+                                                plane,
+                                                rotation_axis,
+                                                view_kind,
+                                                feature_id,
+                                                axis,
+                                            )
+                                        ]
+                                    )
+                                )[1],
+                            }
+                            if (
+                                (
+                                    plane,
+                                    rotation_axis,
+                                    view_kind,
+                                    feature_id,
+                                    axis,
+                                )
+                                not in physical_edge_direction_ambiguous
+                                and len(
+                                    physical_edge_directions.get(
+                                        (
+                                            plane,
+                                            rotation_axis,
+                                            view_kind,
+                                            feature_id,
+                                            axis,
+                                        ),
+                                        set(),
+                                    )
+                                )
+                                == 1
+                            )
+                            else (
+                                {"material_axis_direction_ambiguous": True}
+                                if (
+                                    (
+                                        plane,
+                                        rotation_axis,
+                                        view_kind,
+                                        feature_id,
+                                        axis,
+                                    )
+                                    in physical_edge_direction_ambiguous
+                                    or len(
+                                        physical_edge_directions.get(
+                                            (
+                                                plane,
+                                                rotation_axis,
+                                                view_kind,
+                                                feature_id,
+                                                axis,
+                                            ),
+                                            set(),
+                                        )
+                                    )
+                                    > 1
+                                )
+                                else {}
+                            )
                         ),
                     }
                     for feature_id, axis in physical_edges

@@ -4633,6 +4633,39 @@ def test_physical_oblique_profile_preserves_verified_line_primitive():
 def test_physical_oblique_profile_preserves_verified_arc_primitive_without_pixel_metrics():
     observations = [
         {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "PHYSICAL_TEST",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "PX",
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                            "material_axis_direction": "negative",
+                            "background_axis_direction": "positive",
+                        },
+                        {
+                            "ref": "PZ",
+                            "physical_feature_id": "F2",
+                            "constant_axis": "Z",
+                            "boundary_target": "feature:F2.boundary.z",
+                            "material_axis_direction": "positive",
+                            "background_axis_direction": "negative",
+                        },
+                    ],
+                    "junctions": [["PX", "PZ"]],
+                }
+            ],
+        },
+        {
             "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_topology_only": True,
@@ -4675,8 +4708,99 @@ def test_physical_oblique_profile_preserves_verified_arc_primitive_without_pixel
         "verified_continuous_curved_raster_segment_"
         "between_structural_contacts"
     )
+    assert items[0]["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F1",
+            "constant_axis": "X",
+            "boundary_target": "feature:F1.boundary.x",
+            "material_axis_direction": "negative",
+            "background_axis_direction": "positive",
+        },
+        {
+            "physical_feature_id": "F2",
+            "constant_axis": "Z",
+            "boundary_target": "feature:F2.boundary.z",
+            "material_axis_direction": "positive",
+            "background_axis_direction": "negative",
+        },
+    ]
     assert "curve_fit_residual_fraction" not in repr(items[0])
     assert "sweep_deg_px" not in repr(items[0])
+
+
+def test_physical_oblique_arc_marks_conflicting_edge_direction_ambiguous():
+    observations = [
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": region_id,
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": f"PX_{region_id}",
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                            "material_axis_direction": direction,
+                            "background_axis_direction": (
+                                "positive"
+                                if direction == "negative"
+                                else "negative"
+                            ),
+                        }
+                    ],
+                    "junctions": [],
+                }
+                for region_id, direction in (
+                    ("R1", "negative"),
+                    ("R2", "positive"),
+                )
+            ],
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E1", "E2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "support_status": "verified",
+                    "source_ids": ["hybrid:curve-boundary:3"],
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                }
+            ],
+        },
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {"E1": "F1", "E2": "F2"},
+    )
+
+    assert len(items) == 1
+    x_edge = next(
+        edge
+        for edge in items[0]["supporting_physical_edges"]
+        if edge["constant_axis"] == "X"
+    )
+    assert x_edge["material_axis_direction_ambiguous"] is True
+    assert "material_axis_direction" not in x_edge
+    assert "background_axis_direction" not in x_edge
 
 
 def test_physical_arc_radius_links_to_one_verified_physical_arc_identity():

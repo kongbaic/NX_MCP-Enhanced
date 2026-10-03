@@ -73,6 +73,8 @@ _PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND = (
 )
 _VIEW_AXIS_BOUNDARY_KIND = "hybrid_view_axis_boundary_ledger"
 _LABELED_DIMENSION_RELATION_KIND = "hybrid_labeled_dimension_relation_ledger"
+_ENGINEERING_CALLOUT_LEDGER_KIND = "hybrid_engineering_callout_ledger"
+_PHYSICAL_PROFILE_ARC_RADIUS_KIND = "hybrid_physical_profile_arc_radius_ledger"
 
 
 
@@ -582,6 +584,224 @@ def _physical_rotational_oblique_profile_items(
         )
 
     return output
+
+
+def _linked_physical_profile_arc_radius_observations(
+    observations: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Link an explicit engineering radius to one verified physical profile arc.
+
+    The engineering radius remains OCR-authoritative. Pixel curve traces are
+    used only upstream to identify the curve source. This linker consumes only
+    stable curve-source identity and physical profile topology.
+    """
+
+    physical_by_curve_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _PHYSICAL_ROTATIONAL_OBLIQUE_PROFILE_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("primitive_kind") != "arc"
+                or item.get("primitive_kind_basis")
+                != (
+                    "verified_continuous_curved_raster_segment_"
+                    "between_structural_contacts"
+                )
+                or item.get("connection_kind")
+                != "non_orthogonal_profile_connection"
+                or item.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or item.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                continue
+            physical_arc_id = str(item.get("id") or "")
+            if not physical_arc_id:
+                continue
+            for source_id in item.get("source_ids", []):
+                if (
+                    isinstance(source_id, str)
+                    and source_id.startswith("hybrid:curve-boundary:")
+                ):
+                    physical_by_curve_source[source_id].append(item)
+
+    linked_items: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ENGINEERING_CALLOUT_LEDGER_KIND
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            binding = record.get("profile_arc_radius_binding")
+            facts = record.get("facts")
+            if not (
+                isinstance(binding, dict)
+                and binding.get("status") == "profile_arc_candidate_backed"
+                and isinstance(facts, dict)
+            ):
+                continue
+
+            curve_source_id = str(binding.get("curve_source_id") or "")
+            radius = facts.get("radius")
+            bound_radius = binding.get("engineering_radius")
+            source_item_index = record.get("source_item_index")
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        *(
+                            [f"hybrid:whole:{source_item_index}"]
+                            if source_item_index is not None
+                            else []
+                        ),
+                        *([curve_source_id] if curve_source_id else []),
+                    ]
+                )
+            )
+            valid_contract = (
+                curve_source_id.startswith("hybrid:curve-boundary:")
+                and isinstance(radius, (int, float))
+                and not isinstance(radius, bool)
+                and float(radius) > 0.0
+                and isinstance(bound_radius, (int, float))
+                and not isinstance(bound_radius, bool)
+                and abs(float(radius) - float(bound_radius)) <= 1e-9
+                and binding.get("engineering_value_source") == "hybrid_ocr"
+                and binding.get("engineering_coordinate_inferred_from_pixels")
+                is False
+                and binding.get("pixel_geometry_used_for_identity_only") is True
+            )
+            digest = hashlib.sha256(
+                "|".join(
+                    [
+                        str(source_item_index),
+                        curve_source_id,
+                        str(radius),
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()[:12].upper()
+
+            if not valid_contract:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_IDENTITY_{digest}",
+                        "kind": "feature_value",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "profile arc radius callout binding does not satisfy "
+                            "the engineering-value and pixel-identity contract"
+                        ),
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            matches_by_id = {
+                str(item["id"]): item
+                for item in physical_by_curve_source.get(
+                    curve_source_id,
+                    [],
+                )
+                if isinstance(item, dict) and str(item.get("id") or "")
+            }
+            if len(matches_by_id) != 1:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_IDENTITY_{digest}",
+                        "kind": "feature_inventory",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "engineering radius callout does not map to exactly "
+                            "one verified physical profile arc identity"
+                        ),
+                        "curve_source_id": curve_source_id,
+                        "candidate_physical_arc_ids": sorted(matches_by_id),
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            physical_arc_id, physical_arc = next(iter(matches_by_id.items()))
+            linked_source_ids = list(
+                dict.fromkeys(
+                    [
+                        *source_ids,
+                        *[
+                            value
+                            for value in physical_arc.get("source_ids", [])
+                            if isinstance(value, str) and value
+                        ],
+                    ]
+                )
+            )
+            linked_items.append(
+                {
+                    "id": f"PHYSICAL_ARC_RADIUS_{digest}",
+                    "physical_arc_id": physical_arc_id,
+                    "curve_source_id": curve_source_id,
+                    "engineering_radius": float(radius),
+                    "engineering_value_source": "hybrid_ocr",
+                    "plane": physical_arc.get("plane"),
+                    "rotation_axis": physical_arc.get("rotation_axis"),
+                    "supporting_physical_feature_ids": list(
+                        physical_arc.get(
+                            "supporting_physical_feature_ids",
+                            [],
+                        )
+                    ),
+                    "supporting_physical_edges": copy.deepcopy(
+                        physical_arc.get(
+                            "supporting_physical_edges",
+                            [],
+                        )
+                    ),
+                    "source_ids": linked_source_ids,
+                    "basis": (
+                        "explicit_engineering_radius_callout_plus_"
+                        "unique_physical_arc_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            )
+
+    if not linked_items:
+        return [], unresolved
+    linked_items.sort(
+        key=lambda item: (
+            str(item["physical_arc_id"]),
+            str(item["curve_source_id"]),
+            float(item["engineering_radius"]),
+            str(item["id"]),
+        )
+    )
+    return [
+        {
+            "kind": _PHYSICAL_PROFILE_ARC_RADIUS_KIND,
+            "schema": "1.0",
+            "items": linked_items,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ], unresolved
 
 
 def _oblique_dimension_projection_relations(
@@ -4049,6 +4269,19 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         )
     )
 
+    linked_rotational_observations = (
+        _linked_rotational_profile_topology_observations(
+            capture,
+            entity_to_feature,
+        )
+    )
+    (
+        linked_physical_arc_radius_observations,
+        linked_physical_arc_radius_unresolved,
+    ) = _linked_physical_profile_arc_radius_observations(
+        linked_rotational_observations,
+    )
+
     required_targets = {
         item.target
         for item in direct_values
@@ -4081,10 +4314,8 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
         required_targets=required_targets,
         observations=[
             *_linked_labeled_dimension_relation_observations(capture),
-            *_linked_rotational_profile_topology_observations(
-                capture,
-                entity_to_feature,
-            ),
+            *linked_rotational_observations,
+            *linked_physical_arc_radius_observations,
             {
                 "kind": "reader_required_targets_advisory",
                 "items": [
@@ -4099,6 +4330,7 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
             },
         ],
         unresolved_evidence=[
+            *linked_physical_arc_radius_unresolved,
             *_linked_reader_unresolved(
                 capture,
                 entity_to_feature,

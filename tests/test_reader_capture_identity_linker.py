@@ -4679,6 +4679,153 @@ def test_physical_oblique_profile_preserves_verified_arc_primitive_without_pixel
     assert "sweep_deg_px" not in repr(items[0])
 
 
+def test_physical_arc_radius_links_to_one_verified_physical_arc_identity():
+    observations = [
+        {
+            "kind": "hybrid_engineering_callout_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "source_item_index": 7,
+                    "facts": {"radius": 5.0},
+                    "profile_arc_radius_binding": {
+                        "status": "profile_arc_candidate_backed",
+                        "curve_source_id": "hybrid:curve-boundary:3",
+                        "engineering_radius": 5.0,
+                        "engineering_value_source": "hybrid_ocr",
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "PHYSICAL_OBLIQUE_ARC",
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "connection_kind": "non_orthogonal_profile_connection",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_physical_feature_ids": ["F1", "F2"],
+                    "supporting_physical_edges": [
+                        {
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                        },
+                        {
+                            "physical_feature_id": "F2",
+                            "constant_axis": "Z",
+                            "boundary_target": "feature:F2.boundary.z",
+                        },
+                    ],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(linked) == 1
+    item = linked[0]["items"][0]
+    assert item["physical_arc_id"] == "PHYSICAL_OBLIQUE_ARC"
+    assert item["curve_source_id"] == "hybrid:curve-boundary:3"
+    assert item["engineering_radius"] == 5.0
+    assert item["engineering_value_source"] == "hybrid_ocr"
+    assert item["supporting_physical_feature_ids"] == ["F1", "F2"]
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_identity_only"] is True
+    assert "curve_trace_px" not in repr(item)
+    assert "radius_px" not in repr(item)
+    assert "center_px" not in repr(item)
+
+
+def test_physical_arc_radius_fails_closed_when_curve_identity_is_not_unique():
+    observations = [
+        {
+            "kind": "hybrid_engineering_callout_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "source_item_index": 7,
+                    "facts": {"radius": 5.0},
+                    "profile_arc_radius_binding": {
+                        "status": "profile_arc_candidate_backed",
+                        "curve_source_id": "hybrid:curve-boundary:3",
+                        "engineering_radius": 5.0,
+                        "engineering_value_source": "hybrid_ocr",
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": physical_arc_id,
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "connection_kind": "non_orthogonal_profile_connection",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_physical_feature_ids": ["F1", "F2"],
+                    "supporting_physical_edges": [],
+                    "source_ids": ["hybrid:curve-boundary:3"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+                for physical_arc_id in (
+                    "PHYSICAL_OBLIQUE_A",
+                    "PHYSICAL_OBLIQUE_B",
+                )
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert linked == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["field"] == "profile_arc_radius_identity"
+    assert unresolved[0]["required_for_modeling"] is True
+    assert unresolved[0]["candidate_physical_arc_ids"] == [
+        "PHYSICAL_OBLIQUE_A",
+        "PHYSICAL_OBLIQUE_B",
+    ]
+
+
 def test_physical_oblique_profile_conflicting_crop_classification_fails_closed():
     observations = [
         {

@@ -438,9 +438,20 @@ def _oblique_annotation_lines(
                 ):
                     if exterior_boundary_candidate:
                         previous["exterior_boundary_candidate"] = True
+                    raw_previous_support = previous.get(
+                        "line_edge_support_fraction"
+                    )
+                    previous_support = (
+                        float(raw_previous_support)
+                        if (
+                            isinstance(raw_previous_support, (int, float))
+                            and not isinstance(raw_previous_support, bool)
+                        )
+                        else 0.0
+                    )
                     previous["line_edge_support_fraction"] = max(
-                        float(previous.get("line_edge_support_fraction", 0.0)),
-                        float(candidate["line_edge_support_fraction"]),
+                        previous_support,
+                        float(line_edge_support_fraction),
                     )
                     duplicate = True
                     break

@@ -374,7 +374,7 @@ def _physical_rotational_oblique_profile_items(
                     != f"feature:{feature_id}.boundary.{axis.lower()}"
                 ):
                     continue
-                key = (
+                direction_key = (
                     plane,
                     rotation_axis,
                     view_kind,
@@ -382,7 +382,7 @@ def _physical_rotational_oblique_profile_items(
                     axis,
                 )
                 if edge.get("material_side_ambiguous") is True:
-                    physical_edge_direction_ambiguous.add(key)
+                    physical_edge_direction_ambiguous.add(direction_key)
                     continue
                 material_direction = edge.get("material_axis_direction")
                 background_direction = edge.get("background_axis_direction")
@@ -391,7 +391,7 @@ def _physical_rotational_oblique_profile_items(
                     and background_direction in {"negative", "positive"}
                     and material_direction != background_direction
                 ):
-                    physical_edge_directions[key].add(
+                    physical_edge_directions[direction_key].add(
                         (
                             str(material_direction),
                             str(background_direction),
@@ -503,7 +503,7 @@ def _physical_rotational_oblique_profile_items(
             else:
                 continue
 
-            key = (
+            group_key = (
                 plane,
                 rotation_axis,
                 view_kind,
@@ -511,7 +511,7 @@ def _physical_rotational_oblique_profile_items(
                 oblique_sources[0],
                 connection_kind,
             )
-            grouped.setdefault(key, []).append(
+            grouped.setdefault(group_key, []).append(
                 {
                     "region_id": region_id,
                     "source_ids": source_ids,
@@ -523,7 +523,7 @@ def _physical_rotational_oblique_profile_items(
             )
 
     output: list[dict[str, Any]] = []
-    for key, records in sorted(grouped.items()):
+    for group_key, records in sorted(grouped.items()):
         (
             plane,
             rotation_axis,
@@ -531,7 +531,7 @@ def _physical_rotational_oblique_profile_items(
             physical_edges,
             oblique_source,
             connection_kind,
-        ) = key
+        ) = group_key
         region_ids = sorted(
             {
                 str(record["region_id"])

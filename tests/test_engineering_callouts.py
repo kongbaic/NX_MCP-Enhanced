@@ -29,6 +29,31 @@ def test_explicit_diameter_and_fit_are_safe():
     assert parsed["ambiguities"] == []
 
 
+def test_explicit_radius_callout_preserves_engineering_radius():
+    for raw in ("R5", "R 5.0", "圆角R2.5"):
+        parsed = parse_engineering_callout(raw)
+
+        assert parsed is not None
+        assert parsed["facts"] == {
+            "radius": 5.0 if raw != "圆角R2.5" else 2.5,
+        }
+        assert parsed["ambiguities"] == []
+        assert parsed["tags"] == ["radius"]
+        assert parsed["geometry_binding"] == "unresolved"
+
+
+def test_radius_can_coexist_with_other_explicit_engineering_semantics():
+    parsed = parse_engineering_callout("M6 R3")
+
+    assert parsed is not None
+    assert parsed["facts"] == {
+        "thread_spec": "M6",
+        "radius": 3.0,
+    }
+    assert parsed["ambiguities"] == []
+    assert parsed["geometry_binding"] == "unresolved"
+
+
 def test_leading_zero_through_hole_does_not_invent_diameter():
     parsed = parse_engineering_callout("2-06.6通孔")
 

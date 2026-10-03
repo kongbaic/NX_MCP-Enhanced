@@ -56,6 +56,14 @@ def parse_engineering_callout(text: str) -> dict[str, Any] | None:
         facts["diameter"] = _number(diameter_match.group(1))
         tags.append("diameter")
 
+    radius_match = re.search(
+        r"(?<![A-Z0-9])R(\d+(?:\.\d+)?)(?![A-Z0-9.])",
+        upper,
+    )
+    if radius_match:
+        facts["radius"] = _number(radius_match.group(1))
+        tags.append("radius")
+
     fit_match = re.search(r"(?<![A-Z])([Hh][0-9]{1,2})(?![A-Z0-9])", normalized)
     if fit_match:
         facts["fit"] = fit_match.group(1)

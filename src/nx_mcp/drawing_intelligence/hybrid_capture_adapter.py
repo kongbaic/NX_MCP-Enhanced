@@ -1322,15 +1322,15 @@ def _labeled_profile_transition_boundary_records(
         }
         if len(unique_by_source) != 2:
             continue
-        pair = [
+        oblique_pair = [
             unique_by_source[source]
             for source in sorted(unique_by_source)
         ]
-        first, second = pair
-        first_transition = first["transition_point"]
-        second_transition = second["transition_point"]
-        first_other = first["other_point"]
-        second_other = second["other_point"]
+        first_oblique, second_oblique = oblique_pair
+        first_transition = first_oblique["transition_point"]
+        second_transition = second_oblique["transition_point"]
+        first_other = first_oblique["other_point"]
+        second_other = second_oblique["other_point"]
 
         if (
             abs(

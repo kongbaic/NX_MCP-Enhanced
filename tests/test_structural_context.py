@@ -172,6 +172,26 @@ def test_structural_query_builder_carries_deterministic_profile_symmetry_axis():
     assert plan.queries[1].deterministic_profile_symmetry_overlay is None
 
 
+def test_structural_query_builder_accepts_profile_edge_symmetry_provenance():
+    reader_input = _reader_input()
+    reader_input["regions"][0]["bilateral_symmetry_hint"] = {
+        "status": "established",
+        "axis_direction": "vertical",
+        "method": "profile_edge_mirror_consensus_v1",
+        "vertical_score": 1.0,
+        "horizontal_score": 0.0,
+        "score_margin": 1.0,
+    }
+
+    plan = build_structural_context_queries(reader_input)
+
+    assert plan.queries[0].deterministic_profile_symmetry_axis == "vertical"
+    assert (
+        plan.queries[0].deterministic_profile_symmetry_method
+        == "profile_edge_mirror_consensus_v1"
+    )
+
+
 def test_structural_query_builder_prefers_full_drawing_context_image():
     reader_input = _reader_input()
     reader_input["regions"][0]["structural_context_path"] = "C:/work/R1-structural-context.png"

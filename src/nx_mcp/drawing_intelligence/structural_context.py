@@ -409,7 +409,8 @@ class StructuralRegionQuery(_StrictStructuralModel):
     ] = Field(default_factory=list)
     deterministic_profile_symmetry_axis: Literal["horizontal", "vertical"] | None = None
     deterministic_profile_symmetry_method: Literal[
-        "foreground_mirror_consensus_v1"
+        "foreground_mirror_consensus_v1",
+        "profile_edge_mirror_consensus_v1",
     ] | None = None
     deterministic_profile_symmetry_overlay: Literal[
         "blue_dashed_topology_axis"
@@ -680,14 +681,26 @@ def build_structural_context_queries(
 
         symmetry_hint = region.get("bilateral_symmetry_hint")
         deterministic_axis: Literal["horizontal", "vertical"] | None = None
-        deterministic_method: Literal["foreground_mirror_consensus_v1"] | None = None
+        deterministic_method: Literal[
+            "foreground_mirror_consensus_v1",
+            "profile_edge_mirror_consensus_v1",
+        ] | None = None
         if isinstance(symmetry_hint, dict) and symmetry_hint.get("status") == "established":
             axis_direction = symmetry_hint.get("axis_direction")
             method = symmetry_hint.get("method")
             if axis_direction in {"horizontal", "vertical"}:
                 deterministic_axis = axis_direction
-            if method == "foreground_mirror_consensus_v1":
-                deterministic_method = "foreground_mirror_consensus_v1"
+            if method in {
+                "foreground_mirror_consensus_v1",
+                "profile_edge_mirror_consensus_v1",
+            }:
+                deterministic_method = cast(
+                    Literal[
+                        "foreground_mirror_consensus_v1",
+                        "profile_edge_mirror_consensus_v1",
+                    ],
+                    method,
+                )
 
         queries.append(
             StructuralRegionQuery(

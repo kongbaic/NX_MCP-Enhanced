@@ -224,6 +224,116 @@ def _structural_bilateral_symmetry_hint(
     }
 
 
+def _structural_profile_symmetry_hint(
+    profile_inventory: list[dict[str, Any]],
+    region_id: str,
+) -> dict[str, Any]:
+    """Classify bilateral symmetry from physical profile-edge topology only.
+
+    Pixel positions are used only to prove mirror identity/direction. No
+    engineering coordinate or metric value is derived. At least two independent
+    mirrored edge pairs are required before an axis can be established.
+    """
+
+    def orientation_score(source_orientation: str) -> float:
+        records: list[tuple[float, float, float, float]] = []
+        for item in profile_inventory:
+            if (
+                not isinstance(item, dict)
+                or item.get("region_id") != region_id
+                or item.get("kind") != "profile_edge_candidate"
+                or item.get("source_orientation") != source_orientation
+            ):
+                continue
+            position = item.get("position_px")
+            span = item.get("span_px")
+            tolerance = item.get("axis_tolerance_px", 2.0)
+            if not (
+                isinstance(position, (int, float))
+                and not isinstance(position, bool)
+                and isinstance(span, list)
+                and len(span) == 2
+                and all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in span
+                )
+                and isinstance(tolerance, (int, float))
+                and not isinstance(tolerance, bool)
+            ):
+                continue
+            start, end = sorted(float(value) for value in span)
+            if end <= start:
+                continue
+            records.append(
+                (
+                    float(position),
+                    start,
+                    end,
+                    max(2.0, float(tolerance)),
+                )
+            )
+
+        records.sort(key=lambda item: (item[0], item[1], item[2]))
+        if len(records) < 4:
+            return 0.0
+
+        center = (records[0][0] + records[-1][0]) / 2.0
+        matched: set[int] = set()
+        for index, (position, start, end, tolerance) in enumerate(records):
+            if index in matched:
+                continue
+            target = 2.0 * center - position
+            candidates: list[tuple[float, int]] = []
+            for other_index, (
+                other_position,
+                other_start,
+                other_end,
+                other_tolerance,
+            ) in enumerate(records):
+                if other_index == index or other_index in matched:
+                    continue
+                residual = abs(other_position - target)
+                if residual > max(tolerance, other_tolerance):
+                    continue
+                overlap = max(
+                    0.0,
+                    min(end, other_end) - max(start, other_start),
+                )
+                shorter_span = min(end - start, other_end - other_start)
+                if shorter_span <= 0 or overlap / shorter_span < 0.60:
+                    continue
+                candidates.append((residual, other_index))
+            if not candidates:
+                continue
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            other_index = candidates[0][1]
+            matched.update({index, other_index})
+
+        if len(matched) < 4:
+            return 0.0
+        return len(matched) / len(records)
+
+    vertical_score = orientation_score("vertical")
+    horizontal_score = orientation_score("horizontal")
+    margin = abs(vertical_score - horizontal_score)
+    direction: str | None = None
+    if max(vertical_score, horizontal_score) >= 0.70 and margin >= 0.20:
+        direction = (
+            "vertical"
+            if vertical_score > horizontal_score
+            else "horizontal"
+        )
+
+    return {
+        "status": "established" if direction is not None else "unresolved",
+        "axis_direction": direction,
+        "method": "profile_edge_mirror_consensus_v1",
+        "vertical_score": round(vertical_score, 5),
+        "horizontal_score": round(horizontal_score, 5),
+        "score_margin": round(margin, 5),
+    }
+
+
 def _write_structural_context_image(
     image: Any,
     path: Path,
@@ -621,11 +731,23 @@ def prepare_reader_input(
         overlay_path = crops_dir / f"{region_id}-candidates.png"
         structural_context_path = crops_dir / f"{region_id}-structural-context.png"
         source_bbox = list(region["bbox_px"])
-        bilateral_symmetry_hint = _structural_bilateral_symmetry_hint(
-            image,
-            source_bbox,
-            cv2,
-            np,
+        profile_symmetry_hint = _structural_profile_symmetry_hint(
+            [
+                item
+                for item in aid.get("structural_profile_inventory", [])
+                if isinstance(item, dict)
+            ],
+            region_id,
+        )
+        bilateral_symmetry_hint = (
+            profile_symmetry_hint
+            if profile_symmetry_hint.get("status") == "established"
+            else _structural_bilateral_symmetry_hint(
+                image,
+                source_bbox,
+                cv2,
+                np,
+            )
         )
         _write_crop(image, crop_path, bbox, cv2)
         _write_structural_context_image(

@@ -10,6 +10,7 @@ import numpy as np
 
 from nx_mcp.drawing_intelligence.reader_input_prep import (
     _structural_bilateral_symmetry_hint,
+    _structural_profile_symmetry_hint,
     _write_structural_context_image,
     prepare_reader_input,
 )
@@ -46,6 +47,76 @@ def _write_synthetic_drawing(path: Path) -> None:
     cv2.line(image, (980, 410), (980, 490), (0, 0, 0), 2)
 
     assert cv2.imwrite(str(path), image)
+
+
+def test_structural_profile_symmetry_hint_requires_two_mirrored_edge_pairs():
+    inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 20.0,
+            "span_px": [10.0, 120.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 45.0,
+            "span_px": [35.0, 95.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 155.0,
+            "span_px": [35.0, 95.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 180.0,
+            "span_px": [10.0, 120.0],
+            "axis_tolerance_px": 2.0,
+        },
+    ]
+
+    hint = _structural_profile_symmetry_hint(inventory, "R1")
+
+    assert hint["status"] == "established"
+    assert hint["axis_direction"] == "vertical"
+    assert hint["method"] == "profile_edge_mirror_consensus_v1"
+    assert hint["vertical_score"] == 1.0
+
+
+def test_structural_profile_symmetry_hint_rejects_single_mirrored_edge_pair():
+    inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 20.0,
+            "span_px": [10.0, 120.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 180.0,
+            "span_px": [10.0, 120.0],
+            "axis_tolerance_px": 2.0,
+        },
+    ]
+
+    hint = _structural_profile_symmetry_hint(inventory, "R1")
+
+    assert hint["status"] == "unresolved"
+    assert hint["axis_direction"] is None
 
 
 def test_structural_bilateral_symmetry_hint_uses_topology_not_metric_scale():
@@ -229,9 +300,10 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
             assert int(cv2.absdiff(crop, overlay).sum()) > 0
         assert "circle_groups" not in region
         assert "linear_pattern_candidates" not in region
-        assert region["bilateral_symmetry_hint"]["method"] == (
-            "foreground_mirror_consensus_v1"
-        )
+        assert region["bilateral_symmetry_hint"]["method"] in {
+            "foreground_mirror_consensus_v1",
+            "profile_edge_mirror_consensus_v1",
+        }
         assert region["bilateral_symmetry_hint"]["status"] in {
             "established",
             "unresolved",

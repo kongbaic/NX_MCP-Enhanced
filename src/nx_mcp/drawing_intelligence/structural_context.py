@@ -26,6 +26,7 @@ class StructuralContextError(ValueError):
 _REGION_LOCAL_DEFERRED_UNRESOLVED = {
     "rotational_symmetry_not_visible_in_region",
 }
+_NON_GEOMETRIC_REFERENCE_REGION = "non_geometric_reference_region"
 
 
 class _StrictStructuralModel(BaseModel):
@@ -738,6 +739,7 @@ def build_structural_context_queries(
             "not_established_requires_counterevidence": True,
             "insufficient_rotation_evidence_is_unresolved": True,
             "region_local_rotation_unobservable_may_defer": True,
+            "allow_non_geometric_reference_region": True,
             "global_rotation_closure_remains_fail_closed": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
@@ -827,6 +829,29 @@ def assemble_structural_context(
     for query in plan.queries:
         answer = answers_by_id[query.query_id]
         unresolved = set(answer.unresolved)
+        non_geometric_reference = unresolved == {_NON_GEOMETRIC_REFERENCE_REGION}
+        if non_geometric_reference:
+            if answer.view_kind is not None:
+                raise StructuralContextError(
+                    f"query {query.query_id!r} non-geometric reference region "
+                    "must not carry view_kind"
+                )
+            if (
+                query.labeled_dimension_targets
+                or query.accepted_linear_span_lower_bounds
+                or query.deterministic_profile_symmetry_axis is not None
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} cannot defer as non-geometric "
+                    "because structural geometry targets are present"
+                )
+            _assert_evidence(
+                answer.evidence,
+                query.evidence_label,
+                query_id=query.query_id,
+            )
+            continue
+
         deferred_local_rotation = bool(unresolved) and unresolved.issubset(
             _REGION_LOCAL_DEFERRED_UNRESOLVED
         )

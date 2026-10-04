@@ -28,6 +28,7 @@ def test_nx_agent_skill_keeps_structural_topology_axis_contract():
     assert 'deterministic_profile_symmetry_overlay="blue_dashed_topology_axis"' in skill
     assert "TOPOLOGY SYM AXIS" in skill
     assert '"basis":"axial_section_symmetry"' in skill
+    assert "non_geometric_reference_region" in skill
 
 
 def _reader_input() -> dict:
@@ -118,6 +119,7 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["require_paired_coaxial_profile_for_rotation"] is True
     assert plan.rules["not_established_requires_counterevidence"] is True
     assert plan.rules["insufficient_rotation_evidence_is_unresolved"] is True
+    assert plan.rules["allow_non_geometric_reference_region"] is True
     assert plan.rules["derive_missing_dimensions"] is False
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False
@@ -442,6 +444,59 @@ def test_structural_context_fails_closed_when_global_axis_is_missing():
 
     with pytest.raises(StructuralContextError, match="missing structural overall fact for axis Y"):
         assemble_structural_context(plan, answers)
+
+
+def test_structural_context_skips_explicit_non_geometric_reference_region():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1] = {
+        "query_id": "S002",
+        "view_kind": None,
+        "evidence": ["structural:R2:crop"],
+        "overall_dimension_facts": [],
+        "rotational_symmetry": None,
+        "labeled_dimension_decisions": [],
+        "unresolved": ["non_geometric_reference_region"],
+    }
+
+    context = assemble_structural_context(
+        plan,
+        StructuralContextAnswers.model_validate(payload),
+    )
+
+    assert [(item.region_id, item.view_kind) for item in context.region_views] == [
+        ("R1", "front"),
+    ]
+
+
+def test_non_geometric_reference_region_rejects_structural_geometry_targets():
+    plan = build_structural_context_queries(_reader_input())
+    plan_payload = plan.model_dump(mode="json", by_alias=True)
+    plan_payload["queries"][1]["accepted_linear_span_lower_bounds"] = [
+        {
+            "visual_direction": "horizontal",
+            "minimum_value": 25.0,
+            "candidate_ids": ["DG_TABLE_LIKE"],
+        }
+    ]
+    guarded_plan = StructuralContextQueryPlan.model_validate(plan_payload)
+
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1] = {
+        "query_id": "S002",
+        "view_kind": None,
+        "evidence": ["structural:R2:crop"],
+        "overall_dimension_facts": [],
+        "rotational_symmetry": None,
+        "labeled_dimension_decisions": [],
+        "unresolved": ["non_geometric_reference_region"],
+    }
+
+    with pytest.raises(StructuralContextError, match="structural geometry targets"):
+        assemble_structural_context(
+            guarded_plan,
+            StructuralContextAnswers.model_validate(payload),
+        )
 
 
 def test_structural_context_fails_closed_on_view_unresolved():

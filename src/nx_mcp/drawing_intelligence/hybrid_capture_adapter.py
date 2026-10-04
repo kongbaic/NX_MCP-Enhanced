@@ -1928,7 +1928,7 @@ def _recover_reference_table_profile_span_dimensions(
             if len(matches) != 1:
                 continue
             _distance, value_index, value_text, value_rect = matches[0]
-            parsed = _positive_number(value_text)
+            parsed = _linear_token_number(value_text.replace(",", "."))
             if parsed is None:
                 continue
             used_value_indices.add(value_index)
@@ -2145,9 +2145,10 @@ def _recover_reference_table_profile_span_dimensions(
         if topology is None:
             continue
         visual_direction = topology[0]
-        matching_axes = [
+        candidate_axes: tuple[Axis, ...] = ("X", "Y", "Z")
+        matching_axes: list[Axis] = [
             axis
-            for axis in ("X", "Y", "Z")
+            for axis in candidate_axes
             if _visual_direction_for_axis(
                 region_view.view_kind,
                 axis,

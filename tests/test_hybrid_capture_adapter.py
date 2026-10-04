@@ -6384,6 +6384,142 @@ def test_rotational_oblique_profile_preserves_exterior_when_axis_support_is_unve
     assert hint["pixel_geometry_used_for_topology_only"] is True
 
 
+def test_symmetric_local_section_feature_pair_is_separated_from_body_profile():
+    span_dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_WIDTH",
+        value=26.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.LEFT",
+                basis="profile_edge",
+                evidence=["width:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.RIGHT",
+                basis="profile_edge",
+                evidence=["width:right"],
+            ),
+        ],
+        evidence=["width"],
+    )
+    center_dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_CENTER",
+        value=250.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="unresolved",
+                unresolved_kind="intermediate_surface",
+                evidence=["center:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="unresolved",
+                unresolved_kind="intermediate_surface",
+                evidence=["center:right"],
+            ),
+        ],
+        unresolved_reason="physical 3D feature representation is unresolved",
+        evidence=["center"],
+    )
+
+    records, excluded = (
+        hybrid_adapter._symmetric_local_section_feature_records(
+            dimensions=[span_dimension, center_dimension],
+            profile_span_records=[
+                {
+                    "dimension_key": "R1.DG_WIDTH",
+                    "region_id": "R1",
+                    "axis": "X",
+                    "profile_entity_keys": [
+                        "R1.PROFILE.LEFT",
+                        "R1.PROFILE.RIGHT",
+                    ],
+                    "selected_witness_positions_px": [100.0, 126.0],
+                    "span_midpoint_px": 113.0,
+                    "source_ids": ["width"],
+                }
+            ],
+            span_center_identity_records=[
+                {
+                    "dimension_key": "R1.DG_CENTER",
+                    "endpoint_index": 0,
+                    "axis": "X",
+                    "span_dimension_key": "R1.DG_WIDTH",
+                    "span_region_id": "R1",
+                    "basis": (
+                        "unique_witness_to_resolved_profile_span_midpoint"
+                    ),
+                    "source_ids": ["center", "width"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            symmetric_dimension_pair_records=[
+                {
+                    "dimension_key": "R1.DG_CENTER",
+                    "region_id": "R1",
+                    "axis": "X",
+                    "datum": "overall_center",
+                    "dimension_value": 250.0,
+                    "source_ids": ["center", "overall"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            profile_entity_by_ref={
+                "LOCAL_LEFT": "R1.PROFILE.LEFT",
+                "LOCAL_RIGHT": "R1.PROFILE.RIGHT",
+            },
+        )
+    )
+
+    assert len(records) == 1
+    assert records[0]["span_width"] == 26.0
+    assert records[0]["center_distance"] == 250.0
+    assert records[0]["representation_status"] == (
+        "unresolved_3d_representation"
+    )
+    assert records[0]["count_status"] == "unresolved"
+    assert records[0]["profile_refs"] == [
+        "LOCAL_LEFT",
+        "LOCAL_RIGHT",
+    ]
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert records[0]["pixel_geometry_used_for_identity_only"] is True
+    assert excluded == {"LOCAL_LEFT", "LOCAL_RIGHT"}
+
+
+def test_rotational_profile_topology_excludes_local_section_feature_refs():
+    inventory = _rotational_profile_inventory()
+    hints = hybrid_adapter._rotational_profile_topology_hints(
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 100, 100]}]},
+        profile_inventory=inventory,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        context=_rotational_profile_context(),
+        profile_entity_by_ref={
+            item["ref"]: f"R1.PROFILE.{item['ref']}"
+            for item in inventory
+        },
+        excluded_profile_refs={"STEP"},
+    )
+
+    assert len(hints) == 1
+    assert [item["ref"] for item in hints[0]["edges"]] == [
+        "LEFT",
+        "SHOULDER",
+    ]
+    assert hints[0]["junctions"] == [["LEFT", "SHOULDER"]]
+
+
 def test_rotational_profile_topology_records_connectivity_without_pixel_metric():
     inventory = _rotational_profile_inventory()
     hints = hybrid_adapter._rotational_profile_topology_hints(

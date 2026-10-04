@@ -62,6 +62,61 @@ def _overall_dimension_observations():
     ]
 
 
+def test_local_section_feature_pair_remains_fail_closed_until_3d_representation():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        observations=[
+            {
+                "kind": "hybrid_symmetric_local_section_feature_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "LOCAL_SECTION_PAIR_TEST",
+                        "axis": "X",
+                        "span_dimension_key": "R1.DG_WIDTH",
+                        "center_distance_dimension_key": "R1.DG_CENTER",
+                        "span_width": 10.0,
+                        "center_distance": 30.0,
+                        "profile_entity_keys": [
+                            "R1.PROFILE.LEFT",
+                            "R1.PROFILE.RIGHT",
+                        ],
+                        "profile_refs": ["LEFT", "RIGHT"],
+                        "representation_status": (
+                            "unresolved_3d_representation"
+                        ),
+                        "count_status": "unresolved",
+                        "excluded_from_rotational_body_profile": True,
+                        "basis": (
+                            "resolved_local_profile_span_plus_unique_"
+                            "span_midpoint_endpoint_plus_overall_center_symmetry"
+                        ),
+                        "source_ids": ["width", "center"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    blockers = [
+        item
+        for item in compiled.unresolved_evidence
+        if item.get("field") == "local_section_feature_representation"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["required_for_modeling"] is True
+    assert blockers[0]["metadata"]["span_width"] == 10.0
+    assert blockers[0]["metadata"]["center_distance"] == 30.0
+    assert blockers[0]["metadata"]["count_status"] == "unresolved"
+    assert blockers[0]["source_ids"] == ["width", "center"]
+
+
 def test_front_circle_compiles_to_axis_y():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),

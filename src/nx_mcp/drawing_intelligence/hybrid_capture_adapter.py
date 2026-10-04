@@ -1993,6 +1993,7 @@ def _rotational_oblique_profile_hints(
     if not raw_candidates:
         return []
 
+    excluded_profile_refs = excluded_profile_refs or set()
     hints: list[dict[str, Any]] = []
     for region_id, region_view in sorted(view_lookup.items()):
         plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
@@ -2440,6 +2441,7 @@ def _rotational_profile_topology_hints(
     view_lookup: dict[str, HybridRegionView],
     context: HybridAdapterContext,
     profile_entity_by_ref: dict[str, str],
+    excluded_profile_refs: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Record structural profile connectivity in views with proven rotation.
 
@@ -2474,7 +2476,11 @@ def _rotational_profile_topology_hints(
             ):
                 continue
             ref = str(item.get("ref") or "")
-            if not ref or ref not in profile_entity_by_ref:
+            if (
+                not ref
+                or ref not in profile_entity_by_ref
+                or ref in excluded_profile_refs
+            ):
                 continue
             if _profile_line_segment_px(item) is None:
                 continue
@@ -6978,6 +6984,213 @@ def _dimension_span_center_identity_records(
     return output
 
 
+def _symmetric_local_section_feature_records(
+    *,
+    dimensions: list[ObservationDimension],
+    profile_span_records: list[dict[str, Any]],
+    span_center_identity_records: list[dict[str, Any]],
+    symmetric_dimension_pair_records: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Separate local symmetric section features from the rotational body profile.
+
+    A local profile span whose midpoint is uniquely reused as one endpoint of a
+    second dimension centered on the overall datum is not a global body-profile
+    span.  It is a local paired section feature whose eventual 3D representation
+    may be a discrete hole/slot pair, an annular groove, or another local
+    subtractive/additive feature.  This helper preserves only that identity.
+
+    Pixel positions prove midpoint identity/symmetry only.  Width and center
+    distance remain OCR engineering values; no pixel distance becomes metric
+    geometry.  Until a later feature classifier resolves the 3D representation,
+    the involved profile refs must not be consumed as the primary rotational
+    body silhouette.
+    """
+
+    dimension_by_key = {dimension.key: dimension for dimension in dimensions}
+    spans_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in profile_span_records:
+        if not isinstance(record, dict):
+            continue
+        key = str(record.get("dimension_key") or "")
+        if key:
+            spans_by_key[key].append(record)
+
+    symmetric_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in symmetric_dimension_pair_records:
+        if not isinstance(record, dict):
+            continue
+        key = str(record.get("dimension_key") or "")
+        if key:
+            symmetric_by_key[key].append(record)
+
+    refs_by_entity: dict[str, list[str]] = defaultdict(list)
+    for ref, entity_key in profile_entity_by_ref.items():
+        if ref and entity_key:
+            refs_by_entity[str(entity_key)].append(str(ref))
+
+    output: list[dict[str, Any]] = []
+    excluded_refs: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for identity in span_center_identity_records:
+        if (
+            not isinstance(identity, dict)
+            or identity.get("basis")
+            != "unique_witness_to_resolved_profile_span_midpoint"
+            or identity.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or identity.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+
+        center_key = str(identity.get("dimension_key") or "")
+        span_key = str(identity.get("span_dimension_key") or "")
+        pair_key = (span_key, center_key)
+        if (
+            not span_key
+            or not center_key
+            or span_key == center_key
+            or pair_key in seen_pairs
+        ):
+            continue
+
+        span_dimension = dimension_by_key.get(span_key)
+        center_dimension = dimension_by_key.get(center_key)
+        span_records = spans_by_key.get(span_key, [])
+        center_symmetry = [
+            record
+            for record in symmetric_by_key.get(center_key, [])
+            if record.get("datum") == "overall_center"
+            and record.get("engineering_coordinate_inferred_from_pixels")
+            is False
+            and record.get("pixel_geometry_used_for_identity_only") is True
+        ]
+        if (
+            span_dimension is None
+            or center_dimension is None
+            or len(span_records) != 1
+            or len(center_symmetry) != 1
+            or symmetric_by_key.get(span_key)
+        ):
+            continue
+        if (
+            span_dimension.axis != center_dimension.axis
+            or str(center_symmetry[0].get("axis") or "")
+            != center_dimension.axis
+            or not (0.0 < span_dimension.value < center_dimension.value)
+            or not any(
+                endpoint.role == "unresolved"
+                for endpoint in center_dimension.endpoints
+            )
+        ):
+            continue
+        if not all(
+            endpoint.role == "profile_boundary" and endpoint.entity_key
+            for endpoint in span_dimension.endpoints
+        ):
+            continue
+
+        span_record = span_records[0]
+        span_entity_keys = [
+            str(value)
+            for value in span_record.get("profile_entity_keys", [])
+            if isinstance(value, str) and value
+        ]
+        endpoint_entity_keys = [
+            str(endpoint.entity_key)
+            for endpoint in span_dimension.endpoints
+            if endpoint.entity_key
+        ]
+        if (
+            len(span_entity_keys) != 2
+            or len(set(span_entity_keys)) != 2
+            or set(span_entity_keys) != set(endpoint_entity_keys)
+        ):
+            continue
+
+        profile_refs: list[str] = []
+        valid_refs = True
+        for entity_key in span_entity_keys:
+            matches = sorted(set(refs_by_entity.get(entity_key, [])))
+            if len(matches) != 1:
+                valid_refs = False
+                break
+            profile_refs.append(matches[0])
+        if not valid_refs or len(set(profile_refs)) != 2:
+            continue
+
+        raw_center_value = center_symmetry[0].get("dimension_value")
+        if (
+            not isinstance(raw_center_value, (int, float))
+            or isinstance(raw_center_value, bool)
+            or not math.isclose(
+                float(raw_center_value),
+                float(center_dimension.value),
+                abs_tol=max(abs(float(center_dimension.value)) * 1e-6, 1e-9),
+            )
+        ):
+            continue
+
+        source_ids = list(
+            dict.fromkeys(
+                [
+                    *span_dimension.evidence,
+                    *center_dimension.evidence,
+                    *[
+                        value
+                        for value in span_record.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *[
+                        value
+                        for value in identity.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *[
+                        value
+                        for value in center_symmetry[0].get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                ]
+            )
+        )
+        digest = hashlib.sha1(
+            f"{span_key}|{center_key}".encode("utf-8")
+        ).hexdigest()[:16].upper()
+
+        output.append(
+            {
+                "id": f"LOCAL_SECTION_PAIR_{digest}",
+                "axis": span_dimension.axis,
+                "span_dimension_key": span_key,
+                "center_distance_dimension_key": center_key,
+                "span_width": float(span_dimension.value),
+                "center_distance": float(center_dimension.value),
+                "matched_center_endpoint_index": identity.get(
+                    "endpoint_index"
+                ),
+                "profile_entity_keys": span_entity_keys,
+                "profile_refs": sorted(profile_refs),
+                "representation_status": "unresolved_3d_representation",
+                "count_status": "unresolved",
+                "excluded_from_rotational_body_profile": True,
+                "basis": (
+                    "resolved_local_profile_span_plus_unique_"
+                    "span_midpoint_endpoint_plus_overall_center_symmetry"
+                ),
+                "source_ids": source_ids,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+        excluded_refs.update(profile_refs)
+        seen_pairs.add(pair_key)
+
+    output.sort(key=lambda item: str(item.get("id") or ""))
+    return output, excluded_refs
+
+
 def _symmetric_dimension_pair_record(
     *,
     candidate: dict[str, Any],
@@ -7397,13 +7610,6 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
 
-    rotational_profile_topology_hints = _rotational_profile_topology_hints(
-        report=report,
-        profile_inventory=profile_inventory,
-        view_lookup=view_lookup,
-        context=context,
-        profile_entity_by_ref=profile_entity_by_ref,
-    )
     rotational_oblique_profile_hints = _rotational_oblique_profile_hints(
         report=report,
         profile_inventory=profile_inventory,
@@ -7866,6 +8072,30 @@ def adapt_hybrid_ocr_report(
         )
     )
 
+    (
+        symmetric_local_section_feature_records,
+        excluded_rotational_profile_refs,
+    ) = _symmetric_local_section_feature_records(
+        dimensions=dimensions,
+        profile_span_records=profile_span_center_records,
+        span_center_identity_records=(
+            dimension_span_center_identity_records
+        ),
+        symmetric_dimension_pair_records=(
+            symmetric_dimension_pair_records
+        ),
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+
+    rotational_profile_topology_hints = _rotational_profile_topology_hints(
+        report=report,
+        profile_inventory=profile_inventory,
+        view_lookup=view_lookup,
+        context=context,
+        profile_entity_by_ref=profile_entity_by_ref,
+        excluded_profile_refs=excluded_rotational_profile_refs,
+    )
+
     recovered_half_dimensions, symmetric_chain_ledger = (
         _recover_symmetric_half_dimensions(
             report=report,
@@ -8100,6 +8330,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_dimension_span_center_identity_ledger",
             "schema": "1.0",
             "items": dimension_span_center_identity_records,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_symmetric_local_section_feature_ledger",
+            "schema": "1.0",
+            "items": symmetric_local_section_feature_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

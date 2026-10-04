@@ -934,6 +934,85 @@ def _audit_labeled_dimension_consumption(
             )
 
 
+def _compile_symmetric_local_section_feature_ambiguity(
+    graph: EvidenceGraph,
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Keep local symmetric section features out of the body-profile fast path.
+
+    The adapter may prove a local span width plus a symmetric center-distance
+    pair while still lacking enough evidence to decide whether the 3D feature is
+    a discrete hole/slot pattern, an annular groove, or another local feature.
+    Such evidence is modeling-relevant but must remain fail-closed until a
+    dedicated feature representation consumes it.
+    """
+
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_symmetric_local_section_feature_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if (
+                not isinstance(item, dict)
+                or item.get("representation_status")
+                != "unresolved_3d_representation"
+                or item.get("excluded_from_rotational_body_profile") is not True
+                or item.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or item.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+
+            raw_id = str(item.get("id") or f"item_{item_index}")
+            stable_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_id).strip("_")
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            unresolved.append(
+                {
+                    "id": f"U_LOCAL_SECTION_FEATURE_{stable_id}",
+                    "kind": "unsupported_representation",
+                    "field": "local_section_feature_representation",
+                    "reason": (
+                        "a symmetric local section feature has resolved width "
+                        "and center-spacing identity, but its 3D representation "
+                        "and count are not uniquely established; it must not be "
+                        "consumed as rotational body-profile geometry"
+                    ),
+                    "required_for_modeling": True,
+                    "source_ids": list(dict.fromkeys(source_ids)),
+                    "metadata": {
+                        "axis": item.get("axis"),
+                        "span_dimension_key": item.get(
+                            "span_dimension_key"
+                        ),
+                        "center_distance_dimension_key": item.get(
+                            "center_distance_dimension_key"
+                        ),
+                        "span_width": item.get("span_width"),
+                        "center_distance": item.get("center_distance"),
+                        "count_status": item.get("count_status"),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                }
+            )
+
+
 def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     """Compile raw view/dimension evidence into formal deterministic evidence.
 
@@ -952,6 +1031,10 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
+    _compile_symmetric_local_section_feature_ambiguity(
+        graph,
+        unresolved,
+    )
     _audit_labeled_dimension_consumption(
         graph,
         direct,

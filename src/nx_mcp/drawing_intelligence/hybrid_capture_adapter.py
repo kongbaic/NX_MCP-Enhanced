@@ -7825,11 +7825,7 @@ def _symmetric_dimension_pair_record(
     """
 
     region_id = str(candidate.get("region_id") or "")
-    if not region_id or not _region_has_rotational_symmetry(
-        context,
-        region_id=region_id,
-        dimension_axis=axis,
-    ):
+    if not region_id or region_id not in view_lookup:
         return None
 
     overall_key = {"X": "length_x", "Y": "width_y", "Z": "height_z"}[axis]
@@ -7945,9 +7941,10 @@ def _symmetric_dimension_pair_record(
         "midpoint_residual_px": round(float(anchor["midpoint_residual_px"]), 3),
         "midpoint_tolerance_px": round(float(anchor["midpoint_tolerance_px"]), 3),
         "basis": (
-            "rotational_symmetry_plus_structurally_shared_raster_view"
+            "rotational_symmetry_anchor_plus_structurally_shared_raster_view"
             "_plus_overall_witness_midpoint"
         ),
+        "symmetry_region_id": anchor["region_id"],
         "source_ids": list(
             dict.fromkeys(
                 [

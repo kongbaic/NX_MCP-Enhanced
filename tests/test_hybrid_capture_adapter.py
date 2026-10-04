@@ -3698,6 +3698,91 @@ def test_symmetric_profile_span_accepts_resolved_centered_profile_pair():
     assert record["engineering_coordinate_inferred_from_pixels"] is False
 
 
+def test_symmetric_profile_span_inherits_symmetry_from_shared_overall_anchor_region():
+    context = hybrid_adapter.HybridAdapterContext(
+        region_views=[
+            hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            ),
+            hybrid_adapter.HybridRegionView(
+                region_id="R2",
+                view_kind="front",
+                evidence=["structural:R2:context"],
+            ),
+        ],
+        overall_dimension_facts=[
+            hybrid_adapter.PartialOverallDimensionFact(
+                axis="X",
+                value=100.0,
+                evidence=["structural:R1:context"],
+            )
+        ],
+        rotational_symmetry_facts=[
+            hybrid_adapter.PartialRotationalSymmetryFact(
+                axis="Z",
+                evidence=["structural:R1:context"],
+            )
+        ],
+    )
+    anchor_candidate = _symmetric_profile_test_candidate(
+        "DG_OVERALL",
+        "R1",
+        "100",
+        [0.0, 100.0],
+    )
+    candidate = _symmetric_profile_test_candidate(
+        "DG_SPAN",
+        "R2",
+        "40",
+        [30.0, 70.0],
+    )
+
+    record = hybrid_adapter._symmetric_profile_span_record(
+        candidate=candidate,
+        dimension_key="R2.DG_SPAN",
+        dimension_value=40.0,
+        axis="X",
+        dimension_endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.LEFT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R2.RIGHT_PROFILE",
+                basis="profile_edge",
+                evidence=["test:right"],
+            ),
+        ],
+        candidates=[anchor_candidate, candidate],
+        report={
+            "regions": [
+                {"region_id": "R1", "bbox_px": [0, 10, 100, 80]},
+                {"region_id": "R2", "bbox_px": [10, 0, 80, 100]},
+            ]
+        },
+        context=context,
+        view_lookup={item.region_id: item for item in context.region_views},
+        profile_inventory=_symmetric_profile_test_inventory(),
+        overall_dimensions={"length_x": 100.0},
+    )
+
+    assert record is not None
+    assert record["region_id"] == "R2"
+    assert record["overall_region_id"] == "R1"
+    assert record["symmetry_region_id"] == "R1"
+    assert record["basis"] == (
+        "rotational_symmetry_anchor_plus_structurally_shared_raster_view"
+        "_plus_overall_witness_midpoint"
+    )
+    assert record["engineering_coordinate_inferred_from_pixels"] is False
+    assert record["pixel_geometry_used_for_identity_only"] is True
+
+
 def test_symmetric_profile_span_rejects_off_center_local_profile_pair():
     context = _symmetric_profile_test_context()
     anchor = _symmetric_profile_test_candidate(

@@ -83,13 +83,32 @@ def test_structural_profile_symmetry_hint_requires_two_mirrored_edge_pairs():
             "span_px": [10.0, 120.0],
             "axis_tolerance_px": 2.0,
         },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 70.0,
+            "span_px": [15.0, 70.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 82.0,
+            "span_px": [50.0, 115.0],
+            "axis_tolerance_px": 2.0,
+        },
     ]
 
     hint = _structural_profile_symmetry_hint(inventory, "R1")
 
     assert hint["status"] == "established"
     assert hint["axis_direction"] == "vertical"
-    assert hint["method"] == "profile_edge_mirror_consensus_v1"
+    assert hint["axis_position_px"] == 100.0
+    assert hint["method"] == "profile_edge_midpoint_consensus_v2"
+    assert hint["vertical_pair_count"] == 2
+    assert hint["horizontal_pair_count"] == 0
     assert hint["vertical_score"] == 1.0
 
 
@@ -117,6 +136,82 @@ def test_structural_profile_symmetry_hint_rejects_single_mirrored_edge_pair():
 
     assert hint["status"] == "unresolved"
     assert hint["axis_direction"] is None
+
+
+def test_structural_profile_symmetry_hint_fails_closed_on_axis_pair_count_tie():
+    inventory = [
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 20.0,
+            "span_px": [20.0, 180.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 60.0,
+            "span_px": [40.0, 160.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 140.0,
+            "span_px": [40.0, 160.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "vertical",
+            "position_px": 180.0,
+            "span_px": [20.0, 180.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "horizontal",
+            "position_px": 30.0,
+            "span_px": [20.0, 180.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "horizontal",
+            "position_px": 70.0,
+            "span_px": [40.0, 160.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "horizontal",
+            "position_px": 130.0,
+            "span_px": [40.0, 160.0],
+            "axis_tolerance_px": 2.0,
+        },
+        {
+            "region_id": "R1",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "horizontal",
+            "position_px": 170.0,
+            "span_px": [20.0, 180.0],
+            "axis_tolerance_px": 2.0,
+        },
+    ]
+
+    hint = _structural_profile_symmetry_hint(inventory, "R1")
+
+    assert hint["status"] == "unresolved"
+    assert hint["axis_direction"] is None
+    assert hint["vertical_pair_count"] == 2
+    assert hint["horizontal_pair_count"] == 2
 
 
 def test_structural_bilateral_symmetry_hint_uses_topology_not_metric_scale():
@@ -187,6 +282,39 @@ def test_structural_context_image_marks_established_topology_axis(tmp_path: Path
     axis_x = 40 + 180 // 2
     axis_strip = rendered[30:150, axis_x - 2 : axis_x + 3]
     assert int(cv2.absdiff(axis_strip, image[30:150, axis_x - 2 : axis_x + 3]).sum()) > 0
+
+
+def test_structural_context_image_uses_explicit_topology_axis_position(
+    tmp_path: Path,
+):
+    image = np.full((180, 260, 3), 255, np.uint8)
+    output = tmp_path / "structural-context-explicit-axis.png"
+    hint = {
+        "status": "established",
+        "axis_direction": "vertical",
+        "axis_position_px": 80.0,
+        "method": "profile_edge_midpoint_consensus_v2",
+    }
+
+    _write_structural_context_image(
+        image,
+        output,
+        [40, 30, 180, 120],
+        cv2,
+        hint,
+    )
+
+    rendered = cv2.imread(str(output))
+    assert rendered is not None
+    explicit_strip = rendered[45:135, 78:83]
+    center_strip = rendered[45:135, 128:133]
+    assert int(
+        cv2.absdiff(explicit_strip, image[45:135, 78:83]).sum()
+    ) > 0
+    assert np.array_equal(
+        center_strip,
+        image[45:135, 128:133],
+    )
 
 
 def test_structural_context_image_does_not_mark_unresolved_topology_axis(tmp_path: Path):
@@ -303,6 +431,7 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
         assert region["bilateral_symmetry_hint"]["method"] in {
             "foreground_mirror_consensus_v1",
             "profile_edge_mirror_consensus_v1",
+            "profile_edge_midpoint_consensus_v2",
         }
         assert region["bilateral_symmetry_hint"]["status"] in {
             "established",

@@ -411,6 +411,7 @@ class StructuralRegionQuery(_StrictStructuralModel):
     deterministic_profile_symmetry_method: Literal[
         "foreground_mirror_consensus_v1",
         "profile_edge_mirror_consensus_v1",
+        "profile_edge_midpoint_consensus_v2",
     ] | None = None
     deterministic_profile_symmetry_overlay: Literal[
         "blue_dashed_topology_axis"
@@ -684,6 +685,7 @@ def build_structural_context_queries(
         deterministic_method: Literal[
             "foreground_mirror_consensus_v1",
             "profile_edge_mirror_consensus_v1",
+            "profile_edge_midpoint_consensus_v2",
         ] | None = None
         if isinstance(symmetry_hint, dict) and symmetry_hint.get("status") == "established":
             axis_direction = symmetry_hint.get("axis_direction")
@@ -693,11 +695,13 @@ def build_structural_context_queries(
             if method in {
                 "foreground_mirror_consensus_v1",
                 "profile_edge_mirror_consensus_v1",
+                "profile_edge_midpoint_consensus_v2",
             }:
                 deterministic_method = cast(
                     Literal[
                         "foreground_mirror_consensus_v1",
                         "profile_edge_mirror_consensus_v1",
+                        "profile_edge_midpoint_consensus_v2",
                     ],
                     method,
                 )
@@ -852,7 +856,6 @@ def assemble_structural_context(
             if (
                 query.labeled_dimension_targets
                 or query.accepted_linear_span_lower_bounds
-                or query.deterministic_profile_symmetry_axis is not None
             ):
                 raise StructuralContextError(
                     f"query {query.query_id!r} cannot defer as non-geometric "

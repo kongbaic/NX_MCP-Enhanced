@@ -177,7 +177,7 @@ def test_structural_query_builder_accepts_profile_edge_symmetry_provenance():
     reader_input["regions"][0]["bilateral_symmetry_hint"] = {
         "status": "established",
         "axis_direction": "vertical",
-        "method": "profile_edge_mirror_consensus_v1",
+        "method": "profile_edge_midpoint_consensus_v2",
         "vertical_score": 1.0,
         "horizontal_score": 0.0,
         "score_margin": 1.0,
@@ -188,7 +188,7 @@ def test_structural_query_builder_accepts_profile_edge_symmetry_provenance():
     assert plan.queries[0].deterministic_profile_symmetry_axis == "vertical"
     assert (
         plan.queries[0].deterministic_profile_symmetry_method
-        == "profile_edge_mirror_consensus_v1"
+        == "profile_edge_midpoint_consensus_v2"
     )
 
 
@@ -487,6 +487,45 @@ def test_structural_context_skips_explicit_non_geometric_reference_region():
 
     context = assemble_structural_context(
         plan,
+        StructuralContextAnswers.model_validate(payload),
+    )
+
+    assert [(item.region_id, item.view_kind) for item in context.region_views] == [
+        ("R1", "front"),
+    ]
+
+
+def test_non_geometric_reference_region_may_ignore_candidate_symmetry_hint():
+    plan = build_structural_context_queries(_reader_input())
+    plan_payload = plan.model_dump(mode="json", by_alias=True)
+    plan_payload["queries"][1]["deterministic_profile_symmetry_axis"] = "vertical"
+    plan_payload["queries"][1]["deterministic_profile_symmetry_method"] = (
+        "profile_edge_midpoint_consensus_v2"
+    )
+    plan_payload["queries"][1]["deterministic_profile_symmetry_overlay"] = (
+        "blue_dashed_topology_axis"
+    )
+    guarded_plan = StructuralContextQueryPlan.model_validate(plan_payload)
+
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "centerline_direction": "horizontal",
+        "evidence": ["structural:R1:crop"],
+    }
+    payload["answers"][1] = {
+        "query_id": "S002",
+        "view_kind": None,
+        "evidence": ["structural:R2:crop"],
+        "overall_dimension_facts": [],
+        "rotational_symmetry": None,
+        "labeled_dimension_decisions": [],
+        "unresolved": ["non_geometric_reference_region"],
+    }
+
+    context = assemble_structural_context(
+        guarded_plan,
         StructuralContextAnswers.model_validate(payload),
     )
 

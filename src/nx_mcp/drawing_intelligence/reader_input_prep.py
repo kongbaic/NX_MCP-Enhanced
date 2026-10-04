@@ -230,12 +230,15 @@ def _structural_profile_symmetry_hint(
 ) -> dict[str, Any]:
     """Classify bilateral symmetry from physical profile-edge topology only.
 
-    Pixel positions are used only to prove mirror identity/direction. No
-    engineering coordinate or metric value is derived. At least two independent
-    mirrored edge pairs are required before an axis can be established.
+    Pixel positions prove only mirror identity and the visual axis candidate.
+    Unmatched structural candidates are not counterevidence because annotation
+    and dimension geometry can share the same deterministic region. At least
+    two disjoint mirrored edge pairs with one common midpoint are required.
     """
 
-    def orientation_score(source_orientation: str) -> float:
+    def orientation_consensus(
+        source_orientation: str,
+    ) -> tuple[int, float | None]:
         records: list[tuple[float, float, float, float]] = []
         for item in profile_inventory:
             if (
@@ -275,62 +278,141 @@ def _structural_profile_symmetry_hint(
 
         records.sort(key=lambda item: (item[0], item[1], item[2]))
         if len(records) < 4:
-            return 0.0
+            return 0, None
 
-        center = (records[0][0] + records[-1][0]) / 2.0
-        matched: set[int] = set()
+        pair_candidates: list[
+            tuple[float, int, int, float, float]
+        ] = []
         for index, (position, start, end, tolerance) in enumerate(records):
-            if index in matched:
-                continue
-            target = 2.0 * center - position
-            candidates: list[tuple[float, int]] = []
-            for other_index, (
-                other_position,
-                other_start,
-                other_end,
-                other_tolerance,
-            ) in enumerate(records):
-                if other_index == index or other_index in matched:
-                    continue
-                residual = abs(other_position - target)
-                if residual > max(tolerance, other_tolerance):
+            for other_index in range(index + 1, len(records)):
+                (
+                    other_position,
+                    other_start,
+                    other_end,
+                    other_tolerance,
+                ) = records[other_index]
+                pair_tolerance = max(tolerance, other_tolerance)
+                if abs(other_position - position) <= 2.0 * pair_tolerance:
                     continue
                 overlap = max(
                     0.0,
                     min(end, other_end) - max(start, other_start),
                 )
                 shorter_span = min(end - start, other_end - other_start)
-                if shorter_span <= 0 or overlap / shorter_span < 0.60:
+                if shorter_span <= 0:
                     continue
-                candidates.append((residual, other_index))
-            if not candidates:
-                continue
-            candidates.sort(key=lambda item: (item[0], item[1]))
-            other_index = candidates[0][1]
-            matched.update({index, other_index})
+                overlap_ratio = overlap / shorter_span
+                if overlap_ratio < 0.60:
+                    continue
+                pair_candidates.append(
+                    (
+                        (position + other_position) / 2.0,
+                        index,
+                        other_index,
+                        overlap_ratio,
+                        pair_tolerance,
+                    )
+                )
 
-        if len(matched) < 4:
-            return 0.0
-        return len(matched) / len(records)
+        if not pair_candidates:
+            return 0, None
 
-    vertical_score = orientation_score("vertical")
-    horizontal_score = orientation_score("horizontal")
+        clusters: list[
+            list[tuple[float, int, int, float, float]]
+        ] = []
+        for pair in sorted(
+            pair_candidates,
+            key=lambda item: (item[0], item[1], item[2]),
+        ):
+            placed = False
+            for cluster in clusters:
+                cluster_center = sum(item[0] for item in cluster) / len(cluster)
+                cluster_tolerance = max(
+                    pair[4],
+                    max(item[4] for item in cluster),
+                )
+                if abs(pair[0] - cluster_center) <= cluster_tolerance:
+                    cluster.append(pair)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([pair])
+
+        best_count = 0
+        best_center: float | None = None
+        best_residual = float("inf")
+        for cluster in clusters:
+            cluster_center = sum(item[0] for item in cluster) / len(cluster)
+            used: set[int] = set()
+            chosen: list[tuple[float, int, int, float, float]] = []
+            for pair in sorted(
+                cluster,
+                key=lambda item: (
+                    abs(item[0] - cluster_center),
+                    -item[3],
+                    item[1],
+                    item[2],
+                ),
+            ):
+                if pair[1] in used or pair[2] in used:
+                    continue
+                used.update({pair[1], pair[2]})
+                chosen.append(pair)
+
+            pair_count = len(chosen)
+            residual = sum(
+                abs(item[0] - cluster_center)
+                for item in chosen
+            )
+            if (
+                pair_count > best_count
+                or (
+                    pair_count == best_count
+                    and pair_count > 0
+                    and residual < best_residual
+                )
+            ):
+                best_count = pair_count
+                best_center = cluster_center
+                best_residual = residual
+
+        if best_count < 2:
+            return best_count, None
+        return best_count, best_center
+
+    vertical_pairs, vertical_center = orientation_consensus("vertical")
+    horizontal_pairs, horizontal_center = orientation_consensus("horizontal")
+    pair_margin = abs(vertical_pairs - horizontal_pairs)
+    score_denominator = max(2, vertical_pairs, horizontal_pairs)
+    vertical_score = vertical_pairs / score_denominator
+    horizontal_score = horizontal_pairs / score_denominator
     margin = abs(vertical_score - horizontal_score)
+
     direction: str | None = None
-    if max(vertical_score, horizontal_score) >= 0.70 and margin >= 0.20:
-        direction = (
-            "vertical"
-            if vertical_score > horizontal_score
-            else "horizontal"
-        )
+    axis_position: float | None = None
+    if max(vertical_pairs, horizontal_pairs) >= 2 and pair_margin >= 1:
+        if vertical_pairs > horizontal_pairs:
+            direction = "vertical"
+            axis_position = vertical_center
+        elif horizontal_pairs > vertical_pairs:
+            direction = "horizontal"
+            axis_position = horizontal_center
 
     return {
         "status": "established" if direction is not None else "unresolved",
         "axis_direction": direction,
-        "method": "profile_edge_mirror_consensus_v1",
+        "axis_position_px": (
+            round(axis_position, 3)
+            if axis_position is not None
+            else None
+        ),
+        "method": "profile_edge_midpoint_consensus_v2",
         "vertical_score": round(vertical_score, 5),
         "horizontal_score": round(horizontal_score, 5),
         "score_margin": round(margin, 5),
+        "vertical_pair_count": vertical_pairs,
+        "horizontal_pair_count": horizontal_pairs,
+        "pair_count_margin": pair_margin,
     }
 
 
@@ -381,8 +463,22 @@ def _write_structural_context_image(
         dash_length = max(10, int(round(min(box_width, box_height) * 0.04)))
         gap_length = max(6, dash_length // 2)
 
+        raw_axis_position = symmetry_hint.get("axis_position_px")
+        axis_position = (
+            float(raw_axis_position)
+            if (
+                isinstance(raw_axis_position, (int, float))
+                and not isinstance(raw_axis_position, bool)
+            )
+            else None
+        )
+
         if axis_direction == "vertical":
-            axis_x = left + box_width // 2
+            axis_x = (
+                max(left, min(right, int(round(axis_position))))
+                if axis_position is not None
+                else left + box_width // 2
+            )
             cursor = top
             while cursor <= bottom:
                 segment_end = min(bottom, cursor + dash_length)
@@ -400,7 +496,11 @@ def _write_structural_context_image(
                 max(18, top - 8),
             )
         else:
-            axis_y = top + box_height // 2
+            axis_y = (
+                max(top, min(bottom, int(round(axis_position))))
+                if axis_position is not None
+                else top + box_height // 2
+            )
             cursor = left
             while cursor <= right:
                 segment_end = min(right, cursor + dash_length)

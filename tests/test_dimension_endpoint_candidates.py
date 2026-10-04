@@ -179,6 +179,98 @@ def test_exact_crossing_witness_profile_line_narrows_nearby_anchors():
     )
 
 
+def test_unique_collinear_structural_profile_continuation_narrows_vertex_ambiguity():
+    profile = {
+        **_profile(100.6),
+        "source_orientation": "vertical",
+        "span_px": [80.0, 180.0],
+        "axis_tolerance_px": 2.0,
+        "junction_tolerance_px": 5.0,
+        "independent_geometry_source_count": 1,
+    }
+    vertex = {
+        "kind": "profile_vertex_candidate",
+        "ref": "R1.edge.vertex.min",
+        "position_px": 100.0,
+        "vertex_transverse_px": 121.0,
+        "supporting_profile_orientation": "horizontal",
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+        "vertex_match_tolerance_px": 3.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [profile, vertex], 1: [_profile(200.0)]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [120.0, 180.0],
+                    "crosses_dimension_axis": True,
+                }
+            ]
+        },
+    )
+    candidate["axis_px"] = 175.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first = result["endpoints"][0]
+    assert first["status"] == "unique_physical_candidate"
+    assert first["physical_candidates"] == [profile]
+    assert first["ownership_narrowing_basis"] == (
+        "unique_collinear_crossing_witness_profile_continuation"
+    )
+
+
+def test_collinear_profile_without_independent_geometry_does_not_narrow_vertex_ambiguity():
+    profile = {
+        **_profile(100.6),
+        "source_orientation": "vertical",
+        "span_px": [80.0, 180.0],
+        "axis_tolerance_px": 2.0,
+        "junction_tolerance_px": 5.0,
+        "independent_geometry_source_count": 0,
+    }
+    vertex = {
+        "kind": "profile_vertex_candidate",
+        "ref": "R1.edge.vertex.min",
+        "position_px": 100.0,
+        "vertex_transverse_px": 121.0,
+        "supporting_profile_orientation": "horizontal",
+        "axis_tolerance_px": 3.0,
+        "junction_tolerance_px": 5.0,
+        "vertex_match_tolerance_px": 3.0,
+    }
+    candidate = _candidate(
+        orientation="horizontal",
+        witnesses=[100.0, 200.0],
+        text_coordinate=150.0,
+        anchors={0: [profile, vertex], 1: [_profile(200.0)]},
+        witness_lines={
+            0: [
+                {
+                    "orientation": "vertical",
+                    "axis_px": 100.0,
+                    "span_px": [120.0, 180.0],
+                    "crosses_dimension_axis": True,
+                }
+            ]
+        },
+    )
+    candidate["axis_px"] = 175.0
+
+    result = derive_dimension_endpoint_candidates(candidate)
+
+    first = result["endpoints"][0]
+    assert first["status"] == "ambiguous_physical_candidates"
+    assert len(first["physical_candidates"]) == 2
+    assert first["ownership_narrowing_basis"] is None
+
+
 def test_non_crossing_profile_line_does_not_narrow_ambiguous_candidates():
     profile = {
         **_profile(110.0),

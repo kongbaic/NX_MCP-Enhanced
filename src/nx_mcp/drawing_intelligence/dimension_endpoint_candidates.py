@@ -88,6 +88,69 @@ def _same_source_profile_line(
     )
 
 
+def _collinear_profile_continuation(
+    profile: dict[str, Any],
+    source_line: dict[str, Any],
+) -> bool:
+    """Prove that a structural profile edge continues the dimension witness line.
+
+    Raster geometry is used only for physical identity.  The profile must have
+    an independent geometry source, be collinear with the crossing witness
+    within its declared axis tolerance, and cover most of the witness segment.
+    """
+
+    if (
+        profile.get("kind") != "profile_edge_candidate"
+        or source_line.get("crosses_dimension_axis") is not True
+        or str(profile.get("source_orientation") or "")
+        != str(source_line.get("orientation") or "")
+    ):
+        return False
+
+    independent_geometry_source_count = profile.get(
+        "independent_geometry_source_count"
+    )
+    position = profile.get("position_px")
+    profile_span = profile.get("span_px")
+    source_axis = source_line.get("axis_px")
+    source_span = source_line.get("span_px")
+    axis_tolerance = profile.get("axis_tolerance_px")
+    if (
+        not isinstance(independent_geometry_source_count, int)
+        or isinstance(independent_geometry_source_count, bool)
+        or independent_geometry_source_count < 1
+        or not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(source_axis, (int, float))
+        or isinstance(source_axis, bool)
+        or not isinstance(axis_tolerance, (int, float))
+        or isinstance(axis_tolerance, bool)
+        or not isinstance(profile_span, list)
+        or len(profile_span) != 2
+        or not isinstance(source_span, list)
+        or len(source_span) != 2
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in [*profile_span, *source_span]
+        )
+    ):
+        return False
+
+    if abs(float(position) - float(source_axis)) > float(axis_tolerance):
+        return False
+
+    profile_low, profile_high = sorted(float(value) for value in profile_span)
+    source_low, source_high = sorted(float(value) for value in source_span)
+    source_length = source_high - source_low
+    if source_length <= 1e-9:
+        return False
+    overlap = max(
+        0.0,
+        min(profile_high, source_high) - max(profile_low, source_low),
+    )
+    return overlap / source_length >= 0.80
+
+
 def _profile_source_identity(
     profile: dict[str, Any],
 ) -> tuple[str, float, float, float] | None:
@@ -456,6 +519,22 @@ def derive_dimension_endpoint_candidates(
                         )
                     ]
                     narrowing_basis = "exact_crossing_witness_profile_line_identity"
+            if narrowing_basis is None:
+                continuation_profile_candidates = [
+                    item
+                    for item in physical_candidates
+                    if item.get("kind") == "profile_edge_candidate"
+                    and any(
+                        isinstance(source_line, dict)
+                        and _collinear_profile_continuation(item, source_line)
+                        for source_line in witness_lines
+                    )
+                ]
+                if len(continuation_profile_candidates) == 1:
+                    physical_candidates = continuation_profile_candidates
+                    narrowing_basis = (
+                        "unique_collinear_crossing_witness_profile_continuation"
+                    )
 
         endpoint_status = (
             "unique_physical_candidate"

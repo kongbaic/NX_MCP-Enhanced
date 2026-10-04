@@ -3568,6 +3568,215 @@ def _dimension_relation_from_span_center_identity(
     )
 
 
+def _labeled_profile_span_midpoint_anchor_relation(
+    capture: ReaderCapture,
+    *,
+    dimension: CaptureDimension,
+    boundary_targets: list[str],
+    endpoint_entity_ids: list[str],
+    entity_to_feature: dict[str, str],
+) -> RelationEvidence | None:
+    """Anchor a labeled local span center to one proven physical boundary.
+
+    Raster positions are used only to prove that the local span midpoint and
+    one endpoint of an independently established symmetric profile span refer
+    to the same physical boundary. Engineering coordinates are supplied only
+    by the existing symmetric-span constraint and the labeled span width.
+    """
+
+    if (
+        dimension.direction not in {-1, 1}
+        or len(boundary_targets) != 2
+        or len(set(boundary_targets)) != 2
+        or len(endpoint_entity_ids) != 2
+        or len(set(endpoint_entity_ids)) != 2
+    ):
+        return None
+
+    identity = _profile_span_constraint_identity(
+        axis=dimension.axis,
+        boundary_targets=boundary_targets,
+    )
+    if identity is None:
+        return None
+    _digest, center_target = identity
+
+    labeled_records: list[dict[str, Any]] = []
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_profile_span_identity_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if not isinstance(record, dict):
+                continue
+            target_id = str(record.get("target_id") or "")
+            marker = (
+                f"hybrid:labeled-profile-span:{target_id}"
+                if target_id
+                else ""
+            )
+            raw_value = record.get("value")
+            raw_positions = record.get("selected_witness_positions_px")
+            raw_refs = record.get("profile_refs")
+            if (
+                not marker
+                or marker not in dimension.source_ids
+                or str(record.get("axis") or "").upper() != dimension.axis
+                or isinstance(raw_value, bool)
+                or not isinstance(raw_value, (int, float))
+                or abs(float(raw_value) - float(dimension.value)) > 1e-9
+                or not isinstance(raw_positions, list)
+                or len(raw_positions) != 2
+                or not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in raw_positions
+                )
+                or not isinstance(raw_refs, list)
+                or len(raw_refs) != 2
+                or not all(isinstance(ref, str) and ref for ref in raw_refs)
+            ):
+                continue
+
+            referenced_entities: list[str] = []
+            valid_refs = True
+            for ref in raw_refs:
+                entity_ids = _profile_entity_ids_for_ref(capture, ref)
+                if len(entity_ids) != 1:
+                    valid_refs = False
+                    break
+                referenced_entities.append(entity_ids[0])
+            if (
+                not valid_refs
+                or set(referenced_entities) != set(endpoint_entity_ids)
+            ):
+                continue
+            labeled_records.append(record)
+
+    if len(labeled_records) != 1:
+        return None
+
+    labeled = labeled_records[0]
+    raw_labeled_positions = labeled["selected_witness_positions_px"]
+    labeled_positions = [
+        float(raw_labeled_positions[0]),
+        float(raw_labeled_positions[1]),
+    ]
+    labeled_width_px = abs(labeled_positions[1] - labeled_positions[0])
+    if labeled_width_px <= 0.0:
+        return None
+    labeled_midpoint_px = sum(labeled_positions) / 2.0
+    tolerance_px = max(2.0, labeled_width_px * 0.015)
+    labeled_region_id = str(labeled.get("region_id") or "")
+    if not labeled_region_id:
+        return None
+
+    proposals: dict[str, list[str]] = defaultdict(list)
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _STRUCTURED_SYMMETRIC_PROFILE_SPAN_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for record in items:
+            if (
+                not isinstance(record, dict)
+                or record.get("datum") != "overall_center"
+                or str(record.get("axis") or "").upper() != dimension.axis
+                or str(record.get("region_id") or "") != labeled_region_id
+                or record.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or record.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+            raw_positions = record.get("selected_witness_positions_px")
+            raw_entities = record.get("profile_entity_ids")
+            if (
+                not isinstance(raw_positions, list)
+                or len(raw_positions) != 2
+                or not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in raw_positions
+                )
+                or not isinstance(raw_entities, list)
+                or len(raw_entities) != 2
+                or not all(
+                    isinstance(entity_id, str)
+                    and entity_id in entity_to_feature
+                    for entity_id in raw_entities
+                )
+            ):
+                continue
+
+            for position, entity_id in zip(
+                raw_positions,
+                raw_entities,
+                strict=True,
+            ):
+                if abs(float(position) - labeled_midpoint_px) > tolerance_px:
+                    continue
+                feature_id = entity_to_feature[entity_id]
+                target = (
+                    f"feature:{feature_id}.boundary."
+                    f"{dimension.axis.lower()}"
+                )
+                source_ids = [
+                    source_id
+                    for source_id in record.get("source_ids", [])
+                    if isinstance(source_id, str) and source_id
+                ]
+                proposals[target].extend(source_ids)
+
+    if len(proposals) != 1:
+        return None
+
+    anchor_target, anchor_sources = next(iter(proposals.items()))
+    target_id = str(labeled.get("target_id") or "")
+    return RelationEvidence(
+        id=f"R_LABELED_PROFILE_SPAN_CENTER_ANCHOR_{dimension.id}",
+        kind="alignment",
+        axis=dimension.axis,
+        targets=[center_target, anchor_target],
+        source_ids=list(
+            dict.fromkeys(
+                [
+                    *dimension.source_ids,
+                    *anchor_sources,
+                    (
+                        "hybrid:labeled-profile-span-midpoint-anchor:"
+                        f"{target_id}"
+                    ),
+                ]
+            )
+        ),
+        required_for_modeling=dimension.required_for_modeling,
+        metadata={
+            "basis": (
+                "labeled_profile_span_midpoint_to_resolved_"
+                "symmetric_profile_boundary"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    )
+
+
 def _structured_symmetric_profile_span_sources(
     capture: ReaderCapture,
     *,
@@ -4629,6 +4838,24 @@ def link_reader_capture(capture: ReaderCapture) -> IdentityLinkResult:
                 )
             ):
                 synthetic_relations.append(centered_relation)
+
+            midpoint_anchor_relation = (
+                _labeled_profile_span_midpoint_anchor_relation(
+                    capture,
+                    dimension=item,
+                    boundary_targets=profile_boundary_targets,
+                    endpoint_entity_ids=local_endpoint_entities,
+                    entity_to_feature=entity_to_feature,
+                )
+            )
+            if (
+                midpoint_anchor_relation is not None
+                and not any(
+                    relation.id == midpoint_anchor_relation.id
+                    for relation in synthetic_relations
+                )
+            ):
+                synthetic_relations.append(midpoint_anchor_relation)
 
         if (
             len(profile_boundary_targets) == 2

@@ -3615,6 +3615,195 @@ def test_symmetric_center_distance_bridge_never_overrides_ambiguous_owner():
     )
 
 
+def _labeled_span_midpoint_anchor_capture(
+    *,
+    ambiguous_anchor: bool = False,
+) -> ReaderCapture:
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=True
+    )
+    symmetric_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_symmetric_profile_span_ledger"
+    )
+    symmetric_record = symmetric_ledger["items"][0]
+    symmetric_record.update(
+        {
+            "region_id": "R1",
+            "selected_witness_positions_px": [20.0, 80.0],
+        }
+    )
+
+    capture.entities.extend(
+        [
+            CaptureEntity(
+                id="E_LOCAL_LEFT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL.LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_LOCAL_RIGHT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL.RIGHT"],
+                required_for_modeling=False,
+            ),
+        ]
+    )
+    capture.dimensions.append(
+        CaptureDimension(
+            id="D_LOCAL",
+            value=10,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="profile_boundary",
+                    entity_id="E_LOCAL_LEFT",
+                    basis="profile_edge",
+                    source_ids=[
+                        "hybrid:labeled-profile-span:LD_LOCAL"
+                    ],
+                ),
+                CaptureDimensionEndpoint(
+                    role="profile_boundary",
+                    entity_id="E_LOCAL_RIGHT",
+                    basis="profile_edge",
+                    source_ids=[
+                        "hybrid:labeled-profile-span:LD_LOCAL"
+                    ],
+                ),
+            ],
+            source_ids=[
+                "hybrid:whole:7",
+                "hybrid:labeled-profile-span:LD_LOCAL",
+            ],
+        )
+    )
+    capture.observations.append(
+        {
+            "kind": "hybrid_labeled_profile_span_identity_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "R1.LABELED_PROFILE_SPAN_LD_LOCAL",
+                    "target_id": "LD_LOCAL",
+                    "source_item_index": 7,
+                    "source_text": "L - 10 mm",
+                    "region_id": "R1",
+                    "selected_region_id": "R1",
+                    "axis": "X",
+                    "value": 10.0,
+                    "source_relation": "between_profile_boundaries",
+                    "profile_refs": [
+                        "R1.LOCAL.LEFT",
+                        "R1.LOCAL.RIGHT",
+                    ],
+                    "selected_witness_positions_px": [15.0, 25.0],
+                    "basis": (
+                        "unique_short_dimension_witness_pair_to_two_"
+                        "structural_profile_boundaries"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    )
+
+    if ambiguous_anchor:
+        capture.entities.append(
+            CaptureEntity(
+                id="E_ALT_ANCHOR",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["SRC_ALT_ANCHOR"],
+                required_for_modeling=False,
+            )
+        )
+        symmetric_record_alt = copy.deepcopy(symmetric_record)
+        symmetric_record_alt["candidate_id"] = "DG_SPAN_ALT"
+        symmetric_record_alt["profile_entity_ids"] = [
+            "E_ALT_ANCHOR",
+            "E_RIGHT",
+        ]
+        symmetric_record_alt["selected_witness_positions_px"] = [
+            20.5,
+            80.0,
+        ]
+        symmetric_record_alt["source_ids"] = [
+            "SRC_PROFILE_SPAN_SYMMETRY_ALT"
+        ]
+        symmetric_ledger["items"].append(symmetric_record_alt)
+
+    return capture
+
+
+def test_labeled_profile_span_midpoint_anchors_to_unique_resolved_symmetric_boundary():
+    capture = _labeled_span_midpoint_anchor_capture()
+
+    linked = link_reader_capture(capture)
+
+    anchor = next(
+        relation
+        for relation in linked.evidence.relations
+        if relation.id == "R_LABELED_PROFILE_SPAN_CENTER_ANCHOR_D_LOCAL"
+    )
+    assert anchor.kind == "alignment"
+    assert anchor.metadata["basis"] == (
+        "labeled_profile_span_midpoint_to_resolved_"
+        "symmetric_profile_boundary"
+    )
+    assert anchor.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert anchor.metadata["pixel_geometry_used_for_identity_only"] is True
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    local_left = linked.entity_to_feature["E_LOCAL_LEFT"]
+    local_right = linked.entity_to_feature["E_LOCAL_RIGHT"]
+    assert resolution.values[f"feature:{local_left}.boundary.x"] == 25.0
+    assert resolution.values[f"feature:{local_right}.boundary.x"] == 35.0
+    assert resolution.ok
+
+
+def test_labeled_profile_span_midpoint_rejects_ambiguous_symmetric_boundary_anchor():
+    capture = _labeled_span_midpoint_anchor_capture(
+        ambiguous_anchor=True
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not any(
+        relation.id == "R_LABELED_PROFILE_SPAN_CENTER_ANCHOR_D_LOCAL"
+        for relation in linked.evidence.relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert any(
+        item.get("id") in {
+            "relation:D_LOCAL",
+            "target:feature:"
+            + linked.entity_to_feature["E_LOCAL_LEFT"]
+            + ".boundary.x",
+            "target:feature:"
+            + linked.entity_to_feature["E_LOCAL_RIGHT"]
+            + ".boundary.x",
+        }
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    )
+
+
 def test_identity_linker_anchors_structured_symmetric_profile_span():
     capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
     linked = link_reader_capture(capture)

@@ -1181,6 +1181,107 @@ def test_labeled_profile_span_recovers_unique_two_boundary_identity(
     ]
 
 
+def test_labeled_profile_span_recovers_when_text_is_outside_assigned_region(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_EXT",
+        source_item_index=21,
+        source_text="T - 6 mm",
+        region_id="R1",
+        value=6,
+        axis="Z",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="bilateral",
+        evidence=["hybrid:whole:21", "structural:R1:context"],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [
+            {"region_id": "R1", "bbox_px": [200, 250, 1200, 650]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 21,
+                    "bbox": [
+                        [90.0, 690.0],
+                        [180.0, 690.0],
+                        [180.0, 725.0],
+                        [90.0, 725.0],
+                    ],
+                }
+            ]
+        },
+    }
+    profile_inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "R1.UPPER",
+            "source_orientation": "horizontal",
+            "position_px": 704.8,
+            "span_px": [500.0, 1200.0],
+            "axis_tolerance_px": 5.0,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "R1.LOWER",
+            "source_orientation": "horizontal",
+            "position_px": 714.8,
+            "span_px": [520.0, 1180.0],
+            "axis_tolerance_px": 5.0,
+        },
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(704.5, 715.0)]),
+    )
+
+    dimensions, ledger = (
+        hybrid_adapter._recover_labeled_profile_span_dimensions(
+            report=report,
+            facts=[fact],
+            view_lookup={
+                "R1": hybrid_adapter.HybridRegionView(
+                    region_id="R1",
+                    view_kind="front",
+                    evidence=["structural:R1:context"],
+                )
+            },
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref={
+                "R1.UPPER": "R1.PROFILE.UPPER",
+                "R1.LOWER": "R1.PROFILE.LOWER",
+            },
+        )
+    )
+
+    assert len(dimensions) == 1
+    assert [
+        endpoint.entity_key
+        for endpoint in dimensions[0].endpoints
+    ] == ["R1.PROFILE.UPPER", "R1.PROFILE.LOWER"]
+    assert ledger[0]["selected_region_id"] == "R1"
+    assert ledger[0]["basis"] == (
+        "unique_short_dimension_witness_pair_to_two_"
+        "structural_profile_boundaries"
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_profile_span_relations(
+        facts=[fact],
+        identity_ledger=ledger,
+    )
+    assert reconciled[0].relation == "between_profile_boundaries"
+    assert (
+        "hybrid:labeled-profile-span-relation:LD_EXT"
+        in reconciled[0].evidence
+    )
+
+
 def test_unique_profile_span_identity_overrides_unverified_overall_relation():
     fact = hybrid_adapter.HybridLabeledDimensionFact(
         target_id="LD_0004",

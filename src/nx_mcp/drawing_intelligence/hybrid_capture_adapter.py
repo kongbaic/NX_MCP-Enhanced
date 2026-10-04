@@ -1567,10 +1567,14 @@ def _recover_labeled_profile_span_dimensions(
         center_y = (top + bottom) / 2.0
 
         eligible_regions: list[str] = []
+        if fact.region_id in region_boxes:
+            eligible_regions.append(fact.region_id)
+
         for region_id, (rx, ry, rw, rh) in region_boxes.items():
             candidate_view = view_lookup.get(region_id)
             if (
-                candidate_view is None
+                region_id in eligible_regions
+                or candidate_view is None
                 or candidate_view.view_kind != region_view.view_kind
                 or not (
                     rx <= center_x <= rx + rw
@@ -1634,15 +1638,12 @@ def _recover_labeled_profile_span_dimensions(
                             )
                         ):
                             continue
-                        span_low, span_high = sorted(
-                            float(value) for value in span
-                        )
-                        if expected_profile_orientation == "vertical":
-                            if min(span_high, bottom) < max(span_low, top):
-                                continue
-                        else:
-                            if min(span_high, right) < max(span_low, left):
-                                continue
+
+                        # The OCR text box may sit outside the part, as is normal
+                        # for engineering dimensions. Endpoint identity comes
+                        # from the short-dimension witness-axis positions, not
+                        # from spatial overlap between the text box and the
+                        # physical profile segment.
                         matches.append(edge)
 
                     endpoint_matches.append(matches)

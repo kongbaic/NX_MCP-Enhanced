@@ -2019,14 +2019,14 @@ def _recover_reference_table_profile_span_dimensions(
         rect = item_rect(index)
         if not isinstance(text, str) or rect is None or is_reference_item(rect):
             continue
+        if unit_re.fullmatch(text) is not None:
+            drawing_units.append((index, rect))
+            continue
         header_match = header_re.fullmatch(text)
         if header_match is not None:
             drawing_labels.append(
                 (index, header_match.group("label").upper(), rect)
             )
-            continue
-        if unit_re.fullmatch(text) is not None:
-            drawing_units.append((index, rect))
             continue
         if numeric_re.fullmatch(text) is not None:
             drawing_numbers.append((index, text.strip(), rect))

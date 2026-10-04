@@ -884,6 +884,94 @@ def test_labeled_overall_transition_uses_unique_labeled_extent_witness_contact(
     assert records[0]["pixel_geometry_used_for_identity_only"] is True
 
 
+def test_labeled_profile_span_recovery_uses_axis_span_fallback(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_PROFILE_HEIGHT",
+        source_item_index=7,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="between_profile_boundaries",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:7", "structural:R1:context"],
+    )
+    source_bbox = [[160, 454], [328, 457], [327, 492], [159, 489]]
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R1", "bbox_px": [160, 220, 1010, 520]}],
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {"source_item_index": 7, "bbox": source_bbox}
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_labeled_dimension_axis_span",
+        lambda *_args, **_kwargs: (371.0, 404.0),
+    )
+
+    dimensions, ledger = (
+        hybrid_adapter._recover_labeled_profile_span_dimensions(
+            report=report,
+            facts=[fact],
+            view_lookup={
+                "R1": hybrid_adapter.HybridRegionView(
+                    region_id="R1",
+                    view_kind="front",
+                    evidence=["structural:R1:context"],
+                )
+            },
+            profile_inventory=[
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "source_orientation": "horizontal",
+                    "position_px": 371.5,
+                    "axis_tolerance_px": 2.0,
+                    "ref": "R1.structural.horizontal.001",
+                    "span_px": [500.0, 970.0],
+                },
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "source_orientation": "horizontal",
+                    "position_px": 403.5,
+                    "axis_tolerance_px": 2.0,
+                    "ref": "R1.structural.horizontal.002",
+                    "span_px": [490.0, 980.0],
+                },
+            ],
+            profile_entity_by_ref={
+                "R1.structural.horizontal.001": "R1.PROFILE.TOP",
+                "R1.structural.horizontal.002": "R1.PROFILE.LOWER",
+            },
+        )
+    )
+
+    assert len(dimensions) == 1
+    assert dimensions[0].value == 12
+    assert dimensions[0].axis == "Z"
+    assert [
+        endpoint.entity_key for endpoint in dimensions[0].endpoints
+    ] == ["R1.PROFILE.TOP", "R1.PROFILE.LOWER"]
+    assert len(ledger) == 1
+    assert ledger[0]["target_id"] == "LD_PROFILE_HEIGHT"
+    assert ledger[0]["selected_witness_positions_px"] == [371.0, 404.0]
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
 def test_labeled_overall_transition_axis_span_fallback_canonicalizes_agent_variation(
     monkeypatch,
 ):

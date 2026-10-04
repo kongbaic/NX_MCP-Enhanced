@@ -1805,12 +1805,13 @@ def _recover_labeled_profile_span_dimensions(
             if region_view is not None
             else None
         )
+        bbox_override = (bbox_override_by_target_id or {}).get(
+            fact.target_id
+        )
         raw_bbox = (
-            (bbox_override_by_target_id or {}).get(fact.target_id)
-            or _coverage_bbox_for_source_index(
-                report,
-                fact.source_item_index,
-            )
+            bbox_override
+            if bbox_override is not None
+            else _coverage_bbox_for_labeled_fact(report, fact)
         )
         bounds = _bbox_bounds(raw_bbox)
         if (
@@ -1820,11 +1821,29 @@ def _recover_labeled_profile_span_dimensions(
         ):
             continue
 
-        topology = infer_short_dimension_visual_topology(
-            source_raster,
-            raw_bbox,
-        )
-        if topology is None or topology[0] != expected_direction:
+        if bbox_override is None:
+            topology = _labeled_dimension_topology(
+                report=report,
+                fact=fact,
+                expected_direction=expected_direction,
+            )
+        else:
+            topology = infer_short_dimension_visual_topology(
+                source_raster,
+                raw_bbox,
+            )
+            if topology is None or topology[0] != expected_direction:
+                axis_span = infer_labeled_dimension_axis_span(
+                    source_raster,
+                    raw_bbox,
+                    expected_direction=expected_direction,
+                )
+                topology = (
+                    (expected_direction, [axis_span])
+                    if axis_span is not None
+                    else None
+                )
+        if topology is None:
             continue
 
         topology_pairs = list(topology[1])

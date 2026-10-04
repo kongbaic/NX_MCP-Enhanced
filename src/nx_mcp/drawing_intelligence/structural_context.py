@@ -54,9 +54,9 @@ _LABELED_MM_DIMENSION_RE = re.compile(
     r"(?i)(?P<label>[a-z][a-z0-9_]*)\s*[-=:]\s*"
     r"(?P<value>\d+(?:[.,]\d+)?)\s*mm[a-z]?(?:\b|$)"
 )
-_FRAGMENT_LABEL_RE = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9_]*)\\s*$")
+_FRAGMENT_LABEL_RE = re.compile(r"(?i)^\s*(?P<label>[a-z][a-z0-9_]*)\s*$")
 _FRAGMENT_VALUE_WITH_UNIT_RE = re.compile(
-    r"(?i)^\\s*(?P<value>\\d+(?:[.,]\\d+)?)\\s*mm[a-z]?\\s*$"
+    r"(?i)^\s*(?P<value>\d+(?:[.,]\d+)?)\s*mm[a-z]?\s*$"
 )
 
 

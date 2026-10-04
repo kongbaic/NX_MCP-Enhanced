@@ -495,7 +495,9 @@ def run_mode_b_coordinator(
         stage = "confirmation_request"
         stage_started = time.monotonic()
         try:
-            confirmation_request = build_confirmation_request(graph)
+            # Resolver operates on compiled evidence; the confirmation contract
+            # must describe that same graph so blocker counts and IDs stay aligned.
+            confirmation_request = build_confirmation_request(compiled)
             _atomic_write_json(
                 artifacts["confirmation_request"],
                 confirmation_request,

@@ -449,6 +449,12 @@ def test_structural_context_fails_closed_when_global_axis_is_missing():
 def test_structural_context_skips_explicit_non_geometric_reference_region():
     plan = build_structural_context_queries(_reader_input())
     payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "centerline_direction": "horizontal",
+        "evidence": ["structural:R1:crop"],
+    }
     payload["answers"][1] = {
         "query_id": "S002",
         "view_kind": None,

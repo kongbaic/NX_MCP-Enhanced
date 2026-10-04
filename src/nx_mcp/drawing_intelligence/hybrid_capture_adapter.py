@@ -1050,6 +1050,7 @@ def _labeled_profile_transition_boundary_records(
     boundaries: list[dict[str, Any]],
     profile_inventory: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
+    rotational_oblique_profile_hints: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Bind a labeled overall-offset transition to structural profile levels.
 
@@ -1197,39 +1198,200 @@ def _labeled_profile_transition_boundary_records(
             ):
                 matched_refs.add(ref)
 
-        if not matched_refs:
+        if matched_refs:
+            profile_refs = sorted(matched_refs)
+            output.append(
+                {
+                    "target_id": fact.target_id,
+                    "source_item_index": fact.source_item_index,
+                    "region_id": fact.region_id,
+                    "view_kind": region_view.view_kind,
+                    "axis": fact.axis,
+                    "overall_role": overall_role,
+                    "profile_refs": profile_refs,
+                    "profile_entity_keys": [
+                        profile_entity_by_ref[ref]
+                        for ref in profile_refs
+                    ],
+                    "selected_transition_position_px": round(
+                        transition_position,
+                        3,
+                    ),
+                    "identity_kind": "physical_profile_boundary",
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *fact.evidence,
+                                *[
+                                    f"hybrid:profile-edge:{ref}"
+                                    for ref in profile_refs
+                                ],
+                            ]
+                        )
+                    ),
+                    "basis": (
+                        "labeled_overall_offset_plus_unique_"
+                        "transition_level_profile_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            )
             continue
-        profile_refs = sorted(matched_refs)
+
+        if (
+            fact.symmetry_scope != "bilateral"
+            or not isinstance(rotational_oblique_profile_hints, list)
+        ):
+            continue
+
+        transition_axis_index = 1 if expected_direction == "vertical" else 0
+        transverse_axis_index = 1 - transition_axis_index
+        oblique_matches: list[dict[str, Any]] = []
+
+        for hint in rotational_oblique_profile_hints:
+            if (
+                not isinstance(hint, dict)
+                or hint.get("view_kind") != region_view.view_kind
+                or str(hint.get("rotation_axis") or "").upper() != fact.axis
+                or hint.get("one_sided_boundary_candidate") is not True
+                or hint.get("exterior_boundary_candidate") is not True
+            ):
+                continue
+            line_support = hint.get("line_edge_support_fraction")
+            endpoints = hint.get("endpoints_px")
+            if (
+                not isinstance(line_support, (int, float))
+                or isinstance(line_support, bool)
+                or float(line_support) < 0.85
+                or not isinstance(endpoints, list)
+                or len(endpoints) != 2
+                or not all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in point
+                    )
+                    for point in endpoints
+                )
+            ):
+                continue
+
+            matching_indices = [
+                index
+                for index, point in enumerate(endpoints)
+                if abs(
+                    float(point[transition_axis_index])
+                    - transition_position
+                )
+                <= tolerance
+            ]
+            if len(matching_indices) != 1:
+                continue
+
+            source_ids = [
+                source
+                for source in hint.get("source_ids", [])
+                if isinstance(source, str)
+                and source.startswith("hybrid:oblique-line:")
+            ]
+            if len(source_ids) != 1:
+                continue
+
+            match_index = matching_indices[0]
+            other_index = 1 - match_index
+            oblique_matches.append(
+                {
+                    "source_id": source_ids[0],
+                    "transition_point": [
+                        float(value)
+                        for value in endpoints[match_index]
+                    ],
+                    "other_point": [
+                        float(value)
+                        for value in endpoints[other_index]
+                    ],
+                }
+            )
+
+        unique_by_source = {
+            str(item["source_id"]): item
+            for item in oblique_matches
+        }
+        if len(unique_by_source) != 2:
+            continue
+        pair = [
+            unique_by_source[source]
+            for source in sorted(unique_by_source)
+        ]
+        first, second = pair
+        first_transition = first["transition_point"]
+        second_transition = second["transition_point"]
+        first_other = first["other_point"]
+        second_other = second["other_point"]
+
+        if (
+            abs(
+                first_transition[transition_axis_index]
+                - second_transition[transition_axis_index]
+            )
+            > tolerance
+            or abs(
+                first_other[transition_axis_index]
+                - second_other[transition_axis_index]
+            )
+            > tolerance
+        ):
+            continue
+
+        first_delta = (
+            first_other[transverse_axis_index]
+            - first_transition[transverse_axis_index]
+        )
+        second_delta = (
+            second_other[transverse_axis_index]
+            - second_transition[transverse_axis_index]
+        )
+        if (
+            first_delta == 0.0
+            or second_delta == 0.0
+            or first_delta * second_delta >= 0.0
+            or abs(abs(first_delta) - abs(second_delta)) > tolerance
+        ):
+            continue
+
+        oblique_source_ids = sorted(unique_by_source)
         output.append(
             {
                 "target_id": fact.target_id,
                 "source_item_index": fact.source_item_index,
                 "region_id": fact.region_id,
+                "view_kind": region_view.view_kind,
                 "axis": fact.axis,
                 "overall_role": overall_role,
-                "profile_refs": profile_refs,
-                "profile_entity_keys": [
-                    profile_entity_by_ref[ref]
-                    for ref in profile_refs
-                ],
+                "profile_refs": [],
+                "profile_entity_keys": [],
+                "oblique_source_ids": oblique_source_ids,
                 "selected_transition_position_px": round(
                     transition_position,
                     3,
+                ),
+                "identity_kind": (
+                    "bilateral_oblique_transition_endpoint_level"
                 ),
                 "source_ids": list(
                     dict.fromkeys(
                         [
                             *fact.evidence,
-                            *[
-                                f"hybrid:profile-edge:{ref}"
-                                for ref in profile_refs
-                            ],
+                            *oblique_source_ids,
                         ]
                     )
                 ),
                 "basis": (
-                    "labeled_overall_offset_plus_unique_"
-                    "transition_level_profile_identity"
+                    "labeled_overall_offset_plus_bilateral_"
+                    "oblique_endpoint_identity"
                 ),
                 "engineering_coordinate_inferred_from_pixels": False,
                 "pixel_geometry_used_for_identity_only": True,
@@ -7258,6 +7420,9 @@ def adapt_hybrid_ocr_report(
             boundaries=boundaries,
             profile_inventory=profile_inventory,
             profile_entity_by_ref=profile_entity_by_ref,
+            rotational_oblique_profile_hints=(
+                rotational_oblique_profile_hints
+            ),
         )
     )
 

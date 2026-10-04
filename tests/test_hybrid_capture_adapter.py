@@ -584,6 +584,198 @@ def test_labeled_overall_transition_records_profile_boundary_identity(
     assert records[0]["pixel_geometry_used_for_identity_only"] is True
 
 
+def test_labeled_overall_transition_records_bilateral_oblique_endpoint_identity(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_H3",
+        source_item_index=5,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="overall_max_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="bilateral",
+        evidence=[
+            "hybrid:whole:5",
+            "structural:R1:context",
+            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max",
+        ],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 1000, 600]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "bbox": [[80, 100], [220, 100], [220, 130], [80, 130]],
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(100.5, 145.0)]),
+    )
+
+    records = hybrid_adapter._labeled_profile_transition_boundary_records(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "Z",
+                "anchors": [
+                    {"role": "overall_max", "position_px": 100.0},
+                    {"role": "overall_min", "position_px": 300.0},
+                ],
+            }
+        ],
+        profile_inventory=[],
+        profile_entity_by_ref={},
+        rotational_oblique_profile_hints=[
+            {
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[40.0, 145.5], [20.0, 200.0]],
+                "line_edge_support_fraction": 1.0,
+                "source_ids": ["hybrid:oblique-line:left"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            },
+            {
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[160.0, 144.5], [180.0, 200.5]],
+                "line_edge_support_fraction": 1.0,
+                "source_ids": ["hybrid:oblique-line:right"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            },
+        ],
+    )
+
+    assert len(records) == 1
+    assert records[0]["profile_refs"] == []
+    assert records[0]["oblique_source_ids"] == [
+        "hybrid:oblique-line:left",
+        "hybrid:oblique-line:right",
+    ]
+    assert records[0]["identity_kind"] == (
+        "bilateral_oblique_transition_endpoint_level"
+    )
+    assert records[0]["selected_transition_position_px"] == 145.0
+    assert records[0]["basis"] == (
+        "labeled_overall_offset_plus_bilateral_oblique_endpoint_identity"
+    )
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert records[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_labeled_overall_transition_rejects_nonmirrored_oblique_endpoint_pair(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_H3",
+        source_item_index=5,
+        source_text="H3 - 12 mm",
+        region_id="R1",
+        value=12,
+        axis="Z",
+        relation="overall_max_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="bilateral",
+        evidence=[
+            "hybrid:whole:5",
+            "structural:R1:context",
+            "hybrid:labeled-overall-boundary-contact:R1:Z:overall_max",
+        ],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 1000, 600]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "bbox": [[80, 100], [220, 100], [220, 130], [80, 130]],
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("vertical", [(100.5, 145.0)]),
+    )
+
+    records = hybrid_adapter._labeled_profile_transition_boundary_records(
+        report=report,
+        facts=[fact],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["structural:R1:context"],
+            )
+        },
+        boundaries=[
+            {
+                "status": "resolved",
+                "region_id": "R1",
+                "axis": "Z",
+                "anchors": [
+                    {"role": "overall_max", "position_px": 100.0},
+                    {"role": "overall_min", "position_px": 300.0},
+                ],
+            }
+        ],
+        profile_inventory=[],
+        profile_entity_by_ref={},
+        rotational_oblique_profile_hints=[
+            {
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[40.0, 145.0], [20.0, 200.0]],
+                "line_edge_support_fraction": 1.0,
+                "source_ids": ["hybrid:oblique-line:left"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            },
+            {
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[160.0, 145.0], [170.0, 220.0]],
+                "line_edge_support_fraction": 1.0,
+                "source_ids": ["hybrid:oblique-line:right"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            },
+        ],
+    )
+
+    assert records == []
+
+
 def test_labeled_dimension_relation_reconciles_unique_overall_boundary_contact(
     monkeypatch,
 ):

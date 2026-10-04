@@ -1480,6 +1480,7 @@ def _recover_labeled_profile_span_dimensions(
     view_lookup: dict[str, HybridRegionView],
     profile_inventory: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
+    bbox_override_by_target_id: dict[str, object] | None = None,
 ) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
     """Bind labeled profile-to-profile dimensions only from unique raster identity.
 
@@ -1538,9 +1539,12 @@ def _recover_labeled_profile_span_dimensions(
             if region_view is not None
             else None
         )
-        raw_bbox = _coverage_bbox_for_source_index(
-            report,
-            fact.source_item_index,
+        raw_bbox = (
+            (bbox_override_by_target_id or {}).get(fact.target_id)
+            or _coverage_bbox_for_source_index(
+                report,
+                fact.source_item_index,
+            )
         )
         bounds = _bbox_bounds(raw_bbox)
         if (
@@ -1760,6 +1764,465 @@ def _recover_labeled_profile_span_dimensions(
         )
 
     return dimensions, ledger
+
+
+def _recover_reference_table_profile_span_dimensions(
+    *,
+    report: dict[str, Any],
+    corroborating_facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+    profile_inventory: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
+    """Recover a broken local dimension from a corroborated reference table row.
+
+    A reference row is trusted only after at least three independent labeled
+    dimensions in the drawing match the same header/value row. The table may
+    then supply an engineering value for a label whose local OCR is visibly
+    fragmented, but only when the remaining local numeric glyphs are compatible
+    with that table value and short-dimension witness topology uniquely binds
+    two physical profile boundaries. Raster geometry is identity-only.
+    """
+
+    whole_items = report.get("whole_drawing_items")
+    if not isinstance(whole_items, list):
+        return [], []
+
+    reference_region_ids = _reference_only_region_ids(report, view_lookup)
+    if not reference_region_ids:
+        return [], []
+
+    region_boxes = {
+        region_id: _region_bbox(report, region_id)
+        for region_id in {
+            *reference_region_ids,
+            *view_lookup.keys(),
+        }
+    }
+
+    def item_rect(index: int) -> tuple[float, float, float, float] | None:
+        if not 0 <= index < len(whole_items):
+            return None
+        item = whole_items[index]
+        if not isinstance(item, dict):
+            return None
+        bounds = _bbox_bounds(item.get("bbox"))
+        if bounds is None:
+            return None
+        left, top, right, bottom = bounds
+        if right <= left or bottom <= top:
+            return None
+        return left, top, right - left, bottom - top
+
+    def center(rect: tuple[float, float, float, float]) -> tuple[float, float]:
+        x, y, width, height = rect
+        return x + width / 2.0, y + height / 2.0
+
+    def inside(
+        point: tuple[float, float],
+        rect: tuple[float, float, float, float],
+    ) -> bool:
+        px, py = point
+        x, y, width, height = rect
+        return x <= px <= x + width and y <= py <= y + height
+
+    def row_clusters(
+        items: list[tuple[int, str, tuple[float, float, float, float]]],
+    ) -> list[list[tuple[int, str, tuple[float, float, float, float]]]]:
+        clusters: list[list[tuple[int, str, tuple[float, float, float, float]]]] = []
+        for item in sorted(items, key=lambda value: (center(value[2])[1], center(value[2])[0])):
+            item_y = center(item[2])[1]
+            selected = next(
+                (
+                    cluster
+                    for cluster in clusters
+                    if abs(
+                        item_y
+                        - sum(center(value[2])[1] for value in cluster)
+                        / len(cluster)
+                    )
+                    <= 10.0
+                ),
+                None,
+            )
+            if selected is None:
+                clusters.append([item])
+            else:
+                selected.append(item)
+        return clusters
+
+    header_re = re.compile(r"(?i)^\s*(?P<label>[a-z][a-z0-9]*)\s*$")
+    numeric_re = re.compile(r"^\s*(?P<value>\d+(?:[.,]\d+)?)\s*$")
+    unit_re = re.compile(r"(?i)^\s*mm[a-z]?\s*$")
+    fact_label_re = re.compile(r"(?i)^\s*(?P<label>[a-z][a-z0-9]*)\b")
+
+    table_rows: list[dict[str, Any]] = []
+    for reference_region_id in sorted(reference_region_ids):
+        reference_rect = region_boxes.get(reference_region_id)
+        if reference_rect is None:
+            continue
+
+        headers: list[tuple[int, str, tuple[float, float, float, float]]] = []
+        numeric_values: list[
+            tuple[int, str, tuple[float, float, float, float]]
+        ] = []
+        for index, raw_item in enumerate(whole_items):
+            if not isinstance(raw_item, dict):
+                continue
+            text = raw_item.get("text")
+            rect = item_rect(index)
+            if not isinstance(text, str) or rect is None or not inside(
+                center(rect),
+                reference_rect,
+            ):
+                continue
+            header_match = header_re.fullmatch(text)
+            if header_match is not None:
+                headers.append((index, header_match.group("label").upper(), rect))
+                continue
+            numeric_match = numeric_re.fullmatch(text)
+            if numeric_match is not None:
+                numeric_values.append((index, numeric_match.group("value"), rect))
+
+        header_clusters = row_clusters(headers)
+        value_clusters = row_clusters(numeric_values)
+        if not header_clusters or not value_clusters:
+            continue
+        header_row = max(header_clusters, key=len)
+        header_y = sum(center(value[2])[1] for value in header_row) / len(header_row)
+        value_candidates = [
+            cluster
+            for cluster in value_clusters
+            if (
+                len(cluster) >= 4
+                and sum(center(value[2])[1] for value in cluster) / len(cluster)
+                > header_y
+            )
+        ]
+        if len(header_row) < 4 or not value_candidates:
+            continue
+        value_row = max(value_candidates, key=len)
+
+        sorted_headers = sorted(header_row, key=lambda value: center(value[2])[0])
+        paired: dict[str, dict[str, Any]] = {}
+        used_value_indices: set[int] = set()
+        reference_width = reference_rect[2]
+        column_tolerance = max(
+            24.0,
+            min(80.0, reference_width / max(1, len(sorted_headers)) * 0.60),
+        )
+        for header_index, label, header_rect in sorted_headers:
+            header_x = center(header_rect)[0]
+            matches: list[
+                tuple[float, int, str, tuple[float, float, float, float]]
+            ] = []
+            for value_index, value_text, value_rect in value_row:
+                if value_index in used_value_indices:
+                    continue
+                distance = abs(center(value_rect)[0] - header_x)
+                if distance <= column_tolerance:
+                    matches.append(
+                        (distance, value_index, value_text, value_rect)
+                    )
+            matches.sort(key=lambda value: (value[0], value[1]))
+            if len(matches) != 1:
+                continue
+            _distance, value_index, value_text, value_rect = matches[0]
+            parsed = _positive_number(value_text)
+            if parsed is None:
+                continue
+            used_value_indices.add(value_index)
+            paired[label] = {
+                "label": label,
+                "value": parsed,
+                "header_source_item_index": header_index,
+                "value_source_item_index": value_index,
+                "header_bbox": header_rect,
+                "value_bbox": value_rect,
+            }
+
+        if len(paired) >= 4:
+            table_rows.append(
+                {
+                    "reference_region_id": reference_region_id,
+                    "paired": paired,
+                }
+            )
+
+    if not table_rows:
+        return [], []
+
+    corroborated_rows: list[dict[str, Any]] = []
+    for row in table_rows:
+        paired = row["paired"]
+        matched_labels: list[str] = []
+        for fact in corroborating_facts:
+            match = fact_label_re.match(fact.source_text)
+            if match is None:
+                continue
+            label = match.group("label").upper()
+            table_fact = paired.get(label)
+            if table_fact is None:
+                continue
+            if math.isclose(
+                float(table_fact["value"]),
+                float(fact.value),
+                abs_tol=max(abs(float(fact.value)) * 1e-6, 1e-9),
+            ):
+                matched_labels.append(label)
+        matched_labels = sorted(set(matched_labels))
+        if len(matched_labels) >= 3:
+            corroborated_rows.append(
+                {
+                    **row,
+                    "corroborating_labels": matched_labels,
+                }
+            )
+
+    if len(corroborated_rows) != 1:
+        return [], []
+    row = corroborated_rows[0]
+    paired = row["paired"]
+
+    reference_rects = [
+        rect
+        for region_id, rect in region_boxes.items()
+        if region_id in reference_region_ids and rect is not None
+    ]
+
+    def is_reference_item(rect: tuple[float, float, float, float]) -> bool:
+        point = center(rect)
+        return any(inside(point, reference_rect) for reference_rect in reference_rects)
+
+    def vertical_overlap_fraction(
+        first: tuple[float, float, float, float],
+        second: tuple[float, float, float, float],
+    ) -> float:
+        _x1, y1, _w1, h1 = first
+        _x2, y2, _w2, h2 = second
+        overlap = min(y1 + h1, y2 + h2) - max(y1, y2)
+        if overlap <= 0.0:
+            return 0.0
+        return overlap / max(1.0, min(h1, h2))
+
+    drawing_labels: list[
+        tuple[int, str, tuple[float, float, float, float]]
+    ] = []
+    drawing_units: list[tuple[int, tuple[float, float, float, float]]] = []
+    drawing_numbers: list[
+        tuple[int, str, tuple[float, float, float, float]]
+    ] = []
+    for index, raw_item in enumerate(whole_items):
+        if not isinstance(raw_item, dict):
+            continue
+        text = raw_item.get("text")
+        rect = item_rect(index)
+        if not isinstance(text, str) or rect is None or is_reference_item(rect):
+            continue
+        header_match = header_re.fullmatch(text)
+        if header_match is not None:
+            drawing_labels.append(
+                (index, header_match.group("label").upper(), rect)
+            )
+            continue
+        if unit_re.fullmatch(text) is not None:
+            drawing_units.append((index, rect))
+            continue
+        if numeric_re.fullmatch(text) is not None:
+            drawing_numbers.append((index, text.strip(), rect))
+
+    recovered_dimensions: list[ObservationDimension] = []
+    recovered_ledger: list[dict[str, Any]] = []
+    claimed_numeric_sources: set[int] = set()
+
+    for label_index, label, label_rect in drawing_labels:
+        table_fact = paired.get(label)
+        if table_fact is None:
+            continue
+
+        candidate_triplets: list[
+            tuple[
+                int,
+                str,
+                tuple[float, float, float, float],
+                int,
+                tuple[float, float, float, float],
+            ]
+        ] = []
+        label_right = label_rect[0] + label_rect[2]
+        for unit_index, unit_rect in drawing_units:
+            unit_left = unit_rect[0]
+            if (
+                unit_left < label_right
+                or unit_left - label_right > 180.0
+                or vertical_overlap_fraction(label_rect, unit_rect) < 0.55
+            ):
+                continue
+            for number_index, number_text, number_rect in drawing_numbers:
+                number_center_x = center(number_rect)[0]
+                if not (
+                    label_right <= number_center_x <= unit_left
+                    and vertical_overlap_fraction(label_rect, number_rect) >= 0.55
+                    and vertical_overlap_fraction(number_rect, unit_rect) >= 0.55
+                ):
+                    continue
+                candidate_triplets.append(
+                    (
+                        number_index,
+                        number_text,
+                        number_rect,
+                        unit_index,
+                        unit_rect,
+                    )
+                )
+
+        if len(candidate_triplets) != 1:
+            continue
+        number_index, number_text, number_rect, unit_index, unit_rect = (
+            candidate_triplets[0]
+        )
+        if number_index in claimed_numeric_sources:
+            continue
+
+        table_value = float(table_fact["value"])
+        table_digits = re.sub(
+            r"\D",
+            "",
+            str(table_value).rstrip("0").rstrip("."),
+        )
+        local_digits = re.sub(r"\D", "", number_text)
+        if (
+            not table_digits
+            or not local_digits
+            or local_digits not in table_digits
+        ):
+            continue
+
+        left = min(label_rect[0], number_rect[0], unit_rect[0])
+        top = min(label_rect[1], number_rect[1], unit_rect[1])
+        right = max(
+            label_rect[0] + label_rect[2],
+            number_rect[0] + number_rect[2],
+            unit_rect[0] + unit_rect[2],
+        )
+        bottom = max(
+            label_rect[1] + label_rect[3],
+            number_rect[1] + number_rect[3],
+            unit_rect[1] + unit_rect[3],
+        )
+        combined_bbox = [
+            [left, top],
+            [right, top],
+            [right, bottom],
+            [left, bottom],
+        ]
+        combined_center = ((left + right) / 2.0, (top + bottom) / 2.0)
+
+        region_candidates: list[
+            tuple[float, str, HybridRegionView]
+        ] = []
+        for region_id, region_view in view_lookup.items():
+            region_rect = region_boxes.get(region_id)
+            if region_rect is None or not inside(combined_center, region_rect):
+                continue
+            region_candidates.append(
+                (region_rect[2] * region_rect[3], region_id, region_view)
+            )
+        region_candidates.sort(key=lambda value: (value[0], value[1]))
+        if not region_candidates:
+            continue
+        if (
+            len(region_candidates) > 1
+            and region_candidates[0][0] >= region_candidates[1][0] * 0.95
+        ):
+            continue
+        _area, region_id, region_view = region_candidates[0]
+
+        topology = infer_short_dimension_visual_topology(
+            str(report.get("source_raster") or ""),
+            combined_bbox,
+        )
+        if topology is None:
+            continue
+        visual_direction = topology[0]
+        matching_axes = [
+            axis
+            for axis in ("X", "Y", "Z")
+            if _visual_direction_for_axis(
+                region_view.view_kind,
+                axis,
+            )
+            == visual_direction
+        ]
+        if len(matching_axes) != 1:
+            continue
+        axis = matching_axes[0]
+
+        target_id = f"REF_TABLE_LD_{number_index:04d}"
+        evidence = [
+            f"hybrid:whole:{label_index}",
+            f"hybrid:whole:{number_index}",
+            f"hybrid:whole:{unit_index}",
+            (
+                "hybrid:reference-table-header:"
+                f"{table_fact['header_source_item_index']}"
+            ),
+            (
+                "hybrid:reference-table-value:"
+                f"{table_fact['value_source_item_index']}"
+            ),
+            (
+                "hybrid:reference-table-row-corroborated:"
+                f"{row['reference_region_id']}"
+            ),
+        ]
+        provisional_fact = HybridLabeledDimensionFact(
+            target_id=target_id,
+            source_item_index=number_index,
+            source_text=f"{label} - {table_value:g} mm",
+            region_id=region_id,
+            value=table_value,
+            axis=axis,
+            relation="between_profile_boundaries",
+            evidence=evidence,
+        )
+        dimensions, identity_ledger = _recover_labeled_profile_span_dimensions(
+            report=report,
+            facts=[provisional_fact],
+            view_lookup=view_lookup,
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref=profile_entity_by_ref,
+            bbox_override_by_target_id={target_id: combined_bbox},
+        )
+        if len(dimensions) != 1 or len(identity_ledger) != 1:
+            continue
+
+        recovered_dimensions.extend(dimensions)
+        recovered_ledger.append(
+            {
+                **identity_ledger[0],
+                "reference_region_id": row["reference_region_id"],
+                "reference_header_source_item_index": (
+                    table_fact["header_source_item_index"]
+                ),
+                "reference_value_source_item_index": (
+                    table_fact["value_source_item_index"]
+                ),
+                "drawing_label_source_item_index": label_index,
+                "drawing_numeric_source_item_index": number_index,
+                "drawing_unit_source_item_index": unit_index,
+                "local_numeric_fragment": number_text,
+                "corroborating_labels": list(row["corroborating_labels"]),
+                "engineering_value_source": "corroborated_reference_table_row",
+                "basis": (
+                    "corroborated_reference_table_value_plus_unique_"
+                    "short_dimension_profile_identity"
+                ),
+            }
+        )
+        claimed_numeric_sources.add(number_index)
+
+    return recovered_dimensions, recovered_ledger
 
 
 def _reconcile_labeled_profile_span_relations(
@@ -8262,6 +8725,19 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
     dimensions.extend(labeled_profile_dimensions)
+
+    (
+        reference_table_dimensions,
+        reference_table_dimension_ledger,
+    ) = _recover_reference_table_profile_span_dimensions(
+        report=report,
+        corroborating_facts=labeled_dimension_facts,
+        view_lookup=view_lookup,
+        profile_inventory=profile_inventory,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+    dimensions.extend(reference_table_dimensions)
+
     labeled_dimension_facts = _reconcile_labeled_profile_span_relations(
         facts=labeled_dimension_facts,
         identity_ledger=labeled_profile_span_ledger,
@@ -8284,6 +8760,11 @@ def adapt_hybrid_ocr_report(
         if isinstance(record, dict):
             claimed_unassigned_source_indices.add(
                 record.get("source_item_index")
+            )
+    for record in reference_table_dimension_ledger:
+        if isinstance(record, dict):
+            claimed_unassigned_source_indices.add(
+                record.get("drawing_numeric_source_item_index")
             )
     claimed_unassigned_source_indices.update(
         fact.source_item_index
@@ -8486,6 +8967,14 @@ def adapt_hybrid_ocr_report(
             "items": labeled_profile_span_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_reference_table_dimension_recovery_ledger",
+            "schema": "1.0",
+            "items": reference_table_dimension_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+            "engineering_value_source": "corroborated_reference_table_row",
         },
         {
             "kind": "hybrid_labeled_dimension_relation_ledger",

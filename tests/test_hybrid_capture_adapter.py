@@ -1282,6 +1282,229 @@ def test_labeled_profile_span_recovers_when_text_is_outside_assigned_region(
     )
 
 
+def test_reference_table_row_recovers_fragmented_local_profile_dimension(
+    monkeypatch,
+):
+    whole_items = [
+        {
+            "text": "S",
+            "bbox": [[100.0, 100.0], [120.0, 100.0], [120.0, 125.0], [100.0, 125.0]],
+        },
+        {
+            "text": "5",
+            "bbox": [[145.0, 100.0], [160.0, 100.0], [160.0, 125.0], [145.0, 125.0]],
+        },
+        {
+            "text": "mm",
+            "bbox": [[162.0, 100.0], [195.0, 100.0], [195.0, 125.0], [162.0, 125.0]],
+        },
+        {"text": "H2", "bbox": [[520.0, 320.0], [550.0, 320.0], [550.0, 345.0], [520.0, 345.0]]},
+        {"text": "C2", "bbox": [[620.0, 320.0], [650.0, 320.0], [650.0, 345.0], [620.0, 345.0]]},
+        {"text": "H3", "bbox": [[720.0, 320.0], [750.0, 320.0], [750.0, 345.0], [720.0, 345.0]]},
+        {"text": "L", "bbox": [[820.0, 320.0], [840.0, 320.0], [840.0, 345.0], [820.0, 345.0]]},
+        {"text": "S", "bbox": [[920.0, 320.0], [940.0, 320.0], [940.0, 345.0], [920.0, 345.0]]},
+        {"text": "75", "bbox": [[520.0, 380.0], [550.0, 380.0], [550.0, 405.0], [520.0, 405.0]]},
+        {"text": "28", "bbox": [[620.0, 380.0], [650.0, 380.0], [650.0, 405.0], [620.0, 405.0]]},
+        {"text": "12", "bbox": [[720.0, 380.0], [750.0, 380.0], [750.0, 405.0], [720.0, 405.0]]},
+        {"text": "26", "bbox": [[820.0, 380.0], [850.0, 380.0], [850.0, 405.0], [820.0, 405.0]]},
+        {"text": "4.5", "bbox": [[910.0, 380.0], [950.0, 380.0], [950.0, 405.0], [910.0, 405.0]]},
+    ]
+    report = {
+        "source_raster": "drawing.png",
+        "whole_drawing_items": whole_items,
+        "regions": [
+            {"region_id": "R1", "bbox_px": [50, 50, 250, 180]},
+            {"region_id": "R2", "bbox_px": [450, 280, 600, 180]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 1,
+                    "text": "5",
+                    "token": "5",
+                    "bbox": whole_items[1]["bbox"],
+                }
+            ]
+        },
+    }
+    corroborating = [
+        hybrid_adapter.HybridLabeledDimensionFact(
+            target_id=f"LD_{label}",
+            source_item_index=index,
+            source_text=f"{label} - {value:g} mm",
+            region_id="R1",
+            value=value,
+            axis="Z",
+            relation="between_profile_boundaries",
+            evidence=[f"hybrid:whole:{index}", "structural:R1"],
+        )
+        for index, label, value in [
+            (20, "H2", 75.0),
+            (21, "C2", 28.0),
+            (22, "H3", 12.0),
+            (23, "L", 26.0),
+        ]
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("horizontal", [(110.0, 150.0)]),
+    )
+
+    dimensions, ledger = (
+        hybrid_adapter._recover_reference_table_profile_span_dimensions(
+            report=report,
+            corroborating_facts=corroborating,
+            view_lookup={
+                "R1": hybrid_adapter.HybridRegionView(
+                    region_id="R1",
+                    view_kind="front",
+                    evidence=["structural:R1"],
+                )
+            },
+            profile_inventory=[
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "ref": "R1.LEFT",
+                    "source_orientation": "vertical",
+                    "position_px": 110.0,
+                    "span_px": [40.0, 210.0],
+                    "axis_tolerance_px": 4.0,
+                },
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "ref": "R1.RIGHT",
+                    "source_orientation": "vertical",
+                    "position_px": 150.0,
+                    "span_px": [40.0, 210.0],
+                    "axis_tolerance_px": 4.0,
+                },
+            ],
+            profile_entity_by_ref={
+                "R1.LEFT": "R1.PROFILE.LEFT",
+                "R1.RIGHT": "R1.PROFILE.RIGHT",
+            },
+        )
+    )
+
+    assert len(dimensions) == 1
+    assert dimensions[0].value == 4.5
+    assert dimensions[0].axis == "X"
+    assert [
+        endpoint.entity_key
+        for endpoint in dimensions[0].endpoints
+    ] == ["R1.PROFILE.LEFT", "R1.PROFILE.RIGHT"]
+    assert ledger[0]["drawing_numeric_source_item_index"] == 1
+    assert ledger[0]["reference_value_source_item_index"] == 12
+    assert ledger[0]["corroborating_labels"] == ["C2", "H2", "H3", "L"]
+    assert ledger[0]["engineering_value_source"] == (
+        "corroborated_reference_table_row"
+    )
+
+
+def test_reference_table_row_does_not_override_incompatible_local_fragment(
+    monkeypatch,
+):
+    whole_items = [
+        {
+            "text": "S",
+            "bbox": [[100.0, 100.0], [120.0, 100.0], [120.0, 125.0], [100.0, 125.0]],
+        },
+        {
+            "text": "6",
+            "bbox": [[145.0, 100.0], [160.0, 100.0], [160.0, 125.0], [145.0, 125.0]],
+        },
+        {
+            "text": "mm",
+            "bbox": [[162.0, 100.0], [195.0, 100.0], [195.0, 125.0], [162.0, 125.0]],
+        },
+        {"text": "H2", "bbox": [[520.0, 320.0], [550.0, 320.0], [550.0, 345.0], [520.0, 345.0]]},
+        {"text": "C2", "bbox": [[620.0, 320.0], [650.0, 320.0], [650.0, 345.0], [620.0, 345.0]]},
+        {"text": "H3", "bbox": [[720.0, 320.0], [750.0, 320.0], [750.0, 345.0], [720.0, 345.0]]},
+        {"text": "L", "bbox": [[820.0, 320.0], [840.0, 320.0], [840.0, 345.0], [820.0, 345.0]]},
+        {"text": "S", "bbox": [[920.0, 320.0], [940.0, 320.0], [940.0, 345.0], [920.0, 345.0]]},
+        {"text": "75", "bbox": [[520.0, 380.0], [550.0, 380.0], [550.0, 405.0], [520.0, 405.0]]},
+        {"text": "28", "bbox": [[620.0, 380.0], [650.0, 380.0], [650.0, 405.0], [620.0, 405.0]]},
+        {"text": "12", "bbox": [[720.0, 380.0], [750.0, 380.0], [750.0, 405.0], [720.0, 405.0]]},
+        {"text": "26", "bbox": [[820.0, 380.0], [850.0, 380.0], [850.0, 405.0], [820.0, 405.0]]},
+        {"text": "4.5", "bbox": [[910.0, 380.0], [950.0, 380.0], [950.0, 405.0], [910.0, 405.0]]},
+    ]
+    report = {
+        "source_raster": "drawing.png",
+        "whole_drawing_items": whole_items,
+        "regions": [
+            {"region_id": "R1", "bbox_px": [50, 50, 250, 180]},
+            {"region_id": "R2", "bbox_px": [450, 280, 600, 180]},
+        ],
+        "coverage": {},
+    }
+    corroborating = [
+        hybrid_adapter.HybridLabeledDimensionFact(
+            target_id=f"LD_{label}",
+            source_item_index=index,
+            source_text=f"{label} - {value:g} mm",
+            region_id="R1",
+            value=value,
+            axis="Z",
+            relation="between_profile_boundaries",
+            evidence=[f"hybrid:whole:{index}", "structural:R1"],
+        )
+        for index, label, value in [
+            (20, "H2", 75.0),
+            (21, "C2", 28.0),
+            (22, "H3", 12.0),
+        ]
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: ("horizontal", [(110.0, 150.0)]),
+    )
+
+    dimensions, ledger = (
+        hybrid_adapter._recover_reference_table_profile_span_dimensions(
+            report=report,
+            corroborating_facts=corroborating,
+            view_lookup={
+                "R1": hybrid_adapter.HybridRegionView(
+                    region_id="R1",
+                    view_kind="front",
+                    evidence=["structural:R1"],
+                )
+            },
+            profile_inventory=[
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "ref": "R1.LEFT",
+                    "source_orientation": "vertical",
+                    "position_px": 110.0,
+                    "span_px": [40.0, 210.0],
+                    "axis_tolerance_px": 4.0,
+                },
+                {
+                    "kind": "profile_edge_candidate",
+                    "region_id": "R1",
+                    "ref": "R1.RIGHT",
+                    "source_orientation": "vertical",
+                    "position_px": 150.0,
+                    "span_px": [40.0, 210.0],
+                    "axis_tolerance_px": 4.0,
+                },
+            ],
+            profile_entity_by_ref={
+                "R1.LEFT": "R1.PROFILE.LEFT",
+                "R1.RIGHT": "R1.PROFILE.RIGHT",
+            },
+        )
+    )
+
+    assert dimensions == []
+    assert ledger == []
+
+
 def test_unique_profile_span_identity_overrides_unverified_overall_relation():
     fact = hybrid_adapter.HybridLabeledDimensionFact(
         target_id="LD_0004",

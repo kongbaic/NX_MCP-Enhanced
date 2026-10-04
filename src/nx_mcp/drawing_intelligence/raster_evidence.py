@@ -4,7 +4,7 @@ import math
 from importlib import import_module
 from pathlib import Path
 from statistics import mean, pstdev
-from typing import Any
+from typing import Any, cast
 
 _BASE_REFERENCE_WIDTH = 1774
 _FRAGMENT_MIN_RATIO = 10.0 / _BASE_REFERENCE_WIDTH
@@ -777,16 +777,21 @@ def _orthogonal_line_candidates(
         ):
             continue
 
-        first = (int(round(float(x1))), int(round(float(y1))))
-        second = (int(round(float(x2))), int(round(float(y2))))
+        x1_value = float(cast(int | float, x1))
+        y1_value = float(cast(int | float, y1))
+        x2_value = float(cast(int | float, x2))
+        y2_value = float(cast(int | float, y2))
+
+        first = (int(round(x1_value)), int(round(y1_value)))
+        second = (int(round(x2_value)), int(round(y2_value)))
         if orientation == "horizontal":
-            axis = (float(y1) + float(y2)) / 2.0
-            start = min(int(round(float(x1))), int(round(float(x2))))
-            end = max(int(round(float(x1))), int(round(float(x2))))
+            axis = (y1_value + y2_value) / 2.0
+            start = min(int(round(x1_value)), int(round(x2_value)))
+            end = max(int(round(x1_value)), int(round(x2_value)))
         else:
-            axis = (float(x1) + float(x2)) / 2.0
-            start = min(int(round(float(y1))), int(round(float(y2))))
-            end = max(int(round(float(y1))), int(round(float(y2))))
+            axis = (x1_value + x2_value) / 2.0
+            start = min(int(round(y1_value)), int(round(y2_value)))
+            end = max(int(round(y1_value)), int(round(y2_value)))
         if end <= start:
             continue
 

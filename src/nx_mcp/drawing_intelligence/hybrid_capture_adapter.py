@@ -31,7 +31,10 @@ from .reader_observations import (
     ObservationValue,
     ObservationView,
 )
-from .short_dimension_orientation import infer_short_dimension_visual_topology
+from .short_dimension_orientation import (
+    infer_labeled_dimension_axis_span,
+    infer_short_dimension_visual_topology,
+)
 from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialReaderObservations,
@@ -955,6 +958,135 @@ def _coverage_bbox_for_source_index(
     return first
 
 
+_LABELED_FACT_PREFIX_RE = re.compile(
+    r"(?i)^\s*(?P<label>[a-z][a-z0-9_]*)\s*[-=:]"
+)
+
+
+def _coverage_bbox_for_labeled_fact(
+    report: dict[str, Any],
+    fact: HybridLabeledDimensionFact,
+) -> object | None:
+    """Return the OCR label box, restoring a uniquely split label when needed."""
+
+    raw_bbox = _coverage_bbox_for_source_index(
+        report,
+        fact.source_item_index,
+    )
+    bounds = _bbox_bounds(raw_bbox)
+    if bounds is None:
+        return raw_bbox
+
+    label_match = _LABELED_FACT_PREFIX_RE.match(fact.source_text)
+    whole_items = report.get("whole_drawing_items")
+    if label_match is None or not isinstance(whole_items, list):
+        return raw_bbox
+
+    label = label_match.group("label")
+    if not 0 <= fact.source_item_index < len(whole_items):
+        return raw_bbox
+    source_item = whole_items[fact.source_item_index]
+    source_text = (
+        str(source_item.get("text") or "")
+        if isinstance(source_item, dict)
+        else ""
+    )
+    if re.match(
+        rf"(?i)^\s*{re.escape(label)}(?:\b|\s*[-=:])",
+        source_text,
+    ):
+        return raw_bbox
+
+    left, top, right, bottom = bounds
+    value_height = bottom - top
+    candidates: list[tuple[float, float, float, float]] = []
+    for index, item in enumerate(whole_items):
+        if index == fact.source_item_index or not isinstance(item, dict):
+            continue
+        item_text = item.get("text")
+        item_bounds = _bbox_bounds(item.get("bbox"))
+        if (
+            not isinstance(item_text, str)
+            or item_bounds is None
+            or item_text.strip().casefold() != label.casefold()
+        ):
+            continue
+
+        item_left, item_top, item_right, item_bottom = item_bounds
+        gap = left - item_right
+        if gap < -2.0:
+            continue
+        item_height = item_bottom - item_top
+        maximum_gap = max(
+            24.0,
+            min(item_height, value_height) * 1.5,
+        )
+        if gap > maximum_gap:
+            continue
+
+        overlap = min(bottom, item_bottom) - max(top, item_top)
+        if overlap <= 0.0:
+            continue
+        overlap_fraction = overlap / max(
+            1.0,
+            min(value_height, item_height),
+        )
+        if overlap_fraction < 0.60:
+            continue
+        candidates.append(item_bounds)
+
+    if len(candidates) != 1:
+        return raw_bbox
+
+    item_left, item_top, item_right, item_bottom = candidates[0]
+    union_left = min(left, item_left)
+    union_top = min(top, item_top)
+    union_right = max(right, item_right)
+    union_bottom = max(bottom, item_bottom)
+    return [
+        [union_left, union_top],
+        [union_right, union_top],
+        [union_right, union_bottom],
+        [union_left, union_bottom],
+    ]
+
+
+def _labeled_dimension_topology(
+    *,
+    report: dict[str, Any],
+    fact: HybridLabeledDimensionFact,
+    expected_direction: Literal["horizontal", "vertical"],
+) -> tuple[
+    Literal["horizontal", "vertical"],
+    list[tuple[float, float]],
+] | None:
+    """Prefer short-witness topology, then a unique labeled dimension axis."""
+
+    source_raster = report.get("source_raster")
+    if not isinstance(source_raster, str) or not source_raster:
+        return None
+
+    raw_bbox = _coverage_bbox_for_labeled_fact(report, fact)
+    if raw_bbox is None:
+        return None
+
+    topology = infer_short_dimension_visual_topology(
+        source_raster,
+        raw_bbox,
+    )
+    if topology is not None and topology[0] == expected_direction:
+        return topology
+
+    axis_span = infer_labeled_dimension_axis_span(
+        source_raster,
+        raw_bbox,
+        expected_direction=expected_direction,
+    )
+    if axis_span is None:
+        return None
+    return expected_direction, [axis_span]
+
+
 def _visual_direction_for_axis(
     view_kind: ViewKind,
     axis: Axis,
@@ -1027,17 +1159,12 @@ def _labeled_overall_extent_witness_anchors(
         ):
             continue
 
-        bbox = _coverage_bbox_for_source_index(
-            report,
-            extent_fact.source_item_index,
+        topology = _labeled_dimension_topology(
+            report=report,
+            fact=extent_fact,
+            expected_direction=expected_direction,
         )
-        if bbox is None:
-            continue
-        topology = infer_short_dimension_visual_topology(
-            str(report.get("source_raster") or ""),
-            bbox,
-        )
-        if topology is None or topology[0] != expected_direction:
+        if topology is None:
             continue
 
         unique_pairs: set[tuple[float, float]] = set()
@@ -1103,13 +1230,16 @@ def _reconcile_labeled_dimension_relations(
             if region_view is not None
             else None
         )
-        bbox = _coverage_bbox_for_source_index(report, fact.source_item_index)
-        if expected_direction is None or bbox is None:
+        if expected_direction is None:
             output.append(copied)
             continue
 
-        topology = infer_short_dimension_visual_topology(source_raster, bbox)
-        if topology is None or topology[0] != expected_direction:
+        topology = _labeled_dimension_topology(
+            report=report,
+            fact=fact,
+            expected_direction=expected_direction,
+        )
+        if topology is None:
             output.append(copied)
             continue
 

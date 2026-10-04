@@ -164,6 +164,163 @@ def _best_parallel_pair_score(
     return candidates[0][0] if candidates else 0.0
 
 
+def infer_labeled_dimension_axis_span(
+    image_path: str,
+    raw_bbox: object,
+    *,
+    expected_direction: Direction,
+) -> tuple[float, float] | None:
+    """Recover a labeled dimension-line span for topology/identity only.
+
+    Unlike the short-dimension witness helper, this follows the dimension axis
+    itself, so long overall dimensions can remain usable without converting any
+    raster distance into an engineering value. The selected line must be unique
+    near one edge of the OCR label box and must span the label center.
+    """
+
+    rect = _bbox_rect(raw_bbox)
+    if rect is None or not isinstance(image_path, str) or not image_path:
+        return None
+
+    try:
+        cv2: Any = importlib.import_module("cv2")
+    except ImportError:
+        return None
+
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return None
+
+    x0, y0, x1, y1 = rect
+    width = x1 - x0
+    height = y1 - y0
+    x_margin = max(160.0, width * 1.8)
+    y_margin = max(220.0, height * 8.0)
+
+    image_height, image_width = gray.shape[:2]
+    roi_x0 = max(0, int(math.floor(x0 - x_margin)))
+    roi_x1 = min(image_width, int(math.ceil(x1 + x_margin)))
+    roi_y0 = max(0, int(math.floor(y0 - y_margin)))
+    roi_y1 = min(image_height, int(math.ceil(y1 + y_margin)))
+    if roi_x1 <= roi_x0 or roi_y1 <= roi_y0:
+        return None
+
+    roi = gray[roi_y0:roi_y1, roi_x0:roi_x1].copy()
+    local_x0 = x0 - roi_x0
+    local_x1 = x1 - roi_x0
+    local_y0 = y0 - roi_y0
+    local_y1 = y1 - roi_y0
+
+    mask_margin = 8
+    text_x0 = max(0, int(math.floor(local_x0 - mask_margin)))
+    text_x1 = min(roi.shape[1], int(math.ceil(local_x1 + mask_margin)))
+    text_y0 = max(0, int(math.floor(local_y0 - mask_margin)))
+    text_y1 = min(roi.shape[0], int(math.ceil(local_y1 + mask_margin)))
+    roi[text_y0:text_y1, text_x0:text_x1] = 255
+
+    edges = cv2.Canny(roi, 50, 150)
+    raw_lines = cv2.HoughLinesP(
+        edges,
+        1,
+        math.pi / 180.0,
+        threshold=16,
+        minLineLength=16,
+        maxLineGap=8,
+    )
+    if raw_lines is None:
+        return None
+
+    horizontal_segments: list[tuple[float, float, float]] = []
+    vertical_segments: list[tuple[float, float, float]] = []
+    for x_start, y_start, x_end, y_end in raw_lines.reshape(-1, 4).tolist():
+        dx = float(x_end - x_start)
+        dy = float(y_end - y_start)
+        angle = abs(math.degrees(math.atan2(dy, dx))) % 180.0
+        if angle > 90.0:
+            angle = 180.0 - angle
+        if angle <= 7.0:
+            horizontal_segments.append(
+                (
+                    (float(y_start) + float(y_end)) / 2.0,
+                    float(min(x_start, x_end)),
+                    float(max(x_start, x_end)),
+                )
+            )
+        elif angle >= 83.0:
+            vertical_segments.append(
+                (
+                    (float(x_start) + float(x_end)) / 2.0,
+                    float(min(y_start, y_end)),
+                    float(max(y_start, y_end)),
+                )
+            )
+
+    if expected_direction == "vertical":
+        lines = _cluster_axis_segments(vertical_segments)
+        span_center = ((y0 + y1) / 2.0) - roi_y0
+        box_edge_low = local_x0
+        box_edge_high = local_x1
+        box_axis_span = height
+        perpendicular_span = width
+        global_span_offset = float(roi_y0)
+    else:
+        lines = _cluster_axis_segments(horizontal_segments)
+        span_center = ((x0 + x1) / 2.0) - roi_x0
+        box_edge_low = local_y0
+        box_edge_high = local_y1
+        box_axis_span = width
+        perpendicular_span = height
+        global_span_offset = float(roi_x0)
+
+    minimum_span = max(30.0, box_axis_span * 1.5)
+    maximum_edge_distance = max(80.0, perpendicular_span * 0.75)
+    candidates: list[tuple[float, float, float, float, float]] = []
+
+    for axis_position, low, high in lines:
+        span_length = high - low
+        if span_length < minimum_span:
+            continue
+        if not low - 8.0 <= span_center <= high + 8.0:
+            continue
+
+        if axis_position < box_edge_low:
+            edge_distance = box_edge_low - axis_position
+        elif axis_position > box_edge_high:
+            edge_distance = axis_position - box_edge_high
+        else:
+            edge_distance = min(
+                axis_position - box_edge_low,
+                box_edge_high - axis_position,
+            )
+        if edge_distance > maximum_edge_distance:
+            continue
+
+        candidates.append(
+            (
+                edge_distance,
+                -span_length,
+                axis_position,
+                low,
+                high,
+            )
+        )
+
+    candidates.sort()
+    if not candidates:
+        return None
+
+    if len(candidates) > 1:
+        ambiguity_margin = max(
+            4.0,
+            min(12.0, perpendicular_span * 0.08),
+        )
+        if candidates[1][0] - candidates[0][0] < ambiguity_margin:
+            return None
+
+    _distance, _negative_span, _axis_position, low, high = candidates[0]
+    return low + global_span_offset, high + global_span_offset
+
+
 def infer_short_dimension_visual_topology(
     image_path: str,
     raw_bbox: object,

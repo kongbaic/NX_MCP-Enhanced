@@ -65,8 +65,8 @@ def test_labeled_dimension_axis_span_keeps_axis_endpoint_when_terminal_is_ambigu
 ):
     image = np.full((420, 420), 255, dtype=np.uint8)
     cv2.line(image, (150, 100), (150, 300), 0, 2)
-    cv2.line(image, (90, 88), (155, 88), 0, 2)
-    cv2.line(image, (90, 90), (155, 90), 0, 2)
+    cv2.line(image, (90, 82), (155, 82), 0, 2)
+    cv2.line(image, (90, 118), (155, 118), 0, 2)
     path = tmp_path / "dimension-ambiguous-terminal.png"
     assert cv2.imwrite(str(path), image)
 
@@ -77,5 +77,5 @@ def test_labeled_dimension_axis_span_keeps_axis_endpoint_when_terminal_is_ambigu
     )
 
     assert span is not None
-    assert span[0] >= 97.0
+    assert 97.0 <= span[0] <= 103.0
 

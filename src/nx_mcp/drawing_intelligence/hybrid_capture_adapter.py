@@ -706,7 +706,7 @@ def _coverage_unresolved(
             )
         )
 
-    reference_region_ids = _reference_only_region_ids(report, view_lookup)
+    reference_only_region_ids = _reference_only_region_ids(report, view_lookup)
     for item in coverage.get("local_only_linear_observations", []):
         if not isinstance(item, dict):
             continue
@@ -726,7 +726,7 @@ def _coverage_unresolved(
             == "candidate_line_is_extension_witness_of_accepted_dimension"
         )
         candidate_region_id = str(candidate.get("region_id") or "")
-        reference_only_region = candidate_region_id in reference_region_ids
+        reference_only_region = candidate_region_id in reference_only_region_ids
         required = (
             candidate.get("accepted_token") is None
             and candidate_id not in conflicting_candidate_ids

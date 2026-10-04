@@ -186,6 +186,12 @@ def test_extract_raw_evidence_from_synthetic_engineering_drawing(tmp_path):
     assert raw["summary"]["circle_group_count"] >= 1
     assert raw["summary"]["linear_pattern_candidate_count"] >= 1
     assert raw["summary"]["dimension_geometry_candidate_count"] >= 1
+    assert raw["summary"]["orthogonal_line_candidate_count"] >= 1
+    assert raw["orthogonal_line_candidates"]
+    assert all(
+        item["candidate_only"] is True
+        for item in raw["orthogonal_line_candidates"]
+    )
     assert raw["probe_parameters"]["fragment_length_limits_px"] == [7, 61]
     assert all(
         item["status"] == "candidate_only_no_semantics"

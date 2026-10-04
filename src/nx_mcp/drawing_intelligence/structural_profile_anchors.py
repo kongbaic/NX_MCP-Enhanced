@@ -24,6 +24,145 @@ def _collect_source_lines(
 ) -> list[dict[str, Any]]:
     lines: dict[tuple[str, float, int, int], dict[str, Any]] = {}
 
+    def add_source(
+        source: dict[str, Any],
+        *,
+        independent_geometry: bool = False,
+        crosses_dimension_axis: bool | None = None,
+    ) -> None:
+        orientation = source.get("orientation")
+        axis = source.get("axis_px")
+        span = source.get("span_px")
+        if orientation not in {"horizontal", "vertical"}:
+            return
+        if not isinstance(axis, (int, float)) or isinstance(axis, bool):
+            return
+        if not (
+            isinstance(span, list)
+            and len(span) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+        ):
+            return
+        start = int(round(float(span[0])))
+        end = int(round(float(span[1])))
+        if end <= start:
+            return
+        key = (
+            orientation,
+            round(float(axis), 3),
+            start,
+            end,
+        )
+        record = lines.setdefault(
+            key,
+            {
+                "orientation": orientation,
+                "axis_px": float(axis),
+                "span_px": [start, end],
+                "span_length_px": end - start,
+                "dimension_crossing_source_count": 0,
+                "non_dimension_crossing_source_count": 0,
+                "independent_geometry_source_count": 0,
+            },
+        )
+        if independent_geometry:
+            record["independent_geometry_source_count"] += 1
+        if crosses_dimension_axis is True:
+            record["dimension_crossing_source_count"] += 1
+        elif crosses_dimension_axis is False:
+            record["non_dimension_crossing_source_count"] += 1
+
+        for field in ("axis_ink_fraction", "axis_ink_run_fraction"):
+            raw_value = source.get(field)
+            if (
+                isinstance(raw_value, (int, float))
+                and not isinstance(raw_value, bool)
+            ):
+                record[field] = max(
+                    float(record.get(field, 0.0)),
+                    float(raw_value),
+                )
+        boundary = source.get("boundary_evidence")
+        if (
+            isinstance(boundary, dict)
+            and boundary.get("one_sided_boundary_candidate") is True
+            and boundary.get("material_side_index") in {0, 1}
+            and boundary.get("background_side_index") in {0, 1}
+            and boundary.get("material_side_index")
+            != boundary.get("background_side_index")
+        ):
+            record.setdefault("_material_side_votes", []).append(
+                int(boundary["material_side_index"])
+            )
+            record.setdefault("_background_side_votes", []).append(
+                int(boundary["background_side_index"])
+            )
+
+    regions = _region_lookup(raw_evidence)
+    region = regions.get(region_id)
+    if region is None:
+        raise ValueError(f"unknown region_id: {region_id!r}")
+    bbox = region.get("bbox_px")
+    if not (
+        isinstance(bbox, list)
+        and len(bbox) == 4
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in bbox
+        )
+    ):
+        raise ValueError("region bbox_px must contain four numeric values")
+    x, y, width, height = (float(value) for value in bbox)
+    image = raw_evidence.get("image", {})
+    image_width = image.get("width") if isinstance(image, dict) else None
+    margin = max(
+        2.0,
+        float(image_width) * 0.003
+        if isinstance(image_width, (int, float)) and not isinstance(image_width, bool)
+        else 2.0,
+    )
+
+    raw_lines = raw_evidence.get("orthogonal_line_candidates", [])
+    if raw_lines is not None and not isinstance(raw_lines, list):
+        raise ValueError("orthogonal_line_candidates must be a list")
+    for source in raw_lines or []:
+        if not isinstance(source, dict):
+            continue
+        orientation = source.get("orientation")
+        axis = source.get("axis_px")
+        span = source.get("span_px")
+        if not (
+            orientation in {"horizontal", "vertical"}
+            and isinstance(axis, (int, float))
+            and not isinstance(axis, bool)
+            and isinstance(span, list)
+            and len(span) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+        ):
+            continue
+        span_start, span_end = sorted(float(value) for value in span)
+        axis_value = float(axis)
+        if orientation == "vertical":
+            intersects = (
+                x - margin <= axis_value <= x + width + margin
+                and span_end >= y - margin
+                and span_start <= y + height + margin
+            )
+        else:
+            intersects = (
+                y - margin <= axis_value <= y + height + margin
+                and span_end >= x - margin
+                and span_start <= x + width + margin
+            )
+        if intersects:
+            add_source(source, independent_geometry=True)
+
     candidates = raw_evidence.get("dimension_geometry_candidates", [])
     if not isinstance(candidates, list):
         raise ValueError("dimension_geometry_candidates must be a list")
@@ -45,69 +184,13 @@ def _collect_source_lines(
             for source in source_lines:
                 if not isinstance(source, dict):
                     continue
-                orientation = source.get("orientation")
-                axis = source.get("axis_px")
-                span = source.get("span_px")
-                if orientation not in {"horizontal", "vertical"}:
-                    continue
-                if not isinstance(axis, (int, float)):
-                    continue
-                if not (
-                    isinstance(span, list)
-                    and len(span) == 2
-                    and all(isinstance(value, (int, float)) for value in span)
-                ):
-                    continue
-                start = int(round(float(span[0])))
-                end = int(round(float(span[1])))
-                if end <= start:
-                    continue
-                key = (
-                    orientation,
-                    round(float(axis), 3),
-                    start,
-                    end,
+                crosses = source.get("crosses_dimension_axis")
+                add_source(
+                    source,
+                    crosses_dimension_axis=(
+                        crosses if isinstance(crosses, bool) else None
+                    ),
                 )
-                record = lines.setdefault(
-                    key,
-                    {
-                        "orientation": orientation,
-                        "axis_px": float(axis),
-                        "span_px": [start, end],
-                        "span_length_px": end - start,
-                        "dimension_crossing_source_count": 0,
-                        "non_dimension_crossing_source_count": 0,
-                    },
-                )
-                if source.get("crosses_dimension_axis") is True:
-                    record["dimension_crossing_source_count"] += 1
-                elif source.get("crosses_dimension_axis") is False:
-                    record["non_dimension_crossing_source_count"] += 1
-                for field in ("axis_ink_fraction", "axis_ink_run_fraction"):
-                    raw_value = source.get(field)
-                    if (
-                        isinstance(raw_value, (int, float))
-                        and not isinstance(raw_value, bool)
-                    ):
-                        record[field] = max(
-                            float(record.get(field, 0.0)),
-                            float(raw_value),
-                        )
-                boundary = source.get("boundary_evidence")
-                if (
-                    isinstance(boundary, dict)
-                    and boundary.get("one_sided_boundary_candidate") is True
-                    and boundary.get("material_side_index") in {0, 1}
-                    and boundary.get("background_side_index") in {0, 1}
-                    and boundary.get("material_side_index")
-                    != boundary.get("background_side_index")
-                ):
-                    record.setdefault("_material_side_votes", []).append(
-                        int(boundary["material_side_index"])
-                    )
-                    record.setdefault("_background_side_votes", []).append(
-                        int(boundary["background_side_index"])
-                    )
 
     normalized: list[dict[str, Any]] = []
     for record in lines.values():
@@ -213,6 +296,10 @@ def _merge_near_duplicate_lines(
             ),
             "non_dimension_crossing_source_count": sum(
                 int(item.get("non_dimension_crossing_source_count", 0))
+                for item in group
+            ),
+            "independent_geometry_source_count": sum(
+                int(item.get("independent_geometry_source_count", 0))
                 for item in group
             ),
         }
@@ -551,6 +638,7 @@ def derive_structural_profile_anchors(
         )
         independent_profile_source = (
             int(line.get("non_dimension_crossing_source_count", 0)) > 0
+            or int(line.get("independent_geometry_source_count", 0)) > 0
         )
 
         ink_run = line.get("axis_ink_run_fraction")
@@ -609,6 +697,9 @@ def derive_structural_profile_anchors(
             ),
             "non_dimension_crossing_source_count": int(
                 line.get("non_dimension_crossing_source_count", 0)
+            ),
+            "independent_geometry_source_count": int(
+                line.get("independent_geometry_source_count", 0)
             ),
             "candidate_only": True,
             "ownership_claimed": False,

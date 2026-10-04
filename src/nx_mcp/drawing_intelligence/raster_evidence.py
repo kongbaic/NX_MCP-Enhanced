@@ -755,6 +755,76 @@ def _oblique_annotation_lines(
     )
     return candidates[:128]
 
+def _orthogonal_line_candidates(
+    gray: Any,
+    axis_lines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Preserve geometry-only H/V line candidates independently of dimensions."""
+
+    output: list[dict[str, Any]] = []
+    for line in axis_lines:
+        orientation = str(line.get("orientation") or "")
+        x1 = line.get("x1")
+        y1 = line.get("y1")
+        x2 = line.get("x2")
+        y2 = line.get("y2")
+        if (
+            orientation not in {"horizontal", "vertical"}
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in (x1, y1, x2, y2)
+            )
+        ):
+            continue
+
+        first = (int(round(float(x1))), int(round(float(y1))))
+        second = (int(round(float(x2))), int(round(float(y2))))
+        if orientation == "horizontal":
+            axis = (float(y1) + float(y2)) / 2.0
+            start = min(int(round(float(x1))), int(round(float(x2))))
+            end = max(int(round(float(x1))), int(round(float(x2))))
+        else:
+            axis = (float(x1) + float(x2)) / 2.0
+            start = min(int(round(float(y1))), int(round(float(y2))))
+            end = max(int(round(float(y1))), int(round(float(y2))))
+        if end <= start:
+            continue
+
+        ink_fraction, ink_run_fraction = _axis_ink_continuity(
+            gray,
+            orientation,
+            axis,
+            start,
+            end,
+        )
+        output.append(
+            {
+                "orientation": orientation,
+                "axis_px": round(float(axis), 3),
+                "span_px": [start, end],
+                "span_length_px": end - start,
+                "axis_ink_fraction": ink_fraction,
+                "axis_ink_run_fraction": ink_run_fraction,
+                "boundary_evidence": _one_sided_boundary_evidence(
+                    gray,
+                    first,
+                    second,
+                ),
+                "candidate_only": True,
+            }
+        )
+
+    output.sort(
+        key=lambda item: (
+            str(item["orientation"]),
+            float(item["axis_px"]),
+            int(item["span_px"][0]),
+            int(item["span_px"][1]),
+        )
+    )
+    return output
+
+
 def _view_regions(
     shape: tuple[int, int],
     axis_lines: list[dict[str, Any]],
@@ -1748,6 +1818,13 @@ def extract_raw_evidence(image_path: str | Path) -> dict[str, Any]:
 
     raw = _adapt_probe(probe)
     raw["schema"] = "raw-evidence-v1"
+    raw["orthogonal_line_candidates"] = _orthogonal_line_candidates(
+        gray,
+        lines,
+    )
+    raw["summary"]["orthogonal_line_candidate_count"] = len(
+        raw["orthogonal_line_candidates"]
+    )
     raw["dimension_geometry_candidates"] = _dimension_geometry(
         gray,
         raw,

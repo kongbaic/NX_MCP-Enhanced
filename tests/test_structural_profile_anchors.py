@@ -65,6 +65,61 @@ def _raw() -> dict[str, object]:
     }
 
 
+def test_structural_profile_anchors_use_dimension_independent_region_lines():
+    raw = _raw()
+    raw["dimension_geometry_candidates"] = []
+    raw["orthogonal_line_candidates"] = [
+        {
+            **_source("vertical", 20.0, 20, 180),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+        {
+            **_source("vertical", 80.0, 100, 180),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+        {
+            **_source("vertical", 160.0, 20, 180),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+        {
+            **_source("horizontal", 20.0, 20, 160),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+        {
+            **_source("horizontal", 100.0, 80, 160),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+        {
+            **_source("horizontal", 180.0, 20, 160),
+            "axis_ink_fraction": 1.0,
+            "axis_ink_run_fraction": 1.0,
+            "candidate_only": True,
+        },
+    ]
+
+    anchors = derive_structural_profile_anchors(raw, "R1", "horizontal")
+    by_position = {
+        round(float(anchor["position_px"]), 3): anchor
+        for anchor in anchors
+    }
+
+    assert {20.0, 80.0, 160.0}.issubset(by_position)
+    assert all(
+        by_position[position]["independent_geometry_source_count"] >= 1
+        for position in (20.0, 80.0, 160.0)
+    )
+
+
 def test_structural_profile_anchors_stay_geometry_only():
     anchors = derive_structural_profile_anchors(
         _raw(),

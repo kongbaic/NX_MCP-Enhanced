@@ -1993,7 +1993,6 @@ def _rotational_oblique_profile_hints(
     if not raw_candidates:
         return []
 
-    excluded_profile_refs = excluded_profile_refs or set()
     hints: list[dict[str, Any]] = []
     for region_id, region_view in sorted(view_lookup.items()):
         plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)
@@ -2450,6 +2449,7 @@ def _rotational_profile_topology_hints(
     spans into engineering coordinates, radii, diameters, or axial distances.
     """
 
+    excluded_profile_refs = excluded_profile_refs or set()
     hints: list[dict[str, Any]] = []
     for region_id, region_view in sorted(view_lookup.items()):
         plane = _PROFILE_PLANE_BY_VIEW_KIND.get(region_view.view_kind)

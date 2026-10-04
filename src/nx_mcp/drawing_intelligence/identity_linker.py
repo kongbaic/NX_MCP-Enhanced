@@ -735,6 +735,395 @@ def _physical_rotational_oblique_profile_items(
     return output
 
 
+def _bridge_symmetric_oblique_counterpart_supports(
+    capture: ReaderCapture,
+    items: list[dict[str, Any]],
+    entity_to_feature: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Recover one missing oblique support only from proven bilateral identity.
+
+    A crop-local straight exterior fragment may stop short of one structural
+    profile segment even though a structured centered span has already proven
+    the two opposite physical profile boundaries. Pixel coordinates are used
+    only to prove mirror identity around that established span midpoint; they
+    never become engineering coordinates.
+    """
+
+    output = copy.deepcopy(items)
+    if not output:
+        return output
+
+    raw_by_source: dict[str, dict[str, Any] | None] = {}
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _ROTATIONAL_OBLIQUE_PROFILE_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        raw_items = observation.get("items")
+        if not isinstance(raw_items, list):
+            continue
+        for raw_item in raw_items:
+            if (
+                not isinstance(raw_item, dict)
+                or raw_item.get("one_sided_boundary_candidate") is not True
+                or raw_item.get("exterior_boundary_candidate") is not True
+                or raw_item.get("material_side_index") not in {0, 1}
+                or raw_item.get("background_side_index") not in {0, 1}
+                or raw_item.get("material_side_index")
+                == raw_item.get("background_side_index")
+            ):
+                continue
+            line_support = raw_item.get("line_edge_support_fraction")
+            endpoints = raw_item.get("endpoints_px")
+            source_ids = [
+                value
+                for value in raw_item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            line_sources = [
+                value
+                for value in source_ids
+                if value.startswith("hybrid:oblique-line:")
+            ]
+            if (
+                not isinstance(line_support, (int, float))
+                or isinstance(line_support, bool)
+                or float(line_support) < 0.85
+                or not isinstance(endpoints, list)
+                or len(endpoints) != 2
+                or not all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in point
+                    )
+                    for point in endpoints
+                )
+                or len(line_sources) != 1
+            ):
+                continue
+
+            source = line_sources[0]
+            normalized = {
+                "view_kind": str(raw_item.get("view_kind") or ""),
+                "plane": str(raw_item.get("plane") or "").upper(),
+                "rotation_axis": str(raw_item.get("rotation_axis") or "").upper(),
+                "endpoints_px": [
+                    [float(point[0]), float(point[1])]
+                    for point in endpoints
+                ],
+                "material_side_index": int(raw_item["material_side_index"]),
+                "background_side_index": int(raw_item["background_side_index"]),
+            }
+            previous = raw_by_source.get(source)
+            if previous is None and source not in raw_by_source:
+                raw_by_source[source] = normalized
+            elif previous != normalized:
+                raw_by_source[source] = None
+
+    def raw_for_item(item: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        sources = [
+            value
+            for value in item.get("source_ids", [])
+            if isinstance(value, str)
+            and value.startswith("hybrid:oblique-line:")
+        ]
+        if len(sources) != 1:
+            return None
+        raw = raw_by_source.get(sources[0])
+        if not isinstance(raw, dict):
+            return None
+        return sources[0], raw
+
+    proposals: dict[
+        str,
+        list[tuple[str, str, list[str], str]],
+    ] = defaultdict(list)
+
+    for observation in capture.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind") != _STRUCTURED_SYMMETRIC_PROFILE_SPAN_KIND
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        records = observation.get("items")
+        if not isinstance(records, list):
+            continue
+
+        for record in records:
+            if (
+                not isinstance(record, dict)
+                or record.get("datum") != "overall_center"
+                or record.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or record.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+            axis = str(record.get("axis") or "").upper()
+            entity_ids = record.get("profile_entity_ids")
+            witness_positions = record.get("selected_witness_positions_px")
+            raw_tolerance = record.get("midpoint_tolerance_px")
+            if (
+                axis not in {"X", "Y", "Z"}
+                or not isinstance(entity_ids, list)
+                or len(entity_ids) != 2
+                or len(set(entity_ids)) != 2
+                or not all(
+                    isinstance(entity_id, str)
+                    and entity_id in entity_to_feature
+                    for entity_id in entity_ids
+                )
+                or not isinstance(witness_positions, list)
+                or len(witness_positions) != 2
+                or not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in witness_positions
+                )
+                or not isinstance(raw_tolerance, (int, float))
+                or isinstance(raw_tolerance, bool)
+                or float(raw_tolerance) <= 0.0
+            ):
+                continue
+
+            features = [
+                entity_to_feature[entity_id]
+                for entity_id in entity_ids
+            ]
+            if len(set(features)) != 2:
+                continue
+            feature_positions = {
+                feature_id: float(position)
+                for feature_id, position in zip(
+                    features,
+                    witness_positions,
+                    strict=True,
+                )
+            }
+            tolerance = float(raw_tolerance)
+            mirror_center = sum(feature_positions.values()) / 2.0
+            span_sources = [
+                value
+                for value in record.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+
+            for supported in output:
+                supported_id = str(supported.get("id") or "")
+                supported_edges = supported.get("supporting_physical_edges")
+                supported_raw = raw_for_item(supported)
+                if (
+                    not supported_id
+                    or not isinstance(supported_edges, list)
+                    or len(supported_edges) != 1
+                    or supported_raw is None
+                    or supported.get("connection_kind")
+                    != "one_sided_non_orthogonal_boundary_continuation"
+                ):
+                    continue
+                support_edge = supported_edges[0]
+                if not isinstance(support_edge, dict):
+                    continue
+                support_feature = str(
+                    support_edge.get("physical_feature_id") or ""
+                )
+                if (
+                    support_feature not in feature_positions
+                    or str(support_edge.get("constant_axis") or "").upper()
+                    != axis
+                ):
+                    continue
+
+                _supported_source, supported_geometry = supported_raw
+                if (
+                    supported_geometry["plane"] not in {"XY", "XZ", "YZ"}
+                    or axis not in supported_geometry["plane"]
+                    or supported_geometry["rotation_axis"] == axis
+                ):
+                    continue
+
+                supported_position = feature_positions[support_feature]
+                coordinate_distances = [
+                    min(
+                        abs(float(point[index]) - supported_position)
+                        for point in supported_geometry["endpoints_px"]
+                    )
+                    for index in (0, 1)
+                ]
+                radial_indices = [
+                    index
+                    for index, distance in enumerate(coordinate_distances)
+                    if distance <= tolerance
+                ]
+                if len(radial_indices) != 1:
+                    continue
+                radial_index = radial_indices[0]
+                axial_index = 1 - radial_index
+                counterpart_features = [
+                    feature_id
+                    for feature_id in features
+                    if feature_id != support_feature
+                ]
+                if len(counterpart_features) != 1:
+                    continue
+                counterpart_feature = counterpart_features[0]
+                counterpart_position = feature_positions[counterpart_feature]
+
+                for unsupported in output:
+                    unsupported_id = str(unsupported.get("id") or "")
+                    if not unsupported_id or unsupported_id == supported_id:
+                        continue
+                    unsupported_edges = unsupported.get(
+                        "supporting_physical_edges"
+                    )
+                    unsupported_raw = raw_for_item(unsupported)
+                    if (
+                        not isinstance(unsupported_edges, list)
+                        or unsupported_edges
+                        or unsupported_raw is None
+                        or unsupported.get("connection_kind")
+                        != "exterior_non_orthogonal_boundary_fragment"
+                        or unsupported.get("plane") != supported.get("plane")
+                        or unsupported.get("rotation_axis")
+                        != supported.get("rotation_axis")
+                        or unsupported.get("view_kind")
+                        != supported.get("view_kind")
+                    ):
+                        continue
+
+                    _unsupported_source, unsupported_geometry = unsupported_raw
+                    if (
+                        unsupported_geometry["plane"]
+                        != supported_geometry["plane"]
+                        or unsupported_geometry["rotation_axis"]
+                        != supported_geometry["rotation_axis"]
+                        or unsupported_geometry["view_kind"]
+                        != supported_geometry["view_kind"]
+                        or unsupported_geometry["material_side_index"]
+                        != supported_geometry["material_side_index"]
+                        or unsupported_geometry["background_side_index"]
+                        != supported_geometry["background_side_index"]
+                    ):
+                        continue
+                    if (
+                        min(
+                            abs(float(point[radial_index]) - counterpart_position)
+                            for point in unsupported_geometry["endpoints_px"]
+                        )
+                        > tolerance
+                    ):
+                        continue
+
+                    supported_points = sorted(
+                        supported_geometry["endpoints_px"],
+                        key=lambda point: (
+                            float(point[axial_index]),
+                            float(point[radial_index]),
+                        ),
+                    )
+                    unsupported_points = sorted(
+                        unsupported_geometry["endpoints_px"],
+                        key=lambda point: (
+                            float(point[axial_index]),
+                            float(point[radial_index]),
+                        ),
+                    )
+                    mirrored = all(
+                        abs(
+                            float(supported_point[axial_index])
+                            - float(unsupported_point[axial_index])
+                        )
+                        <= tolerance
+                        and abs(
+                            (
+                                float(supported_point[radial_index])
+                                + float(unsupported_point[radial_index])
+                            )
+                            / 2.0
+                            - mirror_center
+                        )
+                        <= tolerance
+                        for supported_point, unsupported_point in zip(
+                            supported_points,
+                            unsupported_points,
+                            strict=True,
+                        )
+                    )
+                    if not mirrored:
+                        continue
+
+                    proposals[unsupported_id].append(
+                        (
+                            counterpart_feature,
+                            axis,
+                            span_sources,
+                            supported_id,
+                        )
+                    )
+
+    by_id = {
+        str(item.get("id") or ""): item
+        for item in output
+        if str(item.get("id") or "")
+    }
+    for item_id, raw_proposals in proposals.items():
+        unique = {
+            (
+                feature_id,
+                axis,
+                tuple(source_ids),
+                supported_id,
+            )
+            for feature_id, axis, source_ids, supported_id in raw_proposals
+        }
+        if len(unique) != 1:
+            continue
+        feature_id, axis, source_ids_tuple, supported_id = next(iter(unique))
+        item = by_id.get(item_id)
+        if item is None:
+            continue
+        item["supporting_physical_feature_ids"] = [feature_id]
+        item["supporting_physical_edges"] = [
+            {
+                "physical_feature_id": feature_id,
+                "constant_axis": axis,
+                "boundary_target": (
+                    f"feature:{feature_id}.boundary.{axis.lower()}"
+                ),
+            }
+        ]
+        item["connection_kind"] = (
+            "one_sided_non_orthogonal_boundary_continuation"
+        )
+        item["source_ids"] = list(
+            dict.fromkeys(
+                [
+                    *[
+                        value
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *source_ids_tuple,
+                ]
+            )
+        )
+        item["support_identity_basis"] = (
+            "bilateral_oblique_mirror_plus_structured_symmetric_profile_span"
+        )
+        item["support_counterpart_fragment_id"] = supported_id
+
+    return output
+
+
 def _linked_physical_profile_arc_radius_observations(
     observations: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1565,6 +1954,11 @@ def _linked_rotational_profile_topology_observations(
 
     physical_oblique_items = _physical_rotational_oblique_profile_items(
         observations,
+        entity_to_feature,
+    )
+    physical_oblique_items = _bridge_symmetric_oblique_counterpart_supports(
+        capture,
+        physical_oblique_items,
         entity_to_feature,
     )
     if physical_oblique_items:

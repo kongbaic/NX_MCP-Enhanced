@@ -4580,6 +4580,276 @@ def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
     assert "angle_deg" not in repr(item)
 
 
+def test_symmetric_oblique_counterpart_support_recovers_only_mirrored_pair():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=80,
+            height_z=75,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:RIGHT"],
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "candidate_id": "DG_SPAN",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [100.0, 300.0],
+                        "midpoint_tolerance_px": 5.0,
+                        "source_ids": ["SRC_SYMMETRIC_SPAN"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[98.0, 20.0], [80.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:left"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[302.0, 21.0], [320.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:right"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+    items = [
+        {
+            "id": "PHYSICAL_LEFT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_feature_ids": ["F_LEFT"],
+            "supporting_physical_edges": [
+                {
+                    "physical_feature_id": "F_LEFT",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_LEFT.boundary.x",
+                }
+            ],
+            "connection_kind": (
+                "one_sided_non_orthogonal_boundary_continuation"
+            ),
+            "source_ids": ["hybrid:oblique-line:left"],
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "primitive_kind": "unresolved",
+            "primitive_kind_basis": (
+                "fragment_without_verified_full_straight_support"
+            ),
+        },
+        {
+            "id": "PHYSICAL_RIGHT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_feature_ids": [],
+            "supporting_physical_edges": [],
+            "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+            "source_ids": ["hybrid:oblique-line:right"],
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "primitive_kind": "unresolved",
+            "primitive_kind_basis": (
+                "fragment_without_verified_full_straight_support"
+            ),
+        },
+    ]
+
+    bridged = identity_linker_module._bridge_symmetric_oblique_counterpart_supports(
+        capture,
+        items,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_RIGHT": "F_RIGHT",
+        },
+    )
+
+    right = next(item for item in bridged if item["id"] == "PHYSICAL_RIGHT")
+    assert right["supporting_physical_feature_ids"] == ["F_RIGHT"]
+    assert right["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F_RIGHT",
+            "constant_axis": "X",
+            "boundary_target": "feature:F_RIGHT.boundary.x",
+        }
+    ]
+    assert right["connection_kind"] == (
+        "one_sided_non_orthogonal_boundary_continuation"
+    )
+    assert right["support_identity_basis"] == (
+        "bilateral_oblique_mirror_plus_structured_symmetric_profile_span"
+    )
+    assert right["support_counterpart_fragment_id"] == "PHYSICAL_LEFT"
+    assert right["primitive_kind"] == "unresolved"
+    assert "endpoints_px" not in repr(right)
+
+
+def test_symmetric_oblique_counterpart_support_fails_closed_without_mirror():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=80,
+            height_z=75,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "items": [
+                    {
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [100.0, 300.0],
+                        "midpoint_tolerance_px": 3.0,
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "items": [
+                    {
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[100.0, 20.0], [80.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:left"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                    {
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[300.0, 35.0], [320.0, 95.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:right"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+    items = [
+        {
+            "id": "PHYSICAL_LEFT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_edges": [
+                {
+                    "physical_feature_id": "F_LEFT",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_LEFT.boundary.x",
+                }
+            ],
+            "connection_kind": (
+                "one_sided_non_orthogonal_boundary_continuation"
+            ),
+            "source_ids": ["hybrid:oblique-line:left"],
+        },
+        {
+            "id": "PHYSICAL_RIGHT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_edges": [],
+            "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+            "source_ids": ["hybrid:oblique-line:right"],
+        },
+    ]
+
+    bridged = identity_linker_module._bridge_symmetric_oblique_counterpart_supports(
+        capture,
+        items,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_RIGHT": "F_RIGHT",
+        },
+    )
+
+    right = next(item for item in bridged if item["id"] == "PHYSICAL_RIGHT")
+    assert right["supporting_physical_edges"] == []
+    assert right["connection_kind"] == (
+        "exterior_non_orthogonal_boundary_fragment"
+    )
+    assert "support_identity_basis" not in right
+
+
 def test_physical_oblique_profile_preserves_verified_line_primitive():
     observations = [
         {

@@ -776,6 +776,202 @@ def test_labeled_overall_transition_rejects_nonmirrored_oblique_endpoint_pair(
     assert records == []
 
 
+def test_labeled_overall_transition_uses_unique_labeled_extent_witness_contact(
+    monkeypatch,
+):
+    overall_fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_OVERALL",
+        source_item_index=9,
+        source_text="H2 - 75 mm",
+        region_id="R4",
+        value=75,
+        axis="Z",
+        relation="overall_extent",
+        evidence=["hybrid:whole:9", "structural:R4:context"],
+    )
+    transition_fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_TRANSITION",
+        source_item_index=11,
+        source_text="C2 - 28 mm",
+        region_id="R4",
+        value=28,
+        axis="Z",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:11", "structural:R4:context"],
+    )
+    overall_bbox = [[600, 100], [720, 100], [720, 130], [600, 130]]
+    transition_bbox = [[600, 210], [720, 210], [720, 240], [600, 240]]
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R4", "bbox_px": [550, 80, 220, 300]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {"source_item_index": 9, "bbox": overall_bbox},
+                {"source_item_index": 11, "bbox": transition_bbox},
+            ]
+        },
+    }
+
+    def topology(_source_raster, bbox):
+        if bbox == overall_bbox:
+            return "vertical", [(100.0, 300.0)]
+        if bbox == transition_bbox:
+            return "vertical", [(250.0, 300.0)]
+        return None
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        topology,
+    )
+
+    view_lookup = {
+        "R4": hybrid_adapter.HybridRegionView(
+            region_id="R4",
+            view_kind="front",
+            evidence=["structural:R4:context"],
+        )
+    }
+    reconciled = hybrid_adapter._reconcile_labeled_dimension_relations(
+        report=report,
+        facts=[overall_fact, transition_fact],
+        view_lookup=view_lookup,
+        boundaries=[],
+        overall_dimensions={"height_z": 75.0},
+    )
+
+    resolved_transition = next(
+        item for item in reconciled if item.target_id == "LD_TRANSITION"
+    )
+    assert (
+        "hybrid:labeled-overall-extent-witness-contact:R4:Z:LD_OVERALL"
+        in resolved_transition.evidence
+    )
+    assert (
+        "hybrid:labeled-overall-boundary-contact:R4:Z:overall_min"
+        in resolved_transition.evidence
+    )
+
+    records = hybrid_adapter._labeled_profile_transition_boundary_records(
+        report=report,
+        facts=reconciled,
+        view_lookup=view_lookup,
+        boundaries=[],
+        profile_inventory=[
+            {
+                "kind": "profile_edge_candidate",
+                "region_id": "R4",
+                "source_orientation": "horizontal",
+                "position_px": 250.5,
+                "axis_tolerance_px": 2.0,
+                "ref": "R4.structural.horizontal.001",
+            }
+        ],
+        profile_entity_by_ref={
+            "R4.structural.horizontal.001": "R4.PROFILE.001",
+        },
+        overall_dimensions={"height_z": 75.0},
+    )
+
+    assert len(records) == 1
+    assert records[0]["overall_role"] == "overall_min"
+    assert records[0]["profile_refs"] == [
+        "R4.structural.horizontal.001"
+    ]
+    assert records[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert records[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_labeled_overall_transition_rejects_ambiguous_labeled_extent_witnesses(
+    monkeypatch,
+):
+    overall_a = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_OVERALL_A",
+        source_item_index=9,
+        source_text="H2 - 75 mm",
+        region_id="R4",
+        value=75,
+        axis="Z",
+        relation="overall_extent",
+        evidence=["hybrid:whole:9", "structural:R4:context"],
+    )
+    overall_b = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_OVERALL_B",
+        source_item_index=10,
+        source_text="H - 75 mm",
+        region_id="R4",
+        value=75,
+        axis="Z",
+        relation="overall_extent",
+        evidence=["hybrid:whole:10", "structural:R4:context"],
+    )
+    transition_fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_TRANSITION",
+        source_item_index=11,
+        source_text="C2 - 28 mm",
+        region_id="R4",
+        value=28,
+        axis="Z",
+        relation="overall_min_to_profile_transition",
+        profile_transition_geometry="orthogonal",
+        symmetry_scope="single",
+        evidence=["hybrid:whole:11", "structural:R4:context"],
+    )
+    overall_a_bbox = [[600, 100], [720, 100], [720, 130], [600, 130]]
+    overall_b_bbox = [[600, 140], [720, 140], [720, 170], [600, 170]]
+    transition_bbox = [[600, 210], [720, 210], [720, 240], [600, 240]]
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [{"region_id": "R4", "bbox_px": [550, 80, 220, 300]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {"source_item_index": 9, "bbox": overall_a_bbox},
+                {"source_item_index": 10, "bbox": overall_b_bbox},
+                {"source_item_index": 11, "bbox": transition_bbox},
+            ]
+        },
+    }
+
+    def topology(_source_raster, bbox):
+        if bbox == overall_a_bbox:
+            return "vertical", [(100.0, 300.0)]
+        if bbox == overall_b_bbox:
+            return "vertical", [(110.0, 300.0)]
+        if bbox == transition_bbox:
+            return "vertical", [(250.0, 300.0)]
+        return None
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        topology,
+    )
+
+    reconciled = hybrid_adapter._reconcile_labeled_dimension_relations(
+        report=report,
+        facts=[overall_a, overall_b, transition_fact],
+        view_lookup={
+            "R4": hybrid_adapter.HybridRegionView(
+                region_id="R4",
+                view_kind="front",
+                evidence=["structural:R4:context"],
+            )
+        },
+        boundaries=[],
+        overall_dimensions={"height_z": 75.0},
+    )
+
+    unresolved_transition = next(
+        item for item in reconciled if item.target_id == "LD_TRANSITION"
+    )
+    assert not any(
+        item.startswith("hybrid:labeled-overall-boundary-contact:")
+        for item in unresolved_transition.evidence
+    )
+
+
 def test_labeled_dimension_relation_reconciles_unique_overall_boundary_contact(
     monkeypatch,
 ):

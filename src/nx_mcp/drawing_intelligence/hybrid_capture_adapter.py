@@ -973,12 +973,105 @@ def _visual_direction_for_axis(
     return mapping.get((view_kind, axis))
 
 
+def _labeled_overall_extent_witness_anchors(
+    *,
+    report: dict[str, Any],
+    facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+    region_id: str,
+    axis: Axis,
+    overall_dimensions: dict[str, float] | None = None,
+) -> tuple[list[tuple[str, float]], list[str]]:
+    """Recover overall endpoint identity from a unique labeled overall extent.
+
+    The labeled overall extent supplies only endpoint identity on the source
+    raster.  Engineering magnitude still comes from the validated labeled fact
+    and the independently assembled overall dimensions; no pixel distance is
+    converted into an engineering coordinate.
+    """
+
+    region_view = view_lookup.get(region_id)
+    expected_direction = (
+        _visual_direction_for_axis(region_view.view_kind, axis)
+        if region_view is not None
+        else None
+    )
+    if region_view is None or expected_direction is None:
+        return [], []
+
+    overall_key = {"X": "length_x", "Y": "width_y", "Z": "height_z"}[axis]
+    expected_overall = (
+        (overall_dimensions or {}).get(overall_key)
+        if overall_dimensions is not None
+        else None
+    )
+
+    candidates: list[
+        tuple[HybridLabeledDimensionFact, tuple[float, float]]
+    ] = []
+    for extent_fact in facts:
+        if (
+            extent_fact.relation != "overall_extent"
+            or extent_fact.region_id != region_id
+            or extent_fact.axis != axis
+        ):
+            continue
+        if (
+            isinstance(expected_overall, (int, float))
+            and not isinstance(expected_overall, bool)
+            and not math.isclose(
+                float(extent_fact.value),
+                float(expected_overall),
+                abs_tol=max(abs(float(expected_overall)) * 1e-6, 1e-9),
+            )
+        ):
+            continue
+
+        bbox = _coverage_bbox_for_source_index(
+            report,
+            extent_fact.source_item_index,
+        )
+        if bbox is None:
+            continue
+        topology = infer_short_dimension_visual_topology(
+            str(report.get("source_raster") or ""),
+            bbox,
+        )
+        if topology is None or topology[0] != expected_direction:
+            continue
+
+        unique_pairs = {
+            tuple(sorted((float(pair[0]), float(pair[1]))))
+            for pair in topology[1]
+            if isinstance(pair, (list, tuple)) and len(pair) == 2
+        }
+        if len(unique_pairs) != 1:
+            continue
+        candidates.append((extent_fact, next(iter(unique_pairs))))
+
+    if len(candidates) != 1:
+        return [], []
+
+    extent_fact, (low, high) = candidates[0]
+    anchors = (
+        [("overall_min", low), ("overall_max", high)]
+        if expected_direction == "horizontal"
+        else [("overall_max", low), ("overall_min", high)]
+    )
+    proof_marker = (
+        "hybrid:labeled-overall-extent-witness-contact:"
+        f"{region_id}:{axis}:{extent_fact.target_id}"
+    )
+    return anchors, [proof_marker]
+
+
 def _reconcile_labeled_dimension_relations(
     *,
     report: dict[str, Any],
     facts: list[HybridLabeledDimensionFact],
     view_lookup: dict[str, HybridRegionView],
     boundaries: list[dict[str, Any]],
+    overall_dimensions: dict[str, float] | None = None,
 ) -> list[HybridLabeledDimensionFact]:
     """Tighten local relation semantics only from proven overall contact.
 
@@ -1014,6 +1107,7 @@ def _reconcile_labeled_dimension_relations(
             continue
 
         anchors: list[tuple[str, float]] = []
+        contact_proof_evidence: list[str] = []
         for boundary in boundaries:
             if (
                 not isinstance(boundary, dict)
@@ -1034,6 +1128,17 @@ def _reconcile_labeled_dimension_relations(
                 ):
                     anchors.append((role, float(position)))
 
+        if not anchors:
+            anchors, contact_proof_evidence = (
+                _labeled_overall_extent_witness_anchors(
+                    report=report,
+                    facts=facts,
+                    view_lookup=view_lookup,
+                    region_id=fact.region_id,
+                    axis=fact.axis,
+                    overall_dimensions=overall_dimensions,
+                )
+            )
         if not anchors:
             output.append(copied)
             continue
@@ -1081,6 +1186,7 @@ def _reconcile_labeled_dimension_relations(
                         dict.fromkeys(
                             [
                                 *fact.evidence,
+                                *contact_proof_evidence,
                                 contact_marker,
                             ]
                         )
@@ -1093,6 +1199,7 @@ def _reconcile_labeled_dimension_relations(
         }:
             evidence = [
                 *fact.evidence,
+                *contact_proof_evidence,
                 contact_marker,
             ]
             if fact.relation != reconciled_relation:
@@ -1123,6 +1230,7 @@ def _labeled_profile_transition_boundary_records(
     profile_inventory: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
     rotational_oblique_profile_hints: list[dict[str, Any]] | None = None,
+    overall_dimensions: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Bind a labeled overall-offset transition to structural profile levels.
 
@@ -1192,6 +1300,22 @@ def _labeled_profile_transition_boundary_records(
                     and not isinstance(anchor.get("position_px"), bool)
                 ):
                     overall_positions.append(float(anchor["position_px"]))
+        if not overall_positions:
+            fallback_anchors, _fallback_evidence = (
+                _labeled_overall_extent_witness_anchors(
+                    report=report,
+                    facts=facts,
+                    view_lookup=view_lookup,
+                    region_id=fact.region_id,
+                    axis=fact.axis,
+                    overall_dimensions=overall_dimensions,
+                )
+            )
+            overall_positions = [
+                position
+                for role, position in fallback_anchors
+                if role == overall_role
+            ]
         if not overall_positions:
             continue
 
@@ -8182,6 +8306,7 @@ def adapt_hybrid_ocr_report(
         facts=context.labeled_dimension_facts,
         view_lookup=view_lookup,
         boundaries=boundaries,
+        overall_dimensions=overall_dimensions,
     )
 
     dimension_candidates: list[dict[str, Any]] = []
@@ -8247,6 +8372,7 @@ def adapt_hybrid_ocr_report(
             rotational_oblique_profile_hints=(
                 rotational_oblique_profile_hints
             ),
+            overall_dimensions=overall_dimensions,
         )
     )
 

@@ -3988,6 +3988,7 @@ def _engineering_callout_routing(
     annotation_lines = report.get("annotation_line_candidates", [])
     annotation_curves = report.get("annotation_curve_candidates", [])
     region_boxes: list[tuple[str, list[Any]]] = []
+    geometric_regions: list[dict[str, Any]] = []
     if isinstance(regions, list):
         for region in regions:
             if not isinstance(region, dict):
@@ -3996,6 +3997,8 @@ def _engineering_callout_routing(
             bbox = region.get("bbox_px")
             if region_id and isinstance(bbox, list):
                 region_boxes.append((region_id, bbox))
+            if region_id in view_lookup:
+                geometric_regions.append(region)
 
     routed_items = coverage.get(
         "routed_elsewhere_or_unclassified_observations",
@@ -4027,15 +4030,57 @@ def _engineering_callout_routing(
             item.get("bbox"),
         )
         center = _bbox_center(item.get("bbox"))
-        region_candidates = (
-            sorted(region_id for region_id, bbox in region_boxes if _point_in_bbox(center, bbox))
+        raw_region_candidates = (
+            sorted(
+                region_id
+                for region_id, bbox in region_boxes
+                if _point_in_bbox(center, bbox)
+            )
             if center is not None
             else []
         )
+        region_candidates = [
+            region_id
+            for region_id in raw_region_candidates
+            if region_id in view_lookup
+        ]
+        reference_region_candidates = [
+            region_id
+            for region_id in raw_region_candidates
+            if region_id not in view_lookup
+        ]
+
+        if reference_region_candidates and not region_candidates:
+            ledger.append(
+                {
+                    "source_item_index": source_item_index,
+                    "bbox": item.get("bbox"),
+                    "binding_bbox": binding_bbox,
+                    "binding_group_source_item_indices": (
+                        binding_group_by_index.get(
+                            source_item_index,
+                            [source_item_index],
+                        )
+                    ),
+                    "confidence": item.get("confidence"),
+                    "region_candidates": [],
+                    "reference_region_candidates": (
+                        reference_region_candidates
+                    ),
+                    "binding": {
+                        "status": "reference_only",
+                        "basis": "non_geometric_reference_region",
+                        "region_ids": reference_region_candidates,
+                    },
+                    **parsed,
+                }
+            )
+            continue
+
         leader_binding = bind_callout_to_circle_entity(
             binding_bbox,
             annotation_lines,
-            regions,
+            geometric_regions,
         )
         profile_arc_radius_binding: dict[str, Any] | None = None
         radius_value = parsed["facts"].get("radius")
@@ -4312,6 +4357,7 @@ def _engineering_callout_routing(
             ),
             "confidence": item.get("confidence"),
             "region_candidates": region_candidates,
+            "reference_region_candidates": reference_region_candidates,
             "binding": binding,
             **(
                 {

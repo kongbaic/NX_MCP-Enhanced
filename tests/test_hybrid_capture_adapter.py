@@ -1761,6 +1761,84 @@ def test_bound_recess_callout_preserves_noncanonical_facts_as_structured_unresol
     assert fields == {"recessed_hole_subtype"}
 
 
+def test_adapter_keeps_non_geometric_region_callout_reference_only(monkeypatch):
+    report = _report()
+    report["regions"] = [
+        {
+            "region_id": "R1",
+            "bbox_px": [0, 0, 100, 100],
+            "circle_groups": [],
+            "linear_pattern_candidates": [],
+        },
+        {
+            "region_id": "R2",
+            "bbox_px": [200, 0, 200, 160],
+            "circle_groups": [],
+            "linear_pattern_candidates": [],
+        },
+    ]
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 22,
+            "text": "M24",
+            "bbox": [[250, 40], [310, 40], [310, 70], [250, 70]],
+            "confidence": 0.99,
+        }
+    ]
+
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["structural:R1"],
+        )
+    }
+
+    def _unexpected_geometry_binding(*args, **kwargs):
+        raise AssertionError(
+            "non-geometric reference callout must not enter geometry binding"
+        )
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_circle_entity",
+        _unexpected_geometry_binding,
+    )
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_linear_pattern",
+        _unexpected_geometry_binding,
+    )
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "bind_callout_to_dimension_candidate",
+        _unexpected_geometry_binding,
+    )
+
+    ledger, entities, values, unresolved = (
+        hybrid_adapter._engineering_callout_routing(
+            report,
+            [],
+            view_lookup,
+            hidden_pattern_owner_by_index={},
+            existing_entity_keys=set(),
+        )
+    )
+
+    assert entities == []
+    assert values == []
+    assert unresolved == []
+    assert len(ledger) == 1
+    assert ledger[0]["region_candidates"] == []
+    assert ledger[0]["reference_region_candidates"] == ["R2"]
+    assert ledger[0]["facts"]["thread_spec"] == "M24"
+    assert ledger[0]["binding"] == {
+        "status": "reference_only",
+        "basis": "non_geometric_reference_region",
+        "region_ids": ["R2"],
+    }
+
+
 def test_adapter_transports_unbound_callout_facts_when_view_region_is_unique():
     report = _report()
     report["regions"] = [

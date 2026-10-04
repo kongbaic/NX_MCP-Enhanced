@@ -54,6 +54,10 @@ _LABELED_MM_DIMENSION_RE = re.compile(
     r"(?i)(?P<label>[a-z][a-z0-9_]*)\s*[-=:]\s*"
     r"(?P<value>\d+(?:[.,]\d+)?)\s*mm[a-z]?(?:\b|$)"
 )
+_FRAGMENT_LABEL_RE = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9_]*)\\s*$")
+_FRAGMENT_VALUE_WITH_UNIT_RE = re.compile(
+    r"(?i)^\\s*(?P<value>\\d+(?:[.,]\\d+)?)\\s*mm[a-z]?\\s*$"
+)
 
 
 def _positive_number(value: object) -> float | None:
@@ -95,6 +99,120 @@ def _ocr_bbox_rect(raw: object) -> tuple[float, float, float, float] | None:
     if right <= left or bottom <= top:
         return None
     return left, top, right - left, bottom - top
+
+
+def _bbox_vertical_overlap_fraction(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    _first_x, first_y, _first_width, first_height = first
+    _second_x, second_y, _second_width, second_height = second
+    overlap = min(
+        first_y + first_height,
+        second_y + second_height,
+    ) - max(first_y, second_y)
+    if overlap <= 0.0:
+        return 0.0
+    return overlap / max(1.0, min(first_height, second_height))
+
+
+def _fragmented_labeled_dimension_items(
+    raw_items: list[object],
+) -> list[dict[str, object]]:
+    """Recover only unambiguous label + complete value-with-unit OCR splits.
+
+    The engineering value must already be complete in one OCR item, such as
+    "28 mm". This helper never reconstructs missing digits, decimal points,
+    or units from multiple fragments.
+    """
+
+    labels: list[tuple[str, int, tuple[float, float, float, float]]] = []
+    values: list[
+        tuple[dict[str, object], float, tuple[float, float, float, float]]
+    ] = []
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_item_index")
+        text = item.get("text")
+        bbox = _ocr_bbox_rect(item.get("bbox"))
+        if (
+            not isinstance(source_index, int)
+            or isinstance(source_index, bool)
+            or source_index < 0
+            or not isinstance(text, str)
+            or bbox is None
+        ):
+            continue
+
+        label_match = _FRAGMENT_LABEL_RE.fullmatch(text)
+        if label_match is not None:
+            labels.append((label_match.group("label"), source_index, bbox))
+            continue
+
+        value_match = _FRAGMENT_VALUE_WITH_UNIT_RE.fullmatch(text)
+        if value_match is None:
+            continue
+        parsed_value = _positive_number(value_match.group("value"))
+        token_value = _positive_number(item.get("token"))
+        if (
+            parsed_value is None
+            or token_value is None
+            or not math.isclose(
+                parsed_value,
+                token_value,
+                abs_tol=max(abs(token_value) * 1e-6, 1e-9),
+            )
+        ):
+            continue
+        values.append((item, parsed_value, bbox))
+
+    output: list[dict[str, object]] = []
+    for value_item, value, value_bbox in values:
+        value_x, value_y, value_width, value_height = value_bbox
+        candidates: list[
+            tuple[float, str, int, tuple[float, float, float, float]]
+        ] = []
+        for label, label_source_index, label_bbox in labels:
+            label_x, _label_y, label_width, label_height = label_bbox
+            gap = value_x - (label_x + label_width)
+            if gap < -2.0:
+                continue
+            max_gap = max(24.0, min(label_height, value_height) * 1.5)
+            if gap > max_gap:
+                continue
+            overlap = _bbox_vertical_overlap_fraction(label_bbox, value_bbox)
+            if overlap < 0.60:
+                continue
+            candidates.append((gap, label, label_source_index, label_bbox))
+
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        if len(candidates) != 1:
+            continue
+
+        _gap, label, label_source_index, label_bbox = candidates[0]
+        label_x, label_y, label_width, label_height = label_bbox
+        left = min(label_x, value_x)
+        top = min(label_y, value_y)
+        right = max(label_x + label_width, value_x + value_width)
+        bottom = max(label_y + label_height, value_y + value_height)
+        output.append(
+            {
+                **value_item,
+                "text": f"{label} - {value:g} mm",
+                "bbox": [
+                    [left, top],
+                    [right, top],
+                    [right, bottom],
+                    [left, bottom],
+                ],
+                "fragment_label_source_item_index": label_source_index,
+                "fragmented_labeled_dimension": True,
+            }
+        )
+
+    return output
 
 
 def _region_source_bbox(region: dict) -> tuple[float, float, float, float] | None:
@@ -166,6 +284,7 @@ def _labeled_dimension_targets_by_region(
         bucket = coverage.get(bucket_name)
         if isinstance(bucket, list):
             raw_items.extend(bucket)
+    raw_items.extend(_fragmented_labeled_dimension_items(raw_items))
 
     region_boxes: list[
         tuple[str, tuple[float, float, float, float]]

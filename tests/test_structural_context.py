@@ -1233,6 +1233,116 @@ def test_structural_query_builder_covers_safe_labeled_dimension_coverage_buckets
     ]
 
 
+def test_labeled_dimension_reassembles_unique_adjacent_label_and_value_unit():
+    reader_input = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R4",
+                "crop_path": "C:/work/R4.png",
+                "source_bbox_px": [1400, 500, 260, 260],
+            }
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 10,
+                    "text": "C2",
+                    "bbox": [
+                        [1493.0, 651.0],
+                        [1538.0, 651.0],
+                        [1538.0, 682.0],
+                        [1493.0, 682.0],
+                    ],
+                    "primary_tokens": [],
+                    "reason": "not_one_standalone_linear_token",
+                }
+            ],
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 11,
+                    "text": "28 mm",
+                    "bbox": [
+                        [1547.0, 651.0],
+                        [1641.0, 651.0],
+                        [1641.0, 683.0],
+                        [1547.0, 683.0],
+                    ],
+                    "primary_tokens": ["28"],
+                    "token": "28",
+                    "reason": "no_unique_DG_assignment",
+                }
+            ],
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    targets = plan.queries[0].labeled_dimension_targets
+    assert len(targets) == 1
+    assert targets[0].target_id == "LD_0011"
+    assert targets[0].source_item_index == 11
+    assert targets[0].source_text == "C2 - 28 mm"
+    assert targets[0].value == 28.0
+
+
+def test_labeled_dimension_does_not_reconstruct_incomplete_numeric_fragments():
+    reader_input = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R1",
+                "crop_path": "C:/work/R1.png",
+                "source_bbox_px": [500, 250, 220, 120],
+            }
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "routed_elsewhere_or_unclassified_observations": [
+                {
+                    "source_item_index": 4,
+                    "text": "S",
+                    "bbox": [[545.0, 302.0], [568.0, 302.0], [568.0, 328.0], [545.0, 328.0]],
+                    "primary_tokens": [],
+                    "reason": "not_one_standalone_linear_token",
+                },
+                {
+                    "source_item_index": 6,
+                    "text": "mm",
+                    "bbox": [[626.0, 304.0], [680.0, 304.0], [680.0, 330.0], [626.0, 330.0]],
+                    "primary_tokens": [],
+                    "reason": "not_one_standalone_linear_token",
+                },
+            ],
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 5,
+                    "text": "5",
+                    "bbox": [[605.0, 302.0], [626.0, 302.0], [626.0, 326.0], [605.0, 326.0]],
+                    "primary_tokens": ["5"],
+                    "token": "5",
+                    "reason": "no_unique_DG_assignment",
+                }
+            ],
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    assert plan.queries[0].labeled_dimension_targets == []
+
+
 def test_labeled_dimension_routes_long_bbox_touching_narrow_region():
     reader_input = {
         "schema": "reader-input-v1",

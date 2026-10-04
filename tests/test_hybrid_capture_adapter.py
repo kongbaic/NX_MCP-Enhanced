@@ -1377,7 +1377,95 @@ def test_adapter_preserves_coverage_evidence_and_blocks_unconsumed_linear_tokens
     assert partial.observations[0]["kind"] == "hybrid_ocr_coverage_ledger"
 
 
+def test_reference_region_linear_coverage_is_advisory_but_geometry_stays_blocking():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 0, 100, 100]},
+            {"region_id": "R2", "bbox_px": [200, 0, 100, 100]},
+        ],
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "unconfirmed_proposal_observations": [],
+            "secondary_assignment_observations": [],
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 10,
+                    "token": "250",
+                    "bbox": [[220, 20], [260, 20], [260, 40], [220, 40]],
+                },
+                {
+                    "source_item_index": 11,
+                    "token": "26",
+                    "bbox": [[20, 20], [60, 20], [60, 40], [20, 40]],
+                },
+            ],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_REF", "token": "8"},
+                {"candidate_id": "DG_GEOM", "token": "12"},
+            ],
+        },
+    }
+    candidate_lookup = {
+        "DG_REF": {
+            "candidate_id": "DG_REF",
+            "region_id": "R2",
+            "orientation": "vertical",
+            "accepted_token": None,
+            "decision_reason": "no_global_proposal",
+        },
+        "DG_GEOM": {
+            "candidate_id": "DG_GEOM",
+            "region_id": "R1",
+            "orientation": "vertical",
+            "accepted_token": None,
+            "decision_reason": "no_global_proposal",
+        },
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1",
+            view_kind="front",
+            evidence=["structural:R1"],
+        )
+    }
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        report,
+        candidate_lookup,
+        view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+
+    by_evidence = {
+        tuple(item.evidence): item
+        for item in unresolved
+        if item.field == "unassigned_linear_text"
+    }
+    assert by_evidence[("hybrid:whole:10",)].required_for_modeling is False
+    assert "non-geometric reference region" in by_evidence[
+        ("hybrid:whole:10",)
+    ].reason
+    assert by_evidence[("hybrid:whole:11",)].required_for_modeling is True
+
+    local = [
+        item for item in unresolved if item.field == "local_only_linear_text"
+    ]
+    assert [item.required_for_modeling for item in local] == [False, True]
+    assert "non-geometric reference region" in local[0].reason
+
+
 def test_adapter_does_not_double_block_unassigned_source_claimed_by_labeled_fact():
+    report = _report()
+    report["coverage"]["routed_elsewhere_or_unclassified_observations"] = [
+        {
+            "source_item_index": 0,
+            "text": "H3 - 16 mm",
+            "bbox": [[20, 20], [120, 20], [120, 50], [20, 50]],
+            "confidence": 0.99,
+        }
+    ]
     context_payload = _context().model_dump(mode="json", by_alias=True)
     context_payload["labeled_dimension_facts"] = [
         {
@@ -1396,7 +1484,7 @@ def test_adapter_does_not_double_block_unassigned_source_claimed_by_labeled_fact
         }
     ]
     partial = adapt_hybrid_ocr_report(
-        _report(),
+        report,
         HybridAdapterContext.model_validate(context_payload),
     )
 
@@ -1414,6 +1502,25 @@ def test_adapter_does_not_double_block_unassigned_source_claimed_by_labeled_fact
         if item["kind"] == "hybrid_labeled_dimension_relation_ledger"
     )
     assert ledger["items"][0]["source_item_index"] == 0
+    assert not [
+        item
+        for item in partial.unresolved
+        if (
+            item.field == "engineering_callout_geometry_binding"
+            and "hybrid:whole:0" in item.evidence
+        )
+    ]
+    assert not [
+        item
+        for item in partial.values
+        if item.field == "fit" and item.value == "H3"
+    ]
+    callout_ledger = next(
+        item
+        for item in partial.observations
+        if item["kind"] == "hybrid_engineering_callout_ledger"
+    )
+    assert callout_ledger["items"] == []
 
 
 def test_adapter_rejects_silent_drop_report():

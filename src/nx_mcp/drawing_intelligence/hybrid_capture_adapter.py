@@ -485,6 +485,50 @@ def _local_only_redundant_with_accepted_dimension(
     return False
 
 
+def _reference_only_region_ids(
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+) -> set[str]:
+    regions = report.get("regions", [])
+    if not isinstance(regions, list):
+        return set()
+    return {
+        region_id
+        for region in regions
+        if isinstance(region, dict)
+        for region_id in [str(region.get("region_id") or "")]
+        if region_id and region_id not in view_lookup
+    }
+
+
+def _bbox_reference_only_region_ids(
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    bbox: Any,
+) -> list[str]:
+    center = _bbox_center(bbox)
+    if center is None:
+        return []
+
+    reference_region_ids = _reference_only_region_ids(report, view_lookup)
+    containing_region_ids = sorted(
+        str(region.get("region_id") or "")
+        for region in report.get("regions", [])
+        if (
+            isinstance(region, dict)
+            and str(region.get("region_id") or "")
+            and isinstance(region.get("bbox_px"), list)
+            and _point_in_bbox(center, region["bbox_px"])
+        )
+    )
+    if (
+        not containing_region_ids
+        or any(region_id not in reference_region_ids for region_id in containing_region_ids)
+    ):
+        return []
+    return containing_region_ids
+
+
 def _coverage_unresolved(
     report: dict[str, Any],
     candidate_lookup: dict[str, dict[str, Any]],
@@ -630,21 +674,39 @@ def _coverage_unresolved(
             continue
         if item.get("source_item_index") in excluded_source_indices:
             continue
+        reference_region_ids = _bbox_reference_only_region_ids(
+            report,
+            view_lookup,
+            item.get("bbox"),
+        )
+        reason = (
+            "Whole OCR found a standalone linear token with no unique "
+            f"DG assignment: token={item.get('token')!r}."
+        )
+        if reference_region_ids:
+            reason += (
+                " The observation is contained only by non-geometric reference "
+                f"region(s) {reference_region_ids!r}; preserve it as advisory "
+                "reference evidence until deterministic table/header/row semantics "
+                "prove a geometry consumer."
+            )
+        else:
+            reason += (
+                " The engineering value remains modeling-blocking until a "
+                "deterministic consumer or explicit non-modeling classification "
+                "exists."
+            )
         unresolved.append(
             ObservationUnresolved(
                 kind="unsupported_representation",
-                reason=(
-                    "Whole OCR found a standalone linear token with no unique "
-                    f"DG assignment: token={item.get('token')!r}. The engineering "
-                    "value remains modeling-blocking until a deterministic "
-                    "consumer or explicit non-modeling classification exists."
-                ),
+                reason=reason,
                 field="unassigned_linear_text",
                 evidence=[f"hybrid:whole:{item.get('source_item_index')}"],
-                required_for_modeling=True,
+                required_for_modeling=not reference_region_ids,
             )
         )
 
+    reference_region_ids = _reference_only_region_ids(report, view_lookup)
     for item in coverage.get("local_only_linear_observations", []):
         if not isinstance(item, dict):
             continue
@@ -663,17 +725,27 @@ def _coverage_unresolved(
             candidate.get("decision_reason")
             == "candidate_line_is_extension_witness_of_accepted_dimension"
         )
+        candidate_region_id = str(candidate.get("region_id") or "")
+        reference_only_region = candidate_region_id in reference_region_ids
         required = (
             candidate.get("accepted_token") is None
             and candidate_id not in conflicting_candidate_ids
             and not redundant
             and not rejected_dimension_role
+            and not reference_only_region
         )
         reason = (
             "Wide local OCR found a linear token without a matching "
             f"whole-drawing assignment: token={item.get('token')!r}."
         )
-        if redundant:
+        if reference_only_region:
+            reason += (
+                " The parent candidate belongs to a non-geometric reference "
+                f"region {candidate_region_id!r}; preserve the token as advisory "
+                "reference evidence until deterministic table/header/row semantics "
+                "prove a geometry consumer."
+            )
+        elif redundant:
             reason += (
                 " An accepted dimension in the same view/orientation reuses the "
                 "same raw witness source-line topology and carries this value; "
@@ -3972,6 +4044,7 @@ def _engineering_callout_routing(
     existing_entity_keys: set[str],
     profile_inventory: list[dict[str, Any]] | None = None,
     verified_profile_arc_sources: set[str] | None = None,
+    excluded_source_item_indices: set[Any] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[ObservationEntity],
@@ -3984,6 +4057,7 @@ def _engineering_callout_routing(
 
     profile_inventory = profile_inventory or []
     verified_profile_arc_sources = verified_profile_arc_sources or set()
+    excluded_source_indices = excluded_source_item_indices or set()
     regions = report.get("regions", [])
     annotation_lines = report.get("annotation_line_candidates", [])
     annotation_curves = report.get("annotation_curve_candidates", [])
@@ -4024,6 +4098,8 @@ def _engineering_callout_routing(
             continue
 
         source_item_index = item.get("source_item_index")
+        if source_item_index in excluded_source_indices:
+            continue
         evidence = [f"hybrid:whole:{source_item_index}"]
         binding_bbox = binding_bbox_by_index.get(
             source_item_index,
@@ -7776,6 +7852,9 @@ def adapt_hybrid_ocr_report(
                 isinstance(source, str)
                 and source.startswith("hybrid:curve-boundary:")
             )
+        },
+        excluded_source_item_indices={
+            fact.source_item_index for fact in labeled_dimension_facts
         },
     )
     entities.extend(callout_entities)

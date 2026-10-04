@@ -1325,6 +1325,11 @@ def _reconcile_labeled_dimension_relations(
                                 *fact.evidence,
                                 *contact_proof_evidence,
                                 contact_marker,
+                                (
+                                    "hybrid:labeled-overall-relation-canonicalized:"
+                                    f"{fact.target_id}:{fact.relation}:"
+                                    f"{reconciled_relation}"
+                                ),
                             ]
                         )
                     ),

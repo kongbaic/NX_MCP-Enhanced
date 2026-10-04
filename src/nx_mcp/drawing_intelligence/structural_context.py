@@ -71,7 +71,7 @@ def _positive_number(value: object) -> float | None:
     return number if math.isfinite(number) and number > 0 else None
 
 
-def _ocr_bbox_center(raw: object) -> tuple[float, float] | None:
+def _ocr_bbox_rect(raw: object) -> tuple[float, float, float, float] | None:
     if not isinstance(raw, list):
         return None
     points = [
@@ -88,10 +88,13 @@ def _ocr_bbox_center(raw: object) -> tuple[float, float] | None:
     ]
     if len(points) < 2:
         return None
-    return (
-        sum(float(point[0]) for point in points) / len(points),
-        sum(float(point[1]) for point in points) / len(points),
-    )
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right - left, bottom - top
 
 
 def _region_source_bbox(region: dict) -> tuple[float, float, float, float] | None:
@@ -111,16 +114,26 @@ def _region_source_bbox(region: dict) -> tuple[float, float, float, float] | Non
     return x, y, width, height
 
 
-def _point_rect_distance(
-    point: tuple[float, float],
-    rect: tuple[float, float, float, float],
+def _rect_rect_distance(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
 ) -> float:
-    px, py = point
-    x, y, width, height = rect
-    right = x + width
-    bottom = y + height
-    dx = max(x - px, 0.0, px - right)
-    dy = max(y - py, 0.0, py - bottom)
+    first_x, first_y, first_width, first_height = first
+    second_x, second_y, second_width, second_height = second
+    first_right = first_x + first_width
+    first_bottom = first_y + first_height
+    second_right = second_x + second_width
+    second_bottom = second_y + second_height
+    dx = max(
+        second_x - first_right,
+        first_x - second_right,
+        0.0,
+    )
+    dy = max(
+        second_y - first_bottom,
+        first_y - second_bottom,
+        0.0,
+    )
     return math.hypot(dx, dy)
 
 
@@ -217,7 +230,7 @@ def _labeled_dimension_targets_by_region(
             primary_tokens = item.get("primary_tokens")
             if isinstance(primary_tokens, list) and len(primary_tokens) == 1:
                 token_value = _positive_number(primary_tokens[0])
-        center = _ocr_bbox_center(item.get("bbox"))
+        item_bbox = _ocr_bbox_rect(item.get("bbox"))
         if (
             not isinstance(source_index, int)
             or isinstance(source_index, bool)
@@ -226,7 +239,7 @@ def _labeled_dimension_targets_by_region(
             or not isinstance(text, str)
             or not text.strip()
             or token_value is None
-            or center is None
+            or item_bbox is None
         ):
             continue
 
@@ -252,7 +265,7 @@ def _labeled_dimension_targets_by_region(
             distances: list[
                 tuple[float, str, tuple[float, float, float, float]]
             ] = [
-                (_point_rect_distance(center, bbox), region_id, bbox)
+                (_rect_rect_distance(item_bbox, bbox), region_id, bbox)
                 for region_id, bbox in region_boxes
             ]
             distances.sort(key=lambda item: (item[0], item[1]))

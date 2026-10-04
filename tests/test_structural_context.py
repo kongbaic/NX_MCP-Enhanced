@@ -1233,6 +1233,49 @@ def test_structural_query_builder_covers_safe_labeled_dimension_coverage_buckets
     ]
 
 
+def test_labeled_dimension_routes_long_bbox_touching_narrow_region():
+    reader_input = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R4",
+                "crop_path": "C:/work/R4.png",
+                "source_bbox_px": [1428, 452, 127, 269],
+            }
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 9,
+                    "text": "H2- 75 mm",
+                    "bbox": [
+                        [1549.0, 569.0],
+                        [1700.0, 569.0],
+                        [1700.0, 600.0],
+                        [1549.0, 600.0],
+                    ],
+                    "primary_tokens": ["75"],
+                    "token": "75",
+                    "reason": "no_unique_DG_assignment",
+                }
+            ]
+        },
+    }
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    assert len(plan.queries[0].labeled_dimension_targets) == 1
+    target = plan.queries[0].labeled_dimension_targets[0]
+    assert target.target_id == "LD_0009"
+    assert target.value == 75.0
+
+
 def test_structural_query_builder_rejects_ambiguous_primary_token_fallback():
     reader_input = _reader_input_with_labeled_dimension_regions()
     report = {

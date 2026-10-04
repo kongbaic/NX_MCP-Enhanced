@@ -1113,6 +1113,7 @@ def _labeled_overall_extent_witness_anchors(
     region_id: str,
     axis: Axis,
     overall_dimensions: dict[str, float] | None = None,
+    profile_inventory: list[dict[str, Any]] | None = None,
 ) -> tuple[list[tuple[str, float]], list[str]]:
     """Recover overall endpoint identity from a unique labeled overall extent.
 
@@ -1139,12 +1140,111 @@ def _labeled_overall_extent_witness_anchors(
     )
 
     candidates: list[
-        tuple[HybridLabeledDimensionFact, tuple[float, float]]
+        tuple[HybridLabeledDimensionFact, tuple[float, float], bool]
     ] = []
+    target_bbox = _region_bbox(report, region_id)
+
+    def cross_region_pair_matches_target_profile(
+        extent_region_id: str,
+        pair: tuple[float, float],
+    ) -> bool:
+        if (
+            extent_region_id == region_id
+            or not isinstance(profile_inventory, list)
+            or target_bbox is None
+        ):
+            return extent_region_id == region_id
+
+        extent_view = view_lookup.get(extent_region_id)
+        if (
+            extent_view is None
+            or extent_view.view_kind != region_view.view_kind
+        ):
+            return False
+        extent_bbox = _region_bbox(report, extent_region_id)
+        if extent_bbox is None:
+            return False
+
+        tx, ty, tw, th = target_bbox
+        ex, ey, ew, eh = extent_bbox
+        if (
+            min(tx + tw, ex + ew) <= max(tx, ex)
+            or min(ty + th, ey + eh) <= max(ty, ey)
+        ):
+            return False
+
+        expected_profile_orientation = (
+            "horizontal"
+            if expected_direction == "vertical"
+            else "vertical"
+        )
+        base_tolerance = _region_profile_match_tolerance(
+            report,
+            region_id,
+        )
+        matched_refs: list[str] = []
+        for witness_position in pair:
+            matches: set[str] = set()
+            for item in profile_inventory:
+                if (
+                    not isinstance(item, dict)
+                    or item.get("kind") != "profile_edge_candidate"
+                    or str(item.get("region_id") or "") != region_id
+                    or str(item.get("source_orientation") or "")
+                    != expected_profile_orientation
+                    or not isinstance(item.get("position_px"), (int, float))
+                    or isinstance(item.get("position_px"), bool)
+                ):
+                    continue
+                non_dimension_support = item.get(
+                    "non_dimension_crossing_source_count"
+                )
+                independent_support = item.get(
+                    "independent_geometry_source_count",
+                    0,
+                )
+                if not (
+                    (
+                        isinstance(non_dimension_support, int)
+                        and not isinstance(non_dimension_support, bool)
+                        and non_dimension_support > 0
+                    )
+                    or (
+                        isinstance(independent_support, int)
+                        and not isinstance(independent_support, bool)
+                        and independent_support >= 2
+                    )
+                ):
+                    continue
+                axis_tolerance = item.get("axis_tolerance_px")
+                tolerance = max(
+                    base_tolerance,
+                    float(axis_tolerance)
+                    if (
+                        isinstance(axis_tolerance, (int, float))
+                        and not isinstance(axis_tolerance, bool)
+                    )
+                    else 0.0,
+                )
+                if (
+                    abs(float(item["position_px"]) - witness_position)
+                    <= tolerance
+                ):
+                    ref = str(item.get("ref") or "")
+                    if ref:
+                        matches.add(ref)
+            if len(matches) != 1:
+                return False
+            matched_refs.append(next(iter(matches)))
+
+        return (
+            len(matched_refs) == 2
+            and matched_refs[0] != matched_refs[1]
+        )
+
     for extent_fact in facts:
         if (
             extent_fact.relation != "overall_extent"
-            or extent_fact.region_id != region_id
             or extent_fact.axis != axis
         ):
             continue
@@ -1181,12 +1281,19 @@ def _labeled_overall_extent_witness_anchors(
             )
         if len(unique_pairs) != 1:
             continue
-        candidates.append((extent_fact, next(iter(unique_pairs))))
+        pair = next(iter(unique_pairs))
+        cross_region = extent_fact.region_id != region_id
+        if cross_region and not cross_region_pair_matches_target_profile(
+            extent_fact.region_id,
+            pair,
+        ):
+            continue
+        candidates.append((extent_fact, pair, cross_region))
 
     if len(candidates) != 1:
         return [], []
 
-    extent_fact, (low, high) = candidates[0]
+    extent_fact, (low, high), cross_region = candidates[0]
     anchors = (
         [("overall_min", low), ("overall_max", high)]
         if expected_direction == "horizontal"
@@ -1196,7 +1303,14 @@ def _labeled_overall_extent_witness_anchors(
         "hybrid:labeled-overall-extent-witness-contact:"
         f"{region_id}:{axis}:{extent_fact.target_id}"
     )
-    return anchors, [proof_marker]
+    evidence = [proof_marker]
+    if cross_region:
+        evidence.append(
+            "hybrid:labeled-overall-extent-cross-region-profile-contact:"
+            f"{region_id}:{axis}:{extent_fact.region_id}:"
+            f"{extent_fact.target_id}"
+        )
+    return anchors, evidence
 
 
 def _reconcile_labeled_dimension_relations(
@@ -1206,6 +1320,7 @@ def _reconcile_labeled_dimension_relations(
     view_lookup: dict[str, HybridRegionView],
     boundaries: list[dict[str, Any]],
     overall_dimensions: dict[str, float] | None = None,
+    profile_inventory: list[dict[str, Any]] | None = None,
 ) -> list[HybridLabeledDimensionFact]:
     """Tighten local relation semantics only from proven overall contact.
 
@@ -1274,6 +1389,7 @@ def _reconcile_labeled_dimension_relations(
                     region_id=fact.region_id,
                     axis=fact.axis,
                     overall_dimensions=overall_dimensions,
+                    profile_inventory=profile_inventory,
                 )
             )
         if not anchors:
@@ -1451,6 +1567,7 @@ def _labeled_profile_transition_boundary_records(
                     region_id=fact.region_id,
                     axis=fact.axis,
                     overall_dimensions=overall_dimensions,
+                    profile_inventory=profile_inventory,
                 )
             )
             overall_positions = [
@@ -8468,6 +8585,7 @@ def adapt_hybrid_ocr_report(
         view_lookup=view_lookup,
         boundaries=boundaries,
         overall_dimensions=overall_dimensions,
+        profile_inventory=profile_inventory,
     )
 
     dimension_candidates: list[dict[str, Any]] = []

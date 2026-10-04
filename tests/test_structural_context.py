@@ -1448,6 +1448,52 @@ def test_structural_labeled_dimension_uses_deterministic_short_direction(
     assert plan.rules["labeled_dimension_direction_hint_must_be_preserved"] is True
 
 
+def test_short_direction_ignores_nearby_perpendicular_profile_pair(
+    tmp_path: Path,
+):
+    import cv2
+    import numpy as np
+
+    image = np.full((320, 460), 255, np.uint8)
+    bbox = [
+        [120.0, 120.0],
+        [252.0, 120.0],
+        [252.0, 154.0],
+        [120.0, 154.0],
+    ]
+
+    # True vertical witness pair for a horizontal short dimension.  Its
+    # separation intentionally exceeds the legacy fixed 90 px cutoff.
+    cv2.line(image, (140, 161), (140, 255), 0, 2)
+    cv2.line(image, (232, 161), (232, 255), 0, 2)
+
+    # Strong unrelated horizontal profile lines below the label must not be
+    # mistaken for horizontal witnesses and flip the dimension direction.
+    cv2.line(image, (120, 161), (260, 161), 0, 2)
+    cv2.line(image, (120, 220), (330, 220), 0, 2)
+
+    source_raster = tmp_path / "short-horizontal-with-profile-noise.png"
+    assert cv2.imwrite(str(source_raster), image)
+
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = str(source_raster)
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    target = next(
+        target
+        for query in plan.queries
+        for target in query.labeled_dimension_targets
+        if target.target_id == "LD_0017"
+    )
+    assert target.deterministic_visual_direction == "horizontal"
+
+
 def test_structural_context_rejects_visual_direction_against_deterministic_hint(
     tmp_path: Path,
 ):

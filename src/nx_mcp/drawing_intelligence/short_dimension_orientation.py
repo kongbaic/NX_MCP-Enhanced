@@ -92,11 +92,23 @@ def _parallel_pair_candidates(
     bbox_span_high: float,
 ) -> list[tuple[float, float, float]]:
     output: list[tuple[float, float, float]] = []
+    bbox_axis_span = max(0.0, bbox_axis_high - bbox_axis_low)
+    axis_margin = max(8.0, min(32.0, bbox_axis_span * 0.50))
+    max_pair_separation = max(90.0, min(160.0, bbox_axis_span))
     for first_index in range(len(lines)):
         first = lines[first_index]
         for second in lines[first_index + 1 :]:
+            if not (
+                bbox_axis_low - axis_margin
+                <= first[0]
+                <= bbox_axis_high + axis_margin
+                and bbox_axis_low - axis_margin
+                <= second[0]
+                <= bbox_axis_high + axis_margin
+            ):
+                continue
             separation = abs(first[0] - second[0])
-            if separation < 6.0 or separation > 90.0:
+            if separation < 6.0 or separation > max_pair_separation:
                 continue
             overlap_low = max(first[1], second[1])
             overlap_high = min(first[2], second[2])

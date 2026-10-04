@@ -1040,11 +1040,18 @@ def _labeled_overall_extent_witness_anchors(
         if topology is None or topology[0] != expected_direction:
             continue
 
-        unique_pairs = {
-            tuple(sorted((float(pair[0]), float(pair[1]))))
-            for pair in topology[1]
-            if isinstance(pair, (list, tuple)) and len(pair) == 2
-        }
+        unique_pairs: set[tuple[float, float]] = set()
+        for pair in topology[1]:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            first_position = float(pair[0])
+            second_position = float(pair[1])
+            unique_pairs.add(
+                (
+                    min(first_position, second_position),
+                    max(first_position, second_position),
+                )
+            )
         if len(unique_pairs) != 1:
             continue
         candidates.append((extent_fact, next(iter(unique_pairs))))

@@ -2782,6 +2782,126 @@ def test_overlapping_profile_associations_merge_only_mutual_unique_edges():
     )
 
 
+def test_regions_share_structural_raster_view_accepts_independent_geometry_without_nondimension_support():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 20, 220, 180]},
+            {"region_id": "R2", "bbox_px": [40, 0, 160, 160]},
+        ]
+    }
+    view_lookup = {
+        region_id: hybrid_adapter.HybridRegionView(
+            region_id=region_id,
+            view_kind="front",
+            evidence=[f"structural:{region_id}"],
+        )
+        for region_id in ("R1", "R2")
+    }
+    inventory = [
+        {
+            **_overlap_profile_edge(
+                "R1",
+                "R1.V1",
+                orientation="vertical",
+                position=80.0,
+                span=[30.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 2,
+        },
+        {
+            **_overlap_profile_edge(
+                "R2",
+                "R2.V1",
+                orientation="vertical",
+                position=80.0,
+                span=[40.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 2,
+        },
+        {
+            **_overlap_profile_edge(
+                "R1",
+                "R1.V2",
+                orientation="vertical",
+                position=120.0,
+                span=[30.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 3,
+        },
+        {
+            **_overlap_profile_edge(
+                "R2",
+                "R2.V2",
+                orientation="vertical",
+                position=120.6,
+                span=[40.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 2,
+        },
+    ]
+
+    assert hybrid_adapter._regions_share_structural_raster_view(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        first_region_id="R1",
+        second_region_id="R2",
+    ) is True
+
+
+def test_regions_share_structural_raster_view_still_requires_two_independent_repeats():
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [0, 20, 220, 180]},
+            {"region_id": "R2", "bbox_px": [40, 0, 160, 160]},
+        ]
+    }
+    view_lookup = {
+        region_id: hybrid_adapter.HybridRegionView(
+            region_id=region_id,
+            view_kind="front",
+            evidence=[f"structural:{region_id}"],
+        )
+        for region_id in ("R1", "R2")
+    }
+    inventory = [
+        {
+            **_overlap_profile_edge(
+                "R1",
+                "R1.V1",
+                orientation="vertical",
+                position=80.0,
+                span=[30.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 2,
+        },
+        {
+            **_overlap_profile_edge(
+                "R2",
+                "R2.V1",
+                orientation="vertical",
+                position=80.0,
+                span=[40.0, 150.0],
+                support=0,
+            ),
+            "independent_geometry_source_count": 2,
+        },
+    ]
+
+    assert hybrid_adapter._regions_share_structural_raster_view(
+        report=report,
+        profile_inventory=inventory,
+        view_lookup=view_lookup,
+        first_region_id="R1",
+        second_region_id="R2",
+    ) is False
+
+
 def test_overlapping_profile_associations_merge_exact_geometry_without_nondimension_support():
     report = {
         "regions": [

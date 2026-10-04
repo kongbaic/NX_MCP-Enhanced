@@ -6960,7 +6960,14 @@ def _regions_share_structural_raster_view(
                     item.get("non_dimension_crossing_source_count"),
                     int,
                 )
-                or item.get("non_dimension_crossing_source_count", 0) <= 0
+                or not isinstance(
+                    item.get("independent_geometry_source_count", 0),
+                    int,
+                )
+                or (
+                    item.get("non_dimension_crossing_source_count", 0) <= 0
+                    and item.get("independent_geometry_source_count", 0) < 2
+                )
             ):
                 continue
             output.append(item)

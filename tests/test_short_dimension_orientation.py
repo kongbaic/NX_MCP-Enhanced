@@ -40,3 +40,42 @@ def test_labeled_dimension_axis_span_rejects_equally_near_competitors(tmp_path):
     )
 
     assert span is None
+
+def test_labeled_dimension_axis_span_snaps_to_unique_terminal_witnesses(tmp_path):
+    image = np.full((420, 420), 255, dtype=np.uint8)
+    cv2.line(image, (150, 100), (150, 300), 0, 2)
+    cv2.line(image, (90, 88), (155, 88), 0, 2)
+    cv2.line(image, (90, 302), (155, 302), 0, 2)
+    path = tmp_path / "dimension-terminals.png"
+    assert cv2.imwrite(str(path), image)
+
+    span = infer_labeled_dimension_axis_span(
+        str(path),
+        [[170, 185], [260, 185], [260, 215], [170, 215]],
+        expected_direction="vertical",
+    )
+
+    assert span is not None
+    assert abs(span[0] - 88.0) <= 3.0
+    assert abs(span[1] - 302.0) <= 3.0
+
+
+def test_labeled_dimension_axis_span_keeps_axis_endpoint_when_terminal_is_ambiguous(
+    tmp_path,
+):
+    image = np.full((420, 420), 255, dtype=np.uint8)
+    cv2.line(image, (150, 100), (150, 300), 0, 2)
+    cv2.line(image, (90, 88), (155, 88), 0, 2)
+    cv2.line(image, (90, 90), (155, 90), 0, 2)
+    path = tmp_path / "dimension-ambiguous-terminal.png"
+    assert cv2.imwrite(str(path), image)
+
+    span = infer_labeled_dimension_axis_span(
+        str(path),
+        [[170, 185], [260, 185], [260, 215], [170, 215]],
+        expected_direction="vertical",
+    )
+
+    assert span is not None
+    assert span[0] >= 97.0
+

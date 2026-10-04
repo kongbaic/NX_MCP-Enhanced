@@ -317,7 +317,49 @@ def infer_labeled_dimension_axis_span(
         if candidates[1][0] - candidates[0][0] < ambiguity_margin:
             return None
 
-    _distance, _negative_span, _axis_position, low, high = candidates[0]
+    _distance, _negative_span, axis_position, low, high = candidates[0]
+
+    perpendicular_lines = (
+        _cluster_axis_segments(horizontal_segments)
+        if expected_direction == "vertical"
+        else _cluster_axis_segments(vertical_segments)
+    )
+    terminal_tolerance = max(
+        12.0,
+        min(28.0, perpendicular_span * 0.15),
+    )
+
+    def snapped_terminal(raw_position: float) -> float:
+        terminal_candidates: list[tuple[float, float]] = []
+        for terminal_axis, terminal_low, terminal_high in perpendicular_lines:
+            if terminal_high - terminal_low < 20.0:
+                continue
+            if not (
+                terminal_low - 8.0
+                <= axis_position
+                <= terminal_high + 8.0
+            ):
+                continue
+            residual = abs(float(terminal_axis) - raw_position)
+            if residual <= terminal_tolerance:
+                terminal_candidates.append(
+                    (residual, float(terminal_axis))
+                )
+
+        terminal_candidates.sort()
+        if not terminal_candidates:
+            return raw_position
+        if (
+            len(terminal_candidates) > 1
+            and terminal_candidates[1][0] - terminal_candidates[0][0] < 3.0
+        ):
+            return raw_position
+        return terminal_candidates[0][1]
+
+    low = snapped_terminal(low)
+    high = snapped_terminal(high)
+    if low >= high:
+        return None
     return low + global_span_offset, high + global_span_offset
 
 

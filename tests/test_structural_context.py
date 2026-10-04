@@ -121,6 +121,8 @@ def test_structural_query_builder_only_requests_region_structure():
     assert plan.rules["derive_missing_dimensions"] is False
     assert plan.rules["feature_inventory"] is False
     assert plan.rules["dimension_endpoint_ownership"] is False
+    assert plan.rules["labeled_dimension_resolved_reason_must_be_null"] is True
+    assert plan.rules["labeled_dimension_unresolved_reason_required"] is True
     assert plan.rules["pixel_measurement"] is False
     assert plan.view_axis_map["front"].horizontal == "X"
     assert plan.view_axis_map["front"].vertical == "Z"

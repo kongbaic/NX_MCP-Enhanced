@@ -749,6 +749,8 @@ def build_structural_context_queries(
             "labeled_dimension_direction_from_topology_only": True,
             "labeled_dimension_direction_hint_must_be_preserved": True,
             "labeled_dimension_overall_relation_requires_actual_overall_boundary": True,
+            "labeled_dimension_resolved_reason_must_be_null": True,
+            "labeled_dimension_unresolved_reason_required": True,
             "labeled_dimension_profile_topology_metadata_optional": True,
             "overall_dimension_must_cover_accepted_linear_spans": True,
             "pixel_measurement": False,

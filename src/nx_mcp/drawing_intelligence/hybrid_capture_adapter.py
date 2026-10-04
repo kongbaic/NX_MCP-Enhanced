@@ -1561,6 +1561,33 @@ def _recover_labeled_profile_span_dimensions(
         if topology is None or topology[0] != expected_direction:
             continue
 
+        topology_pairs = list(topology[1])
+        if len(topology_pairs) > 1:
+            text_axis_coordinate = (
+                (bounds[0] + bounds[2]) / 2.0
+                if expected_direction == "horizontal"
+                else (bounds[1] + bounds[3]) / 2.0
+            )
+            witness_positions = sorted(
+                {
+                    float(position)
+                    for pair in topology_pairs
+                    for position in pair
+                }
+            )
+            adjacent_brackets = [
+                (first, second)
+                for first, second in zip(
+                    witness_positions,
+                    witness_positions[1:],
+                    strict=False,
+                )
+                if first < text_axis_coordinate < second
+            ]
+            if len(adjacent_brackets) != 1:
+                continue
+            topology_pairs = adjacent_brackets
+
         expected_profile_orientation = (
             "vertical"
             if expected_direction == "horizontal"
@@ -1596,7 +1623,7 @@ def _recover_labeled_profile_span_dimensions(
             report,
             fact.region_id,
         )
-        for first_position, second_position in topology[1]:
+        for first_position, second_position in topology_pairs:
             for candidate_region in sorted(eligible_regions):
                 region_edges = [
                     item

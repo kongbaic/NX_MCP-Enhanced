@@ -1181,6 +1181,121 @@ def test_labeled_profile_span_recovers_unique_two_boundary_identity(
     ]
 
 
+def test_labeled_profile_span_uses_adjacent_witness_pair_bracketing_text(
+    monkeypatch,
+):
+    fact = hybrid_adapter.HybridLabeledDimensionFact(
+        target_id="LD_OVERLAP",
+        source_item_index=31,
+        source_text="S - 4.5 mm",
+        region_id="R3",
+        value=4.5,
+        axis="X",
+        relation="between_profile_boundaries",
+        evidence=["hybrid:whole:31", "structural:R3:context"],
+    )
+    report = {
+        "source_raster": "drawing.png",
+        "regions": [
+            {"region_id": "R1", "bbox_px": [50, 50, 300, 220]},
+            {"region_id": "R3", "bbox_px": [80, 60, 220, 180]},
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 31,
+                    "bbox": [
+                        [100.0, 100.0],
+                        [195.0, 100.0],
+                        [195.0, 125.0],
+                        [100.0, 125.0],
+                    ],
+                }
+            ]
+        },
+    }
+    profile_inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R3",
+            "ref": "R3.FALSE_LEFT",
+            "source_orientation": "vertical",
+            "position_px": 80.0,
+            "span_px": [60.0, 220.0],
+            "axis_tolerance_px": 4.0,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R3",
+            "ref": "R3.FALSE_RIGHT",
+            "source_orientation": "vertical",
+            "position_px": 110.0,
+            "span_px": [60.0, 220.0],
+            "axis_tolerance_px": 4.0,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "R1.TRUE_LEFT",
+            "source_orientation": "vertical",
+            "position_px": 110.0,
+            "span_px": [60.0, 220.0],
+            "axis_tolerance_px": 4.0,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R1",
+            "ref": "R1.TRUE_RIGHT",
+            "source_orientation": "vertical",
+            "position_px": 150.0,
+            "span_px": [60.0, 220.0],
+            "axis_tolerance_px": 4.0,
+        },
+    ]
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "infer_short_dimension_visual_topology",
+        lambda *_args: (
+            "horizontal",
+            [(80.0, 110.0), (110.0, 150.0), (80.0, 150.0)],
+        ),
+    )
+
+    dimensions, ledger = (
+        hybrid_adapter._recover_labeled_profile_span_dimensions(
+            report=report,
+            facts=[fact],
+            view_lookup={
+                "R1": hybrid_adapter.HybridRegionView(
+                    region_id="R1",
+                    view_kind="front",
+                    evidence=["structural:R1:context"],
+                ),
+                "R3": hybrid_adapter.HybridRegionView(
+                    region_id="R3",
+                    view_kind="front",
+                    evidence=["structural:R3:context"],
+                ),
+            },
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref={
+                "R3.FALSE_LEFT": "R3.PROFILE.FALSE_LEFT",
+                "R3.FALSE_RIGHT": "R3.PROFILE.FALSE_RIGHT",
+                "R1.TRUE_LEFT": "R1.PROFILE.TRUE_LEFT",
+                "R1.TRUE_RIGHT": "R1.PROFILE.TRUE_RIGHT",
+            },
+        )
+    )
+
+    assert len(dimensions) == 1
+    assert [
+        endpoint.entity_key
+        for endpoint in dimensions[0].endpoints
+    ] == ["R1.PROFILE.TRUE_LEFT", "R1.PROFILE.TRUE_RIGHT"]
+    assert ledger[0]["selected_region_id"] == "R1"
+    assert ledger[0]["selected_witness_positions_px"] == [110.0, 150.0]
+
+
 def test_labeled_profile_span_recovers_when_text_is_outside_assigned_region(
     monkeypatch,
 ):

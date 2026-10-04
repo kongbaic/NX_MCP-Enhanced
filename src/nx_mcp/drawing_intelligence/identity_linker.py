@@ -3647,18 +3647,34 @@ def _labeled_profile_span_midpoint_anchor_relation(
             ):
                 continue
 
+            endpoint_source_ids = {
+                source_id
+                for endpoint in dimension.endpoints
+                for source_id in endpoint.source_ids
+                if isinstance(source_id, str) and source_id
+            }
+            profile_tokens = {
+                f"hybrid:profile-edge:{ref}"
+                for ref in raw_refs
+            }
+
             referenced_entities: list[str] = []
-            valid_refs = True
+            unique_ref_identity = True
             for ref in raw_refs:
                 entity_ids = _profile_entity_ids_for_ref(capture, ref)
                 if len(entity_ids) != 1:
-                    valid_refs = False
+                    unique_ref_identity = False
                     break
                 referenced_entities.append(entity_ids[0])
-            if (
-                not valid_refs
-                or set(referenced_entities) != set(endpoint_entity_ids)
-            ):
+
+            identity_matches = (
+                unique_ref_identity
+                and set(referenced_entities) == set(endpoint_entity_ids)
+            )
+            endpoint_evidence_matches = profile_tokens.issubset(
+                endpoint_source_ids
+            )
+            if not (identity_matches or endpoint_evidence_matches):
                 continue
             labeled_records.append(record)
 

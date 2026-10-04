@@ -3667,7 +3667,9 @@ def _labeled_span_midpoint_anchor_capture(
                     entity_id="E_LOCAL_LEFT",
                     basis="profile_edge",
                     source_ids=[
-                        "hybrid:labeled-profile-span:LD_LOCAL"
+                        "hybrid:labeled-profile-span:LD_LOCAL",
+                        "hybrid:profile-edge:R1.LOCAL.LEFT",
+                        "hybrid:profile-edge:R1.LOCAL.RIGHT",
                     ],
                 ),
                 CaptureDimensionEndpoint(
@@ -3675,7 +3677,9 @@ def _labeled_span_midpoint_anchor_capture(
                     entity_id="E_LOCAL_RIGHT",
                     basis="profile_edge",
                     source_ids=[
-                        "hybrid:labeled-profile-span:LD_LOCAL"
+                        "hybrid:labeled-profile-span:LD_LOCAL",
+                        "hybrid:profile-edge:R1.LOCAL.LEFT",
+                        "hybrid:profile-edge:R1.LOCAL.RIGHT",
                     ],
                 ),
             ],
@@ -3729,7 +3733,16 @@ def _labeled_span_midpoint_anchor_capture(
                 required_for_modeling=False,
             )
         )
-        symmetric_record_alt = copy.deepcopy(symmetric_record)
+        symmetric_record_alt = {
+            **symmetric_record,
+            "source_ids": list(symmetric_record.get("source_ids", [])),
+            "profile_entity_ids": list(
+                symmetric_record.get("profile_entity_ids", [])
+            ),
+            "selected_witness_positions_px": list(
+                symmetric_record.get("selected_witness_positions_px", [])
+            ),
+        }
         symmetric_record_alt["candidate_id"] = "DG_SPAN_ALT"
         symmetric_record_alt["profile_entity_ids"] = [
             "E_ALT_ANCHOR",

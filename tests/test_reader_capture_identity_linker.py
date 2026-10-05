@@ -3627,6 +3627,8 @@ def _labeled_span_midpoint_anchor_capture(
         for observation in capture.observations
         if observation.get("kind") == "hybrid_symmetric_profile_span_ledger"
     )
+    symmetric_ledger["engineering_coordinate_inferred_from_pixels"] = False
+    symmetric_ledger["pixel_geometry_used_for_identity_only"] = True
     symmetric_record = symmetric_ledger["items"][0]
     symmetric_record.update(
         {

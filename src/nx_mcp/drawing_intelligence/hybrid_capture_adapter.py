@@ -1527,18 +1527,15 @@ def _labeled_profile_transition_boundary_records(
             if region_view is not None
             else None
         )
-        raw_bbox = _coverage_bbox_for_source_index(
-            report,
-            fact.source_item_index,
-        )
-        if region_view is None or expected_direction is None or raw_bbox is None:
+        if region_view is None or expected_direction is None:
             continue
 
-        topology = infer_short_dimension_visual_topology(
-            source_raster,
-            raw_bbox,
+        topology = _labeled_dimension_topology(
+            report=report,
+            fact=fact,
+            expected_direction=expected_direction,
         )
-        if topology is None or topology[0] != expected_direction:
+        if topology is None:
             continue
 
         overall_positions: list[float] = []

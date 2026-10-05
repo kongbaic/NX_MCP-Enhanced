@@ -3725,16 +3725,6 @@ def _labeled_span_midpoint_anchor_capture(
     )
 
     if ambiguous_anchor:
-        capture.entities.append(
-            CaptureEntity(
-                id="E_ALT_ANCHOR",
-                view_id="VF",
-                shape="profile",
-                cross_view_disposition="single_view",
-                source_ids=["SRC_ALT_ANCHOR"],
-                required_for_modeling=False,
-            )
-        )
         symmetric_record_alt = {
             **symmetric_record,
             "source_ids": list(symmetric_record.get("source_ids", [])),
@@ -3747,8 +3737,8 @@ def _labeled_span_midpoint_anchor_capture(
         }
         symmetric_record_alt["candidate_id"] = "DG_SPAN_ALT"
         symmetric_record_alt["profile_entity_ids"] = [
-            "E_ALT_ANCHOR",
             "E_RIGHT",
+            "E_LEFT",
         ]
         symmetric_record_alt["selected_witness_positions_px"] = [
             20.5,

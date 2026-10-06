@@ -1055,7 +1055,11 @@ def test_symmetric_tapered_annular_profile_rejects_ambiguous_bilateral_silhouett
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
-def _multilevel_tapered_annular_graph(*, ambiguous_oblique_transition=False):
+def _multilevel_tapered_annular_graph(
+    *,
+    ambiguous_oblique_transition=False,
+    with_excluded_local_section=False,
+):
     graph = _symmetric_tapered_annular_graph()
     graph.observations.append(_bilateral_straight_silhouette_observation())
 
@@ -1090,6 +1094,68 @@ def _multilevel_tapered_annular_graph(*, ambiguous_oblique_transition=False):
             source_ids=["dim:mid"],
         )
     )
+    if with_excluded_local_section:
+        local_left = "feature:F_LOCAL_CENTER_LEFT.boundary.x"
+        local_right = "feature:F_LOCAL_CENTER_RIGHT.boundary.x"
+        graph.direct_values.extend(
+            [
+                DirectValueEvidence(
+                    id="LOCAL_CENTER_L",
+                    target=local_left,
+                    value=25.0,
+                ),
+                DirectValueEvidence(
+                    id="LOCAL_CENTER_R",
+                    target=local_right,
+                    value=275.0,
+                ),
+            ]
+        )
+        graph.dimensions.append(
+            DimensionObservation(
+                id="D_LOCAL_CENTER_DISTANCE",
+                value=250.0,
+                axis="X",
+                endpoints=[
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target=local_left,
+                    ),
+                    DimensionEndpoint(
+                        role="profile_boundary",
+                        target=local_right,
+                    ),
+                ],
+                direction=1,
+                source_ids=[
+                    "hybrid:DG_LOCAL:whole",
+                    "hybrid:DG_LOCAL:wide",
+                ],
+            )
+        )
+        graph.observations.append(
+            {
+                "kind": "hybrid_symmetric_local_section_feature_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "LOCAL_SECTION_TEST",
+                        "axis": "X",
+                        "center_distance_dimension_key": "R1.DG_LOCAL",
+                        "excluded_from_rotational_body_profile": True,
+                        "source_ids": [
+                            "hybrid:DG_LOCAL:whole",
+                            "hybrid:DG_LOCAL:wide",
+                            "hybrid:DG_OVERALL:overall-center-anchor",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
     graph.relations.extend(
         [
             RelationEvidence(
@@ -1569,6 +1635,24 @@ def test_multilevel_tapered_profile_keeps_unfittable_fillet_blocking():
     assert blockers[0]["metadata"]["primitive_kind"] == "arc"
     assert blockers[0]["required_for_modeling"] is True
     assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
+def test_multilevel_tapered_profile_excludes_local_section_center_distance_layer():
+    graph = _multilevel_tapered_annular_graph(
+        with_excluded_local_section=True,
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert len(draft["profile"]["segments"]) == 9
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+    ]
 
 
 def test_multilevel_tapered_annular_profile_consumes_nested_radial_and_axial_levels():

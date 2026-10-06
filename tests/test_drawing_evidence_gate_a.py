@@ -1059,6 +1059,7 @@ def _multilevel_tapered_annular_graph(
     *,
     ambiguous_oblique_transition=False,
     with_excluded_local_section=False,
+    mixed_transition_sides=False,
 ):
     graph = _symmetric_tapered_annular_graph()
     graph.observations.append(_bilateral_straight_silhouette_observation())
@@ -1189,8 +1190,8 @@ def _multilevel_tapered_annular_graph(
                 kind="edge_offset",
                 axis="Z",
                 targets=[taper_target],
-                value=28.0,
-                from_side="min",
+                value=47.0 if mixed_transition_sides else 28.0,
+                from_side="max" if mixed_transition_sides else "min",
                 source_ids=["dim:taper"],
                 metadata={
                     "basis": "labeled_overall_to_profile_transition",
@@ -1635,6 +1636,25 @@ def test_multilevel_tapered_profile_keeps_unfittable_fillet_blocking():
     assert blockers[0]["metadata"]["primitive_kind"] == "arc"
     assert blockers[0]["required_for_modeling"] is True
     assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
+def test_multilevel_tapered_profile_orders_mixed_dimension_anchor_sides_by_geometry():
+    graph = _multilevel_tapered_annular_graph(
+        mixed_transition_sides=True,
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert result.values["constraints.profile_transitions.TAPER.z"] == 28.0
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert len(draft["profile"]["segments"]) == 9
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "profile_transition"
+    ]
 
 
 def test_multilevel_tapered_profile_excludes_local_section_center_distance_layer():

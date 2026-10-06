@@ -117,6 +117,112 @@ def test_local_section_feature_pair_remains_fail_closed_until_3d_representation(
     assert blockers[0]["source_ids"] == ["width", "center"]
 
 
+def test_resolved_local_section_pattern_compiles_to_exact_hole_feature():
+    graph = EvidenceGraph(
+        overall_dimensions=_overall_dimensions(),
+        observations=[
+            {
+                "kind": "hybrid_symmetric_local_section_feature_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "LOCAL_SECTION_PAIR_RESOLVED",
+                        "feature_id": "F_LOCAL_PATTERN",
+                        "axis": "X",
+                        "span_dimension_key": "R1.DG_WIDTH",
+                        "center_distance_dimension_key": "R1.DG_CENTER",
+                        "span_width": 4.0,
+                        "center_distance": 20.0,
+                        "representation_status": (
+                            "resolved_circular_through_hole_pattern"
+                        ),
+                        "count_status": (
+                            "resolved_reference_table_count"
+                        ),
+                        "feature_type": "through_hole",
+                        "feature_axis": "Z",
+                        "diameter": 4.0,
+                        "count": 4,
+                        "pcd": 20.0,
+                        "pattern_type": "circular",
+                        "explicit_centers": [
+                            {"x": 30.0, "y": 16.0},
+                            {"x": 20.0, "y": 26.0},
+                            {"x": 10.0, "y": 16.0},
+                            {"x": 20.0, "y": 6.0},
+                        ],
+                        "through": True,
+                        "excluded_from_rotational_body_profile": True,
+                        "source_ids": [
+                            "drawing:width",
+                            "drawing:center",
+                            "reference:count",
+                        ],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        ],
+    )
+
+    compiled = compile_evidence_graph(graph)
+
+    blockers = [
+        item
+        for item in compiled.unresolved_evidence
+        if item.get("field") == "local_section_feature_representation"
+    ]
+    assert blockers == []
+
+    values = {
+        item.target: item.value
+        for item in compiled.direct_values
+        if item.target.startswith("feature:F_LOCAL_PATTERN.")
+    }
+    assert values == {
+        "feature:F_LOCAL_PATTERN.axis": "Z",
+        "feature:F_LOCAL_PATTERN.count": 4,
+        "feature:F_LOCAL_PATTERN.diameter": 4.0,
+        "feature:F_LOCAL_PATTERN.explicit_centers": [
+            {"x": 30.0, "y": 16.0},
+            {"x": 20.0, "y": 26.0},
+            {"x": 10.0, "y": 16.0},
+            {"x": 20.0, "y": 6.0},
+        ],
+        "feature:F_LOCAL_PATTERN.pattern_type": "circular",
+        "feature:F_LOCAL_PATTERN.pcd": 20.0,
+        "feature:F_LOCAL_PATTERN.through": True,
+        "feature:F_LOCAL_PATTERN.type": "through_hole",
+    }
+
+    result = resolve_evidence_graph(compiled)
+    assert result.ok
+
+    draft = build_semantic_draft(compiled, result)
+    feature = next(
+        item
+        for item in draft["features"]
+        if item["id"] == "F_LOCAL_PATTERN"
+    )
+    assert feature["type"] == "through_hole"
+    assert feature["axis"] == "Z"
+    assert feature["diameter"] == 4.0
+    assert feature["count"] == 4
+    assert feature["pcd"] == 20.0
+    assert feature["pattern_type"] == "circular"
+    assert feature["through"] is True
+    assert feature["explicit_centers"] == [
+        {"x": 10.0, "y": 0.0},
+        {"x": 0.0, "y": 10.0},
+        {"x": -10.0, "y": 0.0},
+        {"x": 0.0, "y": -10.0},
+    ]
+    assert R.check_drawing_json(draft) == []
+
+
 def test_front_circle_compiles_to_axis_y():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),

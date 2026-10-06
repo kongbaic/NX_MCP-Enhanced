@@ -1488,6 +1488,7 @@ def _labeled_profile_transition_boundary_records(
     profile_inventory: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
     rotational_oblique_profile_hints: list[dict[str, Any]] | None = None,
+    bilateral_rotational_straight_silhouette_records: list[dict[str, Any]] | None = None,
     overall_dimensions: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Bind a labeled overall-offset transition to structural profile levels.
@@ -1825,17 +1826,200 @@ def _labeled_profile_transition_boundary_records(
                     continue
                 valid_pairs.append((first_oblique, second_oblique))
 
-        if len(valid_pairs) != 1:
+        if len(valid_pairs) == 1:
+            first_oblique, second_oblique = valid_pairs[0]
+            first_transition = first_oblique["transition_point"]
+            second_transition = second_oblique["transition_point"]
+            oblique_source_ids = sorted(
+                {
+                    str(first_oblique["source_id"]),
+                    str(second_oblique["source_id"]),
+                }
+            )
+            output.append(
+                {
+                    "target_id": fact.target_id,
+                    "source_item_index": fact.source_item_index,
+                    "region_id": fact.region_id,
+                    "view_kind": region_view.view_kind,
+                    "axis": fact.axis,
+                    "overall_role": overall_role,
+                    "profile_refs": [],
+                    "profile_entity_keys": [],
+                    "oblique_source_ids": oblique_source_ids,
+                    "selected_transition_position_px": round(
+                        (
+                            first_transition[transition_axis_index]
+                            + second_transition[transition_axis_index]
+                        )
+                        / 2.0,
+                        3,
+                    ),
+                    "identity_kind": (
+                        "bilateral_oblique_transition_endpoint_level"
+                    ),
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *fact.evidence,
+                                *oblique_source_ids,
+                            ]
+                        )
+                    ),
+                    "basis": (
+                        "labeled_overall_offset_plus_bilateral_"
+                        "oblique_endpoint_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            )
             continue
-        first_oblique, second_oblique = valid_pairs[0]
-        first_transition = first_oblique["transition_point"]
-        second_transition = second_oblique["transition_point"]
-        oblique_source_ids = sorted(
-            {
-                str(first_oblique["source_id"]),
-                str(second_oblique["source_id"]),
-            }
+
+        if not isinstance(
+            bilateral_rotational_straight_silhouette_records,
+            list,
+        ):
+            continue
+
+        hint_by_source: dict[str, dict[str, Any]] = {}
+        for hint in rotational_oblique_profile_hints:
+            if not isinstance(hint, dict):
+                continue
+            source_ids = [
+                source
+                for source in hint.get("source_ids", [])
+                if isinstance(source, str)
+                and source.startswith("hybrid:oblique-line:")
+            ]
+            endpoints = hint.get("endpoints_px")
+            if (
+                len(source_ids) != 1
+                or not isinstance(endpoints, list)
+                or len(endpoints) != 2
+                or not all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in point
+                    )
+                    for point in endpoints
+                )
+            ):
+                continue
+            hint_by_source[source_ids[0]] = hint
+
+        silhouette_matches: list[
+            tuple[dict[str, Any], list[str], list[list[float]]]
+        ] = []
+        for silhouette in bilateral_rotational_straight_silhouette_records:
+            if (
+                not isinstance(silhouette, dict)
+                or silhouette.get("view_kind") != region_view.view_kind
+                or str(silhouette.get("rotation_axis") or "").upper()
+                != fact.axis
+                or silhouette.get("primitive_kind") != "line"
+                or silhouette.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or silhouette.get("pixel_geometry_used_for_topology_only")
+                is not True
+            ):
+                continue
+
+            negative_sources = [
+                value
+                for value in silhouette.get(
+                    "negative_side_source_ids",
+                    [],
+                )
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            ]
+            positive_sources = [
+                value
+                for value in silhouette.get(
+                    "positive_side_source_ids",
+                    [],
+                )
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            ]
+            if (
+                not negative_sources
+                or not positive_sources
+                or set(negative_sources).intersection(positive_sources)
+            ):
+                continue
+            family_sources = list(
+                dict.fromkeys([*negative_sources, *positive_sources])
+            )
+            if any(source not in hint_by_source for source in family_sources):
+                continue
+
+            matched_terminals: list[list[float]] = []
+            ambiguous_terminal = False
+            for side_sources in (negative_sources, positive_sources):
+                side_points = [
+                    [float(value) for value in point]
+                    for source in side_sources
+                    for point in hint_by_source[source]["endpoints_px"]
+                ]
+                axial_values = [
+                    point[transition_axis_index]
+                    for point in side_points
+                ]
+                side_low = min(axial_values)
+                side_high = max(axial_values)
+                terminal_points = [
+                    point
+                    for point in side_points
+                    if (
+                        abs(point[transition_axis_index] - side_low) <= 1e-9
+                        or abs(point[transition_axis_index] - side_high) <= 1e-9
+                    )
+                ]
+                side_matches = {
+                    (
+                        round(point[0], 6),
+                        round(point[1], 6),
+                    )
+                    for point in terminal_points
+                    if any(
+                        abs(
+                            point[transition_axis_index]
+                            - transition_position
+                        )
+                        <= tolerance
+                        for transition_position in transition_positions
+                    )
+                }
+                if len(side_matches) > 1:
+                    ambiguous_terminal = True
+                    break
+                if side_matches:
+                    matched_terminals.append(
+                        [float(value) for value in next(iter(side_matches))]
+                    )
+
+            if ambiguous_terminal or not matched_terminals:
+                continue
+            silhouette_matches.append(
+                (silhouette, family_sources, matched_terminals)
+            )
+
+        if len(silhouette_matches) != 1:
+            continue
+
+        silhouette, oblique_source_ids, matched_terminals = (
+            silhouette_matches[0]
         )
+        selected_transition_position = sum(
+            point[transition_axis_index]
+            for point in matched_terminals
+        ) / len(matched_terminals)
+        silhouette_id = str(silhouette.get("id") or "")
         output.append(
             {
                 "target_id": fact.target_id,
@@ -1848,11 +2032,7 @@ def _labeled_profile_transition_boundary_records(
                 "profile_entity_keys": [],
                 "oblique_source_ids": oblique_source_ids,
                 "selected_transition_position_px": round(
-                    (
-                        first_transition[transition_axis_index]
-                        + second_transition[transition_axis_index]
-                    )
-                    / 2.0,
+                    selected_transition_position,
                     3,
                 ),
                 "identity_kind": (
@@ -1862,13 +2042,14 @@ def _labeled_profile_transition_boundary_records(
                     dict.fromkeys(
                         [
                             *fact.evidence,
+                            *([silhouette_id] if silhouette_id else []),
                             *oblique_source_ids,
                         ]
                     )
                 ),
                 "basis": (
                     "labeled_overall_offset_plus_bilateral_"
-                    "oblique_endpoint_identity"
+                    "silhouette_terminal_identity"
                 ),
                 "engineering_coordinate_inferred_from_pixels": False,
                 "pixel_geometry_used_for_identity_only": True,
@@ -10096,21 +10277,6 @@ def adapt_hybrid_ocr_report(
         profile_entity_by_ref=profile_entity_by_ref,
     )
 
-    labeled_profile_transition_boundary_ledger = (
-        _labeled_profile_transition_boundary_records(
-            report=report,
-            facts=labeled_dimension_facts,
-            view_lookup=view_lookup,
-            boundaries=boundaries,
-            profile_inventory=profile_inventory,
-            profile_entity_by_ref=profile_entity_by_ref,
-            rotational_oblique_profile_hints=(
-                rotational_oblique_profile_hints
-            ),
-            overall_dimensions=overall_dimensions,
-        )
-    )
-
     hidden_entity_records: dict[str, dict[str, Any]] = {}
     for record in hidden_center_records:
         entity_key = str(record.get("entity_key") or "")
@@ -10606,6 +10772,24 @@ def adapt_hybrid_ocr_report(
         _bilateral_rotational_straight_silhouette_records(
             oblique_hints=rotational_oblique_profile_hints,
             symmetric_profile_span_records=symmetric_profile_span_records,
+        )
+    )
+
+    labeled_profile_transition_boundary_ledger = (
+        _labeled_profile_transition_boundary_records(
+            report=report,
+            facts=labeled_dimension_facts,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref=profile_entity_by_ref,
+            rotational_oblique_profile_hints=(
+                rotational_oblique_profile_hints
+            ),
+            bilateral_rotational_straight_silhouette_records=(
+                bilateral_rotational_straight_silhouette_records
+            ),
+            overall_dimensions=overall_dimensions,
         )
     )
 

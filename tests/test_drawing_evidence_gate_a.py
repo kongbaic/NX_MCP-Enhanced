@@ -1306,6 +1306,190 @@ def test_multilevel_tapered_profile_does_not_merge_independent_region_component(
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def _multilevel_tapered_annular_graph_with_arc(*, radius=2.0):
+    graph = _multilevel_tapered_annular_graph()
+    physical_arc_id = "PHYSICAL_MULTILEVEL_FILLET"
+    radial_target = "feature:F_HUB_RIGHT.boundary.x"
+    axial_target = "feature:F_Z_STEP2.boundary.z"
+    radius_target = (
+        "constraints.profile_arc_radii."
+        f"{physical_arc_id}.radius"
+    )
+    physical_arc = {
+        "id": physical_arc_id,
+        "region_ids": ["R1"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": [
+            "F_HUB_RIGHT",
+            "F_Z_STEP2",
+        ],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": "F_HUB_RIGHT",
+                "constant_axis": "X",
+                "boundary_target": radial_target,
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+            {
+                "physical_feature_id": "F_Z_STEP2",
+                "constant_axis": "Z",
+                "boundary_target": axial_target,
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+        ],
+        "connection_kind": "non_orthogonal_profile_connection",
+        "primitive_kind": "arc",
+        "primitive_kind_basis": (
+            "verified_continuous_curved_raster_segment_"
+            "between_structural_contacts"
+        ),
+        "source_ids": ["hybrid:curve-boundary:42"],
+        "basis": "identity_linked_physical_oblique_profile_topology",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+    graph.observations.extend(
+        [
+            {
+                "kind": (
+                    "hybrid_physical_rotational_oblique_profile_"
+                    "topology_ledger"
+                ),
+                "schema": "1.0",
+                "items": [physical_arc],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+            {
+                "kind": "hybrid_physical_profile_arc_radius_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "PHYSICAL_ARC_RADIUS_TABLE_TEST",
+                        "physical_arc_id": physical_arc_id,
+                        "curve_source_id": "hybrid:curve-boundary:42",
+                        "engineering_radius": radius,
+                        "engineering_value_source": (
+                            "corroborated_reference_table_row"
+                        ),
+                        "radius_label": "R7",
+                        "reference_region_id": "R_TABLE",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "supporting_physical_feature_ids": [
+                            "F_HUB_RIGHT",
+                            "F_Z_STEP2",
+                        ],
+                        "supporting_physical_edges": (
+                            physical_arc[
+                                "supporting_physical_edges"
+                            ]
+                        ),
+                        "source_ids": [
+                            "hybrid:reference-table:R_TABLE:value:14",
+                            "hybrid:curve-boundary:42",
+                        ],
+                        "basis": (
+                            "corroborated_reference_table_radius_plus_"
+                            "unique_physical_arc_identity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+        ]
+    )
+    graph.direct_values.append(
+        DirectValueEvidence(
+            id="MULTILEVEL_ARC_RADIUS",
+            target=radius_target,
+            value=radius,
+            semantic="radius",
+            source_ids=[
+                "hybrid:reference-table:R_TABLE:value:14",
+                "hybrid:curve-boundary:42",
+            ],
+        )
+    )
+    graph.required_targets.append(radius_target)
+    return graph
+
+
+def test_multilevel_tapered_profile_materializes_resolved_engineering_fillet():
+    graph = _multilevel_tapered_annular_graph_with_arc(radius=2.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    arcs = [
+        segment
+        for segment in draft["profile"]["segments"]
+        if segment["type"] == "arc"
+    ]
+    assert len(arcs) == 1
+    assert arcs[0]["center"] == {"x": 107.0, "z": 10.0}
+    assert arcs[0]["radius"] == 2.0
+    assert arcs[0]["start_angle"] == 0.0
+    assert arcs[0]["end_angle"] == 90.0
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile_primitive"
+    ]
+    assert blockers == []
+
+    arc_sources = [
+        item
+        for item in draft["source_ledger"]
+        if item.get("target", "").startswith("profile.segments.")
+        and item.get("solver") == "rotational_profile_arc_solver"
+    ]
+    assert arc_sources
+    assert all(
+        "hybrid:curve-boundary:42" in item["evidence"]
+        for item in arc_sources
+    )
+    assert any(
+        item["target"].endswith(".radius")
+        and (
+            "constraints.profile_arc_radii."
+            "PHYSICAL_MULTILEVEL_FILLET.radius"
+        )
+        in item.get("source_targets", [])
+        for item in arc_sources
+    )
+    assert R.check_drawing_json(draft) == []
+
+
+def test_multilevel_tapered_profile_keeps_unfittable_fillet_blocking():
+    graph = _multilevel_tapered_annular_graph_with_arc(radius=20.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert all(
+        segment["type"] == "line"
+        for segment in draft["profile"]["segments"]
+    )
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile_primitive"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["metadata"]["primitive_kind"] == "arc"
+    assert blockers[0]["required_for_modeling"] is True
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_multilevel_tapered_annular_profile_consumes_nested_radial_and_axial_levels():
     graph = _multilevel_tapered_annular_graph()
     result = resolve_evidence_graph(graph)

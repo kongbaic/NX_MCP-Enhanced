@@ -1884,8 +1884,6 @@ def _labeled_profile_transition_boundary_records(
 
         hint_by_source: dict[str, dict[str, Any]] = {}
         for hint in rotational_oblique_profile_hints:
-            if not isinstance(hint, dict):
-                continue
             source_ids = [
                 source
                 for source in hint.get("source_ids", [])

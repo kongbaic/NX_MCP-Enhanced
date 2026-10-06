@@ -973,6 +973,88 @@ def _symmetric_tapered_annular_graph(
     )
 
 
+def _bilateral_straight_silhouette_observation(*, duplicate=False):
+    record = {
+        "id": "BILATERAL_STRAIGHT_SILHOUETTE_TEST",
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "radial_axis": "X",
+        "negative_side_source_ids": ["hybrid:oblique-line:0"],
+        "positive_side_source_ids": ["hybrid:oblique-line:1"],
+        "source_ids": [
+            "hybrid:oblique-line:0",
+            "hybrid:oblique-line:1",
+            "hybrid:center-proof:left",
+            "hybrid:center-proof:right",
+        ],
+        "primitive_kind": "line",
+        "primitive_kind_basis": (
+            "bilateral_mirrored_continuous_straight_exterior_silhouette"
+        ),
+        "basis": (
+            "full_support_exterior_fragments_plus_"
+            "independent_symmetric_span_midpoint"
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+    items = [record]
+    if duplicate:
+        items.append({**record, "id": "BILATERAL_STRAIGHT_SILHOUETTE_DUPLICATE"})
+    return {
+        "kind": "hybrid_bilateral_rotational_straight_silhouette_ledger",
+        "schema": "1.0",
+        "items": items,
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+
+def test_symmetric_tapered_annular_profile_consumes_unique_bilateral_silhouette_ledger():
+    graph = _symmetric_tapered_annular_graph()
+    graph.observations.append(_bilateral_straight_silhouette_observation())
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+    evidence = {
+        value
+        for item in draft["source_ledger"]
+        if str(item.get("target", "")).startswith("profile.")
+        for value in item.get("evidence", [])
+    }
+    assert "BILATERAL_STRAIGHT_SILHOUETTE_TEST" in evidence
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+    ]
+
+
+def test_symmetric_tapered_annular_profile_rejects_ambiguous_bilateral_silhouette_ledger():
+    graph = _symmetric_tapered_annular_graph()
+    graph.observations.append(
+        _bilateral_straight_silhouette_observation(duplicate=True)
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_symmetric_tapered_annular_profile_rejects_legacy_straight_basis():
     graph = _symmetric_tapered_annular_graph(
         verified_straight_primitive=True,

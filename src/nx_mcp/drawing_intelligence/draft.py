@@ -884,6 +884,121 @@ def _ordered_rotational_cycle_matches_material_polarity(
     return True
 
 
+def _rotational_profile_companion_family(
+    topology_items: list[dict[str, Any]],
+    item: dict[str, Any],
+) -> tuple[dict[str, Any], set[tuple[str, str, str, int]]] | None:
+    """Aggregate disconnected components only within one proven rotational view.
+
+    This is topology-only aggregation. It introduces no metric coordinates and
+    keeps every original component key so Draft can prove that each component
+    was consumed by the same canonical profile.
+    """
+
+    key = _rotational_profile_key(item)
+    if key is None:
+        return None
+    rotation_axis, plane, region_id, _component_index = key
+    view_kind = str(item.get("view_kind") or "")
+    if not view_kind:
+        return None
+
+    companions: list[dict[str, Any]] = []
+    keys: set[tuple[str, str, str, int]] = set()
+    for candidate in topology_items:
+        candidate_key = _rotational_profile_key(candidate)
+        if candidate_key is None:
+            continue
+        if (
+            candidate_key[0] != rotation_axis
+            or candidate_key[1] != plane
+            or candidate_key[2] != region_id
+            or str(candidate.get("view_kind") or "") != view_kind
+        ):
+            continue
+        companions.append(candidate)
+        keys.add(candidate_key)
+
+    if not companions:
+        return None
+    if len(companions) == 1:
+        return copy.deepcopy(item), keys
+
+    edges_by_ref: dict[str, dict[str, Any]] = {}
+    junctions: set[tuple[str, str]] = set()
+    source_ids: list[str] = []
+    fragments: dict[str, dict[str, Any]] = {}
+
+    for companion in companions:
+        raw_edges = companion.get("edges")
+        raw_junctions = companion.get("junctions")
+        if not isinstance(raw_edges, list) or not isinstance(raw_junctions, list):
+            return None
+        for edge in raw_edges:
+            if not isinstance(edge, dict):
+                return None
+            ref = str(edge.get("ref") or "")
+            if not ref:
+                return None
+            previous = edges_by_ref.get(ref)
+            if previous is not None and previous != edge:
+                return None
+            edges_by_ref.setdefault(ref, copy.deepcopy(edge))
+        for pair in raw_junctions:
+            if (
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or not all(isinstance(ref, str) and ref for ref in pair)
+                or pair[0] == pair[1]
+            ):
+                return None
+            junctions.add(tuple(sorted((pair[0], pair[1]))))
+        source_ids.extend(
+            value
+            for value in companion.get("source_ids", [])
+            if isinstance(value, str) and value
+        )
+        raw_fragments = companion.get("non_orthogonal_fragments")
+        if raw_fragments is not None:
+            if not isinstance(raw_fragments, list):
+                return None
+            for fragment in raw_fragments:
+                if not isinstance(fragment, dict):
+                    return None
+                fragment_id = str(fragment.get("id") or "")
+                if not fragment_id:
+                    return None
+                previous = fragments.get(fragment_id)
+                if previous is not None and previous != fragment:
+                    return None
+                fragments.setdefault(fragment_id, copy.deepcopy(fragment))
+
+    edge_refs = set(edges_by_ref)
+    if any(left not in edge_refs or right not in edge_refs for left, right in junctions):
+        return None
+
+    merged = copy.deepcopy(item)
+    merged["edges"] = [edges_by_ref[ref] for ref in sorted(edges_by_ref)]
+    merged["junctions"] = [list(pair) for pair in sorted(junctions)]
+    merged["source_ids"] = list(dict.fromkeys(source_ids))
+    if fragments:
+        merged["non_orthogonal_fragments"] = [
+            fragments[fragment_id]
+            for fragment_id in sorted(fragments)
+        ]
+    merged["companion_component_keys"] = [
+        {
+            "rotation_axis": candidate_key[0],
+            "plane": candidate_key[1],
+            "region_id": candidate_key[2],
+            "component_index": candidate_key[3],
+        }
+        for candidate_key in sorted(keys)
+    ]
+    merged["basis"] = "same_rotational_view_companion_topology_family"
+    return merged, keys
+
+
 def _bilateral_straight_silhouette_ledger_sources(
     graph: EvidenceGraph,
     item: dict[str, Any],
@@ -914,9 +1029,6 @@ def _bilateral_straight_silhouette_ledger_sources(
             if isinstance(value, str)
             and value.startswith("hybrid:oblique-line:")
         )
-    if len(item_sources) < 2:
-        return None
-
     matches: list[dict[str, Any]] = []
     for observation in graph.observations:
         if (
@@ -962,8 +1074,10 @@ def _bilateral_straight_silhouette_ledger_sources(
                 not negative
                 or not positive
                 or negative.intersection(positive)
-                or negative.union(positive) != item_sources
             ):
+                continue
+            record_sources = negative.union(positive)
+            if item_sources and record_sources != item_sources:
                 continue
             matches.append(record)
 
@@ -1334,6 +1448,13 @@ def _materialize_symmetric_tapered_annular_profile(
 
     materialized: set[tuple[str, str, str, int]] = set()
     for item in topology_items:
+        family = _rotational_profile_companion_family(
+            topology_items,
+            item,
+        )
+        if family is None:
+            continue
+        working_item, family_keys = family
         key = _rotational_profile_key(item)
         if key is None:
             continue
@@ -1349,7 +1470,10 @@ def _materialize_symmetric_tapered_annular_profile(
         radial_center = radial_extent / 2.0
         tolerance = 1e-7
 
-        oblique_evidence = _bilateral_exterior_oblique_sources(graph, item)
+        oblique_evidence = _bilateral_exterior_oblique_sources(
+            graph,
+            working_item,
+        )
         if oblique_evidence is None:
             continue
 
@@ -1467,7 +1591,7 @@ def _materialize_symmetric_tapered_annular_profile(
 
         transition_records = _resolved_labeled_profile_transition_levels(
             graph,
-            item,
+            working_item,
             resolution,
             rotation_axis=rotation_axis,
             axial_extent=axial_extent,
@@ -1613,7 +1737,7 @@ def _materialize_symmetric_tapered_annular_profile(
                     [
                         *[
                             value
-                            for value in item.get("source_ids", [])
+                            for value in working_item.get("source_ids", [])
                             if isinstance(value, str) and value
                         ],
                         *oblique_evidence,
@@ -1679,7 +1803,7 @@ def _materialize_symmetric_tapered_annular_profile(
                     },
                 ]
             )
-            materialized.add(key)
+            materialized.update(family_keys)
             break
 
         if len(hub_candidates) != 1:
@@ -1687,8 +1811,8 @@ def _materialize_symmetric_tapered_annular_profile(
         hub_span = hub_candidates[0]
         hub_radius = hub_radii[0]
 
-        raw_edges = item.get("edges")
-        raw_junctions = item.get("junctions")
+        raw_edges = working_item.get("edges")
+        raw_junctions = working_item.get("junctions")
         if not isinstance(raw_edges, list) or not isinstance(raw_junctions, list):
             continue
         edges = {
@@ -1805,7 +1929,7 @@ def _materialize_symmetric_tapered_annular_profile(
                 [
                     *[
                         value
-                        for value in item.get("source_ids", [])
+                        for value in working_item.get("source_ids", [])
                         if isinstance(value, str) and value
                     ],
                     *oblique_evidence,
@@ -1869,7 +1993,7 @@ def _materialize_symmetric_tapered_annular_profile(
                 },
             ]
         )
-        materialized.add(key)
+        materialized.update(family_keys)
         break
 
     return materialized

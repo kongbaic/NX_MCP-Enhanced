@@ -1306,6 +1306,78 @@ def test_multilevel_tapered_profile_does_not_merge_independent_region_component(
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def _corroborated_profile_radius_table_observation(
+    *,
+    label="R7",
+    radius=2.0,
+):
+    return {
+        "kind": "hybrid_corroborated_reference_table_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "reference_region_id": "R_TABLE",
+                "paired": {
+                    "A": {
+                        "label": "A",
+                        "value": 40.0,
+                        "header_source_item_index": 1,
+                        "value_source_item_index": 11,
+                    },
+                    "B": {
+                        "label": "B",
+                        "value": 24.0,
+                        "header_source_item_index": 2,
+                        "value_source_item_index": 12,
+                    },
+                    "C": {
+                        "label": "C",
+                        "value": 12.0,
+                        "header_source_item_index": 3,
+                        "value_source_item_index": 13,
+                    },
+                    label: {
+                        "label": label,
+                        "value": radius,
+                        "header_source_item_index": 4,
+                        "value_source_item_index": 14,
+                    },
+                },
+                "corroborating_labels": ["A", "B", "C"],
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+        "engineering_value_source": "corroborated_reference_table_row",
+    }
+
+
+def test_unowned_reference_table_profile_radius_blocks_only_at_gate_a():
+    graph = _multilevel_tapered_annular_graph()
+    graph.observations.append(
+        _corroborated_profile_radius_table_observation(
+            label="R7",
+            radius=2.0,
+        )
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "profile_arc_radius_identity"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["radius_label"] == "R7"
+    assert blockers[0]["engineering_radius"] == 2.0
+    assert blockers[0]["linked_physical_arc_ids"] == []
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def _multilevel_tapered_annular_graph_with_arc(*, radius=2.0):
     graph = _multilevel_tapered_annular_graph()
     physical_arc_id = "PHYSICAL_MULTILEVEL_FILLET"
@@ -1354,6 +1426,10 @@ def _multilevel_tapered_annular_graph_with_arc(*, radius=2.0):
     }
     graph.observations.extend(
         [
+            _corroborated_profile_radius_table_observation(
+                label="R7",
+                radius=radius,
+            ),
             {
                 "kind": (
                     "hybrid_physical_rotational_oblique_profile_"
@@ -1445,6 +1521,11 @@ def test_multilevel_tapered_profile_materializes_resolved_engineering_fillet():
         if item.get("field") == "rotational_profile_primitive"
     ]
     assert blockers == []
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "profile_arc_radius_identity"
+    ]
 
     arc_sources = [
         item

@@ -5492,7 +5492,7 @@ def test_corroborated_reference_table_radius_links_to_unique_verified_profile_ar
     assert values[0].semantic == "radius"
 
 
-def test_corroborated_reference_table_radius_fails_closed_with_multiple_profile_arcs():
+def test_corroborated_reference_table_radius_defers_ambiguous_profile_arcs_to_gate_a():
     observations = [
         _corroborated_reference_radius_observation(),
         {
@@ -5520,17 +5520,7 @@ def test_corroborated_reference_table_radius_fails_closed_with_multiple_profile_
     )
 
     assert linked == []
-    blockers = [
-        item
-        for item in unresolved
-        if item.get("field") == "profile_arc_radius_identity"
-        and item.get("required_for_modeling") is True
-    ]
-    assert len(blockers) == 1
-    assert blockers[0]["candidate_physical_arc_ids"] == [
-        "PHYSICAL_OBLIQUE_ARC_A",
-        "PHYSICAL_OBLIQUE_ARC_B",
-    ]
+    assert unresolved == []
 
 
 def test_physical_arc_radius_becomes_standard_resolver_direct_value():

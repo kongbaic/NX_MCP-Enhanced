@@ -1598,60 +1598,69 @@ def _labeled_profile_transition_boundary_records(
 
         if not transition_positions:
             continue
-        if (
-            max(transition_positions) - min(transition_positions)
-            > tolerance
-        ):
-            continue
-        transition_position = (
-            sum(transition_positions) / len(transition_positions)
-        )
 
         expected_profile_orientation = (
             "horizontal"
             if expected_direction == "vertical"
             else "vertical"
         )
-        matched_refs: set[str] = set()
-        for profile in profile_inventory:
-            if (
-                not isinstance(profile, dict)
-                or profile.get("kind") != "profile_edge_candidate"
-                or str(profile.get("source_orientation") or "")
-                != expected_profile_orientation
-            ):
-                continue
-            profile_region_id = str(profile.get("region_id") or "")
-            profile_view = view_lookup.get(profile_region_id)
-            if (
-                profile_view is None
-                or profile_view.view_kind != region_view.view_kind
-            ):
-                continue
-            ref = str(profile.get("ref") or "")
-            position = profile.get("position_px")
-            if (
-                not ref
-                or ref not in profile_entity_by_ref
-                or not isinstance(position, (int, float))
-                or isinstance(position, bool)
-            ):
-                continue
-            raw_axis_tolerance = profile.get("axis_tolerance_px")
-            axis_tolerance = (
-                float(raw_axis_tolerance)
-                if isinstance(raw_axis_tolerance, (int, float))
-                and not isinstance(raw_axis_tolerance, bool)
-                else 0.0
-            )
-            if (
-                abs(float(position) - transition_position)
-                <= max(tolerance, axis_tolerance)
-            ):
-                matched_refs.add(ref)
+        matched_by_transition: list[tuple[float, tuple[str, ...]]] = []
+        for transition_position in transition_positions:
+            matched_refs: set[str] = set()
+            for profile in profile_inventory:
+                if (
+                    not isinstance(profile, dict)
+                    or profile.get("kind") != "profile_edge_candidate"
+                    or str(profile.get("source_orientation") or "")
+                    != expected_profile_orientation
+                ):
+                    continue
+                profile_region_id = str(profile.get("region_id") or "")
+                profile_view = view_lookup.get(profile_region_id)
+                if (
+                    profile_view is None
+                    or profile_view.view_kind != region_view.view_kind
+                ):
+                    continue
+                ref = str(profile.get("ref") or "")
+                position = profile.get("position_px")
+                if (
+                    not ref
+                    or ref not in profile_entity_by_ref
+                    or not isinstance(position, (int, float))
+                    or isinstance(position, bool)
+                ):
+                    continue
+                raw_axis_tolerance = profile.get("axis_tolerance_px")
+                axis_tolerance = (
+                    float(raw_axis_tolerance)
+                    if isinstance(raw_axis_tolerance, (int, float))
+                    and not isinstance(raw_axis_tolerance, bool)
+                    else 0.0
+                )
+                if (
+                    abs(float(position) - transition_position)
+                    <= max(tolerance, axis_tolerance)
+                ):
+                    matched_refs.add(ref)
+            if matched_refs:
+                matched_by_transition.append(
+                    (transition_position, tuple(sorted(matched_refs)))
+                )
 
-        if matched_refs:
-            profile_refs = sorted(matched_refs)
+        unique_profile_identities = {
+            refs for _position, refs in matched_by_transition
+        }
+        if len(unique_profile_identities) == 1:
+            profile_refs = list(next(iter(unique_profile_identities)))
+            selected_positions = [
+                position
+                for position, refs in matched_by_transition
+                if refs == tuple(profile_refs)
+            ]
+            selected_transition_position = (
+                sum(selected_positions) / len(selected_positions)
+            )
             output.append(
                 {
                     "target_id": fact.target_id,
@@ -1666,7 +1675,7 @@ def _labeled_profile_transition_boundary_records(
                         for ref in profile_refs
                     ],
                     "selected_transition_position_px": round(
-                        transition_position,
+                        selected_transition_position,
                         3,
                     ),
                     "identity_kind": "physical_profile_boundary",
@@ -1690,11 +1699,10 @@ def _labeled_profile_transition_boundary_records(
                 }
             )
             continue
+        if len(unique_profile_identities) > 1:
+            continue
 
-        if (
-            fact.symmetry_scope != "bilateral"
-            or not isinstance(rotational_oblique_profile_hints, list)
-        ):
+        if not isinstance(rotational_oblique_profile_hints, list):
             continue
 
         transition_axis_index = 1 if expected_direction == "vertical" else 0
@@ -1734,11 +1742,14 @@ def _labeled_profile_transition_boundary_records(
             matching_indices = [
                 index
                 for index, point in enumerate(endpoints)
-                if abs(
-                    float(point[transition_axis_index])
-                    - transition_position
+                if any(
+                    abs(
+                        float(point[transition_axis_index])
+                        - transition_position
+                    )
+                    <= tolerance
+                    for transition_position in transition_positions
                 )
-                <= tolerance
             ]
             if len(matching_indices) != 1:
                 continue
@@ -1772,49 +1783,59 @@ def _labeled_profile_transition_boundary_records(
             str(item["source_id"]): item
             for item in oblique_matches
         }
-        if len(unique_by_source) != 2:
+        valid_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        ordered_sources = sorted(unique_by_source)
+        for first_index, first_source in enumerate(ordered_sources):
+            first_oblique = unique_by_source[first_source]
+            for second_source in ordered_sources[first_index + 1 :]:
+                second_oblique = unique_by_source[second_source]
+                first_transition = first_oblique["transition_point"]
+                second_transition = second_oblique["transition_point"]
+                first_other = first_oblique["other_point"]
+                second_other = second_oblique["other_point"]
+
+                if (
+                    abs(
+                        first_transition[transition_axis_index]
+                        - second_transition[transition_axis_index]
+                    )
+                    > tolerance
+                    or abs(
+                        first_other[transition_axis_index]
+                        - second_other[transition_axis_index]
+                    )
+                    > tolerance
+                ):
+                    continue
+
+                first_delta = (
+                    first_other[transverse_axis_index]
+                    - first_transition[transverse_axis_index]
+                )
+                second_delta = (
+                    second_other[transverse_axis_index]
+                    - second_transition[transverse_axis_index]
+                )
+                if (
+                    first_delta == 0.0
+                    or second_delta == 0.0
+                    or first_delta * second_delta >= 0.0
+                    or abs(abs(first_delta) - abs(second_delta)) > tolerance
+                ):
+                    continue
+                valid_pairs.append((first_oblique, second_oblique))
+
+        if len(valid_pairs) != 1:
             continue
-        oblique_pair = [
-            unique_by_source[source]
-            for source in sorted(unique_by_source)
-        ]
-        first_oblique, second_oblique = oblique_pair
+        first_oblique, second_oblique = valid_pairs[0]
         first_transition = first_oblique["transition_point"]
         second_transition = second_oblique["transition_point"]
-        first_other = first_oblique["other_point"]
-        second_other = second_oblique["other_point"]
-
-        if (
-            abs(
-                first_transition[transition_axis_index]
-                - second_transition[transition_axis_index]
-            )
-            > tolerance
-            or abs(
-                first_other[transition_axis_index]
-                - second_other[transition_axis_index]
-            )
-            > tolerance
-        ):
-            continue
-
-        first_delta = (
-            first_other[transverse_axis_index]
-            - first_transition[transverse_axis_index]
+        oblique_source_ids = sorted(
+            {
+                str(first_oblique["source_id"]),
+                str(second_oblique["source_id"]),
+            }
         )
-        second_delta = (
-            second_other[transverse_axis_index]
-            - second_transition[transverse_axis_index]
-        )
-        if (
-            first_delta == 0.0
-            or second_delta == 0.0
-            or first_delta * second_delta >= 0.0
-            or abs(abs(first_delta) - abs(second_delta)) > tolerance
-        ):
-            continue
-
-        oblique_source_ids = sorted(unique_by_source)
         output.append(
             {
                 "target_id": fact.target_id,
@@ -1827,7 +1848,11 @@ def _labeled_profile_transition_boundary_records(
                 "profile_entity_keys": [],
                 "oblique_source_ids": oblique_source_ids,
                 "selected_transition_position_px": round(
-                    transition_position,
+                    (
+                        first_transition[transition_axis_index]
+                        + second_transition[transition_axis_index]
+                    )
+                    / 2.0,
                     3,
                 ),
                 "identity_kind": (

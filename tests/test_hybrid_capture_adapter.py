@@ -8120,6 +8120,7 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
                 evidence=["local:right"],
             ),
         ],
+        evidence=["local:span"],
     )
     center_a = hybrid_adapter.ObservationDimension(
         key="R1.DG_CENTER_A",
@@ -8139,6 +8140,7 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
                 evidence=["center:a:right"],
             ),
         ],
+        evidence=["center:a"],
     )
     center_b = hybrid_adapter.ObservationDimension(
         key="R1.DG_CENTER_B",
@@ -8158,6 +8160,7 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
                 evidence=["center:b:right"],
             ),
         ],
+        evidence=["center:b"],
     )
     span_records = [
         {

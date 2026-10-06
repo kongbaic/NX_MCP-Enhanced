@@ -3821,6 +3821,10 @@ def _bilateral_rotational_straight_silhouette_records(
 
         def consolidate_side(
             side_hints: list[dict[str, Any]],
+            *,
+            axial_index: int = axial_index,
+            radial_index: int = radial_index,
+            center_tolerance: float = center_tolerance,
         ) -> dict[str, Any] | None:
             points: list[tuple[float, float]] = []
             intervals: list[tuple[float, float]] = []
@@ -3840,9 +3844,10 @@ def _bilateral_rotational_straight_silhouette_records(
                 if abs(local_points[0][0] - local_points[1][0]) <= 1e-9:
                     return None
                 points.extend(local_points)
-                intervals.append(
-                    tuple(sorted((local_points[0][0], local_points[1][0])))
+                low, high = sorted(
+                    (local_points[0][0], local_points[1][0])
                 )
+                intervals.append((low, high))
                 sources.extend(
                     value
                     for value in hint.get("source_ids", [])

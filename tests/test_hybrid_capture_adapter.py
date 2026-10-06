@@ -8110,10 +8110,12 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.LOCAL_LEFT",
+                evidence=["local:left"],
             ),
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.LOCAL_RIGHT",
+                evidence=["local:right"],
             ),
         ],
     )
@@ -8125,10 +8127,12 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.CENTER_A_LEFT",
+                evidence=["center:a:left"],
             ),
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.CENTER_A_RIGHT",
+                evidence=["center:a:right"],
             ),
         ],
     )
@@ -8140,10 +8144,12 @@ def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambig
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.CENTER_B_LEFT",
+                evidence=["center:b:left"],
             ),
             hybrid_adapter.ObservationDimensionEndpoint(
                 role="profile_boundary",
                 entity_key="R1.PROFILE.CENTER_B_RIGHT",
+                evidence=["center:b:right"],
             ),
         ],
     )

@@ -1479,6 +1479,328 @@ def _resolved_labeled_profile_transition_levels(
     return output
 
 
+def _apply_resolved_multilevel_profile_arcs(
+    profile_segments: list[dict[str, Any]],
+    *,
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+    plane: str,
+    rotation_axis: str,
+    radial_axis: str,
+) -> list[dict[str, Any]] | None:
+    """Apply identity-linked engineering fillets to a solved multi-level profile.
+
+    The canonical line polygon already owns every metric vertex. Physical arc
+    evidence identifies which two engineering boundaries meet at the fillet,
+    while the Resolver-owned radius supplies the metric radius. Raster curve
+    geometry never supplies a center, tangent point, or radius.
+    """
+
+    axes = (plane[0], plane[1])
+    tolerance = 1e-7
+    working: list[dict[str, Any]] = []
+    for segment in profile_segments:
+        if segment.get("type") != "line":
+            return None
+        try:
+            start = {
+                axis: float(segment[f"{axis.lower()}1"])
+                for axis in axes
+            }
+            end = {
+                axis: float(segment[f"{axis.lower()}2"])
+                for axis in axes
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        working.append(
+            {
+                "type": "line",
+                "start": start,
+                "end": end,
+                "source_ids": [],
+                "source_targets": [],
+                "solver": "rotational_multilevel_taper_profile_solver",
+            }
+        )
+
+    if len(working) < 3:
+        return None
+    area2 = _profile_cycle_area2(working, axes)
+    if abs(area2) <= 1e-9:
+        return None
+    if area2 < 0.0:
+        working = _reverse_profile_cycle(working)
+
+    arc_items: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_physical_profile_arc_radius_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if (
+                isinstance(item, dict)
+                and str(item.get("plane") or "").upper() == plane
+                and str(item.get("rotation_axis") or "").upper() == rotation_axis
+            ):
+                arc_items.append(item)
+
+    for item in sorted(
+        arc_items,
+        key=lambda value: str(value.get("physical_arc_id") or ""),
+    ):
+        physical_arc_id = str(item.get("physical_arc_id") or "")
+        curve_source_id = str(item.get("curve_source_id") or "")
+        if (
+            not physical_arc_id
+            or not curve_source_id.startswith("hybrid:curve-boundary:")
+            or item.get("engineering_coordinate_inferred_from_pixels") is not False
+            or item.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            return None
+
+        radius_target = (
+            "constraints.profile_arc_radii."
+            f"{physical_arc_id}.radius"
+        )
+        raw_radius = resolution.values.get(radius_target)
+        if (
+            isinstance(raw_radius, bool)
+            or not isinstance(raw_radius, (int, float))
+            or float(raw_radius) <= 0.0
+        ):
+            return None
+        radius = float(raw_radius)
+        raw_item_radius = item.get("engineering_radius")
+        if (
+            isinstance(raw_item_radius, bool)
+            or not isinstance(raw_item_radius, (int, float))
+            or abs(float(raw_item_radius) - radius) > tolerance
+        ):
+            return None
+
+        raw_supports = item.get("supporting_physical_edges")
+        if not isinstance(raw_supports, list) or len(raw_supports) != 2:
+            return None
+
+        support_by_index: dict[int, dict[str, Any]] = {}
+        for raw_support in raw_supports:
+            if not isinstance(raw_support, dict):
+                return None
+            axis = str(raw_support.get("constant_axis") or "").upper()
+            target = str(raw_support.get("boundary_target") or "")
+            material_direction = raw_support.get("material_axis_direction")
+            background_direction = raw_support.get("background_axis_direction")
+            if (
+                axis not in axes
+                or not target
+                or target not in resolution.values
+                or material_direction not in {"negative", "positive"}
+                or background_direction not in {"negative", "positive"}
+                or material_direction == background_direction
+                or raw_support.get("material_axis_direction_ambiguous") is True
+            ):
+                return None
+            raw_value = resolution.values[target]
+            if (
+                isinstance(raw_value, bool)
+                or not isinstance(raw_value, (int, float))
+            ):
+                return None
+            value = float(
+                _planner_value_for_target(
+                    graph,
+                    target,
+                    raw_value,
+                )
+            )
+            if axis == radial_axis:
+                value = abs(value)
+
+            matching_indices = [
+                index
+                for index, segment in enumerate(working)
+                if (
+                    segment.get("type") == "line"
+                    and abs(float(segment["start"][axis]) - value) <= tolerance
+                    and abs(float(segment["end"][axis]) - value) <= tolerance
+                )
+            ]
+            if len(matching_indices) != 1:
+                return None
+            segment_index = matching_indices[0]
+            if segment_index in support_by_index:
+                return None
+            support_by_index[segment_index] = {
+                "axis": axis,
+                "target": target,
+                "value": value,
+                "material_axis_direction": material_direction,
+            }
+
+        if len(support_by_index) != 2:
+            return None
+        support_indices = sorted(support_by_index)
+        first_index, second_index = support_indices
+        if second_index != (first_index + 1) % len(working):
+            if first_index == (second_index + 1) % len(working):
+                first_index, second_index = second_index, first_index
+            else:
+                return None
+
+        first_segment = copy.deepcopy(working[first_index])
+        second_segment = copy.deepcopy(working[second_index])
+        first_support = support_by_index[first_index]
+        second_support = support_by_index[second_index]
+        if (
+            first_support["axis"] == second_support["axis"]
+            or _point_key(first_segment["end"], axes)
+            != _point_key(second_segment["start"], axes)
+        ):
+            return None
+
+        def boundary_for(
+            segment: dict[str, Any],
+            support: dict[str, Any],
+        ) -> dict[str, Any]:
+            axis = str(support["axis"])
+            varying_axis = axes[1] if axis == axes[0] else axes[0]
+            return {
+                "axis": axis,
+                "value": float(support["value"]),
+                "span": [
+                    float(segment["start"][varying_axis]),
+                    float(segment["end"][varying_axis]),
+                ],
+                "material_axis_direction": support[
+                    "material_axis_direction"
+                ],
+                "target": support["target"],
+            }
+
+        solved = solve_orthogonal_tangent_arc(
+            axes=axes,
+            first_boundary=boundary_for(first_segment, first_support),
+            second_boundary=boundary_for(second_segment, second_support),
+            radius=radius,
+        )
+        if solved.get("status") != "resolved":
+            return None
+
+        center = {
+            axis: float(solved["center"][axis])
+            for axis in axes
+        }
+        tangent_points = solved.get("tangent_points")
+        if not isinstance(tangent_points, dict):
+            return None
+        first_tangent = tangent_points.get(str(first_support["axis"]))
+        second_tangent = tangent_points.get(str(second_support["axis"]))
+        if not (
+            isinstance(first_tangent, dict)
+            and isinstance(second_tangent, dict)
+        ):
+            return None
+        first_tangent = {
+            axis: float(first_tangent[axis])
+            for axis in axes
+        }
+        second_tangent = {
+            axis: float(second_tangent[axis])
+            for axis in axes
+        }
+        if (
+            _point_key(first_segment["start"], axes)
+            == _point_key(first_tangent, axes)
+            or _point_key(second_tangent, axes)
+            == _point_key(second_segment["end"], axes)
+        ):
+            return None
+
+        start_angle = _profile_arc_angle(center, first_tangent, axes)
+        raw_end_angle = _profile_arc_angle(center, second_tangent, axes)
+        sweep = (raw_end_angle - start_angle) % 360.0
+        if sweep <= 1e-7 or sweep > 180.0 + 1e-7:
+            return None
+        end_angle = start_angle + sweep
+
+        arc_sources = list(
+            dict.fromkeys(
+                [
+                    physical_arc_id,
+                    curve_source_id,
+                    *[
+                        value
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                ]
+            )
+        )
+        arc_targets = list(
+            dict.fromkeys(
+                [
+                    str(first_support["target"]),
+                    str(second_support["target"]),
+                    radius_target,
+                ]
+            )
+        )
+
+        first_segment["end"] = first_tangent
+        second_segment["start"] = second_tangent
+        for segment in (first_segment, second_segment):
+            segment["source_ids"] = list(
+                dict.fromkeys(
+                    [
+                        *segment.get("source_ids", []),
+                        *arc_sources,
+                    ]
+                )
+            )
+            segment["source_targets"] = list(
+                dict.fromkeys(
+                    [
+                        *segment.get("source_targets", []),
+                        *arc_targets,
+                    ]
+                )
+            )
+            segment["solver"] = "rotational_profile_arc_solver"
+
+        arc_segment = {
+            "type": "arc",
+            "center": center,
+            "radius": radius,
+            "start_angle": start_angle,
+            "end_angle": end_angle,
+            "start": first_tangent,
+            "end": second_tangent,
+            "source_ids": arc_sources,
+            "source_targets": arc_targets,
+            "solver": "rotational_profile_arc_solver",
+            "physical_arc_id": physical_arc_id,
+        }
+        if second_index == 0:
+            working[first_index] = first_segment
+            working[0] = second_segment
+            working.append(arc_segment)
+        else:
+            working[first_index] = first_segment
+            working[second_index] = second_segment
+            working.insert(second_index, arc_segment)
+
+    return working
+
+
 def _materialize_symmetric_tapered_annular_profile(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -1818,29 +2140,111 @@ def _materialize_symmetric_tapered_annular_profile(
                     ]
                 )
             )
+            arc_ordered = _apply_resolved_multilevel_profile_arcs(
+                multilevel_profile_segments,
+                graph=graph,
+                resolution=resolution,
+                plane=plane,
+                rotation_axis=rotation_axis,
+                radial_axis=radial_axis,
+            )
+            if arc_ordered is None:
+                arc_ordered = [
+                    {
+                        "type": "line",
+                        "start": {
+                            axis: float(
+                                segment[f"{axis.lower()}1"]
+                            )
+                            for axis in (plane[0], plane[1])
+                        },
+                        "end": {
+                            axis: float(
+                                segment[f"{axis.lower()}2"]
+                            )
+                            for axis in (plane[0], plane[1])
+                        },
+                        "source_ids": [],
+                        "source_targets": [],
+                        "solver": (
+                            "rotational_multilevel_taper_profile_solver"
+                        ),
+                    }
+                    for segment in multilevel_profile_segments
+                ]
+
+            final_profile_segments: list[dict[str, Any]] = []
+            for index, segment in enumerate(arc_ordered):
+                segment_evidence = list(source_ids)
+                segment_evidence.extend(
+                    value
+                    for value in segment.get("source_ids", [])
+                    if isinstance(value, str) and value
+                )
+                source_targets = [
+                    value
+                    for value in segment.get("source_targets", [])
+                    if isinstance(value, str) and value
+                ]
+                for source_target in source_targets:
+                    segment_evidence.extend(
+                        resolution.traces.get(source_target, [])
+                    )
+                segment_evidence = list(
+                    dict.fromkeys(segment_evidence)
+                )
+                segment_solver = str(
+                    segment.get("solver")
+                    or "rotational_multilevel_taper_profile_solver"
+                )
+
+                if segment.get("type") == "arc":
+                    profile_segment = {
+                        "type": "arc",
+                        "center": {
+                            axis.lower(): float(
+                                segment["center"][axis]
+                            )
+                            for axis in (plane[0], plane[1])
+                        },
+                        "radius": float(segment["radius"]),
+                        "start_angle": float(segment["start_angle"]),
+                        "end_angle": float(segment["end_angle"]),
+                    }
+                else:
+                    profile_segment = {"type": "line"}
+                    for axis in (plane[0], plane[1]):
+                        lower = axis.lower()
+                        profile_segment[f"{lower}1"] = float(
+                            segment["start"][axis]
+                        )
+                        profile_segment[f"{lower}2"] = float(
+                            segment["end"][axis]
+                        )
+                final_profile_segments.append(profile_segment)
+
+                for field, value in profile_segment.items():
+                    ledger_item = {
+                        "id": (
+                            "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_"
+                            f"{index}_{field.upper()}"
+                        ),
+                        "semantic": "profile_dimension",
+                        "value": copy.deepcopy(value),
+                        "target": f"profile.segments.{index}.{field}",
+                        "evidence": segment_evidence,
+                        "solver": segment_solver,
+                    }
+                    if source_targets:
+                        ledger_item["source_targets"] = source_targets
+                    draft["source_ledger"].append(ledger_item)
+
             draft["profile"] = {
                 "plane": plane,
                 "topology": "closed_polygon",
                 "rotation_axis": rotation_axis,
-                "segments": multilevel_profile_segments,
+                "segments": final_profile_segments,
             }
-            for index, segment in enumerate(multilevel_profile_segments):
-                for field, value in segment.items():
-                    draft["source_ledger"].append(
-                        {
-                            "id": (
-                                "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_"
-                                f"{index}_{field.upper()}"
-                            ),
-                            "semantic": "profile_dimension",
-                            "value": copy.deepcopy(value),
-                            "target": f"profile.segments.{index}.{field}",
-                            "evidence": source_ids,
-                            "solver": (
-                                "rotational_multilevel_taper_profile_solver"
-                            ),
-                        }
-                    )
             draft["source_ledger"].extend(
                 [
                     {

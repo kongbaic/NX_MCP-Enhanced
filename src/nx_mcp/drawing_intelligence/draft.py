@@ -1131,6 +1131,174 @@ def _bilateral_exterior_oblique_sources(
     return list(dict.fromkeys(evidence))
 
 
+def _resolved_labeled_profile_transition_levels(
+    graph: EvidenceGraph,
+    item: dict[str, Any],
+    resolution: ResolutionResult,
+    *,
+    rotation_axis: str,
+    axial_extent: float,
+    oblique_evidence: list[str],
+) -> list[dict[str, Any]]:
+    """Resolve profile-transition levels only from engineering relations.
+
+    Transition-boundary ledgers prove physical identity. Resolver values provide
+    the metric coordinate. Raster positions and slopes never become engineering
+    coordinates.
+    """
+
+    edge_refs = {
+        str(edge.get("ref") or "")
+        for edge in item.get("edges", [])
+        if isinstance(edge, dict) and str(edge.get("ref") or "")
+    }
+    oblique_sources = {
+        value
+        for value in oblique_evidence
+        if isinstance(value, str)
+        and value.startswith("hybrid:oblique-line:")
+    }
+
+    identity_records: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_labeled_profile_transition_boundary_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if isinstance(items, list):
+            identity_records.extend(
+                record for record in items if isinstance(record, dict)
+            )
+
+    tolerance = 1e-7
+    output: list[dict[str, Any]] = []
+    for relation in graph.relations:
+        if (
+            relation.kind != "edge_offset"
+            or relation.axis != rotation_axis
+            or relation.metadata.get("basis")
+            != "labeled_overall_to_profile_transition"
+            or not relation.targets
+        ):
+            continue
+
+        target_id = str(relation.metadata.get("labeled_target_id") or "")
+        if not target_id:
+            continue
+
+        matches: list[dict[str, Any]] = []
+        for record in identity_records:
+            if (
+                str(record.get("target_id") or "") != target_id
+                or str(record.get("axis") or "").upper() != rotation_axis
+                or record.get("engineering_coordinate_inferred_from_pixels") is not False
+                or record.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+            identity_kind = str(record.get("identity_kind") or "")
+            if identity_kind == "physical_profile_boundary":
+                profile_refs = {
+                    str(value)
+                    for value in record.get("profile_refs", [])
+                    if isinstance(value, str) and value
+                }
+                if not profile_refs or not profile_refs.intersection(edge_refs):
+                    continue
+            elif identity_kind == "bilateral_oblique_transition_endpoint_level":
+                sources = {
+                    str(value)
+                    for value in record.get("oblique_source_ids", [])
+                    if isinstance(value, str) and value
+                }
+                if not sources or not sources.issubset(oblique_sources):
+                    continue
+            else:
+                continue
+            matches.append(record)
+
+        if len(matches) != 1:
+            continue
+
+        resolved_values = [
+            resolution.values[target]
+            for target in relation.targets
+            if target in resolution.values
+        ]
+        if (
+            len(resolved_values) != len(relation.targets)
+            or any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                for value in resolved_values
+            )
+        ):
+            continue
+        levels = [float(value) for value in resolved_values]
+        if max(levels) - min(levels) > tolerance:
+            continue
+
+        if relation.value is None or relation.from_side not in {"min", "max"}:
+            continue
+        expected = (
+            float(relation.value)
+            if relation.from_side == "min"
+            else axial_extent - float(relation.value)
+        )
+        level = levels[0]
+        if (
+            level <= tolerance
+            or level >= axial_extent - tolerance
+            or abs(level - expected) > tolerance
+        ):
+            continue
+
+        record = matches[0]
+        output.append(
+            {
+                "level": level,
+                "relation": relation,
+                "identity_kind": str(record.get("identity_kind") or ""),
+                "profile_refs": [
+                    value
+                    for value in record.get("profile_refs", [])
+                    if isinstance(value, str) and value
+                ],
+                "oblique_source_ids": [
+                    value
+                    for value in record.get("oblique_source_ids", [])
+                    if isinstance(value, str) and value
+                ],
+                "evidence": list(
+                    dict.fromkeys(
+                        [
+                            relation.id,
+                            *relation.source_ids,
+                            *[
+                                value
+                                for value in record.get("source_ids", [])
+                                if isinstance(value, str) and value
+                            ],
+                        ]
+                    )
+                ),
+            }
+        )
+
+    output.sort(
+        key=lambda record: (
+            float(record["level"]),
+            str(record["relation"].id),
+        )
+    )
+    return output
+
+
 def _materialize_symmetric_tapered_annular_profile(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -1275,15 +1443,246 @@ def _materialize_symmetric_tapered_annular_profile(
                 and float(candidate["span"]) < radial_extent - tolerance
             )
         ]
+        hub_candidates.sort(
+            key=lambda candidate: float(candidate["span"]),
+            reverse=True,
+        )
+        flange_radius = radial_extent / 2.0
+        hub_radii = [
+            float(candidate["span"]) / 2.0
+            for candidate in hub_candidates
+        ]
+        if (
+            not hub_radii
+            or not all(
+                0.0 < inner_radius < neck_radius < radius < flange_radius
+                for radius in hub_radii
+            )
+            or any(
+                left <= right + tolerance
+                for left, right in zip(hub_radii, hub_radii[1:])
+            )
+        ):
+            continue
+
+        transition_records = _resolved_labeled_profile_transition_levels(
+            graph,
+            item,
+            resolution,
+            rotation_axis=rotation_axis,
+            axial_extent=axial_extent,
+            oblique_evidence=oblique_evidence,
+        )
+
+        if len(hub_candidates) > 1:
+            physical_transitions = [
+                record
+                for record in transition_records
+                if record["identity_kind"] == "physical_profile_boundary"
+            ]
+            oblique_transitions = [
+                record
+                for record in transition_records
+                if (
+                    record["identity_kind"]
+                    == "bilateral_oblique_transition_endpoint_level"
+                )
+            ]
+            if (
+                len(physical_transitions) != len(hub_candidates)
+                or len(oblique_transitions) != 1
+            ):
+                continue
+
+            taper_transition = oblique_transitions[0]
+            taper_relation = taper_transition["relation"]
+            if taper_relation.from_side not in {"min", "max"}:
+                continue
+            side = taper_relation.from_side
+            if any(
+                record["relation"].from_side != side
+                for record in physical_transitions
+            ):
+                continue
+
+            physical_transitions.sort(
+                key=lambda record: float(record["level"]),
+                reverse=(side == "max"),
+            )
+            taper_level = float(taper_transition["level"])
+            physical_levels = [
+                float(record["level"])
+                for record in physical_transitions
+            ]
+            if (
+                len({round(level, 9) for level in physical_levels})
+                != len(physical_levels)
+                or (
+                    side == "min"
+                    and (
+                        any(
+                            left >= right - tolerance
+                            for left, right in zip(
+                                physical_levels,
+                                physical_levels[1:],
+                            )
+                        )
+                        or physical_levels[-1] >= taper_level - tolerance
+                    )
+                )
+                or (
+                    side == "max"
+                    and (
+                        any(
+                            left <= right + tolerance
+                            for left, right in zip(
+                                physical_levels,
+                                physical_levels[1:],
+                            )
+                        )
+                        or physical_levels[-1] <= taper_level + tolerance
+                    )
+                )
+            ):
+                continue
+
+            if side == "min":
+                start_level = 0.0
+                neck_level = axial_extent
+            else:
+                start_level = axial_extent
+                neck_level = 0.0
+
+            points = [
+                {radial_axis: inner_radius, rotation_axis: start_level},
+                {radial_axis: flange_radius, rotation_axis: start_level},
+            ]
+            current_radius = flange_radius
+            for transition, hub_radius in zip(
+                physical_transitions,
+                hub_radii,
+            ):
+                level = float(transition["level"])
+                points.append(
+                    {radial_axis: current_radius, rotation_axis: level}
+                )
+                points.append(
+                    {radial_axis: hub_radius, rotation_axis: level}
+                )
+                current_radius = hub_radius
+            points.extend(
+                [
+                    {
+                        radial_axis: current_radius,
+                        rotation_axis: taper_level,
+                    },
+                    {
+                        radial_axis: neck_radius,
+                        rotation_axis: neck_level,
+                    },
+                    {
+                        radial_axis: inner_radius,
+                        rotation_axis: neck_level,
+                    },
+                ]
+            )
+
+            profile_segments: list[dict[str, Any]] = []
+            for index, start in enumerate(points):
+                end = points[(index + 1) % len(points)]
+                profile_segments.append(
+                    {
+                        "type": "line",
+                        f"{radial_axis.lower()}1": float(start[radial_axis]),
+                        f"{rotation_axis.lower()}1": float(start[rotation_axis]),
+                        f"{radial_axis.lower()}2": float(end[radial_axis]),
+                        f"{rotation_axis.lower()}2": float(end[rotation_axis]),
+                    }
+                )
+
+            transition_evidence = [
+                value
+                for record in transition_records
+                for value in record["evidence"]
+            ]
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        *[
+                            value
+                            for value in item.get("source_ids", [])
+                            if isinstance(value, str) and value
+                        ],
+                        *oblique_evidence,
+                        *neck_span["dimension"].source_ids,
+                        *wall_span["dimension"].source_ids,
+                        *[
+                            value
+                            for candidate in hub_candidates
+                            for value in candidate["dimension"].source_ids
+                        ],
+                        *transition_evidence,
+                    ]
+                )
+            )
+            draft["profile"] = {
+                "plane": plane,
+                "topology": "closed_polygon",
+                "rotation_axis": rotation_axis,
+                "segments": profile_segments,
+            }
+            for index, segment in enumerate(profile_segments):
+                for field, value in segment.items():
+                    draft["source_ledger"].append(
+                        {
+                            "id": (
+                                "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_"
+                                f"{index}_{field.upper()}"
+                            ),
+                            "semantic": "profile_dimension",
+                            "value": copy.deepcopy(value),
+                            "target": f"profile.segments.{index}.{field}",
+                            "evidence": source_ids,
+                            "solver": (
+                                "rotational_multilevel_taper_profile_solver"
+                            ),
+                        }
+                    )
+            draft["source_ledger"].extend(
+                [
+                    {
+                        "id": "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_PLANE",
+                        "semantic": "profile_dimension",
+                        "value": plane,
+                        "target": "profile.plane",
+                        "evidence": source_ids,
+                        "solver": "rotational_multilevel_taper_profile_solver",
+                    },
+                    {
+                        "id": "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_TOPOLOGY",
+                        "semantic": "profile_dimension",
+                        "value": "closed_polygon",
+                        "target": "profile.topology",
+                        "evidence": source_ids,
+                        "solver": "rotational_multilevel_taper_profile_solver",
+                    },
+                    {
+                        "id": "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_AXIS",
+                        "semantic": "profile_dimension",
+                        "value": rotation_axis,
+                        "target": "profile.rotation_axis",
+                        "evidence": source_ids,
+                        "solver": "rotational_multilevel_taper_profile_solver",
+                    },
+                ]
+            )
+            materialized.add(key)
+            break
+
         if len(hub_candidates) != 1:
             continue
         hub_span = hub_candidates[0]
-        hub_radius = float(hub_span["span"]) / 2.0
-        flange_radius = radial_extent / 2.0
-        if not (
-            0.0 < inner_radius < neck_radius < hub_radius < flange_radius
-        ):
-            continue
+        hub_radius = hub_radii[0]
 
         raw_edges = item.get("edges")
         raw_junctions = item.get("junctions")

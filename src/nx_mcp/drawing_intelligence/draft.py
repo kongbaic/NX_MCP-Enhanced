@@ -1012,11 +1012,11 @@ def _bilateral_straight_silhouette_ledger_sources(
     """
 
     fragments = item.get("non_orthogonal_fragments")
-    if not isinstance(fragments, list):
+    if fragments is not None and not isinstance(fragments, list):
         return None
 
     item_sources: set[str] = set()
-    for fragment in fragments:
+    for fragment in fragments or []:
         if (
             not isinstance(fragment, dict)
             or fragment.get("engineering_coordinate_inferred_from_pixels") is not False
@@ -1029,6 +1029,62 @@ def _bilateral_straight_silhouette_ledger_sources(
             if isinstance(value, str)
             and value.startswith("hybrid:oblique-line:")
         )
+
+    family_source_counts: dict[str, int] = defaultdict(int)
+    if not item_sources:
+        companion_keys = item.get("companion_component_keys")
+        family_regions = {
+            str(value)
+            for value in item.get("region_ids", [])
+            if isinstance(value, str) and value
+        }
+        region_id = str(item.get("region_id") or "")
+        if region_id and not region_id.startswith("PHYSICAL_"):
+            family_regions.add(region_id)
+        if (
+            item.get("basis")
+            != "same_rotational_view_companion_topology_family"
+            or not isinstance(companion_keys, list)
+            or len(companion_keys) < 2
+            or not family_regions
+        ):
+            return None
+
+        for observation in graph.observations:
+            if (
+                not isinstance(observation, dict)
+                or observation.get("kind")
+                != "hybrid_rotational_oblique_profile_candidate_ledger"
+                or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+                or observation.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                continue
+            records = observation.get("items")
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if (
+                    not isinstance(record, dict)
+                    or str(record.get("region_id") or "") not in family_regions
+                    or record.get("view_kind") != item.get("view_kind")
+                    or record.get("plane") != item.get("plane")
+                    or record.get("rotation_axis") != item.get("rotation_axis")
+                    or record.get("one_sided_boundary_candidate") is not True
+                    or record.get("exterior_boundary_candidate") is not True
+                    or record.get("engineering_coordinate_inferred_from_pixels") is not False
+                    or record.get("pixel_geometry_used_for_topology_only") is not True
+                ):
+                    continue
+                sources = {
+                    value
+                    for value in record.get("source_ids", [])
+                    if isinstance(value, str)
+                    and value.startswith("hybrid:oblique-line:")
+                }
+                if len(sources) != 1:
+                    continue
+                family_source_counts[next(iter(sources))] += 1
+
     matches: list[dict[str, Any]] = []
     for observation in graph.observations:
         if (
@@ -1077,7 +1133,16 @@ def _bilateral_straight_silhouette_ledger_sources(
             ):
                 continue
             record_sources = negative.union(positive)
-            if item_sources and record_sources != item_sources:
+            if item_sources:
+                if record_sources != item_sources:
+                    continue
+            elif (
+                not record_sources
+                or any(
+                    family_source_counts.get(source, 0) != 1
+                    for source in record_sources
+                )
+            ):
                 continue
             matches.append(record)
 

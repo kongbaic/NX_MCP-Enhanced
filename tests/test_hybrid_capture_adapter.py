@@ -523,7 +523,13 @@ def test_labeled_overall_transition_records_profile_boundary_identity(
     monkeypatch.setattr(
         hybrid_adapter,
         "infer_short_dimension_visual_topology",
-        lambda *_args: ("vertical", [(250.0, 300.0)]),
+        lambda *_args: (
+            "vertical",
+            [
+                (250.0, 300.0),
+                (190.0, 300.0),
+            ],
+        ),
     )
     records = hybrid_adapter._labeled_profile_transition_boundary_records(
         report=report,
@@ -754,7 +760,7 @@ def test_labeled_overall_transition_records_bilateral_oblique_endpoint_identity(
         axis="Z",
         relation="overall_max_to_profile_transition",
         profile_transition_geometry="orthogonal",
-        symmetry_scope="bilateral",
+        symmetry_scope="single",
         evidence=[
             "hybrid:whole:5",
             "structural:R1:context",
@@ -822,6 +828,16 @@ def test_labeled_overall_transition_records_bilateral_oblique_endpoint_identity(
                 "endpoints_px": [[160.0, 144.5], [180.0, 200.5]],
                 "line_edge_support_fraction": 1.0,
                 "source_ids": ["hybrid:oblique-line:right"],
+                "one_sided_boundary_candidate": True,
+                "exterior_boundary_candidate": True,
+            },
+            {
+                "view_kind": "front",
+                "plane": "XZ",
+                "rotation_axis": "Z",
+                "endpoints_px": [[170.0, 145.2], [175.0, 170.0]],
+                "line_edge_support_fraction": 1.0,
+                "source_ids": ["hybrid:oblique-line:right-fragment"],
                 "one_sided_boundary_candidate": True,
                 "exterior_boundary_candidate": True,
             },

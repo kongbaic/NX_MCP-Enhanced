@@ -3760,6 +3760,8 @@ def _bilateral_rotational_straight_silhouette_records(
             continue
         assert radial_index is not None
         assert axial_index is not None
+        resolved_radial_index: int = radial_index
+        resolved_axial_index: int = axial_index
 
         center_records = [
             record
@@ -3824,8 +3826,8 @@ def _bilateral_rotational_straight_silhouette_records(
         def consolidate_side(
             side_hints: list[dict[str, Any]],
             *,
-            axial_index: int = axial_index,
-            radial_index: int = radial_index,
+            axial_index: int = resolved_axial_index,
+            radial_index: int = resolved_radial_index,
             center_tolerance: float = center_tolerance,
         ) -> dict[str, Any] | None:
             points: list[tuple[float, float]] = []

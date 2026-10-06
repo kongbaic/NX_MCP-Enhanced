@@ -1649,7 +1649,26 @@ def test_multilevel_tapered_profile_orders_mixed_dimension_anchor_sides_by_geome
     assert result.values["constraints.profile_transitions.TAPER.z"] == 28.0
     assert draft["dimension_closure"] == {"status": "closed"}
     assert draft["profile"]["plane"] == "XZ"
-    assert len(draft["profile"]["segments"]) == 9
+    segments = draft["profile"]["segments"]
+    assert len(segments) == 9
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in segments
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in segments
+    }
+    assert points == {
+        (79.65, 0.0),
+        (150.0, 0.0),
+        (150.0, 3.0),
+        (109.0, 3.0),
+        (109.0, 12.0),
+        (96.0, 12.0),
+        (84.15, 28.0),
+        (84.15, 75.0),
+        (79.65, 75.0),
+    }
     assert not [
         item
         for item in draft["unresolved"]

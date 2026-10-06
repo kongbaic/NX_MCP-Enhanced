@@ -1440,21 +1440,9 @@ def _linked_physical_profile_arc_radius_observations(
             ).hexdigest()[:12].upper()
 
             if len(radius_entries) != 1:
-                unresolved.append(
-                    {
-                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
-                        "kind": "feature_value",
-                        "field": "profile_arc_radius_identity",
-                        "reason": (
-                            "corroborated reference row contains multiple "
-                            "candidate radius columns without unique ownership"
-                        ),
-                        "candidate_radius_labels": sorted(
-                            label for label, _fact, _radius in radius_entries
-                        ),
-                        "required_for_modeling": True,
-                    }
-                )
+                # Reference-table radius ownership is a Gate A geometry
+                # completeness concern. Do not terminate Resolve merely
+                # because physical arc identity is not unique yet.
                 continue
 
             radius_label, table_fact, radius = radius_entries[0]
@@ -1486,23 +1474,8 @@ def _linked_physical_profile_arc_radius_observations(
             )
 
             if len(eligible_arcs) != 1:
-                unresolved.append(
-                    {
-                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
-                        "kind": "feature_inventory",
-                        "field": "profile_arc_radius_identity",
-                        "reason": (
-                            "corroborated reference-table radius does not map "
-                            "to exactly one verified orthogonally supported "
-                            "physical profile arc"
-                        ),
-                        "radius_label": radius_label,
-                        "engineering_radius": radius,
-                        "candidate_physical_arc_ids": sorted(eligible_arcs),
-                        "source_ids": source_ids,
-                        "required_for_modeling": True,
-                    }
-                )
+                # Preserve the corroborated table evidence for Gate A. The
+                # linker only emits a radius target when ownership is unique.
                 continue
 
             physical_arc_id, physical_arc = next(iter(eligible_arcs.items()))
@@ -1515,22 +1488,9 @@ def _linked_physical_profile_arc_radius_observations(
                 }
             )
             if len(curve_sources) != 1:
-                unresolved.append(
-                    {
-                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
-                        "kind": "feature_inventory",
-                        "field": "profile_arc_radius_identity",
-                        "reason": (
-                            "unique verified physical profile arc lacks one "
-                            "stable curve-source identity"
-                        ),
-                        "radius_label": radius_label,
-                        "engineering_radius": radius,
-                        "candidate_physical_arc_ids": [physical_arc_id],
-                        "source_ids": source_ids,
-                        "required_for_modeling": True,
-                    }
-                )
+                # A unique physical arc still needs one stable raster identity
+                # before it can own an engineering radius. Defer the missing
+                # ownership to Gate A instead of blocking Resolve.
                 continue
 
             linked_source_ids = list(

@@ -884,6 +884,104 @@ def _ordered_rotational_cycle_matches_material_polarity(
     return True
 
 
+def _bilateral_straight_silhouette_ledger_sources(
+    graph: EvidenceGraph,
+    item: dict[str, Any],
+) -> list[str] | None:
+    """Consume one uniquely matched bilateral straight-silhouette proof.
+
+    The observation is topology-only evidence. Pixel geometry may prove that
+    opposite exterior fragments form one mirrored straight silhouette, but all
+    metric profile coordinates must still come from engineering dimensions and
+    Resolver values.
+    """
+
+    fragments = item.get("non_orthogonal_fragments")
+    if not isinstance(fragments, list):
+        return None
+
+    item_sources: set[str] = set()
+    for fragment in fragments:
+        if (
+            not isinstance(fragment, dict)
+            or fragment.get("engineering_coordinate_inferred_from_pixels") is not False
+            or fragment.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        item_sources.update(
+            value
+            for value in fragment.get("source_ids", [])
+            if isinstance(value, str)
+            and value.startswith("hybrid:oblique-line:")
+        )
+    if len(item_sources) < 2:
+        return None
+
+    matches: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_bilateral_rotational_straight_silhouette_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        records = observation.get("items")
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if (
+                not isinstance(record, dict)
+                or record.get("view_kind") != item.get("view_kind")
+                or record.get("plane") != item.get("plane")
+                or record.get("rotation_axis") != item.get("rotation_axis")
+                or record.get("primitive_kind") != "line"
+                or record.get("primitive_kind_basis")
+                != (
+                    "bilateral_mirrored_continuous_straight_"
+                    "exterior_silhouette"
+                )
+                or record.get("engineering_coordinate_inferred_from_pixels") is not False
+                or record.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                continue
+            negative = {
+                value
+                for value in record.get("negative_side_source_ids", [])
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            }
+            positive = {
+                value
+                for value in record.get("positive_side_source_ids", [])
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            }
+            if (
+                not negative
+                or not positive
+                or negative.intersection(positive)
+                or negative.union(positive) != item_sources
+            ):
+                continue
+            matches.append(record)
+
+    if len(matches) != 1:
+        return None
+
+    record = matches[0]
+    evidence = [
+        str(record.get("id") or ""),
+        *[
+            value
+            for value in record.get("source_ids", [])
+            if isinstance(value, str) and value
+        ],
+    ]
+    return list(dict.fromkeys(value for value in evidence if value))
+
+
 def _bilateral_exterior_oblique_sources(
     graph: EvidenceGraph,
     item: dict[str, Any],
@@ -896,6 +994,13 @@ def _bilateral_exterior_oblique_sources(
     structural contacts; unresolved exterior fragments are blockers, never
     authority to synthesize a line.
     """
+
+    ledger_sources = _bilateral_straight_silhouette_ledger_sources(
+        graph,
+        item,
+    )
+    if ledger_sources is not None:
+        return ledger_sources
 
     fragments = item.get("non_orthogonal_fragments")
     if not isinstance(fragments, list):

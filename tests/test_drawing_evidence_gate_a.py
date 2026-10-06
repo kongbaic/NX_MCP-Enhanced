@@ -1230,6 +1230,82 @@ def _multilevel_tapered_annular_graph(*, ambiguous_oblique_transition=False):
     return graph
 
 
+def _split_multilevel_tapered_annular_graph(*, same_region=True):
+    graph = _multilevel_tapered_annular_graph()
+    topology = next(
+        observation
+        for observation in graph.observations
+        if observation.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    primary = topology["items"][0]
+    step2 = next(
+        edge
+        for edge in primary["edges"]
+        if edge.get("ref") == "STEP2"
+    )
+    primary["edges"] = [
+        edge
+        for edge in primary["edges"]
+        if edge.get("ref") != "STEP2"
+    ]
+    primary["component_index"] = 0
+    primary.pop("non_orthogonal_fragments", None)
+
+    companion = {
+        "region_id": (
+            primary["region_id"]
+            if same_region
+            else "INDEPENDENT_ROTATIONAL_REGION"
+        ),
+        "region_ids": list(primary.get("region_ids", [])),
+        "view_kind": primary["view_kind"],
+        "plane": primary["plane"],
+        "rotation_axis": primary["rotation_axis"],
+        "component_index": 1,
+        "edges": [step2],
+        "junctions": [],
+        "source_ids": ["structural:companion-component"],
+        "basis": "identity_linked_physical_rotational_profile_topology",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+    topology["items"].append(companion)
+    return graph
+
+
+def test_multilevel_tapered_profile_consumes_same_view_companion_components():
+    graph = _split_multilevel_tapered_annular_graph()
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert len(draft["profile"]["segments"]) == 9
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+    ]
+
+
+def test_multilevel_tapered_profile_does_not_merge_independent_region_component():
+    graph = _split_multilevel_tapered_annular_graph(same_region=False)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 2
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def test_multilevel_tapered_annular_profile_consumes_nested_radial_and_axial_levels():
     graph = _multilevel_tapered_annular_graph()
     result = resolve_evidence_graph(graph)

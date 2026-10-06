@@ -1460,7 +1460,7 @@ def _materialize_symmetric_tapered_annular_profile(
             )
             or any(
                 left <= right + tolerance
-                for left, right in zip(hub_radii, hub_radii[1:])
+                for left, right in zip(hub_radii, hub_radii[1:], strict=False)
             )
         ):
             continue
@@ -1525,6 +1525,7 @@ def _materialize_symmetric_tapered_annular_profile(
                             for left, right in zip(
                                 physical_levels,
                                 physical_levels[1:],
+                                strict=False,
                             )
                         )
                         or physical_levels[-1] >= taper_level - tolerance
@@ -1538,6 +1539,7 @@ def _materialize_symmetric_tapered_annular_profile(
                             for left, right in zip(
                                 physical_levels,
                                 physical_levels[1:],
+                                strict=False,
                             )
                         )
                         or physical_levels[-1] <= taper_level + tolerance
@@ -1561,6 +1563,7 @@ def _materialize_symmetric_tapered_annular_profile(
             for transition, hub_radius in zip(
                 physical_transitions,
                 hub_radii,
+                strict=True,
             ):
                 level = float(transition["level"])
                 points.append(
@@ -1587,10 +1590,10 @@ def _materialize_symmetric_tapered_annular_profile(
                 ]
             )
 
-            profile_segments: list[dict[str, Any]] = []
+            multilevel_profile_segments: list[dict[str, Any]] = []
             for index, start in enumerate(points):
                 end = points[(index + 1) % len(points)]
-                profile_segments.append(
+                multilevel_profile_segments.append(
                     {
                         "type": "line",
                         f"{radial_axis.lower()}1": float(start[radial_axis]),
@@ -1629,9 +1632,9 @@ def _materialize_symmetric_tapered_annular_profile(
                 "plane": plane,
                 "topology": "closed_polygon",
                 "rotation_axis": rotation_axis,
-                "segments": profile_segments,
+                "segments": multilevel_profile_segments,
             }
-            for index, segment in enumerate(profile_segments):
+            for index, segment in enumerate(multilevel_profile_segments):
                 for field, value in segment.items():
                     draft["source_ledger"].append(
                         {

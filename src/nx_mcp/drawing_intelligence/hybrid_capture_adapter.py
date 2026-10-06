@@ -8532,7 +8532,7 @@ def _symmetric_local_section_feature_records(
             f"{span_key}|{center_key}".encode("utf-8")
         ).hexdigest()[:16].upper()
 
-        record: dict[str, Any] = {
+        feature_record: dict[str, Any] = {
             "id": f"LOCAL_SECTION_PAIR_{digest}",
             "axis": span_dimension.axis,
             "span_dimension_key": span_key,
@@ -8556,9 +8556,11 @@ def _symmetric_local_section_feature_records(
             "pixel_geometry_used_for_identity_only": True,
         }
         if center_profile_refs:
-            record["center_profile_refs"] = sorted(center_profile_refs)
+            feature_record["center_profile_refs"] = sorted(
+                center_profile_refs
+            )
 
-        output.append(record)
+        output.append(feature_record)
         excluded_refs.update(profile_refs)
         excluded_refs.update(center_profile_refs)
         seen_pairs.add(pair_key)

@@ -1865,10 +1865,50 @@ def _materialize_symmetric_tapered_annular_profile(
         if oblique_evidence is None:
             continue
 
+        excluded_center_distance_sources: set[str] = set()
+        for observation in graph.observations:
+            if (
+                not isinstance(observation, dict)
+                or observation.get("kind")
+                != "hybrid_symmetric_local_section_feature_ledger"
+                or observation.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or observation.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+            local_items = observation.get("items")
+            if not isinstance(local_items, list):
+                continue
+            for local_item in local_items:
+                if (
+                    not isinstance(local_item, dict)
+                    or local_item.get("excluded_from_rotational_body_profile")
+                    is not True
+                ):
+                    continue
+                center_distance_key = str(
+                    local_item.get("center_distance_dimension_key") or ""
+                )
+                source_token = center_distance_key.rsplit(".", 1)[-1]
+                if not source_token:
+                    continue
+                expected_prefix = f"hybrid:{source_token}:"
+                excluded_center_distance_sources.update(
+                    value
+                    for value in local_item.get("source_ids", [])
+                    if isinstance(value, str)
+                    and value.startswith(expected_prefix)
+                )
+
         centered_spans: list[dict[str, Any]] = []
         radial_dimensions: list[dict[str, Any]] = []
         for dimension in graph.dimensions:
             if dimension.axis != radial_axis:
+                continue
+            if any(
+                source in excluded_center_distance_sources
+                for source in dimension.source_ids
+            ):
                 continue
             endpoints = dimension.endpoints
             if (

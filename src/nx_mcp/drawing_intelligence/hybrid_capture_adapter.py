@@ -2195,7 +2195,7 @@ def _recover_labeled_profile_span_dimensions(
 def _engineering_dimension_label(text: str) -> str | None:
     """Return one leading engineering label without assigning its semantics."""
 
-    match = re.match(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\b", text)
+    match = re.match(r"(?i)^\s*(?P<label>[a-z][a-z0-9]*)\b", text)
     if match is None:
         return None
     return match.group("label").upper()
@@ -2313,9 +2313,9 @@ def _corroborated_reference_table_rows(
                 selected.append(item)
         return clusters
 
-    header_re = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\s*$")
-    numeric_re = re.compile(r"^\\s*(?P<value>\\d+(?:[.,]\\d+)?)\\s*$")
-    fact_label_re = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\b")
+    header_re = re.compile(r"(?i)^\s*(?P<label>[a-z][a-z0-9]*)\s*$")
+    numeric_re = re.compile(r"^\s*(?P<value>\d+(?:[.,]\d+)?)\s*$")
+    fact_label_re = re.compile(r"(?i)^\s*(?P<label>[a-z][a-z0-9]*)\b")
     table_rows: list[dict[str, Any]] = []
 
     for reference_region_id in sorted(reference_region_ids):
@@ -2449,8 +2449,8 @@ def _corroborated_reference_table_rows(
 
     corroborated: list[dict[str, Any]] = []
     for row in table_rows:
-        paired = row.get("paired")
-        if not isinstance(paired, dict):
+        row_paired = row.get("paired")
+        if not isinstance(row_paired, dict):
             continue
         matched_labels: list[str] = []
         for fact in corroborating_facts:
@@ -2458,7 +2458,7 @@ def _corroborated_reference_table_rows(
             if match is None:
                 continue
             label = match.group("label").upper()
-            table_fact = paired.get(label)
+            table_fact = row_paired.get(label)
             if not isinstance(table_fact, dict):
                 continue
             table_value = table_fact.get("value")
@@ -8695,7 +8695,7 @@ def _resolved_circular_local_section_pattern(
         return None
 
     region_id = str(span_record.get("region_id") or "")
-    span_axis = str(span_dimension.axis or "").upper()
+    span_axis = span_dimension.axis
     if (
         not region_id
         or span_axis not in {"X", "Y", "Z"}

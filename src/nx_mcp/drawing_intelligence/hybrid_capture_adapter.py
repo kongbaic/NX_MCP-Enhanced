@@ -2192,6 +2192,302 @@ def _recover_labeled_profile_span_dimensions(
     return dimensions, ledger
 
 
+def _engineering_dimension_label(text: str) -> str | None:
+    """Return one leading engineering label without assigning its semantics."""
+
+    match = re.match(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\b", text)
+    if match is None:
+        return None
+    return match.group("label").upper()
+
+
+def _candidate_engineering_dimension_label(
+    candidate: dict[str, Any],
+) -> str | None:
+    """Read a unique leading label from the accepted OCR assignment."""
+
+    accepted_token = candidate.get("accepted_token")
+    if not isinstance(accepted_token, str) or not accepted_token:
+        return None
+
+    labels: set[str] = set()
+    assignments = candidate.get("global_assignments")
+    if not isinstance(assignments, list):
+        return None
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            continue
+        token = assignment.get("token")
+        text = assignment.get("text")
+        if token != accepted_token or not isinstance(text, str):
+            continue
+        label = _engineering_dimension_label(text)
+        if label:
+            labels.add(label)
+    return next(iter(labels)) if len(labels) == 1 else None
+
+
+def _corroborated_reference_table_rows(
+    *,
+    report: dict[str, Any],
+    corroborating_facts: list[HybridLabeledDimensionFact],
+    view_lookup: dict[str, HybridRegionView],
+) -> list[dict[str, Any]]:
+    """Return uniquely structured numeric reference rows backed by drawing facts.
+
+    Table geometry is used only to identify header/value cells.  A row is
+    engineering-authoritative only after at least three independently observed
+    labeled dimensions in the drawing match that same row.
+    """
+
+    whole_items = report.get("whole_drawing_items")
+    if not isinstance(whole_items, list):
+        return []
+
+    reference_region_ids = _reference_only_region_ids(report, view_lookup)
+    if not reference_region_ids:
+        return []
+
+    def item_rect(index: int) -> tuple[float, float, float, float] | None:
+        if not 0 <= index < len(whole_items):
+            return None
+        item = whole_items[index]
+        if not isinstance(item, dict):
+            return None
+        bounds = _bbox_bounds(item.get("bbox"))
+        if bounds is None:
+            return None
+        left, top, right, bottom = bounds
+        if right <= left or bottom <= top:
+            return None
+        return left, top, right - left, bottom - top
+
+    def center(
+        rect: tuple[float, float, float, float],
+    ) -> tuple[float, float]:
+        x, y, width, height = rect
+        return x + width / 2.0, y + height / 2.0
+
+    def inside(
+        point: tuple[float, float],
+        rect: tuple[float, float, float, float],
+    ) -> bool:
+        px, py = point
+        x, y, width, height = rect
+        return x <= px <= x + width and y <= py <= y + height
+
+    def row_clusters(
+        items: list[
+            tuple[int, str, tuple[float, float, float, float]]
+        ],
+    ) -> list[
+        list[tuple[int, str, tuple[float, float, float, float]]]
+    ]:
+        clusters: list[
+            list[tuple[int, str, tuple[float, float, float, float]]]
+        ] = []
+        for item in sorted(
+            items,
+            key=lambda value: (
+                center(value[2])[1],
+                center(value[2])[0],
+            ),
+        ):
+            item_y = center(item[2])[1]
+            selected = next(
+                (
+                    cluster
+                    for cluster in clusters
+                    if abs(
+                        item_y
+                        - sum(center(value[2])[1] for value in cluster)
+                        / len(cluster)
+                    )
+                    <= 10.0
+                ),
+                None,
+            )
+            if selected is None:
+                clusters.append([item])
+            else:
+                selected.append(item)
+        return clusters
+
+    header_re = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\s*$")
+    numeric_re = re.compile(r"^\\s*(?P<value>\\d+(?:[.,]\\d+)?)\\s*$")
+    fact_label_re = re.compile(r"(?i)^\\s*(?P<label>[a-z][a-z0-9]*)\\b")
+    table_rows: list[dict[str, Any]] = []
+
+    for reference_region_id in sorted(reference_region_ids):
+        reference_rect = _region_bbox(report, reference_region_id)
+        if reference_rect is None:
+            continue
+
+        headers: list[
+            tuple[int, str, tuple[float, float, float, float]]
+        ] = []
+        numeric_values: list[
+            tuple[int, str, tuple[float, float, float, float]]
+        ] = []
+        for index, raw_item in enumerate(whole_items):
+            if not isinstance(raw_item, dict):
+                continue
+            text_value = raw_item.get("text")
+            rect = item_rect(index)
+            if (
+                not isinstance(text_value, str)
+                or rect is None
+                or not inside(center(rect), reference_rect)
+            ):
+                continue
+            header_match = header_re.fullmatch(text_value)
+            if header_match is not None:
+                headers.append(
+                    (
+                        index,
+                        header_match.group("label").upper(),
+                        rect,
+                    )
+                )
+                continue
+            numeric_match = numeric_re.fullmatch(text_value)
+            if numeric_match is not None:
+                numeric_values.append(
+                    (
+                        index,
+                        numeric_match.group("value"),
+                        rect,
+                    )
+                )
+
+        header_clusters = row_clusters(headers)
+        value_clusters = row_clusters(numeric_values)
+        if not header_clusters or not value_clusters:
+            continue
+
+        header_row = max(header_clusters, key=len)
+        header_y = sum(
+            center(value[2])[1] for value in header_row
+        ) / len(header_row)
+        value_candidates = [
+            cluster
+            for cluster in value_clusters
+            if (
+                len(cluster) >= 4
+                and sum(center(value[2])[1] for value in cluster)
+                / len(cluster)
+                > header_y
+            )
+        ]
+        if len(header_row) < 4 or not value_candidates:
+            continue
+        value_row = max(value_candidates, key=len)
+
+        sorted_headers = sorted(
+            header_row,
+            key=lambda value: center(value[2])[0],
+        )
+        paired: dict[str, dict[str, Any]] = {}
+        used_value_indices: set[int] = set()
+        reference_width = reference_rect[2]
+        column_tolerance = max(
+            24.0,
+            min(
+                80.0,
+                reference_width
+                / max(1, len(sorted_headers))
+                * 0.60,
+            ),
+        )
+        for header_index, label, header_rect in sorted_headers:
+            header_x = center(header_rect)[0]
+            matches: list[
+                tuple[
+                    float,
+                    int,
+                    str,
+                    tuple[float, float, float, float],
+                ]
+            ] = []
+            for value_index, value_text, value_rect in value_row:
+                if value_index in used_value_indices:
+                    continue
+                distance = abs(center(value_rect)[0] - header_x)
+                if distance <= column_tolerance:
+                    matches.append(
+                        (
+                            distance,
+                            value_index,
+                            value_text,
+                            value_rect,
+                        )
+                    )
+            matches.sort(key=lambda value: (value[0], value[1]))
+            if len(matches) != 1:
+                continue
+            _distance, value_index, value_text, value_rect = matches[0]
+            parsed = _linear_token_number(
+                value_text.replace(",", ".")
+            )
+            if parsed is None:
+                continue
+            used_value_indices.add(value_index)
+            paired[label] = {
+                "label": label,
+                "value": parsed,
+                "header_source_item_index": header_index,
+                "value_source_item_index": value_index,
+            }
+
+        if len(paired) >= 4:
+            table_rows.append(
+                {
+                    "reference_region_id": reference_region_id,
+                    "paired": paired,
+                }
+            )
+
+    corroborated: list[dict[str, Any]] = []
+    for row in table_rows:
+        paired = row.get("paired")
+        if not isinstance(paired, dict):
+            continue
+        matched_labels: list[str] = []
+        for fact in corroborating_facts:
+            match = fact_label_re.match(fact.source_text)
+            if match is None:
+                continue
+            label = match.group("label").upper()
+            table_fact = paired.get(label)
+            if not isinstance(table_fact, dict):
+                continue
+            table_value = table_fact.get("value")
+            if (
+                isinstance(table_value, (int, float))
+                and not isinstance(table_value, bool)
+                and math.isclose(
+                    float(table_value),
+                    float(fact.value),
+                    abs_tol=max(
+                        abs(float(fact.value)) * 1e-6,
+                        1e-9,
+                    ),
+                )
+            ):
+                matched_labels.append(label)
+
+        matched_labels = sorted(set(matched_labels))
+        if len(matched_labels) >= 3:
+            corroborated.append(
+                {
+                    **row,
+                    "corroborating_labels": matched_labels,
+                }
+            )
+
+    return corroborated
+
+
 def _recover_reference_table_profile_span_dimensions(
     *,
     report: dict[str, Any],
@@ -7953,6 +8249,8 @@ def _recovered_profile_span_center_records(
         output.append(
             {
                 "dimension_key": dimension_key,
+                "target_id": str(record.get("target_id") or ""),
+                "source_text": str(record.get("source_text") or ""),
                 "region_id": region_id,
                 "axis": axis,
                 "profile_entity_keys": [
@@ -8696,6 +8994,9 @@ def _symmetric_dimension_pair_record(
         "axis": axis,
         "datum": "overall_center",
         "dimension_value": dimension_value,
+        "dimension_label": _candidate_engineering_dimension_label(
+            candidate
+        ),
         "overall_dimension_value": float(overall_value),
         "selected_witness_positions_px": [witness_low, witness_high],
         "overall_candidate_id": anchor["candidate_id"],

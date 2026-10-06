@@ -1044,6 +1044,17 @@ def _compile_resolved_symmetric_local_section_features(
                 )
                 continue
 
+            assert isinstance(diameter, (int, float)) and not isinstance(
+                diameter,
+                bool,
+            )
+            assert isinstance(pcd, (int, float)) and not isinstance(
+                pcd,
+                bool,
+            )
+            diameter_value = float(diameter)
+            pcd_value = float(pcd)
+
             facts = [
                 (
                     "TYPE",
@@ -1060,7 +1071,7 @@ def _compile_resolved_symmetric_local_section_features(
                 (
                     "DIAMETER",
                     f"feature:{feature_id}.diameter",
-                    float(diameter),
+                    diameter_value,
                     "diameter",
                 ),
                 (
@@ -1072,7 +1083,7 @@ def _compile_resolved_symmetric_local_section_features(
                 (
                     "PCD",
                     f"feature:{feature_id}.pcd",
-                    float(pcd),
+                    pcd_value,
                     "pattern_dimension",
                 ),
                 (

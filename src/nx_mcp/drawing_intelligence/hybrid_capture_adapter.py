@@ -3758,6 +3758,8 @@ def _bilateral_rotational_straight_silhouette_records(
             or radial_index == axial_index
         ):
             continue
+        assert radial_index is not None
+        assert axial_index is not None
 
         center_records = [
             record

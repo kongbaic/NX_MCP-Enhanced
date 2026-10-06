@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import math
 import re
+from collections import defaultdict
 from typing import Any
 
 from .evidence import DirectValueEvidence, EvidenceGraph, RelationEvidence

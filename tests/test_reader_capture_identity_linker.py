@@ -5348,6 +5348,191 @@ def test_physical_arc_radius_links_to_one_verified_physical_arc_identity():
     assert "center_px" not in repr(item)
 
 
+def _corroborated_reference_radius_observation(
+    *,
+    label: str = "R7",
+    radius: float = 6.0,
+):
+    return {
+        "kind": "hybrid_corroborated_reference_table_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "reference_region_id": "R_TABLE",
+                "paired": {
+                    "A": {
+                        "label": "A",
+                        "value": 40.0,
+                        "header_source_item_index": 1,
+                        "value_source_item_index": 11,
+                    },
+                    "B": {
+                        "label": "B",
+                        "value": 24.0,
+                        "header_source_item_index": 2,
+                        "value_source_item_index": 12,
+                    },
+                    "C": {
+                        "label": "C",
+                        "value": 12.0,
+                        "header_source_item_index": 3,
+                        "value_source_item_index": 13,
+                    },
+                    label: {
+                        "label": label,
+                        "value": radius,
+                        "header_source_item_index": 4,
+                        "value_source_item_index": 14,
+                    },
+                },
+                "corroborating_labels": ["A", "B", "C"],
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+        "engineering_value_source": "corroborated_reference_table_row",
+    }
+
+
+def _verified_physical_arc(
+    arc_id: str,
+    curve_source: str,
+):
+    return {
+        "id": arc_id,
+        "primitive_kind": "arc",
+        "primitive_kind_basis": (
+            "verified_continuous_curved_raster_segment_"
+            "between_structural_contacts"
+        ),
+        "connection_kind": "non_orthogonal_profile_connection",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": [
+            f"{arc_id}_X",
+            f"{arc_id}_Z",
+        ],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": f"{arc_id}_X",
+                "constant_axis": "X",
+                "boundary_target": f"feature:{arc_id}_X.boundary.x",
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+            {
+                "physical_feature_id": f"{arc_id}_Z",
+                "constant_axis": "Z",
+                "boundary_target": f"feature:{arc_id}_Z.boundary.z",
+                "material_axis_direction": "positive",
+                "background_axis_direction": "negative",
+            },
+        ],
+        "source_ids": [
+            "structural:R_MAIN",
+            curve_source,
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+
+def test_corroborated_reference_table_radius_links_to_unique_verified_profile_arc():
+    observations = [
+        _corroborated_reference_radius_observation(),
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_TABLE_ARC",
+                    "hybrid:curve-boundary:8",
+                )
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(linked) == 1
+    item = linked[0]["items"][0]
+    assert item["physical_arc_id"] == "PHYSICAL_OBLIQUE_TABLE_ARC"
+    assert item["curve_source_id"] == "hybrid:curve-boundary:8"
+    assert item["engineering_radius"] == 6.0
+    assert item["engineering_value_source"] == (
+        "corroborated_reference_table_row"
+    )
+    assert item["radius_label"] == "R7"
+    assert item["basis"] == (
+        "corroborated_reference_table_radius_plus_"
+        "unique_physical_arc_identity"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_identity_only"] is True
+
+    values, value_unresolved = (
+        identity_linker_module._physical_profile_arc_radius_direct_values(
+            linked
+        )
+    )
+    assert value_unresolved == []
+    assert len(values) == 1
+    assert values[0].target == (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_OBLIQUE_TABLE_ARC.radius"
+    )
+    assert values[0].value == 6.0
+    assert values[0].semantic == "radius"
+
+
+def test_corroborated_reference_table_radius_fails_closed_with_multiple_profile_arcs():
+    observations = [
+        _corroborated_reference_radius_observation(),
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_ARC_A",
+                    "hybrid:curve-boundary:8",
+                ),
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_ARC_B",
+                    "hybrid:curve-boundary:9",
+                ),
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert linked == []
+    blockers = [
+        item
+        for item in unresolved
+        if item.get("field") == "profile_arc_radius_identity"
+        and item.get("required_for_modeling") is True
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["candidate_physical_arc_ids"] == [
+        "PHYSICAL_OBLIQUE_ARC_A",
+        "PHYSICAL_OBLIQUE_ARC_B",
+    ]
+
+
 def test_physical_arc_radius_becomes_standard_resolver_direct_value():
     observations = [
         {

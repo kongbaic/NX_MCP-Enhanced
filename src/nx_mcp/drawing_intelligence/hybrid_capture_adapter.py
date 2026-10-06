@@ -9439,6 +9439,23 @@ def adapt_hybrid_ocr_report(
                 )
             )
 
+    (
+        labeled_profile_dimensions,
+        labeled_profile_span_ledger,
+    ) = _recover_labeled_profile_span_dimensions(
+        report=report,
+        facts=labeled_dimension_facts,
+        view_lookup=view_lookup,
+        profile_inventory=profile_inventory,
+        profile_entity_by_ref=profile_entity_by_ref,
+    )
+    dimensions.extend(labeled_profile_dimensions)
+    profile_span_center_records.extend(
+        _recovered_profile_span_center_records(
+            labeled_profile_span_ledger
+        )
+    )
+
     dimension_span_center_identity_records = (
         _dimension_span_center_identity_records(
             dimensions=dimensions,
@@ -9447,6 +9464,9 @@ def adapt_hybrid_ocr_report(
             report=report,
             view_lookup=view_lookup,
             profile_inventory=profile_inventory,
+            symmetric_dimension_pair_records=(
+                symmetric_dimension_pair_records
+            ),
         )
     )
 
@@ -9502,18 +9522,6 @@ def adapt_hybrid_ocr_report(
         )
     )
     dimensions.extend(recovered_profile_dimensions)
-
-    (
-        labeled_profile_dimensions,
-        labeled_profile_span_ledger,
-    ) = _recover_labeled_profile_span_dimensions(
-        report=report,
-        facts=labeled_dimension_facts,
-        view_lookup=view_lookup,
-        profile_inventory=profile_inventory,
-        profile_entity_by_ref=profile_entity_by_ref,
-    )
-    dimensions.extend(labeled_profile_dimensions)
 
     (
         reference_table_dimensions,

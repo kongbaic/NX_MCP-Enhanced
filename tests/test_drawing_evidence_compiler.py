@@ -120,6 +120,7 @@ def test_local_section_feature_pair_remains_fail_closed_until_3d_representation(
 def test_resolved_local_section_pattern_compiles_to_exact_hole_feature():
     graph = EvidenceGraph(
         overall_dimensions=_overall_dimensions(),
+        dimensions=_overall_dimension_observations(),
         observations=[
             {
                 "kind": "hybrid_symmetric_local_section_feature_ledger",

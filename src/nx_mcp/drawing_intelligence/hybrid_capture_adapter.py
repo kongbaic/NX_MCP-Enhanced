@@ -7864,6 +7864,124 @@ def _profile_span_center_record(
     }
 
 
+def _recovered_profile_span_center_records(
+    ledger: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose recovered labeled profile spans to midpoint topology consumers.
+
+    The recovered dimension already owns its engineering width.  Raster witness
+    positions are preserved only to prove midpoint/endpoint identity; no pixel
+    distance is converted into an engineering coordinate.
+    """
+
+    allowed_bases = {
+        "unique_short_dimension_witness_pair_to_two_"
+        "structural_profile_boundaries",
+        "corroborated_reference_table_value_plus_unique_short_"
+        "dimension_profile_identity",
+    }
+    output: list[dict[str, Any]] = []
+    for record in ledger:
+        if (
+            not isinstance(record, dict)
+            or record.get("basis") not in allowed_bases
+            or record.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or record.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+
+        dimension_key = str(record.get("dimension_key") or "")
+        region_id = str(
+            record.get("selected_region_id")
+            or record.get("region_id")
+            or ""
+        )
+        axis = str(record.get("axis") or "").upper()
+        raw_entity_keys = record.get("profile_entity_keys")
+        raw_witnesses = record.get("selected_witness_positions_px")
+        if (
+            not dimension_key
+            or not region_id
+            or axis not in {"X", "Y", "Z"}
+            or not isinstance(raw_entity_keys, list)
+            or len(raw_entity_keys) != 2
+            or len(set(str(value) for value in raw_entity_keys)) != 2
+            or not all(isinstance(value, str) and value for value in raw_entity_keys)
+            or not isinstance(raw_witnesses, list)
+            or len(raw_witnesses) != 2
+            or not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in raw_witnesses
+            )
+        ):
+            continue
+
+        witness_low, witness_high = sorted(float(value) for value in raw_witnesses)
+        if witness_high <= witness_low:
+            continue
+
+        source_ids = [
+            value
+            for value in record.get("source_ids", [])
+            if isinstance(value, str) and value
+        ]
+        if not source_ids:
+            target_id = str(record.get("target_id") or "")
+            profile_refs = [
+                str(value)
+                for value in record.get("profile_refs", [])
+                if isinstance(value, str) and value
+            ]
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        *(
+                            [f"hybrid:labeled-profile-span:{target_id}"]
+                            if target_id
+                            else []
+                        ),
+                        *[
+                            f"hybrid:profile-edge:{ref}"
+                            for ref in profile_refs
+                        ],
+                    ]
+                )
+            )
+
+        output.append(
+            {
+                "dimension_key": dimension_key,
+                "region_id": region_id,
+                "axis": axis,
+                "profile_entity_keys": [
+                    str(value) for value in raw_entity_keys
+                ],
+                "selected_witness_positions_px": [
+                    witness_low,
+                    witness_high,
+                ],
+                "span_midpoint_px": (
+                    witness_low + witness_high
+                )
+                / 2.0,
+                "source_ids": source_ids,
+                "basis": "recovered_profile_boundary_span_midpoint",
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    output.sort(
+        key=lambda item: (
+            str(item.get("dimension_key") or ""),
+            str(item.get("region_id") or ""),
+        )
+    )
+    return output
+
+
 def _dimension_span_center_identity_records(
     *,
     dimensions: list[ObservationDimension],
@@ -7872,8 +7990,16 @@ def _dimension_span_center_identity_records(
     report: dict[str, Any],
     view_lookup: dict[str, HybridRegionView],
     profile_inventory: list[dict[str, Any]],
+    symmetric_dimension_pair_records: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Match unresolved dimension witnesses to unique resolved span midpoints."""
+    """Match dimension endpoints to unique resolved span midpoints.
+
+    The legacy path handles unresolved candidate endpoints.  A second, equally
+    fail-closed path handles a resolved symmetric dimension whose raster endpoint
+    is the unique midpoint of a smaller recovered profile span.  This lets local
+    paired section features be separated from the primary rotational body
+    profile without inferring any engineering coordinate from pixels.
+    """
 
     candidate_by_dimension_key = {
         f"{str(item.get('region_id') or '')}.{str(item.get('candidate_id') or '')}": item
@@ -7881,6 +8007,9 @@ def _dimension_span_center_identity_records(
         if str(item.get("region_id") or "")
         and str(item.get("candidate_id") or "")
         and item.get("accepted_token") is not None
+    }
+    dimension_by_key = {
+        dimension.key: dimension for dimension in dimensions
     }
     output: list[dict[str, Any]] = []
 
@@ -8001,8 +8130,191 @@ def _dimension_span_center_identity_records(
                 }
             )
 
-    return output
+    symmetric_records = [
+        record
+        for record in (symmetric_dimension_pair_records or [])
+        if (
+            isinstance(record, dict)
+            and record.get("datum") == "overall_center"
+            and record.get("engineering_coordinate_inferred_from_pixels")
+            is False
+            and record.get("pixel_geometry_used_for_identity_only") is True
+        )
+    ]
+    symmetric_keys = {
+        str(record.get("dimension_key") or "")
+        for record in symmetric_records
+        if str(record.get("dimension_key") or "")
+    }
 
+    for span in profile_span_records:
+        span_key = str(span.get("dimension_key") or "")
+        span_region_id = str(span.get("region_id") or "")
+        span_axis = str(span.get("axis") or "").upper()
+        span_dimension = dimension_by_key.get(span_key)
+        raw_span_pair = span.get("selected_witness_positions_px")
+        raw_midpoint = span.get("span_midpoint_px")
+        if (
+            not span_key
+            or span_key in symmetric_keys
+            or not span_region_id
+            or span_axis not in {"X", "Y", "Z"}
+            or span_dimension is None
+            or not isinstance(raw_span_pair, list)
+            or len(raw_span_pair) != 2
+            or not all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in raw_span_pair
+            )
+            or not isinstance(raw_midpoint, (int, float))
+            or isinstance(raw_midpoint, bool)
+        ):
+            continue
+
+        span_low, span_high = sorted(float(value) for value in raw_span_pair)
+        span_width_px = span_high - span_low
+        if span_width_px <= 0.0:
+            continue
+        tolerance = max(2.0, span_width_px * 0.015)
+        midpoint = float(raw_midpoint)
+
+        proposals: list[dict[str, Any]] = []
+        for symmetric in symmetric_records:
+            center_key = str(symmetric.get("dimension_key") or "")
+            center_region_id = str(symmetric.get("region_id") or "")
+            center_axis = str(symmetric.get("axis") or "").upper()
+            center_dimension = dimension_by_key.get(center_key)
+            raw_center_pair = symmetric.get("selected_witness_positions_px")
+            if (
+                not center_key
+                or center_key == span_key
+                or not center_region_id
+                or center_axis != span_axis
+                or center_dimension is None
+                or any(
+                    endpoint.role == "unresolved"
+                    for endpoint in center_dimension.endpoints
+                )
+                or not (
+                    0.0
+                    < float(span_dimension.value)
+                    < float(center_dimension.value)
+                )
+                or not isinstance(raw_center_pair, list)
+                or len(raw_center_pair) != 2
+                or not all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in raw_center_pair
+                )
+            ):
+                continue
+
+            same_raster_view = span_region_id == center_region_id
+            if not same_raster_view:
+                same_raster_view = _regions_share_structural_raster_view(
+                    report=report,
+                    profile_inventory=profile_inventory,
+                    view_lookup=view_lookup,
+                    first_region_id=span_region_id,
+                    second_region_id=center_region_id,
+                )
+            if not same_raster_view:
+                continue
+
+            center_pair = [float(value) for value in raw_center_pair]
+            endpoint_matches = [
+                (
+                    endpoint_index,
+                    abs(midpoint - witness_position),
+                    witness_position,
+                )
+                for endpoint_index, witness_position in enumerate(center_pair)
+                if abs(midpoint - witness_position) <= tolerance
+            ]
+            if len(endpoint_matches) != 1:
+                continue
+            endpoint_index, residual, witness_position = endpoint_matches[0]
+
+            # A local span centered on a pitch/center-distance endpoint must
+            # straddle that endpoint.  If one local boundary itself coincides
+            # with the centered-dimension endpoint, this is more likely a wall
+            # thickness or nested body boundary and must remain unclassified.
+            if (
+                abs(span_low - witness_position) <= tolerance
+                or abs(span_high - witness_position) <= tolerance
+            ):
+                continue
+
+            proposals.append(
+                {
+                    "dimension_key": center_key,
+                    "endpoint_index": endpoint_index,
+                    "axis": span_axis,
+                    "witness_position_px": witness_position,
+                    "span_dimension_key": span_key,
+                    "span_region_id": span_region_id,
+                    "span_midpoint_px": midpoint,
+                    "midpoint_residual_px": residual,
+                    "midpoint_tolerance_px": tolerance,
+                    "source_ids": list(
+                        dict.fromkeys(
+                            [
+                                *[
+                                    value
+                                    for value in span.get("source_ids", [])
+                                    if isinstance(value, str) and value
+                                ],
+                                *[
+                                    value
+                                    for value in symmetric.get("source_ids", [])
+                                    if isinstance(value, str) and value
+                                ],
+                            ]
+                        )
+                    ),
+                }
+            )
+
+        unique = {
+            (
+                proposal["dimension_key"],
+                int(proposal["endpoint_index"]),
+            ): proposal
+            for proposal in proposals
+        }
+        if len(unique) != 1:
+            continue
+        proposal = next(iter(unique.values()))
+        output.append(
+            {
+                **proposal,
+                "midpoint_residual_px": round(
+                    float(proposal["midpoint_residual_px"]),
+                    3,
+                ),
+                "midpoint_tolerance_px": round(
+                    float(proposal["midpoint_tolerance_px"]),
+                    3,
+                ),
+                "basis": (
+                    "unique_resolved_profile_span_midpoint_to_"
+                    "symmetric_dimension_endpoint"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    output.sort(
+        key=lambda item: (
+            str(item.get("dimension_key") or ""),
+            int(item.get("endpoint_index") or 0),
+            str(item.get("span_dimension_key") or ""),
+        )
+    )
+    return output
 
 def _symmetric_local_section_feature_records(
     *,

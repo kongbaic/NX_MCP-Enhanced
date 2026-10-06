@@ -7550,6 +7550,40 @@ def _region_overall_fact_axes(
 
 
 
+def _unique_region_rotation_axis(
+    context: HybridAdapterContext,
+    *,
+    region_id: str,
+    dimension_axis: Axis,
+) -> Axis | None:
+    """Return one rotation axis proven in the region, otherwise fail closed."""
+
+    region = next(
+        (
+            item
+            for item in context.region_views
+            if item.region_id == region_id
+        ),
+        None,
+    )
+    if region is None:
+        return None
+
+    visible_axes = _VISIBLE_AXES_BY_VIEW.get(region.view_kind, set())
+    axes = {
+        fact.axis
+        for fact in context.rotational_symmetry_facts
+        if (
+            fact.axis != dimension_axis
+            and fact.axis in visible_axes
+            and set(region.evidence) & set(fact.evidence)
+        )
+    }
+    if len(axes) != 1:
+        return None
+    return next(iter(axes))
+
+
 def _region_has_rotational_symmetry(
     context: HybridAdapterContext,
     *,
@@ -8614,6 +8648,392 @@ def _dimension_span_center_identity_records(
     )
     return output
 
+_LOCAL_SECTION_COUNT_LABELS = frozenset(
+    {
+        "COUNT",
+        "NUMBER",
+        "NUM",
+        "NO",
+        "NOS",
+        "QTY",
+        "QUANTITY",
+    }
+)
+
+
+def _resolved_circular_local_section_pattern(
+    *,
+    span_dimension: ObservationDimension,
+    center_dimension: ObservationDimension,
+    span_record: dict[str, Any],
+    center_symmetry: dict[str, Any],
+    profile_refs: list[str],
+    context: HybridAdapterContext | None,
+    view_lookup: dict[str, HybridRegionView] | None,
+    profile_inventory: list[dict[str, Any]] | None,
+    reference_table_rows: list[dict[str, Any]] | None,
+    overall_dimensions: dict[str, float] | None,
+    feature_id: str,
+) -> dict[str, Any] | None:
+    """Resolve a repeated axial local section into an exact circular hole pattern.
+
+    This path requires an independently corroborated reference row, an explicit
+    integer count column, a uniquely established rotation axis, and local
+    section boundaries running along that axis.  Raster geometry proves only
+    identity/topology.  Hole diameter, pitch-circle diameter, count and centers
+    are all derived from engineering dimensions, symmetry and table values.
+    """
+
+    if (
+        context is None
+        or view_lookup is None
+        or profile_inventory is None
+        or overall_dimensions is None
+        or not isinstance(reference_table_rows, list)
+        or len(reference_table_rows) != 1
+    ):
+        return None
+
+    region_id = str(span_record.get("region_id") or "")
+    span_axis = str(span_dimension.axis or "").upper()
+    if (
+        not region_id
+        or span_axis not in {"X", "Y", "Z"}
+        or len(profile_refs) != 2
+    ):
+        return None
+
+    span_label = _engineering_dimension_label(
+        str(span_record.get("source_text") or "")
+    )
+    center_label = str(
+        center_symmetry.get("dimension_label") or ""
+    ).upper()
+    if (
+        not span_label
+        or not center_label
+        or span_label == center_label
+    ):
+        return None
+
+    row = reference_table_rows[0]
+    paired = row.get("paired")
+    if not isinstance(paired, dict):
+        return None
+    span_table = paired.get(span_label)
+    center_table = paired.get(center_label)
+    if not isinstance(span_table, dict) or not isinstance(center_table, dict):
+        return None
+
+    span_table_value = span_table.get("value")
+    center_table_value = center_table.get("value")
+    if (
+        not isinstance(span_table_value, (int, float))
+        or isinstance(span_table_value, bool)
+        or not isinstance(center_table_value, (int, float))
+        or isinstance(center_table_value, bool)
+        or not math.isclose(
+            float(span_table_value),
+            float(span_dimension.value),
+            abs_tol=max(
+                abs(float(span_dimension.value)) * 1e-6,
+                1e-9,
+            ),
+        )
+        or not math.isclose(
+            float(center_table_value),
+            float(center_dimension.value),
+            abs_tol=max(
+                abs(float(center_dimension.value)) * 1e-6,
+                1e-9,
+            ),
+        )
+    ):
+        return None
+
+    count_columns = [
+        (label, value)
+        for label, value in paired.items()
+        if (
+            str(label).upper() in _LOCAL_SECTION_COUNT_LABELS
+            and isinstance(value, dict)
+        )
+    ]
+    if len(count_columns) != 1:
+        return None
+    count_label, count_fact = count_columns[0]
+    raw_count = count_fact.get("value")
+    if (
+        not isinstance(raw_count, (int, float))
+        or isinstance(raw_count, bool)
+        or float(raw_count) < 2.0
+        or not float(raw_count).is_integer()
+    ):
+        return None
+    count = int(raw_count)
+
+    # A centered section proves a diametrically opposite pair.  An odd count
+    # cannot contain such a pair in an equally spaced circular pattern.
+    if count % 2 != 0:
+        return None
+
+    rotation_axis = _unique_region_rotation_axis(
+        context,
+        region_id=region_id,
+        dimension_axis=span_dimension.axis,
+    )
+    if rotation_axis is None or rotation_axis == span_dimension.axis:
+        return None
+
+    region_view = view_lookup.get(region_id)
+    if region_view is None:
+        return None
+
+    inventory_by_ref = {
+        str(item.get("ref") or ""): item
+        for item in profile_inventory
+        if (
+            isinstance(item, dict)
+            and str(item.get("ref") or "")
+        )
+    }
+    local_edges: list[dict[str, Any]] = []
+    for ref in profile_refs:
+        edge = inventory_by_ref.get(ref)
+        if (
+            edge is None
+            or str(edge.get("region_id") or "") != region_id
+            or edge.get("kind") != "profile_edge_candidate"
+            or not isinstance(
+                edge.get("endpoint_junction_count"),
+                int,
+            )
+            or isinstance(
+                edge.get("endpoint_junction_count"),
+                bool,
+            )
+            or int(edge["endpoint_junction_count"]) < 2
+        ):
+            return None
+        orientation = str(edge.get("source_orientation") or "")
+        try:
+            varying_axis = _axis_for(
+                region_view.view_kind,
+                orientation,
+            )
+        except HybridCaptureAdapterError:
+            return None
+        if varying_axis != rotation_axis:
+            return None
+        local_edges.append(edge)
+
+    # The two local boundary segments must overlap along the rotation axis.
+    # This is topology-only and does not supply any engineering length.
+    edge_spans: list[tuple[float, float]] = []
+    for edge in local_edges:
+        raw_span = edge.get("span_px")
+        if not (
+            isinstance(raw_span, list)
+            and len(raw_span) == 2
+            and all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in raw_span
+            )
+        ):
+            return None
+        low, high = sorted(float(value) for value in raw_span)
+        if high <= low:
+            return None
+        edge_spans.append((low, high))
+    if min(edge_spans[0][1], edge_spans[1][1]) <= max(
+        edge_spans[0][0],
+        edge_spans[1][0],
+    ):
+        return None
+
+    transverse_axes = {
+        "X": ("Y", "Z"),
+        "Y": ("X", "Z"),
+        "Z": ("X", "Y"),
+    }[rotation_axis]
+    if span_axis not in transverse_axes:
+        return None
+    other_axis = (
+        transverse_axes[1]
+        if transverse_axes[0] == span_axis
+        else transverse_axes[0]
+    )
+
+    overall_by_axis: dict[str, float] = {}
+    for axis, key in (
+        ("X", "length_x"),
+        ("Y", "width_y"),
+        ("Z", "height_z"),
+    ):
+        value = overall_dimensions.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and float(value) > 0.0
+        ):
+            overall_by_axis[axis] = float(value)
+
+    # Established rotational symmetry closes a missing radial overall extent.
+    radial_axes = {
+        "X": ("Y", "Z"),
+        "Y": ("X", "Z"),
+        "Z": ("X", "Y"),
+    }[rotation_axis]
+    known_radial = [
+        overall_by_axis[axis]
+        for axis in radial_axes
+        if axis in overall_by_axis
+    ]
+    if len(known_radial) == 1:
+        missing_axis = next(
+            axis
+            for axis in radial_axes
+            if axis not in overall_by_axis
+        )
+        overall_by_axis[missing_axis] = known_radial[0]
+    if any(axis not in overall_by_axis for axis in transverse_axes):
+        return None
+
+    diameter = float(span_dimension.value)
+    pcd = float(center_dimension.value)
+    if diameter <= 0.0 or pcd <= 0.0:
+        return None
+
+    radius = pcd / 2.0
+    center_by_axis = {
+        axis: overall_by_axis[axis] / 2.0
+        for axis in transverse_axes
+    }
+    explicit_centers: list[dict[str, float]] = []
+    half_diameter = diameter / 2.0
+    fit_tolerance = max(
+        max(overall_by_axis[axis] for axis in transverse_axes) * 1e-9,
+        1e-9,
+    )
+
+    for index in range(count):
+        angle = 2.0 * math.pi * index / count
+        coordinates = {
+            span_axis: (
+                center_by_axis[span_axis]
+                + radius * math.cos(angle)
+            ),
+            other_axis: (
+                center_by_axis[other_axis]
+                + radius * math.sin(angle)
+            ),
+        }
+        if any(
+            coordinates[axis] - half_diameter < -fit_tolerance
+            or coordinates[axis] + half_diameter
+            > overall_by_axis[axis] + fit_tolerance
+            for axis in transverse_axes
+        ):
+            return None
+        explicit_centers.append(
+            {
+                axis.lower(): round(coordinates[axis], 12)
+                for axis in transverse_axes
+            }
+        )
+
+    count_header_index = count_fact.get(
+        "header_source_item_index"
+    )
+    count_value_index = count_fact.get(
+        "value_source_item_index"
+    )
+    reference_region_id = str(
+        row.get("reference_region_id") or ""
+    )
+    table_source_ids = [
+        *(
+            [
+                "hybrid:reference-table-header:"
+                f"{count_header_index}"
+            ]
+            if isinstance(count_header_index, int)
+            else []
+        ),
+        *(
+            [
+                "hybrid:reference-table-value:"
+                f"{count_value_index}"
+            ]
+            if isinstance(count_value_index, int)
+            else []
+        ),
+        *(
+            [
+                "hybrid:reference-table-row-corroborated:"
+                f"{reference_region_id}"
+            ]
+            if reference_region_id
+            else []
+        ),
+    ]
+    symmetry_sources = [
+        source
+        for fact in context.rotational_symmetry_facts
+        if fact.axis == rotation_axis
+        for source in fact.evidence
+    ]
+
+    return {
+        "feature_id": feature_id,
+        "representation_status": (
+            "resolved_circular_through_hole_pattern"
+        ),
+        "count_status": "resolved_reference_table_count",
+        "feature_type": "through_hole",
+        "feature_axis": rotation_axis,
+        "diameter": diameter,
+        "count": count,
+        "pcd": pcd,
+        "pattern_type": "circular",
+        "explicit_centers": explicit_centers,
+        "through": True,
+        "span_label": span_label,
+        "center_distance_label": center_label,
+        "count_label": str(count_label).upper(),
+        "reference_region_id": reference_region_id,
+        "representation_basis": (
+            "resolved_local_span_plus_centered_diametric_pair_plus_"
+            "corroborated_reference_table_count_plus_established_"
+            "rotation_axis"
+        ),
+        "source_ids": list(
+            dict.fromkeys(
+                [
+                    *[
+                        value
+                        for value in span_record.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *[
+                        value
+                        for value in center_symmetry.get(
+                            "source_ids",
+                            [],
+                        )
+                        if isinstance(value, str) and value
+                    ],
+                    *table_source_ids,
+                    *symmetry_sources,
+                ]
+            )
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+
 def _symmetric_local_section_feature_records(
     *,
     dimensions: list[ObservationDimension],
@@ -8621,6 +9041,11 @@ def _symmetric_local_section_feature_records(
     span_center_identity_records: list[dict[str, Any]],
     symmetric_dimension_pair_records: list[dict[str, Any]],
     profile_entity_by_ref: dict[str, str],
+    context: HybridAdapterContext | None = None,
+    view_lookup: dict[str, HybridRegionView] | None = None,
+    profile_inventory: list[dict[str, Any]] | None = None,
+    reference_table_rows: list[dict[str, Any]] | None = None,
+    overall_dimensions: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     """Separate local symmetric section features from the rotational body profile.
 
@@ -8857,6 +9282,22 @@ def _symmetric_local_section_feature_records(
             feature_record["center_profile_refs"] = sorted(
                 center_profile_refs
             )
+
+        resolved_pattern = _resolved_circular_local_section_pattern(
+            span_dimension=span_dimension,
+            center_dimension=center_dimension,
+            span_record=span_record,
+            center_symmetry=center_symmetry[0],
+            profile_refs=profile_refs,
+            context=context,
+            view_lookup=view_lookup,
+            profile_inventory=profile_inventory,
+            reference_table_rows=reference_table_rows,
+            overall_dimensions=overall_dimensions,
+            feature_id=f"F_LOCAL_SECTION_{digest}",
+        )
+        if resolved_pattern is not None:
+            feature_record.update(resolved_pattern)
 
         output.append(feature_record)
         excluded_refs.update(profile_refs)
@@ -9759,6 +10200,14 @@ def adapt_hybrid_ocr_report(
         )
     )
 
+    corroborated_reference_table_rows = (
+        _corroborated_reference_table_rows(
+            report=report,
+            corroborating_facts=labeled_dimension_facts,
+            view_lookup=view_lookup,
+        )
+    )
+
     dimension_span_center_identity_records = (
         _dimension_span_center_identity_records(
             dimensions=dimensions,
@@ -9786,6 +10235,11 @@ def adapt_hybrid_ocr_report(
             symmetric_dimension_pair_records
         ),
         profile_entity_by_ref=profile_entity_by_ref,
+        context=context,
+        view_lookup=view_lookup,
+        profile_inventory=profile_inventory,
+        reference_table_rows=corroborated_reference_table_rows,
+        overall_dimensions=overall_dimensions,
     )
 
     rotational_profile_topology_hints = _rotational_profile_topology_hints(

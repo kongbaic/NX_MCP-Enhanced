@@ -934,6 +934,183 @@ def _audit_labeled_dimension_consumption(
             )
 
 
+def _compile_resolved_symmetric_local_section_features(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Materialize only fully proved repeated local-section hole patterns."""
+
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_symmetric_local_section_feature_ledger"
+            or observation.get("schema") != "1.0"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item_index, item in enumerate(items):
+            if (
+                not isinstance(item, dict)
+                or item.get("representation_status")
+                != "resolved_circular_through_hole_pattern"
+            ):
+                continue
+
+            raw_id = str(item.get("id") or f"item_{item_index}")
+            stable_id = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "_",
+                raw_id,
+            ).strip("_")
+            feature_id = str(item.get("feature_id") or "")
+            feature_axis = str(item.get("feature_axis") or "").upper()
+            feature_type = str(item.get("feature_type") or "")
+            diameter = item.get("diameter")
+            pcd = item.get("pcd")
+            count = item.get("count")
+            pattern_type = str(item.get("pattern_type") or "")
+            explicit_centers = item.get("explicit_centers")
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+
+            valid = (
+                bool(feature_id)
+                and feature_axis in {"X", "Y", "Z"}
+                and feature_type == "through_hole"
+                and isinstance(diameter, (int, float))
+                and not isinstance(diameter, bool)
+                and float(diameter) > 0.0
+                and isinstance(pcd, (int, float))
+                and not isinstance(pcd, bool)
+                and float(pcd) > 0.0
+                and isinstance(count, int)
+                and not isinstance(count, bool)
+                and count >= 2
+                and count % 2 == 0
+                and pattern_type == "circular"
+                and item.get("through") is True
+                and item.get("count_status")
+                == "resolved_reference_table_count"
+                and isinstance(explicit_centers, list)
+                and len(explicit_centers) == count
+                and all(
+                    isinstance(center, dict)
+                    and len(center) == 2
+                    and all(
+                        key in {"x", "y", "z"}
+                        and isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for key, value in center.items()
+                    )
+                    for center in explicit_centers
+                )
+                and item.get(
+                    "engineering_coordinate_inferred_from_pixels"
+                )
+                is False
+                and item.get("pixel_geometry_used_for_identity_only")
+                is True
+            )
+            if not valid:
+                unresolved.append(
+                    {
+                        "id": (
+                            "U_LOCAL_SECTION_FEATURE_"
+                            f"{stable_id or item_index}"
+                        ),
+                        "kind": "unsupported_representation",
+                        "field": (
+                            "local_section_feature_representation"
+                        ),
+                        "reason": (
+                            "resolved local-section pattern record is "
+                            "incomplete or internally inconsistent"
+                        ),
+                        "required_for_modeling": True,
+                        "source_ids": source_ids,
+                    }
+                )
+                continue
+
+            facts = [
+                (
+                    "TYPE",
+                    f"feature:{feature_id}.type",
+                    "through_hole",
+                    "feature_kind",
+                ),
+                (
+                    "AXIS",
+                    f"feature:{feature_id}.axis",
+                    feature_axis,
+                    "axis",
+                ),
+                (
+                    "DIAMETER",
+                    f"feature:{feature_id}.diameter",
+                    float(diameter),
+                    "diameter",
+                ),
+                (
+                    "COUNT",
+                    f"feature:{feature_id}.count",
+                    count,
+                    "feature_count",
+                ),
+                (
+                    "PCD",
+                    f"feature:{feature_id}.pcd",
+                    float(pcd),
+                    "pattern_dimension",
+                ),
+                (
+                    "PATTERN",
+                    f"feature:{feature_id}.pattern_type",
+                    "circular",
+                    "pattern_dimension",
+                ),
+                (
+                    "CENTERS",
+                    f"feature:{feature_id}.explicit_centers",
+                    copy.deepcopy(explicit_centers),
+                    "pattern_dimension",
+                ),
+                (
+                    "THROUGH",
+                    f"feature:{feature_id}.through",
+                    True,
+                    "through",
+                ),
+            ]
+            for suffix, target, value, semantic in facts:
+                _append_direct(
+                    direct,
+                    unresolved,
+                    DirectValueEvidence(
+                        id=(
+                            "LSF_"
+                            f"{stable_id or item_index}_{suffix}"
+                        ),
+                        target=target,
+                        value=value,
+                        semantic=semantic,
+                        source_ids=source_ids,
+                    ),
+                )
+
+
 def _compile_symmetric_local_section_feature_ambiguity(
     graph: EvidenceGraph,
     unresolved: list[dict[str, Any]],
@@ -1031,6 +1208,11 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
+    _compile_resolved_symmetric_local_section_features(
+        graph,
+        direct,
+        unresolved,
+    )
     _compile_symmetric_local_section_feature_ambiguity(
         graph,
         unresolved,

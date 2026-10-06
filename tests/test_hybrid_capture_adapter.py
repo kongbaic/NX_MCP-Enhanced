@@ -7966,6 +7966,247 @@ def test_rotational_oblique_profile_preserves_exterior_when_axis_support_is_unve
     assert hint["pixel_geometry_used_for_topology_only"] is True
 
 
+def test_recovered_profile_span_midpoint_classifies_resolved_symmetric_local_pair():
+    span_dimension = hybrid_adapter.ObservationDimension(
+        key="R1.LABELED_PROFILE_SPAN",
+        value=20.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.LOCAL_LEFT",
+                basis="profile_edge",
+                evidence=["local:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.LOCAL_RIGHT",
+                basis="profile_edge",
+                evidence=["local:right"],
+            ),
+        ],
+        evidence=["local:span"],
+    )
+    center_dimension = hybrid_adapter.ObservationDimension(
+        key="R1.DG_CENTER",
+        value=200.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_LEFT",
+                basis="profile_edge",
+                evidence=["center:left"],
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_RIGHT",
+                basis="profile_edge",
+                evidence=["center:right"],
+            ),
+        ],
+        evidence=["center:span"],
+    )
+
+    span_records = hybrid_adapter._recovered_profile_span_center_records(
+        [
+            {
+                "dimension_key": "R1.LABELED_PROFILE_SPAN",
+                "target_id": "LD_LOCAL",
+                "region_id": "R1",
+                "selected_region_id": "R1",
+                "axis": "X",
+                "profile_refs": ["LOCAL_LEFT", "LOCAL_RIGHT"],
+                "profile_entity_keys": [
+                    "R1.PROFILE.LOCAL_LEFT",
+                    "R1.PROFILE.LOCAL_RIGHT",
+                ],
+                "selected_witness_positions_px": [90.0, 110.0],
+                "basis": (
+                    "unique_short_dimension_witness_pair_to_two_"
+                    "structural_profile_boundaries"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        ]
+    )
+    assert len(span_records) == 1
+    assert span_records[0]["span_midpoint_px"] == 100.0
+
+    symmetry_records = [
+        {
+            "dimension_key": "R1.DG_CENTER",
+            "region_id": "R1",
+            "axis": "X",
+            "datum": "overall_center",
+            "dimension_value": 200.0,
+            "selected_witness_positions_px": [100.5, 300.0],
+            "source_ids": ["center:symmetry"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+    identities = hybrid_adapter._dimension_span_center_identity_records(
+        dimensions=[span_dimension, center_dimension],
+        candidates=[],
+        profile_span_records=span_records,
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 400, 200]}]},
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        profile_inventory=[],
+        symmetric_dimension_pair_records=symmetry_records,
+    )
+
+    assert len(identities) == 1
+    assert identities[0]["dimension_key"] == "R1.DG_CENTER"
+    assert identities[0]["span_dimension_key"] == "R1.LABELED_PROFILE_SPAN"
+    assert identities[0]["endpoint_index"] == 0
+    assert identities[0]["basis"] == (
+        "unique_resolved_profile_span_midpoint_to_symmetric_dimension_endpoint"
+    )
+    assert identities[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert identities[0]["pixel_geometry_used_for_identity_only"] is True
+
+    records, excluded = hybrid_adapter._symmetric_local_section_feature_records(
+        dimensions=[span_dimension, center_dimension],
+        profile_span_records=span_records,
+        span_center_identity_records=identities,
+        symmetric_dimension_pair_records=symmetry_records,
+        profile_entity_by_ref={
+            "LOCAL_LEFT": "R1.PROFILE.LOCAL_LEFT",
+            "LOCAL_RIGHT": "R1.PROFILE.LOCAL_RIGHT",
+            "CENTER_LEFT": "R1.PROFILE.CENTER_LEFT",
+            "CENTER_RIGHT": "R1.PROFILE.CENTER_RIGHT",
+        },
+    )
+
+    assert len(records) == 1
+    assert records[0]["span_width"] == 20.0
+    assert records[0]["center_distance"] == 200.0
+    assert records[0]["center_profile_refs"] == [
+        "CENTER_LEFT",
+        "CENTER_RIGHT",
+    ]
+    assert excluded == {
+        "LOCAL_LEFT",
+        "LOCAL_RIGHT",
+        "CENTER_LEFT",
+        "CENTER_RIGHT",
+    }
+
+
+def test_resolved_local_span_midpoint_identity_fails_closed_when_center_is_ambiguous():
+    span_dimension = hybrid_adapter.ObservationDimension(
+        key="R1.LABELED_PROFILE_SPAN",
+        value=20.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.LOCAL_LEFT",
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.LOCAL_RIGHT",
+            ),
+        ],
+    )
+    center_a = hybrid_adapter.ObservationDimension(
+        key="R1.DG_CENTER_A",
+        value=200.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_A_LEFT",
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_A_RIGHT",
+            ),
+        ],
+    )
+    center_b = hybrid_adapter.ObservationDimension(
+        key="R1.DG_CENTER_B",
+        value=240.0,
+        axis="X",
+        endpoints=[
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_B_LEFT",
+            ),
+            hybrid_adapter.ObservationDimensionEndpoint(
+                role="profile_boundary",
+                entity_key="R1.PROFILE.CENTER_B_RIGHT",
+            ),
+        ],
+    )
+    span_records = [
+        {
+            "dimension_key": "R1.LABELED_PROFILE_SPAN",
+            "region_id": "R1",
+            "axis": "X",
+            "profile_entity_keys": [
+                "R1.PROFILE.LOCAL_LEFT",
+                "R1.PROFILE.LOCAL_RIGHT",
+            ],
+            "selected_witness_positions_px": [90.0, 110.0],
+            "span_midpoint_px": 100.0,
+            "source_ids": ["local"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+    symmetry_records = [
+        {
+            "dimension_key": "R1.DG_CENTER_A",
+            "region_id": "R1",
+            "axis": "X",
+            "datum": "overall_center",
+            "dimension_value": 200.0,
+            "selected_witness_positions_px": [100.5, 300.0],
+            "source_ids": ["center:a"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "dimension_key": "R1.DG_CENTER_B",
+            "region_id": "R1",
+            "axis": "X",
+            "datum": "overall_center",
+            "dimension_value": 240.0,
+            "selected_witness_positions_px": [99.5, 340.0],
+            "source_ids": ["center:b"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+
+    identities = hybrid_adapter._dimension_span_center_identity_records(
+        dimensions=[span_dimension, center_a, center_b],
+        candidates=[],
+        profile_span_records=span_records,
+        report={"regions": [{"region_id": "R1", "bbox_px": [0, 0, 400, 200]}]},
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        profile_inventory=[],
+        symmetric_dimension_pair_records=symmetry_records,
+    )
+
+    assert identities == []
+
+
 def test_symmetric_local_section_feature_pair_is_separated_from_body_profile():
     span_dimension = hybrid_adapter.ObservationDimension(
         key="R1.DG_WIDTH",

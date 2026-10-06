@@ -2047,6 +2047,9 @@ def _materialize_symmetric_tapered_annular_profile(
                 continue
 
             taper_transition = oblique_transitions[0]
+            taper_relation = taper_transition["relation"]
+            if taper_relation.from_side not in {"min", "max"}:
+                continue
             taper_level = float(taper_transition["level"])
             physical_levels = [
                 float(record["level"])
@@ -2124,21 +2127,40 @@ def _materialize_symmetric_tapered_annular_profile(
                     {radial_axis: hub_radius, rotation_axis: level}
                 )
                 current_radius = hub_radius
-            points.extend(
-                [
-                    {
-                        radial_axis: current_radius,
-                        rotation_axis: taper_level,
-                    },
-                    {
-                        radial_axis: neck_radius,
-                        rotation_axis: neck_level,
-                    },
-                    {
-                        radial_axis: inner_radius,
-                        rotation_axis: neck_level,
-                    },
-                ]
+            neck_side = "max" if side == "min" else "min"
+            if taper_relation.from_side == side:
+                points.extend(
+                    [
+                        {
+                            radial_axis: current_radius,
+                            rotation_axis: taper_level,
+                        },
+                        {
+                            radial_axis: neck_radius,
+                            rotation_axis: neck_level,
+                        },
+                    ]
+                )
+            elif taper_relation.from_side == neck_side:
+                points.extend(
+                    [
+                        {
+                            radial_axis: neck_radius,
+                            rotation_axis: taper_level,
+                        },
+                        {
+                            radial_axis: neck_radius,
+                            rotation_axis: neck_level,
+                        },
+                    ]
+                )
+            else:
+                continue
+            points.append(
+                {
+                    radial_axis: inner_radius,
+                    rotation_axis: neck_level,
+                }
             )
 
             multilevel_profile_segments: list[dict[str, Any]] = []

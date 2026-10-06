@@ -1135,6 +1135,7 @@ def _linked_physical_profile_arc_radius_observations(
     """
 
     physical_by_curve_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    physical_by_id: dict[str, dict[str, Any]] = {}
     for observation in observations:
         if (
             not isinstance(observation, dict)
@@ -1166,6 +1167,7 @@ def _linked_physical_profile_arc_radius_observations(
             physical_arc_id = str(item.get("id") or "")
             if not physical_arc_id:
                 continue
+            physical_by_id[physical_arc_id] = item
             for source_id in item.get("source_ids", []):
                 if (
                     isinstance(source_id, str)
@@ -1335,6 +1337,249 @@ def _linked_physical_profile_arc_radius_observations(
                 }
             )
 
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_corroborated_reference_table_ledger"
+            or observation.get("engineering_value_source")
+            != "corroborated_reference_table_row"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        rows = observation.get("items")
+        if not isinstance(rows, list):
+            continue
+
+        eligible_arcs: dict[str, dict[str, Any]] = {}
+        for physical_arc_id, physical_arc in physical_by_id.items():
+            plane = str(physical_arc.get("plane") or "").upper()
+            rotation_axis = str(physical_arc.get("rotation_axis") or "").upper()
+            supports = physical_arc.get("supporting_physical_edges")
+            if (
+                plane not in {"XY", "XZ", "YZ"}
+                or rotation_axis not in set(plane)
+                or not isinstance(supports, list)
+                or len(supports) != 2
+            ):
+                continue
+            support_axes: set[str] = set()
+            valid_supports = True
+            for support in supports:
+                if not isinstance(support, dict):
+                    valid_supports = False
+                    break
+                axis = str(support.get("constant_axis") or "").upper()
+                material_direction = support.get("material_axis_direction")
+                background_direction = support.get("background_axis_direction")
+                if (
+                    axis not in set(plane)
+                    or material_direction not in {"negative", "positive"}
+                    or background_direction not in {"negative", "positive"}
+                    or material_direction == background_direction
+                    or support.get("material_axis_direction_ambiguous") is True
+                ):
+                    valid_supports = False
+                    break
+                support_axes.add(axis)
+            if valid_supports and len(support_axes) == 2:
+                eligible_arcs[physical_arc_id] = physical_arc
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            paired = row.get("paired")
+            corroborating_labels = row.get("corroborating_labels")
+            reference_region_id = str(row.get("reference_region_id") or "")
+            if (
+                not isinstance(paired, dict)
+                or not isinstance(corroborating_labels, list)
+                or len({str(value) for value in corroborating_labels if value}) < 3
+                or not reference_region_id
+            ):
+                continue
+
+            radius_entries: list[tuple[str, dict[str, Any], float]] = []
+            for raw_label, raw_fact in paired.items():
+                label = str(raw_label or "").upper()
+                if not (
+                    label == "R"
+                    or (
+                        label.startswith("R")
+                        and len(label) > 1
+                        and label[1:].isdigit()
+                    )
+                ):
+                    continue
+                if not isinstance(raw_fact, dict):
+                    continue
+                raw_value = raw_fact.get("value")
+                if (
+                    isinstance(raw_value, bool)
+                    or not isinstance(raw_value, (int, float))
+                    or float(raw_value) <= 0.0
+                ):
+                    continue
+                radius_entries.append((label, raw_fact, float(raw_value)))
+
+            if not radius_entries:
+                continue
+
+            stable_row = hashlib.sha256(
+                "|".join(
+                    [
+                        reference_region_id,
+                        *sorted(str(value) for value in corroborating_labels),
+                        *[
+                            f"{label}:{radius}"
+                            for label, _fact, radius in radius_entries
+                        ],
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()[:12].upper()
+
+            if len(radius_entries) != 1:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
+                        "kind": "feature_value",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "corroborated reference row contains multiple "
+                            "candidate radius columns without unique ownership"
+                        ),
+                        "candidate_radius_labels": sorted(
+                            label for label, _fact, _radius in radius_entries
+                        ),
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            radius_label, table_fact, radius = radius_entries[0]
+            header_index = table_fact.get("header_source_item_index")
+            value_index = table_fact.get("value_source_item_index")
+            source_ids = list(
+                dict.fromkeys(
+                    [
+                        (
+                            f"hybrid:reference-table:{reference_region_id}:"
+                            f"header:{header_index}"
+                        ),
+                        (
+                            f"hybrid:reference-table:{reference_region_id}:"
+                            f"value:{value_index}"
+                        ),
+                        *[
+                            f"hybrid:reference-table-corroboration:{label}"
+                            for label in sorted(
+                                {
+                                    str(value)
+                                    for value in corroborating_labels
+                                    if value
+                                }
+                            )
+                        ],
+                    ]
+                )
+            )
+
+            if len(eligible_arcs) != 1:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
+                        "kind": "feature_inventory",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "corroborated reference-table radius does not map "
+                            "to exactly one verified orthogonally supported "
+                            "physical profile arc"
+                        ),
+                        "radius_label": radius_label,
+                        "engineering_radius": radius,
+                        "candidate_physical_arc_ids": sorted(eligible_arcs),
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            physical_arc_id, physical_arc = next(iter(eligible_arcs.items()))
+            curve_sources = sorted(
+                {
+                    value
+                    for value in physical_arc.get("source_ids", [])
+                    if isinstance(value, str)
+                    and value.startswith("hybrid:curve-boundary:")
+                }
+            )
+            if len(curve_sources) != 1:
+                unresolved.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable_row}",
+                        "kind": "feature_inventory",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "unique verified physical profile arc lacks one "
+                            "stable curve-source identity"
+                        ),
+                        "radius_label": radius_label,
+                        "engineering_radius": radius,
+                        "candidate_physical_arc_ids": [physical_arc_id],
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                    }
+                )
+                continue
+
+            linked_source_ids = list(
+                dict.fromkeys(
+                    [
+                        *source_ids,
+                        *[
+                            value
+                            for value in physical_arc.get("source_ids", [])
+                            if isinstance(value, str) and value
+                        ],
+                    ]
+                )
+            )
+            linked_items.append(
+                {
+                    "id": f"PHYSICAL_ARC_RADIUS_TABLE_{stable_row}",
+                    "physical_arc_id": physical_arc_id,
+                    "curve_source_id": curve_sources[0],
+                    "engineering_radius": radius,
+                    "engineering_value_source": (
+                        "corroborated_reference_table_row"
+                    ),
+                    "radius_label": radius_label,
+                    "reference_region_id": reference_region_id,
+                    "plane": physical_arc.get("plane"),
+                    "rotation_axis": physical_arc.get("rotation_axis"),
+                    "supporting_physical_feature_ids": list(
+                        physical_arc.get(
+                            "supporting_physical_feature_ids",
+                            [],
+                        )
+                    ),
+                    "supporting_physical_edges": copy.deepcopy(
+                        physical_arc.get(
+                            "supporting_physical_edges",
+                            [],
+                        )
+                    ),
+                    "source_ids": linked_source_ids,
+                    "basis": (
+                        "corroborated_reference_table_radius_plus_"
+                        "unique_physical_arc_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            )
+
     if not linked_items:
         return [], unresolved
     linked_items.sort(
@@ -1398,15 +1643,32 @@ def _physical_profile_arc_radius_direct_values(
                 for source_id in item.get("source_ids", [])
                 if isinstance(source_id, str) and source_id
             ]
+            provenance = str(
+                item.get("engineering_value_source") or ""
+            )
+            basis = str(item.get("basis") or "")
+            valid_provenance = (
+                (
+                    provenance == "hybrid_ocr"
+                    and basis
+                    == (
+                        "explicit_engineering_radius_callout_plus_"
+                        "unique_physical_arc_identity"
+                    )
+                )
+                or (
+                    provenance == "corroborated_reference_table_row"
+                    and basis
+                    == (
+                        "corroborated_reference_table_radius_plus_"
+                        "unique_physical_arc_identity"
+                    )
+                )
+            )
             valid = (
                 physical_arc_id
                 and radius is not None
-                and item.get("engineering_value_source") == "hybrid_ocr"
-                and item.get("basis")
-                == (
-                    "explicit_engineering_radius_callout_plus_"
-                    "unique_physical_arc_identity"
-                )
+                and valid_provenance
                 and item.get("engineering_coordinate_inferred_from_pixels")
                 is False
                 and item.get("pixel_geometry_used_for_identity_only") is True

@@ -2047,20 +2047,6 @@ def _materialize_symmetric_tapered_annular_profile(
                 continue
 
             taper_transition = oblique_transitions[0]
-            taper_relation = taper_transition["relation"]
-            if taper_relation.from_side not in {"min", "max"}:
-                continue
-            side = taper_relation.from_side
-            if any(
-                record["relation"].from_side != side
-                for record in physical_transitions
-            ):
-                continue
-
-            physical_transitions.sort(
-                key=lambda record: float(record["level"]),
-                reverse=(side == "max"),
-            )
             taper_level = float(taper_transition["level"])
             physical_levels = [
                 float(record["level"])
@@ -2069,32 +2055,45 @@ def _materialize_symmetric_tapered_annular_profile(
             if (
                 len({round(level, 9) for level in physical_levels})
                 != len(physical_levels)
-                or (
-                    side == "min"
-                    and (
-                        any(
-                            left >= right - tolerance
-                            for left, right in zip(
-                                physical_levels,
-                                physical_levels[1:],
-                                strict=False,
-                            )
-                        )
-                        or physical_levels[-1] >= taper_level - tolerance
+            ):
+                continue
+
+            if max(physical_levels) < taper_level - tolerance:
+                side = "min"
+                physical_transitions.sort(
+                    key=lambda record: float(record["level"]),
+                )
+            elif min(physical_levels) > taper_level + tolerance:
+                side = "max"
+                physical_transitions.sort(
+                    key=lambda record: float(record["level"]),
+                    reverse=True,
+                )
+            else:
+                continue
+
+            physical_levels = [
+                float(record["level"])
+                for record in physical_transitions
+            ]
+            if (
+                side == "min"
+                and any(
+                    left >= right - tolerance
+                    for left, right in zip(
+                        physical_levels,
+                        physical_levels[1:],
+                        strict=False,
                     )
                 )
-                or (
-                    side == "max"
-                    and (
-                        any(
-                            left <= right + tolerance
-                            for left, right in zip(
-                                physical_levels,
-                                physical_levels[1:],
-                                strict=False,
-                            )
-                        )
-                        or physical_levels[-1] <= taper_level + tolerance
+            ) or (
+                side == "max"
+                and any(
+                    left <= right + tolerance
+                    for left, right in zip(
+                        physical_levels,
+                        physical_levels[1:],
+                        strict=False,
                     )
                 )
             ):

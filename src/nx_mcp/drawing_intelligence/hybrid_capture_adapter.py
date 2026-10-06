@@ -3692,6 +3692,332 @@ def _rotational_oblique_profile_hints(
     return hints
 
 
+def _bilateral_rotational_straight_silhouette_records(
+    *,
+    oblique_hints: list[dict[str, Any]],
+    symmetric_profile_span_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Prove one bilateral straight rotational silhouette from raster topology.
+
+    Multiple detector fragments on one physical side may overlap even when none
+    reaches a structural orthogonal support.  This helper is deliberately
+    evidence-only: it may consolidate those fragments and prove bilateral mirror
+    identity around an independently established symmetric-span midpoint, but it
+    never converts pixel slope, span, or position into engineering geometry.
+    """
+
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for hint in oblique_hints:
+        if (
+            not isinstance(hint, dict)
+            or hint.get("one_sided_boundary_candidate") is not True
+            or hint.get("exterior_boundary_candidate") is not True
+            or hint.get("engineering_coordinate_inferred_from_pixels") is not False
+            or hint.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        line_support = hint.get("line_edge_support_fraction")
+        endpoints = hint.get("endpoints_px")
+        view_kind = str(hint.get("view_kind") or "")
+        plane = str(hint.get("plane") or "").upper()
+        rotation_axis = str(hint.get("rotation_axis") or "").upper()
+        if (
+            not isinstance(line_support, (int, float))
+            or isinstance(line_support, bool)
+            or float(line_support) < 0.85
+            or view_kind not in {"front", "side", "top"}
+            or plane not in {"XY", "XZ", "YZ"}
+            or rotation_axis not in set(plane)
+            or not isinstance(endpoints, list)
+            or len(endpoints) != 2
+            or not all(
+                isinstance(point, list)
+                and len(point) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in point
+                )
+                for point in endpoints
+            )
+        ):
+            continue
+        grouped[(view_kind, plane, rotation_axis)].append(hint)
+
+    output: list[dict[str, Any]] = []
+    for (view_kind, plane, rotation_axis), hints in sorted(grouped.items()):
+        radial_axes = [axis for axis in plane if axis != rotation_axis]
+        if len(radial_axes) != 1:
+            continue
+        radial_axis = radial_axes[0]
+        radial_index = _PIXEL_INDEX_BY_VIEW_AXIS.get((view_kind, radial_axis))
+        axial_index = _PIXEL_INDEX_BY_VIEW_AXIS.get((view_kind, rotation_axis))
+        if (
+            radial_index not in {0, 1}
+            or axial_index not in {0, 1}
+            or radial_index == axial_index
+        ):
+            continue
+
+        center_records = [
+            record
+            for record in symmetric_profile_span_records
+            if (
+                isinstance(record, dict)
+                and str(record.get("axis") or "").upper() == radial_axis
+                and record.get("datum") == "overall_center"
+                and record.get("engineering_coordinate_inferred_from_pixels")
+                is False
+                and record.get("pixel_geometry_used_for_identity_only") is True
+                and isinstance(record.get("selected_witness_positions_px"), list)
+                and len(record["selected_witness_positions_px"]) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    for value in record["selected_witness_positions_px"]
+                )
+                and isinstance(record.get("midpoint_tolerance_px"), (int, float))
+                and not isinstance(record.get("midpoint_tolerance_px"), bool)
+                and float(record["midpoint_tolerance_px"]) > 0.0
+            )
+        ]
+        if len(center_records) < 2:
+            continue
+
+        center_values = [
+            sum(float(value) for value in record["selected_witness_positions_px"])
+            / 2.0
+            for record in center_records
+        ]
+        center_tolerance = min(
+            float(record["midpoint_tolerance_px"])
+            for record in center_records
+        )
+        if max(center_values) - min(center_values) > center_tolerance:
+            continue
+        center_px = sum(center_values) / len(center_values)
+
+        by_side: dict[str, list[dict[str, Any]]] = {
+            "negative": [],
+            "positive": [],
+        }
+        ambiguous_side = False
+        for hint in hints:
+            endpoints = hint["endpoints_px"]
+            radial_values = [
+                float(point[radial_index])
+                for point in endpoints
+            ]
+            if all(value < center_px - center_tolerance for value in radial_values):
+                side = "negative"
+            elif all(value > center_px + center_tolerance for value in radial_values):
+                side = "positive"
+            else:
+                ambiguous_side = True
+                break
+            by_side[side].append(hint)
+        if ambiguous_side or any(not values for values in by_side.values()):
+            continue
+
+        def consolidate_side(
+            side_hints: list[dict[str, Any]],
+        ) -> dict[str, Any] | None:
+            points: list[tuple[float, float]] = []
+            intervals: list[tuple[float, float]] = []
+            sources: list[str] = []
+            polarity: set[tuple[int, int]] = set()
+            for hint in side_hints:
+                endpoints = hint.get("endpoints_px")
+                if not isinstance(endpoints, list) or len(endpoints) != 2:
+                    return None
+                local_points = [
+                    (
+                        float(point[axial_index]),
+                        float(point[radial_index]),
+                    )
+                    for point in endpoints
+                ]
+                if abs(local_points[0][0] - local_points[1][0]) <= 1e-9:
+                    return None
+                points.extend(local_points)
+                intervals.append(
+                    tuple(sorted((local_points[0][0], local_points[1][0])))
+                )
+                sources.extend(
+                    value
+                    for value in hint.get("source_ids", [])
+                    if (
+                        isinstance(value, str)
+                        and value.startswith("hybrid:oblique-line:")
+                    )
+                )
+                material_side = hint.get("material_side_index")
+                background_side = hint.get("background_side_index")
+                if (
+                    material_side in {0, 1}
+                    and background_side in {0, 1}
+                    and material_side != background_side
+                ):
+                    polarity.add(
+                        (int(material_side), int(background_side))
+                    )
+
+            if len(set(sources)) != len(side_hints) or len(polarity) != 1:
+                return None
+
+            axial_values = [point[0] for point in points]
+            radial_values = [point[1] for point in points]
+            mean_axial = sum(axial_values) / len(axial_values)
+            mean_radial = sum(radial_values) / len(radial_values)
+            denominator = sum(
+                (value - mean_axial) ** 2
+                for value in axial_values
+            )
+            if denominator <= 1e-9:
+                return None
+            slope = sum(
+                (axial - mean_axial) * (radial - mean_radial)
+                for axial, radial in points
+            ) / denominator
+            intercept = mean_radial - slope * mean_axial
+            residual = max(
+                abs(radial - (slope * axial + intercept))
+                for axial, radial in points
+            )
+            fit_tolerance = max(2.0, center_tolerance * 0.25)
+            if abs(slope) <= 1e-6 or residual > fit_tolerance:
+                return None
+
+            merged_intervals: list[list[float]] = []
+            for low, high in sorted(intervals):
+                if (
+                    not merged_intervals
+                    or low > merged_intervals[-1][1] + center_tolerance
+                ):
+                    merged_intervals.append([low, high])
+                else:
+                    merged_intervals[-1][1] = max(
+                        merged_intervals[-1][1],
+                        high,
+                    )
+            if len(merged_intervals) != 1:
+                return None
+
+            return {
+                "slope": slope,
+                "intercept": intercept,
+                "axial_range": merged_intervals[0],
+                "source_ids": sorted(set(sources)),
+                "polarity": next(iter(polarity)),
+            }
+
+        negative = consolidate_side(by_side["negative"])
+        positive = consolidate_side(by_side["positive"])
+        if negative is None or positive is None:
+            continue
+        if negative["slope"] * positive["slope"] >= 0.0:
+            continue
+
+        slope_scale = max(
+            abs(float(negative["slope"])),
+            abs(float(positive["slope"])),
+        )
+        if (
+            abs(
+                abs(float(negative["slope"]))
+                - abs(float(positive["slope"]))
+            )
+            > max(1e-6, slope_scale * 0.15)
+            or negative["polarity"] != positive["polarity"]
+        ):
+            continue
+
+        overlap_low = max(
+            float(negative["axial_range"][0]),
+            float(positive["axial_range"][0]),
+        )
+        overlap_high = min(
+            float(negative["axial_range"][1]),
+            float(positive["axial_range"][1]),
+        )
+        if overlap_high <= overlap_low:
+            continue
+
+        mirror_tolerance = max(2.0, center_tolerance * 0.5)
+        sample_positions = [
+            overlap_low,
+            (overlap_low + overlap_high) / 2.0,
+            overlap_high,
+        ]
+        if any(
+            abs(
+                (
+                    (
+                        float(negative["slope"]) * axial
+                        + float(negative["intercept"])
+                    )
+                    + (
+                        float(positive["slope"]) * axial
+                        + float(positive["intercept"])
+                    )
+                )
+                / 2.0
+                - center_px
+            )
+            > mirror_tolerance
+            for axial in sample_positions
+        ):
+            continue
+
+        sources = [
+            *negative["source_ids"],
+            *positive["source_ids"],
+            *[
+                source
+                for record in center_records
+                for source in record.get("source_ids", [])
+                if isinstance(source, str) and source
+            ],
+        ]
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    view_kind,
+                    plane,
+                    rotation_axis,
+                    radial_axis,
+                    *sorted(set(sources)),
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        output.append(
+            {
+                "id": f"BILATERAL_STRAIGHT_SILHOUETTE_{digest}",
+                "view_kind": view_kind,
+                "plane": plane,
+                "rotation_axis": rotation_axis,
+                "radial_axis": radial_axis,
+                "negative_side_source_ids": negative["source_ids"],
+                "positive_side_source_ids": positive["source_ids"],
+                "source_ids": list(dict.fromkeys(sources)),
+                "primitive_kind": "line",
+                "primitive_kind_basis": (
+                    "bilateral_mirrored_continuous_straight_"
+                    "exterior_silhouette"
+                ),
+                "basis": (
+                    "full_support_exterior_fragments_plus_"
+                    "independent_symmetric_span_midpoint"
+                ),
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        )
+
+    output.sort(key=lambda item: str(item.get("id") or ""))
+    return output
+
+
 def _rotational_profile_topology_hints(
     *,
     report: dict[str, Any],
@@ -10242,6 +10568,13 @@ def adapt_hybrid_ocr_report(
         overall_dimensions=overall_dimensions,
     )
 
+    bilateral_rotational_straight_silhouette_records = (
+        _bilateral_rotational_straight_silhouette_records(
+            oblique_hints=rotational_oblique_profile_hints,
+            symmetric_profile_span_records=symmetric_profile_span_records,
+        )
+    )
+
     rotational_profile_topology_hints = _rotational_profile_topology_hints(
         report=report,
         profile_inventory=profile_inventory,
@@ -10531,6 +10864,14 @@ def adapt_hybrid_ocr_report(
             "engineering_value_source": "corroborated_reference_table_row",
         },
         {
+            "kind": "hybrid_corroborated_reference_table_ledger",
+            "schema": "1.0",
+            "items": corroborated_reference_table_rows,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+            "engineering_value_source": "corroborated_reference_table_row",
+        },
+        {
             "kind": "hybrid_labeled_dimension_relation_ledger",
             "schema": "1.0",
             "items": [
@@ -10560,6 +10901,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
             "schema": "1.0",
             "items": rotational_oblique_profile_hints,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "kind": "hybrid_bilateral_rotational_straight_silhouette_ledger",
+            "schema": "1.0",
+            "items": bilateral_rotational_straight_silhouette_records,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_topology_only": True,
         },

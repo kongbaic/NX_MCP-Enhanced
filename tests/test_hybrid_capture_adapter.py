@@ -7966,6 +7966,156 @@ def test_rotational_oblique_profile_preserves_exterior_when_axis_support_is_unve
     assert hint["pixel_geometry_used_for_topology_only"] is True
 
 
+def test_bilateral_straight_silhouette_merges_split_mirrored_fragments():
+    symmetric_records = [
+        {
+            "axis": "X",
+            "datum": "overall_center",
+            "selected_witness_positions_px": [100.0, 300.0],
+            "midpoint_tolerance_px": 5.0,
+            "source_ids": ["span:a"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "axis": "X",
+            "datum": "overall_center",
+            "selected_witness_positions_px": [120.0, 280.0],
+            "midpoint_tolerance_px": 5.0,
+            "source_ids": ["span:b"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+    hints = [
+        {
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "endpoints_px": [[150.0, 20.0], [130.0, 80.0]],
+            "line_edge_support_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "exterior_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "source_ids": ["hybrid:oblique-line:left"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "endpoints_px": [[250.0, 20.0], [260.0, 50.0]],
+            "line_edge_support_fraction": 0.99,
+            "one_sided_boundary_candidate": True,
+            "exterior_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "source_ids": ["hybrid:oblique-line:right-a"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "endpoints_px": [[260.0, 50.0], [270.0, 80.0]],
+            "line_edge_support_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "exterior_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "source_ids": ["hybrid:oblique-line:right-b"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    records = hybrid_adapter._bilateral_rotational_straight_silhouette_records(
+        oblique_hints=hints,
+        symmetric_profile_span_records=symmetric_records,
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["plane"] == "XZ"
+    assert record["rotation_axis"] == "Z"
+    assert record["radial_axis"] == "X"
+    assert record["primitive_kind"] == "line"
+    assert record["negative_side_source_ids"] == [
+        "hybrid:oblique-line:left"
+    ]
+    assert record["positive_side_source_ids"] == [
+        "hybrid:oblique-line:right-a",
+        "hybrid:oblique-line:right-b",
+    ]
+    assert record["engineering_coordinate_inferred_from_pixels"] is False
+    assert record["pixel_geometry_used_for_topology_only"] is True
+    assert "slope" not in record
+    assert "center_px" not in record
+
+
+def test_bilateral_straight_silhouette_fails_closed_without_mirror():
+    symmetric_records = [
+        {
+            "axis": "X",
+            "datum": "overall_center",
+            "selected_witness_positions_px": [100.0, 300.0],
+            "midpoint_tolerance_px": 4.0,
+            "source_ids": ["span:a"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "axis": "X",
+            "datum": "overall_center",
+            "selected_witness_positions_px": [120.0, 280.0],
+            "midpoint_tolerance_px": 4.0,
+            "source_ids": ["span:b"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+    hints = [
+        {
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "endpoints_px": [[150.0, 20.0], [130.0, 80.0]],
+            "line_edge_support_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "exterior_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "source_ids": ["hybrid:oblique-line:left"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "endpoints_px": [[270.0, 20.0], [290.0, 80.0]],
+            "line_edge_support_fraction": 1.0,
+            "one_sided_boundary_candidate": True,
+            "exterior_boundary_candidate": True,
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "source_ids": ["hybrid:oblique-line:right"],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    records = hybrid_adapter._bilateral_rotational_straight_silhouette_records(
+        oblique_hints=hints,
+        symmetric_profile_span_records=symmetric_records,
+    )
+
+    assert records == []
+
+
 def test_correlated_reference_table_row_exposes_unique_count_column():
     def box(left, top, width=34.0, height=16.0):
         return [

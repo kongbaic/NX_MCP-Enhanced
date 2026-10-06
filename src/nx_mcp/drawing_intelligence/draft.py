@@ -3505,6 +3505,193 @@ def _unconsumed_rotational_profile_primitive_unresolved(
     return output
 
 
+def _unowned_reference_table_profile_radius_unresolved(
+    graph: EvidenceGraph,
+) -> list[dict[str, Any]]:
+    """Defer corroborated reference-table radius ownership to Gate A.
+
+    The linker may bind a table radius only when one verified physical profile
+    arc owns it. Absence or ambiguity of that ownership must not terminate the
+    Resolver, but the engineering radius still remains modeling-critical until
+    Gate A can prove one unique linked physical arc.
+    """
+
+    linked: dict[tuple[str, str, float], list[dict[str, Any]]] = defaultdict(list)
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_physical_profile_arc_radius_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("engineering_value_source")
+                != "corroborated_reference_table_row"
+                or item.get("basis")
+                != (
+                    "corroborated_reference_table_radius_plus_"
+                    "unique_physical_arc_identity"
+                )
+            ):
+                continue
+            region_id = str(item.get("reference_region_id") or "")
+            radius_label = str(item.get("radius_label") or "").upper()
+            raw_radius = item.get("engineering_radius")
+            if (
+                not region_id
+                or not radius_label
+                or isinstance(raw_radius, bool)
+                or not isinstance(raw_radius, (int, float))
+                or float(raw_radius) <= 0.0
+            ):
+                continue
+            linked[(region_id, radius_label, round(float(raw_radius), 9))].append(item)
+
+    output: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_corroborated_reference_table_ledger"
+            or observation.get("engineering_value_source")
+            != "corroborated_reference_table_row"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        rows = observation.get("items")
+        if not isinstance(rows, list):
+            continue
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            paired = row.get("paired")
+            corroborating_labels = row.get("corroborating_labels")
+            reference_region_id = str(row.get("reference_region_id") or "")
+            if (
+                not isinstance(paired, dict)
+                or not isinstance(corroborating_labels, list)
+                or len(
+                    {
+                        str(value)
+                        for value in corroborating_labels
+                        if isinstance(value, str) and value
+                    }
+                )
+                < 3
+                or not reference_region_id
+            ):
+                continue
+
+            corroboration_sources = [
+                f"hybrid:reference-table-corroboration:{label}"
+                for label in sorted(
+                    {
+                        str(value)
+                        for value in corroborating_labels
+                        if isinstance(value, str) and value
+                    }
+                )
+            ]
+            for raw_label, raw_fact in sorted(
+                paired.items(),
+                key=lambda value: str(value[0]),
+            ):
+                radius_label = str(raw_label or "").upper()
+                if not (
+                    radius_label == "R"
+                    or (
+                        radius_label.startswith("R")
+                        and len(radius_label) > 1
+                        and radius_label[1:].isdigit()
+                    )
+                ):
+                    continue
+                if not isinstance(raw_fact, dict):
+                    continue
+                raw_radius = raw_fact.get("value")
+                if (
+                    isinstance(raw_radius, bool)
+                    or not isinstance(raw_radius, (int, float))
+                    or float(raw_radius) <= 0.0
+                ):
+                    continue
+                radius = float(raw_radius)
+                key = (
+                    reference_region_id,
+                    radius_label,
+                    round(radius, 9),
+                )
+                matches = linked.get(key, [])
+                if len(matches) == 1:
+                    continue
+
+                header_index = raw_fact.get("header_source_item_index")
+                value_index = raw_fact.get("value_source_item_index")
+                source_ids = list(
+                    dict.fromkeys(
+                        [
+                            (
+                                f"hybrid:reference-table:{reference_region_id}:"
+                                f"header:{header_index}"
+                            ),
+                            (
+                                f"hybrid:reference-table:{reference_region_id}:"
+                                f"value:{value_index}"
+                            ),
+                            *corroboration_sources,
+                        ]
+                    )
+                )
+                stable = "_".join(
+                    [
+                        _stable_fragment(reference_region_id),
+                        _stable_fragment(radius_label),
+                        _stable_fragment(f"{radius:g}"),
+                    ]
+                )
+                output.append(
+                    {
+                        "id": f"U_PROFILE_ARC_RADIUS_TABLE_{stable}",
+                        "kind": "feature_inventory",
+                        "field": "profile_arc_radius_identity",
+                        "reason": (
+                            "corroborated reference-table radius has not been "
+                            "uniquely linked to one verified physical profile "
+                            "arc before Gate A"
+                        ),
+                        "radius_label": radius_label,
+                        "engineering_radius": radius,
+                        "linked_physical_arc_ids": sorted(
+                            {
+                                str(item.get("physical_arc_id") or "")
+                                for item in matches
+                                if str(item.get("physical_arc_id") or "")
+                            }
+                        ),
+                        "source_ids": source_ids,
+                        "required_for_modeling": True,
+                        "metadata": {
+                            "basis": (
+                                "corroborated_reference_table_radius_"
+                                "requires_unique_profile_arc_ownership"
+                            ),
+                            "engineering_coordinate_inferred_from_pixels": False,
+                        },
+                    }
+                )
+
+    return output
+
+
 def _unconsumed_profile_transition_unresolved(
     draft: dict[str, Any],
     graph: EvidenceGraph,
@@ -3937,6 +4124,11 @@ def build_semantic_draft(
     draft["unresolved"].extend(
         _unconsumed_profile_transition_unresolved(
             draft,
+            graph,
+        )
+    )
+    draft["unresolved"].extend(
+        _unowned_reference_table_profile_radius_unresolved(
             graph,
         )
     )

@@ -1055,6 +1055,255 @@ def test_symmetric_tapered_annular_profile_rejects_ambiguous_bilateral_silhouett
     assert draft["dimension_closure"] == {"status": "incomplete"}
 
 
+def _multilevel_tapered_annular_graph(*, ambiguous_oblique_transition=False):
+    graph = _symmetric_tapered_annular_graph()
+    graph.observations.append(_bilateral_straight_silhouette_observation())
+
+    mid_left = "feature:F_MID_LEFT.boundary.x"
+    mid_right = "feature:F_MID_RIGHT.boundary.x"
+    z_step1 = "feature:F_Z_STEP1.boundary.z"
+    z_step2 = "feature:F_Z_STEP2.boundary.z"
+    taper_target = "constraints.profile_transitions.TAPER.z"
+
+    graph.direct_values.extend(
+        [
+            DirectValueEvidence(id="MID_L", target=mid_left, value=54.0),
+            DirectValueEvidence(id="MID_R", target=mid_right, value=246.0),
+        ]
+    )
+    graph.dimensions.append(
+        DimensionObservation(
+            id="D_MID",
+            value=192.0,
+            axis="X",
+            endpoints=[
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=mid_left,
+                ),
+                DimensionEndpoint(
+                    role="profile_boundary",
+                    target=mid_right,
+                ),
+            ],
+            direction=1,
+            source_ids=["dim:mid"],
+        )
+    )
+    graph.relations.extend(
+        [
+            RelationEvidence(
+                id="LPT_STEP1",
+                kind="edge_offset",
+                axis="Z",
+                targets=[z_step1],
+                value=3.0,
+                from_side="min",
+                source_ids=["dim:step1"],
+                metadata={
+                    "basis": "labeled_overall_to_profile_transition",
+                    "labeled_target_id": "STEP1",
+                },
+            ),
+            RelationEvidence(
+                id="LPT_STEP2",
+                kind="edge_offset",
+                axis="Z",
+                targets=[z_step2],
+                value=12.0,
+                from_side="min",
+                source_ids=["dim:step2"],
+                metadata={
+                    "basis": "labeled_overall_to_profile_transition",
+                    "labeled_target_id": "STEP2",
+                },
+            ),
+            RelationEvidence(
+                id="LPT_TAPER",
+                kind="edge_offset",
+                axis="Z",
+                targets=[taper_target],
+                value=28.0,
+                from_side="min",
+                source_ids=["dim:taper"],
+                metadata={
+                    "basis": "labeled_overall_to_profile_transition",
+                    "labeled_target_id": "TAPER",
+                },
+            ),
+        ]
+    )
+
+    topology = next(
+        observation
+        for observation in graph.observations
+        if observation.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    item = topology["items"][0]
+    item["edges"].extend(
+        [
+            {
+                "ref": "STEP1",
+                "constant_axis": "Z",
+                "boundary_target": z_step1,
+            },
+            {
+                "ref": "STEP2",
+                "constant_axis": "Z",
+                "boundary_target": z_step2,
+            },
+        ]
+    )
+
+    transition_items = [
+        {
+            "target_id": "STEP1",
+            "axis": "Z",
+            "profile_refs": ["STEP1"],
+            "profile_entity_keys": ["profile.step1"],
+            "identity_kind": "physical_profile_boundary",
+            "source_ids": ["transition:step1"],
+            "basis": (
+                "labeled_overall_offset_plus_unique_"
+                "transition_level_profile_identity"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "target_id": "STEP2",
+            "axis": "Z",
+            "profile_refs": ["STEP2"],
+            "profile_entity_keys": ["profile.step2"],
+            "identity_kind": "physical_profile_boundary",
+            "source_ids": ["transition:step2"],
+            "basis": (
+                "labeled_overall_offset_plus_unique_"
+                "transition_level_profile_identity"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "target_id": "TAPER",
+            "axis": "Z",
+            "profile_refs": [],
+            "profile_entity_keys": [],
+            "oblique_source_ids": [
+                "hybrid:oblique-line:0",
+                "hybrid:oblique-line:1",
+            ],
+            "identity_kind": "bilateral_oblique_transition_endpoint_level",
+            "source_ids": [
+                "transition:taper",
+                "hybrid:oblique-line:0",
+                "hybrid:oblique-line:1",
+            ],
+            "basis": (
+                "labeled_overall_offset_plus_bilateral_"
+                "oblique_endpoint_identity"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+    if ambiguous_oblique_transition:
+        transition_items.append(
+            {
+                **transition_items[-1],
+                "source_ids": [
+                    "transition:taper:duplicate",
+                    "hybrid:oblique-line:0",
+                    "hybrid:oblique-line:1",
+                ],
+            }
+        )
+    graph.observations.append(
+        {
+            "kind": "hybrid_labeled_profile_transition_boundary_ledger",
+            "schema": "1.0",
+            "items": transition_items,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    )
+    return graph
+
+
+def test_multilevel_tapered_annular_profile_consumes_nested_radial_and_axial_levels():
+    graph = _multilevel_tapered_annular_graph()
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+
+    segments = draft["profile"]["segments"]
+    assert len(segments) == 9
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in segments
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in segments
+    }
+    assert points == {
+        (79.65, 0.0),
+        (150.0, 0.0),
+        (150.0, 3.0),
+        (109.0, 3.0),
+        (109.0, 12.0),
+        (96.0, 12.0),
+        (96.0, 28.0),
+        (84.15, 75.0),
+        (79.65, 75.0),
+    }
+
+    geometry_evidence = {
+        value
+        for item in draft["source_ledger"]
+        if str(item.get("target", "")).startswith("profile.")
+        for value in item.get("evidence", [])
+    }
+    assert {"LPT_STEP1", "LPT_STEP2", "LPT_TAPER"} <= geometry_evidence
+    assert all(
+        item.get("solver") == "rotational_multilevel_taper_profile_solver"
+        for item in draft["source_ledger"]
+        if str(item.get("id", "")).startswith(
+            "ROTATIONAL_MULTILEVEL_TAPER_PROFILE_"
+        )
+    )
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") in {
+            "rotational_profile",
+            "profile_transition",
+        }
+    ]
+    assert R.check_drawing_json(draft) == []
+
+
+def test_multilevel_tapered_annular_profile_fails_closed_on_ambiguous_oblique_transition():
+    graph = _multilevel_tapered_annular_graph(
+        ambiguous_oblique_transition=True,
+    )
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+    assert [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "rotational_profile"
+        and item.get("required_for_modeling") is True
+    ]
+
+
 def test_symmetric_tapered_annular_profile_rejects_legacy_straight_basis():
     graph = _symmetric_tapered_annular_graph(
         verified_straight_primitive=True,

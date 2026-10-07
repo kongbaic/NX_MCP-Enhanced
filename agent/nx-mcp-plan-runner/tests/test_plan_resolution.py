@@ -5,6 +5,7 @@ Run:  python tests/test_plan_resolution.py
 or:   pytest tests/test_plan_resolution.py
 """
 import json
+import math
 import os
 import sys
 
@@ -2173,6 +2174,93 @@ def test_native_z_hole_capability_dispatch_round_trip():
         "changes axial range" in item
         for item in R.dispatch_gate_b_validator(capability, plan, payload)
     )
+
+
+
+def test_native_z_hole_material_interval_supports_curved_rotational_profile():
+    drawing = {
+        "overall_dimensions": {
+            "length_x": 14,
+            "width_y": 14,
+            "height_z": 8,
+        },
+        "profile": {
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "topology": "closed_polygon",
+            "segments": [
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 0.0,
+                    "x2": 5.0,
+                    "z2": 0.0,
+                },
+                {
+                    "type": "arc",
+                    "center": {"x": 5.0, "z": 2.0},
+                    "radius": 2.0,
+                    "start_angle": -90.0,
+                    "end_angle": 0.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 2.0,
+                    "x2": 7.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 7.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 8.0,
+                },
+                {
+                    "type": "line",
+                    "x1": 2.0,
+                    "z1": 8.0,
+                    "x2": 2.0,
+                    "z2": 0.0,
+                },
+            ],
+        },
+        "features": [
+            {
+                "id": "H1",
+                "type": "hole",
+                "axis": "Z",
+                "diameter": 1.0,
+                "through": True,
+                "centerline": {"x": 6.0, "y": 0.0},
+                "count": 1,
+            }
+        ],
+    }
+    capability = R.resolve_modeling_capabilities("hole", "Z")[0][0]
+
+    payload, errors = R.dispatch_planner_adapter(capability, drawing)
+
+    expected_start = 2.0 - math.sqrt(3.0)
+    assert errors == []
+    assert payload is not None
+    assert len(payload["geometries"]) == 1
+    axial_range = payload["geometries"][0]["axial_range"]
+    assert abs(axial_range[0] - expected_start) <= 1e-9
+    assert abs(axial_range[1] - 8.0) <= 1e-9
+
+    radial_equivalent, radial_errors = R.resolve_axis_material_intervals(
+        drawing,
+        "Z",
+        [0.0, 6.0],
+        exclude_feature_ids={"H1"},
+    )
+    assert radial_errors == []
+    assert len(radial_equivalent) == 1
+    assert abs(radial_equivalent[0][0] - expected_start) <= 1e-9
+    assert abs(radial_equivalent[0][1] - 8.0) <= 1e-9
+
 
 
 def test_principal_axis_hole_composes_point_tangent_slot_profile():

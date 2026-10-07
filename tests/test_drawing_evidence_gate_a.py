@@ -1711,7 +1711,7 @@ def _multilevel_tapered_graph_with_terminal_fillet(*, radius=2.0):
                         "hybrid:oblique-line:1",
                     ],
                     "direct_transition_target_id": "TAPER",
-                    "direct_transition_overall_role": "max",
+                    "direct_transition_overall_role": "overall_max",
                     "opposite_transition_target_ids": [
                         "STEP1",
                         "STEP2",

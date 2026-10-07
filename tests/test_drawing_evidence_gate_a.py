@@ -1998,6 +1998,72 @@ def test_multilevel_tapered_annular_profile_consumes_nested_radial_and_axial_lev
     assert R.check_drawing_json(draft) == []
 
 
+def test_multilevel_tapered_profile_supports_overall_side_raised_boss():
+    graph = _multilevel_tapered_annular_graph()
+
+    hub_dimension = next(
+        item for item in graph.dimensions if item.id == "D_HUB"
+    )
+    hub_target = hub_dimension.endpoints[0].target
+    assert hub_target is not None
+
+    topology = next(
+        observation
+        for observation in graph.observations
+        if observation.get("kind")
+        == "hybrid_rotational_profile_topology_ledger"
+    )
+    item = topology["items"][0]
+    item["edges"].extend(
+        [
+            {
+                "ref": "OVERALL_SIDE_FACE",
+                "constant_axis": "Z",
+                "material_axis_direction": "positive",
+                "background_axis_direction": "negative",
+            },
+            {
+                "ref": "RAISED_BOSS_SIDE",
+                "constant_axis": "X",
+                "boundary_target": hub_target,
+            },
+        ]
+    )
+    item["junctions"].append(
+        ["OVERALL_SIDE_FACE", "RAISED_BOSS_SIDE"]
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert draft["profile"]["rotation_axis"] == "Z"
+
+    segments = draft["profile"]["segments"]
+    assert len(segments) == 9
+    points = {
+        (segment["x1"], segment["z1"])
+        for segment in segments
+    } | {
+        (segment["x2"], segment["z2"])
+        for segment in segments
+    }
+    assert points == {
+        (79.65, 0.0),
+        (109.0, 0.0),
+        (109.0, 3.0),
+        (150.0, 3.0),
+        (150.0, 12.0),
+        (96.0, 12.0),
+        (96.0, 28.0),
+        (84.15, 75.0),
+        (79.65, 75.0),
+    }
+    assert R.check_drawing_json(draft) == []
+
+
 def test_multilevel_tapered_annular_profile_fails_closed_on_ambiguous_oblique_transition():
     graph = _multilevel_tapered_annular_graph(
         ambiguous_oblique_transition=True,

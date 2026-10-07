@@ -369,6 +369,7 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert input_path.is_file()
     assert crops_dir.is_dir()
     assert (crops_dir / "overview.png").is_file()
+    assert (crops_dir / "structural-context-overview.png").is_file()
     assert (workspace / "reader-contact-sheet.png").is_file()
 
     payload = json.loads(input_path.read_text(encoding="utf-8"))
@@ -379,8 +380,9 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
     assert payload["summary"]["bucket_count"] >= 1
     assert payload["summary"]["candidate_overlay_count"] == payload["summary"]["region_count"]
     assert payload["summary"]["structural_context_image_count"] == payload["summary"]["region_count"]
+    assert payload["summary"]["shared_structural_context_image_count"] == 1
     assert payload["summary"]["crop_count"] == (
-        1 + 3 * payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
+        2 + 3 * payload["summary"]["region_count"] + payload["summary"]["bucket_count"]
     )
 
     assert payload["reader_contract"] == {
@@ -404,6 +406,11 @@ def test_prepare_reader_input_writes_one_shot_bundle(tmp_path: Path):
 
     source_image = cv2.imread(str(image_path))
     assert source_image is not None
+    shared_context_path = Path(payload["structural_context_overview_path"])
+    shared_context = cv2.imread(str(shared_context_path))
+    assert shared_context is not None
+    assert shared_context.shape == source_image.shape
+    assert int(cv2.absdiff(shared_context, source_image).sum()) > 0
 
     for region in payload["regions"]:
         crop_path = Path(region["crop_path"])

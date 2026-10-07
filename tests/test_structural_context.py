@@ -29,6 +29,7 @@ def test_nx_agent_skill_keeps_structural_topology_axis_contract():
     assert "TOPOLOGY SYM AXIS" in skill
     assert '"basis":"axial_section_symmetry"' in skill
     assert "non_geometric_reference_region" in skill
+    assert "多个 query 若共享同一路径，只打开该共享图一次" in skill
 
 
 def _reader_input() -> dict:
@@ -102,6 +103,8 @@ def test_structural_query_builder_only_requests_region_structure():
     assert [item.region_id for item in plan.queries] == ["R1", "R2"]
     assert plan.queries[0].image_path.endswith("R1.png")
     assert plan.queries[0].evidence_label == "structural:R1:crop"
+    assert plan.rules["structural_query_images_may_be_shared"] is True
+    assert plan.rules["deduplicate_identical_query_image_paths"] is True
     assert plan.rules["report_only_view_kind_and_direct_overall_dimensions"] is True
     assert plan.rules["report_only_visual_rotational_symmetry_basis"] is True
     assert plan.rules["agent_must_not_report_engineering_rotation_axis"] is True
@@ -139,6 +142,35 @@ def test_structural_query_builder_only_requests_region_structure():
     assert template.answers[0].rotational_symmetry is None
     assert template.answers[1].rotational_symmetry is None
     assert all(item.unresolved == ["pending_structural_visual_read"] for item in template.answers)
+
+
+def test_structural_query_builder_prefers_shared_full_drawing_context_image():
+    reader_input = _reader_input()
+    reader_input["structural_context_overview_path"] = (
+        "C:/work/structural-context-overview.png"
+    )
+    reader_input["regions"][0]["structural_context_path"] = (
+        "C:/work/R1-structural-context.png"
+    )
+    reader_input["regions"][1]["structural_context_path"] = (
+        "C:/work/R2-structural-context.png"
+    )
+
+    plan = build_structural_context_queries(reader_input)
+
+    assert {
+        item.image_path
+        for item in plan.queries
+    } == {"C:/work/structural-context-overview.png"}
+    assert [item.evidence_label for item in plan.queries] == [
+        "structural:R1:context",
+        "structural:R2:context",
+    ]
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    assert [item.evidence for item in template.answers] == [
+        ["structural:R1:context"],
+        ["structural:R2:context"],
+    ]
 
 
 def test_structural_query_builder_carries_deterministic_profile_symmetry_axis():

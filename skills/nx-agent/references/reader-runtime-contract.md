@@ -18,10 +18,13 @@ python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-pa
 That coordinator owns deterministic Reader input preparation, production Whole +
 Wide-Local Hybrid OCR, and the structural query plan. It intentionally stops at
 `phase=awaiting_structural_context`. The Agent then acts only as the bounded
-Structural Reader: inspect each listed `query.image_path` once. Production query images
-prefer a deterministic full-drawing context image with the target region boxed; classify
-the boxed region's orthographic view, not the deterministic region as an assumed
-standalone view. The box is only a region-to-view locator, not an annotation-reading
+Structural Reader: inspect each distinct listed `query.image_path` once. Multiple
+queries may intentionally share one deterministic full-drawing structural overview;
+when they do, open that shared image once and answer each query independently by its
+`query_id` / `region_id`. Production query images prefer a deterministic
+full-drawing context image with target regions boxed and labeled; classify each boxed
+region's orthographic view, not the deterministic region as an assumed standalone
+view. The box is only a region-to-view locator, not an annotation-reading
 boundary. An explicit overall dimension anywhere in that query image may be reported
 when it unambiguously belongs to the boxed region's same orthographic view and spans
 that view's complete visible part/profile extent, even when its dimension line or text
@@ -171,10 +174,13 @@ Hard boundaries:
 
 ### Hybrid raster Structural Reader
 
-For each structural query, inspect exactly its listed `image_path` once and answer
-only the fields allowed by the generated query contract. When the runtime image reader
-supports multiple image paths in one call, batch all current structural-query images
-into one visual-read call and still answer each `query_id` independently. Do not insert
+Inspect each distinct structural-query `image_path` exactly once and answer only the
+fields allowed by the generated query contract. If several queries share the same
+`image_path`, open that shared image once and answer those `query_id` values
+independently using their labeled `region_id` boxes. When the runtime image reader
+supports multiple image paths in one call, deduplicate paths first, then batch all
+remaining structural-query images into one visual-read call and still answer each
+`query_id` independently. Do not insert
 per-image progress narration, rule re-reading, or unrelated tool calls between those
 visual reads; after all judgments are complete, write `structural-context-answers.json`
 once. Fall back to sequential image reads only when the runtime cannot batch images. Evidence must be exactly the

@@ -880,6 +880,48 @@ def prepare_reader_input(
             }
         )
 
+    # Keep the existing per-region structural context images for diagnostics and
+    # compatibility, but also compose one shared full-resolution overview.  All
+    # region markers are overlaid onto the same authoritative raster so the
+    # bounded Structural Reader can inspect repeated full-drawing context once
+    # instead of reprocessing one near-identical full image per region.
+    structural_context_overview_path = crops_dir / "structural-context-overview.png"
+    structural_context_overview = image.copy()
+    for region_entry in region_entries:
+        context_image = cv2.imread(str(region_entry["structural_context_path"]))
+        if context_image is None or context_image.shape != image.shape:
+            raise ValueError(
+                "failed to compose shared structural context overview from "
+                f"{region_entry['structural_context_path']}"
+            )
+        overlay_mask = np.any(context_image != image, axis=2)
+        structural_context_overview[overlay_mask] = context_image[overlay_mask]
+
+        source_x, source_y, _, _ = (
+            int(value) for value in region_entry["source_bbox_px"]
+        )
+        label_x = max(0, min(image_width - 1, source_x + 4))
+        label_y = max(18, min(image_height - 1, source_y + 18))
+        cv2.putText(
+            structural_context_overview,
+            str(region_entry["region_id"]),
+            (label_x, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 0, 220),
+            max(1, int(round(min(image_width, image_height) * 0.0015))),
+            cv2.LINE_AA,
+        )
+
+    if not cv2.imwrite(
+        str(structural_context_overview_path),
+        structural_context_overview,
+    ):
+        raise ValueError(
+            "failed to write shared structural context overview: "
+            f"{structural_context_overview_path}"
+        )
+
     bucket_entries: list[dict[str, Any]] = []
     for bucket in aid.get("candidate_buckets", []):
         if not isinstance(bucket, dict):
@@ -949,6 +991,7 @@ def prepare_reader_input(
         "raw_evidence_path": str(raw_path),
         "reader_visual_aid_path": str(aid_path),
         "overview_crop_path": str(overview_path),
+        "structural_context_overview_path": str(structural_context_overview_path),
         "contact_sheet_path": str(contact_sheet_path),
         "regions": region_entries,
         "candidate_buckets": bucket_entries,
@@ -962,9 +1005,10 @@ def prepare_reader_input(
                 (int(item.get("candidate_count", 0)) for item in bucket_entries),
                 default=0,
             ),
-            "crop_count": 1 + 3 * len(region_entries) + len(bucket_entries),
+            "crop_count": 2 + 3 * len(region_entries) + len(bucket_entries),
             "candidate_overlay_count": len(region_entries),
             "structural_context_image_count": len(region_entries),
+            "shared_structural_context_image_count": 1,
         },
         "timing_ms": {
             "raw_evidence": raw_elapsed_ms,

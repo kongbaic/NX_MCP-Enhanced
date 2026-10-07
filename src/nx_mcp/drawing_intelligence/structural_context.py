@@ -784,6 +784,17 @@ def build_structural_context_queries(
         _accepted_linear_span_lower_bounds_by_region(hybrid_report)
     )
 
+    shared_structural_context_path = reader_input.get(
+        "structural_context_overview_path"
+    )
+    if shared_structural_context_path is not None and (
+        not isinstance(shared_structural_context_path, str)
+        or not shared_structural_context_path
+    ):
+        raise StructuralContextError(
+            "structural_context_overview_path must be a non-empty string"
+        )
+
     queries: list[StructuralRegionQuery] = []
     seen_regions: set[str] = set()
 
@@ -800,7 +811,11 @@ def build_structural_context_queries(
         seen_regions.add(region_id)
 
         using_structural_context_image = False
-        if isinstance(structural_context_path, str) and structural_context_path:
+        if isinstance(shared_structural_context_path, str):
+            image_path = shared_structural_context_path
+            evidence_label = f"structural:{region_id}:context"
+            using_structural_context_image = True
+        elif isinstance(structural_context_path, str) and structural_context_path:
             image_path = structural_context_path
             evidence_label = f"structural:{region_id}:context"
             using_structural_context_image = True
@@ -868,6 +883,8 @@ def build_structural_context_queries(
         rules={
             "read_only_query_image": True,
             "open_unlisted_images": False,
+            "structural_query_images_may_be_shared": True,
+            "deduplicate_identical_query_image_paths": True,
             "scan_workspace": False,
             "report_only_view_kind_and_direct_overall_dimensions": True,
             "report_only_visual_rotational_symmetry_basis": True,

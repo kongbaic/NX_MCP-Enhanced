@@ -1414,6 +1414,129 @@ def test_run_history_and_runtime_dirty(tmp_path=None):
     assert h2.most_recent(r"C:\work\test.prt")["save_ok"] is False
 
 
+
+def test_build_revolve_body_producer_binds_downstream_consumers():
+    frozen = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_create_sketch",
+                "tool_args": {"plane": "XZ"},
+                "topology_changes": False,
+            },
+            {
+                "step": 2,
+                "tool": "nx_finish_sketch",
+                "tool_args": {"sketch_id": "sketch_body"},
+                "topology_changes": False,
+            },
+            {
+                "step": 3,
+                "tool": "nx_revolve",
+                "tool_args": {
+                    "sketch_id": "sketch_body",
+                    "axis_start": {"x": 0.0, "y": 0.0},
+                    "axis_end": {"x": 0.0, "y": 75.0},
+                    "angle": 360.0,
+                    "reverse": False,
+                },
+                "topology_changes": True,
+            },
+            {
+                "step": 4,
+                "tool": "nx_hole",
+                "tool_args": {
+                    "body_id": "body_main",
+                    "center": {"x": 10.0, "y": 0.0},
+                    "diameter": 6.0,
+                    "depth": 20.0,
+                    "start_offset": 0.0,
+                },
+                "topology_changes": True,
+            },
+            {
+                "step": 5,
+                "tool": "nx_hole",
+                "tool_args": {
+                    "body_id": "body_main",
+                    "center": {"x": -10.0, "y": 0.0},
+                    "diameter": 6.0,
+                    "depth": 20.0,
+                    "start_offset": 0.0,
+                },
+                "topology_changes": True,
+            },
+        ],
+    }
+
+    executable = R.build_executable_plan(frozen)
+
+    assert executable["operations"][0]["result_bindings"] == {
+        "object": "sketch_body"
+    }
+    assert executable["operations"][2]["result_bindings"] == {
+        "object": "body_main"
+    }
+    assert executable["operations"][3]["tool_args"]["body_id"] == "$body_main"
+    assert executable["operations"][4]["tool_args"]["body_id"] == "$body_main"
+    assert R.check_plan(executable, executable=True) == []
+
+
+def test_run_plan_revolve_object_binding_resolves_body_consumer():
+    import asyncio
+
+    plan = {
+        "mode": "FAST",
+        "operations": [
+            {
+                "step": 1,
+                "tool": "nx_revolve",
+                "tool_args": {
+                    "sketch_id": "SK1",
+                    "axis_start": {"x": 0.0, "y": 0.0},
+                    "axis_end": {"x": 0.0, "y": 10.0},
+                    "angle": 360.0,
+                    "reverse": False,
+                },
+                "result_bindings": {"object": "body_main"},
+                "topology_changes": True,
+            },
+            {
+                "step": 2,
+                "tool": "nx_hole",
+                "tool_args": {
+                    "body_id": "$body_main",
+                    "center": {"x": 1.0, "y": 2.0},
+                    "diameter": 3.0,
+                    "depth": 4.0,
+                    "start_offset": 0.0,
+                },
+                "topology_changes": True,
+            },
+        ],
+    }
+    calls = []
+
+    class T:
+        async def call(self, tool, args):
+            calls.append((tool, args))
+            if tool == "nx_revolve":
+                return {
+                    "status": "success",
+                    "object": ObjectRef("REV_BODY"),
+                    "message": "revolved",
+                }
+            return {"status": "success", "message": "hole ok"}
+
+    report = asyncio.run(R.run_plan(plan, T()))
+
+    assert report["status"] == "success", report["steps"]
+    assert calls[1][0] == "nx_hole"
+    assert calls[1][1]["body_id"] == "REV_BODY"
+
+
+
 def test_run_plan_mirror_object_binding():
     # regression: the bridge adapts nx_mirror results under "object"; a plan that
     # binds {"object": ...} must resolve in the very next step

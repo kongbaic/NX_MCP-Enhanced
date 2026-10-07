@@ -215,6 +215,16 @@ def _direct_target_is_downstream_safe(target: str) -> bool:
     if target.startswith("profile."):
         return bool(target[len("profile.") :])
 
+    if target.startswith("constraints.profile_arc_radii."):
+        parts = target.split(".")
+        return (
+            len(parts) == 4
+            and parts[0] == "constraints"
+            and parts[1] == "profile_arc_radii"
+            and bool(parts[2])
+            and parts[3] == "radius"
+        )
+
     return False
 
 def _validate_record(

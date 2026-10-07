@@ -1620,6 +1620,15 @@ def _apply_unique_taper_terminal_fillet(
     if len(matching_relations) != 1:
         return None
     direct_relation = matching_relations[0]
+    expected_direct_role = (
+        "overall_min"
+        if direct_relation.from_side == "min"
+        else "overall_max"
+        if direct_relation.from_side == "max"
+        else ""
+    )
+    if item.get("direct_transition_overall_role") != expected_direct_role:
+        return None
     direct_values = [
         resolution.values[target]
         for target in direct_relation.targets

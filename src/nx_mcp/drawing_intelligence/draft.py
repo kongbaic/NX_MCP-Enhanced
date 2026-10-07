@@ -3919,6 +3919,83 @@ def _unconsumed_rotational_profile_primitive_unresolved(
     return output
 
 
+def _unconsumed_linked_profile_arc_radius_unresolved(
+    draft: dict[str, Any],
+    graph: EvidenceGraph,
+) -> list[dict[str, Any]]:
+    """Block a linked engineering radius until canonical arc geometry consumes it."""
+
+    consumed_targets = {
+        source_target
+        for item in draft.get("source_ledger", [])
+        if (
+            isinstance(item, dict)
+            and str(item.get("target") or "").startswith(
+                "profile.segments."
+            )
+            and item.get("solver") == "rotational_profile_arc_solver"
+        )
+        for source_target in item.get("source_targets", [])
+        if isinstance(source_target, str) and source_target
+    }
+
+    output: list[dict[str, Any]] = []
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_physical_profile_arc_radius_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_identity_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            physical_arc_id = str(item.get("physical_arc_id") or "")
+            if not physical_arc_id:
+                continue
+            radius_target = (
+                "constraints.profile_arc_radii."
+                f"{physical_arc_id}.radius"
+            )
+            if radius_target in consumed_targets:
+                continue
+            source_ids = [
+                value
+                for value in item.get("source_ids", [])
+                if isinstance(value, str) and value
+            ]
+            output.append(
+                {
+                    "id": (
+                        "U_PROFILE_ARC_RADIUS_UNCONSUMED_"
+                        f"{_stable_fragment(physical_arc_id)}"
+                    ),
+                    "kind": "unsupported_representation",
+                    "field": "profile_arc_radius_application",
+                    "reason": (
+                        "identity-linked engineering profile radius was not "
+                        "consumed by canonical arc geometry"
+                    ),
+                    "physical_arc_id": physical_arc_id,
+                    "source_ids": source_ids,
+                    "required_for_modeling": True,
+                    "metadata": {
+                        "radius_target": radius_target,
+                        "profile_arc_identity_kind": item.get(
+                            "profile_arc_identity_kind"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                    },
+                }
+            )
+    return output
+
+
 def _unowned_reference_table_profile_radius_unresolved(
     graph: EvidenceGraph,
 ) -> list[dict[str, Any]]:
@@ -4543,6 +4620,12 @@ def build_semantic_draft(
     )
     draft["unresolved"].extend(
         _unowned_reference_table_profile_radius_unresolved(
+            graph,
+        )
+    )
+    draft["unresolved"].extend(
+        _unconsumed_linked_profile_arc_radius_unresolved(
+            draft,
             graph,
         )
     )

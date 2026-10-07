@@ -1702,8 +1702,8 @@ def build_executable_plan(plan: dict) -> dict:
         tool = ops[op_idx]["tool"]
         if tool in ("nx_circular_pattern", "nx_linear_pattern", "nx_list_bodies"):
             field = "objects"
-        elif tool in ("nx_mirror", "nx_unite"):
-            field = "object"   # bridge adapted-response field for mirror/unite
+        elif tool in ("nx_revolve", "nx_mirror", "nx_unite"):
+            field = "object"   # certified ObjectResult response field
         else:
             field = "body"
         emit(op_idx, field, name)
@@ -1742,7 +1742,8 @@ def build_executable_plan(plan: dict) -> dict:
             sk_live.append(i)
         elif tool == "nx_extrude" and args.get("operation", "create") == "create":
             bd_live.append(i)
-        elif tool == "nx_mirror":
+        elif tool in ("nx_revolve", "nx_mirror"):
+            # Both certified tools create a new independent solid body.
             bd_live.append(i)
         elif tool in ("nx_circular_pattern", "nx_linear_pattern"):
             try:

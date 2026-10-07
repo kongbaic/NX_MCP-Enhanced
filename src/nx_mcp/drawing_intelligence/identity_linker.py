@@ -1407,6 +1407,52 @@ def _linked_physical_profile_arc_radius_observations(
 
     linked_items: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    taper_terminal_identity = (
+        _unique_bilateral_taper_terminal_arc_identity(observations)
+    )
+    reference_table_radius_keys: set[tuple[str, str, float]] = set()
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_corroborated_reference_table_ledger"
+            or observation.get("engineering_value_source")
+            != "corroborated_reference_table_row"
+        ):
+            continue
+        rows = observation.get("items")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            region_id = str(row.get("reference_region_id") or "")
+            paired = row.get("paired")
+            if not region_id or not isinstance(paired, dict):
+                continue
+            for raw_label, raw_fact in paired.items():
+                label = str(raw_label or "").upper()
+                if not (
+                    label == "R"
+                    or (
+                        label.startswith("R")
+                        and len(label) > 1
+                        and label[1:].isdigit()
+                    )
+                ):
+                    continue
+                if not isinstance(raw_fact, dict):
+                    continue
+                raw_value = raw_fact.get("value")
+                if (
+                    isinstance(raw_value, bool)
+                    or not isinstance(raw_value, (int, float))
+                    or float(raw_value) <= 0.0
+                ):
+                    continue
+                reference_table_radius_keys.add(
+                    (region_id, label, round(float(raw_value), 9))
+                )
     for observation in observations:
         if (
             not isinstance(observation, dict)
@@ -1703,24 +1749,46 @@ def _linked_physical_profile_arc_radius_observations(
                 )
             )
 
-            if len(eligible_arcs) != 1:
+            fallback_identity = False
+            if len(eligible_arcs) == 1:
+                physical_arc_id, physical_arc = next(
+                    iter(eligible_arcs.items())
+                )
+                curve_sources = sorted(
+                    {
+                        value
+                        for value in physical_arc.get("source_ids", [])
+                        if isinstance(value, str)
+                        and value.startswith("hybrid:curve-boundary:")
+                    }
+                )
+                if len(curve_sources) != 1:
+                    # A unique physical arc still needs one stable raster
+                    # identity before it can own an engineering radius.
+                    continue
+                curve_source_id = curve_sources[0]
+            elif (
+                not eligible_arcs
+                and taper_terminal_identity is not None
+                and len(reference_table_radius_keys) == 1
+                and (
+                    reference_region_id,
+                    radius_label,
+                    round(radius, 9),
+                )
+                in reference_table_radius_keys
+            ):
+                physical_arc = taper_terminal_identity
+                physical_arc_id = str(
+                    taper_terminal_identity["physical_arc_id"]
+                )
+                curve_source_id = str(
+                    taper_terminal_identity["identity_source_id"]
+                )
+                fallback_identity = True
+            else:
                 # Preserve the corroborated table evidence for Gate A. The
-                # linker only emits a radius target when ownership is unique.
-                continue
-
-            physical_arc_id, physical_arc = next(iter(eligible_arcs.items()))
-            curve_sources = sorted(
-                {
-                    value
-                    for value in physical_arc.get("source_ids", [])
-                    if isinstance(value, str)
-                    and value.startswith("hybrid:curve-boundary:")
-                }
-            )
-            if len(curve_sources) != 1:
-                # A unique physical arc still needs one stable raster identity
-                # before it can own an engineering radius. Defer the missing
-                # ownership to Gate A instead of blocking Resolve.
+                # linker emits a radius target only for one deterministic owner.
                 continue
 
             linked_source_ids = list(
@@ -1739,7 +1807,40 @@ def _linked_physical_profile_arc_radius_observations(
                 {
                     "id": f"PHYSICAL_ARC_RADIUS_TABLE_{stable_row}",
                     "physical_arc_id": physical_arc_id,
-                    "curve_source_id": curve_sources[0],
+                    "curve_source_id": curve_source_id,
+                    **(
+                        {
+                            "profile_arc_identity_kind": physical_arc.get(
+                                "profile_arc_identity_kind"
+                            ),
+                            "identity_source_id": physical_arc.get(
+                                "identity_source_id"
+                            ),
+                            "silhouette_id": physical_arc.get(
+                                "silhouette_id"
+                            ),
+                            "oblique_source_ids": list(
+                                physical_arc.get(
+                                    "oblique_source_ids",
+                                    [],
+                                )
+                            ),
+                            "direct_transition_target_id": physical_arc.get(
+                                "direct_transition_target_id"
+                            ),
+                            "direct_transition_overall_role": physical_arc.get(
+                                "direct_transition_overall_role"
+                            ),
+                            "opposite_transition_target_ids": list(
+                                physical_arc.get(
+                                    "opposite_transition_target_ids",
+                                    [],
+                                )
+                            ),
+                        }
+                        if fallback_identity
+                        else {}
+                    ),
                     "engineering_radius": radius,
                     "engineering_value_source": (
                         "corroborated_reference_table_row"

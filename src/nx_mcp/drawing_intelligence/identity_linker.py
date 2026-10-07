@@ -1124,6 +1124,236 @@ def _bridge_symmetric_oblique_counterpart_supports(
     return output
 
 
+def _unique_bilateral_taper_terminal_arc_identity(
+    observations: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Identify one fillet location at the otherwise-unowned end of a taper.
+
+    This is an identity/topology bridge only. A bilateral straight silhouette
+    proves one physical taper family and one labeled oblique-transition record
+    proves exactly one of its two terminals. If the opposite side of the
+    engineering profile has at least one deterministic physical transition,
+    the other taper terminal is a unique unowned topology location.
+
+    No pixel coordinate becomes an engineering coordinate or radius. Metric
+    tangency remains the Draft/Resolver's responsibility.
+    """
+
+    silhouettes: list[dict[str, Any]] = []
+    for observation in observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_bilateral_rotational_straight_silhouette_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels")
+            is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        items = observation.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            silhouette_id = str(item.get("id") or "")
+            view_kind = str(item.get("view_kind") or "")
+            plane = str(item.get("plane") or "").upper()
+            rotation_axis = str(item.get("rotation_axis") or "").upper()
+            negative = {
+                value
+                for value in item.get("negative_side_source_ids", [])
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            }
+            positive = {
+                value
+                for value in item.get("positive_side_source_ids", [])
+                if isinstance(value, str)
+                and value.startswith("hybrid:oblique-line:")
+            }
+            family_sources = negative.union(positive)
+            if (
+                not silhouette_id
+                or not view_kind
+                or plane not in {"XY", "XZ", "YZ"}
+                or rotation_axis not in set(plane)
+                or item.get("primitive_kind") != "line"
+                or item.get("primitive_kind_basis")
+                != (
+                    "bilateral_mirrored_continuous_straight_"
+                    "exterior_silhouette"
+                )
+                or not negative
+                or not positive
+                or negative.intersection(positive)
+                or not family_sources
+                or item.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or item.get("pixel_geometry_used_for_topology_only") is not True
+            ):
+                continue
+            silhouettes.append(
+                {
+                    "id": silhouette_id,
+                    "view_kind": view_kind,
+                    "plane": plane,
+                    "rotation_axis": rotation_axis,
+                    "oblique_source_ids": sorted(family_sources),
+                    "source_ids": [
+                        value
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                }
+            )
+
+    candidates: list[dict[str, Any]] = []
+    for silhouette in silhouettes:
+        family_sources = set(silhouette["oblique_source_ids"])
+        direct_terminals: list[dict[str, Any]] = []
+        physical_transitions: list[dict[str, Any]] = []
+        for observation in observations:
+            if (
+                not isinstance(observation, dict)
+                or observation.get("kind")
+                != "hybrid_labeled_profile_transition_boundary_ledger"
+                or observation.get("engineering_coordinate_inferred_from_pixels")
+                is not False
+                or observation.get("pixel_geometry_used_for_identity_only") is not True
+            ):
+                continue
+            items = observation.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if (
+                    not isinstance(item, dict)
+                    or str(item.get("view_kind") or "")
+                    != silhouette["view_kind"]
+                    or str(item.get("axis") or "").upper()
+                    != silhouette["rotation_axis"]
+                    or item.get("engineering_coordinate_inferred_from_pixels")
+                    is not False
+                    or item.get("pixel_geometry_used_for_identity_only") is not True
+                ):
+                    continue
+                identity_kind = str(item.get("identity_kind") or "")
+                if identity_kind == "bilateral_oblique_transition_endpoint_level":
+                    sources = {
+                        value
+                        for value in item.get("oblique_source_ids", [])
+                        if isinstance(value, str)
+                        and value.startswith("hybrid:oblique-line:")
+                    }
+                    source_ids = {
+                        value
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    }
+                    if (
+                        sources == family_sources
+                        and silhouette["id"] in source_ids
+                        and item.get("overall_role") in {"overall_min", "overall_max"}
+                    ):
+                        direct_terminals.append(item)
+                elif (
+                    identity_kind == "physical_profile_boundary"
+                    and item.get("overall_role") in {"overall_min", "overall_max"}
+                ):
+                    physical_transitions.append(item)
+
+        if len(direct_terminals) != 1:
+            continue
+        direct = direct_terminals[0]
+        direct_role = str(direct.get("overall_role") or "")
+        opposite_role = (
+            "overall_max" if direct_role == "overall_min" else "overall_min"
+        )
+        opposite_transitions = [
+            item
+            for item in physical_transitions
+            if item.get("overall_role") == opposite_role
+        ]
+        if not opposite_transitions:
+            continue
+
+        direct_target_id = str(direct.get("target_id") or "")
+        opposite_target_ids = sorted(
+            {
+                str(item.get("target_id") or "")
+                for item in opposite_transitions
+                if str(item.get("target_id") or "")
+            }
+        )
+        if not direct_target_id or not opposite_target_ids:
+            continue
+
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    str(silhouette["id"]),
+                    str(silhouette["plane"]),
+                    str(silhouette["rotation_axis"]),
+                    direct_target_id,
+                    direct_role,
+                    *opposite_target_ids,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:12].upper()
+        physical_arc_id = f"PHYSICAL_TAPER_TERMINAL_FILLET_{digest}"
+        identity_source_id = (
+            f"hybrid:taper-terminal-fillet-identity:{digest}"
+        )
+        source_ids = list(
+            dict.fromkeys(
+                [
+                    identity_source_id,
+                    str(silhouette["id"]),
+                    *silhouette["source_ids"],
+                    *[
+                        value
+                        for value in direct.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                    *[
+                        value
+                        for item in opposite_transitions
+                        for value in item.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    ],
+                ]
+            )
+        )
+        candidates.append(
+            {
+                "id": physical_arc_id,
+                "physical_arc_id": physical_arc_id,
+                "profile_arc_identity_kind": (
+                    "unique_bilateral_taper_unowned_terminal"
+                ),
+                "identity_source_id": identity_source_id,
+                "silhouette_id": str(silhouette["id"]),
+                "view_kind": str(silhouette["view_kind"]),
+                "plane": str(silhouette["plane"]),
+                "rotation_axis": str(silhouette["rotation_axis"]),
+                "oblique_source_ids": list(
+                    silhouette["oblique_source_ids"]
+                ),
+                "direct_transition_target_id": direct_target_id,
+                "direct_transition_overall_role": direct_role,
+                "opposite_transition_target_ids": opposite_target_ids,
+                "source_ids": source_ids,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
 def _linked_physical_profile_arc_radius_observations(
     observations: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

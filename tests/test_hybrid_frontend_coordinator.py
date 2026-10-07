@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -225,6 +226,40 @@ def test_resume_builds_reader_observations_and_hands_off_to_mode_b(
     assert (run_dir / "reader-observations.json").is_file()
     if mode_b_code == 2:
         assert report["errors"][-1]["stage"] == "mode_b_coordinator"
+
+
+def test_structural_context_wait_timing_spans_agent_answer_write_and_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    timestamps = iter([100.0, 107.0])
+    monkeypatch.setattr(coordinator.time, "time", lambda: next(timestamps))
+
+    manifest, run_dir = _start_ready(
+        tmp_path,
+        monkeypatch,
+        "structural-wall-time",
+    )
+
+    start_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert start_payload["timing_markers_epoch_s"][
+        "structural_context_wait_started"
+    ] == 100.0
+
+    answers = run_dir / "structural-context-answers.json"
+    _write_structural_answers(answers)
+    os.utime(answers, (105.0, 105.0))
+    _install_resume_fakes(monkeypatch, 0)
+
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest,
+        answers,
+        tmp_path / "structural-wall-time-mode-b",
+    )
+
+    assert code == 0
+    assert report["timing_seconds"]["structural_context_agent_wait"] == 5.0
+    assert report["timing_seconds"]["structural_context_resume_lag"] == 2.0
 
 
 def test_start_blocks_without_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

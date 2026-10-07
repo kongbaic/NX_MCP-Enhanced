@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import math
+
 from nx_mcp.drawing_intelligence.metric_profile_arc_solver import (
     solve_orthogonal_tangent_arc,
+    solve_tangent_arc_between_segments,
 )
 
 
@@ -103,3 +106,78 @@ def test_solver_supports_other_principal_profile_planes():
 
     assert result["status"] == "resolved"
     assert result["center"] == {"Y": 28.0, "Z": 62.0}
+
+
+
+def _segment(start, end):
+    return {
+        "type": "line",
+        "start": {"X": float(start[0]), "Z": float(start[1])},
+        "end": {"X": float(end[0]), "Z": float(end[1])},
+    }
+
+
+def test_adjacent_nonorthogonal_fillet_uses_only_engineering_segments_and_radius():
+    result = solve_tangent_arc_between_segments(
+        axes=("X", "Z"),
+        first_segment=_segment((10.0, 0.0), (0.0, 0.0)),
+        second_segment=_segment((0.0, 0.0), (-4.0, 12.0)),
+        radius=2.0,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["engineering_coordinate_inferred_from_pixels"] is False
+    assert result["pixel_geometry_used_for_identity_only"] is False
+    assert math.isclose(result["center"]["X"], 1.4415184401, abs_tol=1e-9)
+    assert math.isclose(result["center"]["Z"], 2.0, abs_tol=1e-9)
+    assert math.isclose(
+        result["first_tangent"]["X"],
+        1.4415184401,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(result["first_tangent"]["Z"], 0.0, abs_tol=1e-9)
+    assert math.isclose(
+        result["second_tangent"]["X"],
+        -0.4558481560,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        result["second_tangent"]["Z"],
+        1.3675444680,
+        abs_tol=1e-9,
+    )
+    assert result["traversal_sweep_deg"] < 0.0
+    assert math.isclose(
+        result["minor_sweep_deg"],
+        71.5650511771,
+        abs_tol=1e-9,
+    )
+
+
+def test_adjacent_nonorthogonal_fillet_becomes_positive_after_cycle_reversal():
+    result = solve_tangent_arc_between_segments(
+        axes=("X", "Z"),
+        first_segment=_segment((-4.0, 12.0), (0.0, 0.0)),
+        second_segment=_segment((0.0, 0.0), (10.0, 0.0)),
+        radius=2.0,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["traversal_sweep_deg"] > 0.0
+    assert math.isclose(
+        result["traversal_sweep_deg"],
+        71.5650511771,
+        abs_tol=1e-9,
+    )
+
+
+def test_adjacent_nonorthogonal_fillet_fails_closed_when_radius_consumes_neighbor():
+    result = solve_tangent_arc_between_segments(
+        axes=("X", "Z"),
+        first_segment=_segment((2.0, 0.0), (0.0, 0.0)),
+        second_segment=_segment((0.0, 0.0), (-1.0, 3.0)),
+        radius=10.0,
+    )
+
+    assert result["status"] == "unresolved"
+    assert result["reason"] == "engineering_radius_does_not_fit_adjacent_segments"

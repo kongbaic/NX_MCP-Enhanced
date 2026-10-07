@@ -1676,6 +1676,158 @@ def test_multilevel_tapered_profile_orders_mixed_dimension_anchor_sides_by_geome
     ]
 
 
+
+def _multilevel_tapered_graph_with_terminal_fillet(*, radius=2.0):
+    graph = _multilevel_tapered_annular_graph(
+        mixed_transition_sides=True,
+    )
+    physical_arc_id = "PHYSICAL_TAPER_TERMINAL_FILLET_TEST"
+    radius_target = (
+        "constraints.profile_arc_radii."
+        f"{physical_arc_id}.radius"
+    )
+    graph.observations.append(
+        {
+            "kind": "hybrid_physical_profile_arc_radius_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "PHYSICAL_ARC_RADIUS_TABLE_TERMINAL_TEST",
+                    "physical_arc_id": physical_arc_id,
+                    "curve_source_id": (
+                        "hybrid:taper-terminal-fillet-identity:TEST"
+                    ),
+                    "profile_arc_identity_kind": (
+                        "unique_bilateral_taper_unowned_terminal"
+                    ),
+                    "identity_source_id": (
+                        "hybrid:taper-terminal-fillet-identity:TEST"
+                    ),
+                    "silhouette_id": (
+                        "BILATERAL_STRAIGHT_SILHOUETTE_TEST"
+                    ),
+                    "oblique_source_ids": [
+                        "hybrid:oblique-line:0",
+                        "hybrid:oblique-line:1",
+                    ],
+                    "direct_transition_target_id": "TAPER",
+                    "direct_transition_overall_role": "max",
+                    "opposite_transition_target_ids": [
+                        "STEP1",
+                        "STEP2",
+                    ],
+                    "engineering_radius": radius,
+                    "engineering_value_source": (
+                        "corroborated_reference_table_row"
+                    ),
+                    "radius_label": "R_TEST",
+                    "reference_region_id": "R_TABLE",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "source_ids": [
+                        "hybrid:reference-table:R_TABLE:value:14",
+                        "hybrid:taper-terminal-fillet-identity:TEST",
+                        "BILATERAL_STRAIGHT_SILHOUETTE_TEST",
+                    ],
+                    "basis": (
+                        "corroborated_reference_table_radius_plus_"
+                        "unique_physical_arc_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    )
+    graph.direct_values.append(
+        DirectValueEvidence(
+            id="TAPER_TERMINAL_RADIUS",
+            target=radius_target,
+            value=radius,
+            semantic="radius",
+            source_ids=[
+                "hybrid:reference-table:R_TABLE:value:14",
+                "hybrid:taper-terminal-fillet-identity:TEST",
+            ],
+        )
+    )
+    graph.required_targets.append(radius_target)
+    return graph
+
+
+def test_multilevel_tapered_profile_materializes_unique_terminal_fillet():
+    graph = _multilevel_tapered_graph_with_terminal_fillet(radius=2.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    arcs = [
+        segment
+        for segment in draft["profile"]["segments"]
+        if segment["type"] == "arc"
+    ]
+    assert len(arcs) == 1
+    assert arcs[0]["radius"] == 2.0
+    assert 0.0 < (
+        arcs[0]["end_angle"] - arcs[0]["start_angle"]
+    ) < 180.0
+
+    radius_target = (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_TAPER_TERMINAL_FILLET_TEST.radius"
+    )
+    assert any(
+        item.get("solver") == "rotational_profile_arc_solver"
+        and radius_target in item.get("source_targets", [])
+        for item in draft["source_ledger"]
+        if str(item.get("target") or "").startswith("profile.segments.")
+    )
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") in {
+            "profile_arc_radius_identity",
+            "profile_arc_radius_application",
+        }
+    ]
+
+    geometry, errors = R._rotational_profile_geometry(draft)
+    assert errors == []
+    assert geometry is not None
+    contract, contract_errors = R._rotational_profile_operation_contract(
+        geometry
+    )
+    assert contract_errors == []
+    assert contract is not None
+    assert any(
+        operation["tool"] == "nx_sketch_arc"
+        for operation in contract["operations"]
+    )
+
+
+def test_unique_terminal_fillet_stays_blocked_when_radius_does_not_fit():
+    graph = _multilevel_tapered_graph_with_terminal_fillet(radius=20.0)
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert all(
+        segment["type"] == "line"
+        for segment in draft["profile"]["segments"]
+    )
+    blockers = [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "profile_arc_radius_application"
+    ]
+    assert len(blockers) == 1
+    assert blockers[0]["required_for_modeling"] is True
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+
+
 def _move_step2_transition_identity_to_dimension_region(graph):
     transition_ledger = next(
         observation

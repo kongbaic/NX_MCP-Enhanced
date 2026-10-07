@@ -516,6 +516,10 @@ def test_gate0_quarantines_direct_targets_not_consumable_by_frozen_draft(target)
         "feature:F_MAIN.diameter",
         "overall_dimensions.length_x",
         "profile.width",
+        (
+            "constraints.profile_arc_radii."
+            "PHYSICAL_TAPER_TERMINAL_FILLET_TEST.radius"
+        ),
     ],
 )
 def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
@@ -541,6 +545,11 @@ def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
         "feature:",
         "overall_dimensions.",
         "profile.",
+        "constraints.profile_arc_radii.",
+        "constraints.profile_arc_radii.ARC_ONLY",
+        "constraints.profile_arc_radii.ARC_ONLY.center",
+        "constraints.profile_arc_radii.ARC_ONLY.radius.extra",
+        "constraints.other.ARC_ONLY.radius",
     ],
 )
 def test_gate0_quarantines_incomplete_downstream_target_paths(target):

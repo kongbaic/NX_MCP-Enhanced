@@ -1676,6 +1676,102 @@ def test_multilevel_tapered_profile_orders_mixed_dimension_anchor_sides_by_geome
     ]
 
 
+def _move_step2_transition_identity_to_dimension_region(graph):
+    transition_ledger = next(
+        observation
+        for observation in graph.observations
+        if observation.get("kind")
+        == "hybrid_labeled_profile_transition_boundary_ledger"
+    )
+    step2 = next(
+        item
+        for item in transition_ledger["items"]
+        if item.get("target_id") == "STEP2"
+    )
+    step2.update(
+        {
+            "region_id": "R_DIM",
+            "view_kind": "front",
+            "overall_role": "overall_min",
+            "profile_refs": ["R_DIM.structural.horizontal.002"],
+            "profile_entity_keys": ["profile.dimension.step2"],
+            "source_ids": [
+                "transition:step2",
+                (
+                    "hybrid:labeled-overall-boundary-contact:"
+                    "R_DIM:Z:overall_min"
+                ),
+            ],
+        }
+    )
+
+
+def test_multilevel_tapered_profile_consumes_unique_dimension_region_transition_level():
+    graph = _multilevel_tapered_annular_graph()
+    _move_step2_transition_identity_to_dimension_region(graph)
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert draft["dimension_closure"] == {"status": "closed"}
+    assert draft["profile"]["plane"] == "XZ"
+    assert len(draft["profile"]["segments"]) == 9
+    assert not [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") in {
+            "rotational_profile",
+            "profile_transition",
+        }
+    ]
+
+
+def test_dimension_region_transition_fails_closed_with_multiple_rotational_families():
+    graph = _multilevel_tapered_annular_graph()
+    _move_step2_transition_identity_to_dimension_region(graph)
+    topology = next(
+        observation
+        for observation in graph.observations
+        if observation.get("kind")
+        == "hybrid_rotational_profile_topology_ledger"
+    )
+    topology["items"].append(
+        {
+            "region_id": "R_OTHER",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [
+                {
+                    "ref": "R_OTHER.profile.edge",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_OTHER.boundary.x",
+                }
+            ],
+            "junctions": [],
+            "source_ids": ["structural:R_OTHER:rotation"],
+            "basis": "identity_linked_physical_rotational_profile_topology",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    )
+
+    result = resolve_evidence_graph(graph)
+    draft = build_semantic_draft(graph, result)
+
+    assert result.ok
+    assert "profile" not in draft
+    assert draft["dimension_closure"] == {"status": "incomplete"}
+    assert [
+        item
+        for item in draft["unresolved"]
+        if item.get("field") == "profile_transition"
+        and item.get("required_for_modeling") is True
+    ]
+
+
 def test_multilevel_tapered_profile_excludes_local_section_center_distance_layer():
     graph = _multilevel_tapered_annular_graph(
         with_excluded_local_section=True,

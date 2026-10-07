@@ -1332,6 +1332,41 @@ def _resolved_labeled_profile_transition_levels(
         for edge in item.get("edges", [])
         if isinstance(edge, dict) and str(edge.get("ref") or "")
     }
+    item_view_kind = str(item.get("view_kind") or "")
+    item_plane = str(item.get("plane") or "").upper()
+    item_region_id = str(item.get("region_id") or "")
+
+    same_view_rotational_regions: set[str] = set()
+    for observation in graph.observations:
+        if (
+            not isinstance(observation, dict)
+            or observation.get("kind")
+            != "hybrid_rotational_profile_topology_ledger"
+            or observation.get("engineering_coordinate_inferred_from_pixels") is not False
+            or observation.get("pixel_geometry_used_for_topology_only") is not True
+        ):
+            continue
+        topology_items = observation.get("items")
+        if not isinstance(topology_items, list):
+            continue
+        for topology_item in topology_items:
+            if (
+                not isinstance(topology_item, dict)
+                or str(topology_item.get("view_kind") or "") != item_view_kind
+                or str(topology_item.get("plane") or "").upper() != item_plane
+                or str(topology_item.get("rotation_axis") or "").upper()
+                != rotation_axis
+            ):
+                continue
+            region_id = str(topology_item.get("region_id") or "")
+            if region_id:
+                same_view_rotational_regions.add(region_id)
+
+    unique_same_view_rotational_family = (
+        bool(item_region_id)
+        and same_view_rotational_regions == {item_region_id}
+    )
+
     oblique_sources = {
         value
         for value in oblique_evidence
@@ -1388,8 +1423,41 @@ def _resolved_labeled_profile_transition_levels(
                     for value in record.get("profile_refs", [])
                     if isinstance(value, str) and value
                 }
-                if not profile_refs or not profile_refs.intersection(edge_refs):
+                if not profile_refs:
                     continue
+                if not profile_refs.intersection(edge_refs):
+                    expected_overall_role = (
+                        "overall_min"
+                        if relation.from_side == "min"
+                        else "overall_max"
+                        if relation.from_side == "max"
+                        else ""
+                    )
+                    record_region_id = str(record.get("region_id") or "")
+                    record_sources = {
+                        str(value)
+                        for value in record.get("source_ids", [])
+                        if isinstance(value, str) and value
+                    }
+                    contact_marker = (
+                        "hybrid:labeled-overall-boundary-contact:"
+                        f"{record_region_id}:{rotation_axis}:"
+                        f"{expected_overall_role}"
+                    )
+                    if (
+                        not unique_same_view_rotational_family
+                        or str(record.get("view_kind") or "") != item_view_kind
+                        or str(record.get("overall_role") or "")
+                        != expected_overall_role
+                        or record.get("basis")
+                        != (
+                            "labeled_overall_offset_plus_unique_"
+                            "transition_level_profile_identity"
+                        )
+                        or not record_region_id
+                        or contact_marker not in record_sources
+                    ):
+                        continue
             elif identity_kind == "bilateral_oblique_transition_endpoint_level":
                 sources = {
                     str(value)

@@ -245,6 +245,27 @@ def start_hybrid_frontend(
             plan.model_dump(mode="json", by_alias=True),
         )
         manifest["summary"]["structural_query_count"] = len(plan.queries)
+        manifest["summary"]["structural_unique_image_count"] = len(
+            {item.image_path for item in plan.queries}
+        )
+        structural_targets = [
+            target
+            for query in plan.queries
+            for target in query.labeled_dimension_targets
+        ]
+        manifest["summary"]["structural_labeled_target_count"] = len(
+            structural_targets
+        )
+        manifest["summary"]["structural_seeded_target_count"] = sum(
+            1
+            for target in structural_targets
+            if target.deterministic_relation_seed is not None
+        )
+        manifest["summary"]["structural_agent_pending_target_count"] = sum(
+            1
+            for target in structural_targets
+            if target.deterministic_relation_seed is None
+        )
     except (
         OSError,
         ValueError,

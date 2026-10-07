@@ -16,7 +16,10 @@ from .reader_semantic_answers import (
     PartialOverallDimensionFact,
     PartialRotationalSymmetryFact,
 )
-from .short_dimension_orientation import infer_short_dimension_visual_direction
+from .short_dimension_orientation import (
+    infer_short_dimension_visual_direction,
+    infer_short_dimension_visual_topology,
+)
 
 
 class StructuralContextError(ValueError):
@@ -48,6 +51,12 @@ class StructuralLabeledDimensionTarget(_StrictStructuralModel):
     source_text: str = Field(min_length=1)
     value: float = Field(gt=0)
     deterministic_visual_direction: Literal["horizontal", "vertical"] | None = None
+    deterministic_relation_seed: Literal[
+        "overall_extent",
+        "overall_min_to_profile_transition",
+        "overall_max_to_profile_transition",
+        "between_profile_boundaries",
+    ] | None = None
 
 
 _LABELED_MM_DIMENSION_RE = re.compile(
@@ -255,6 +264,181 @@ def _rect_rect_distance(
     return math.hypot(dx, dy)
 
 
+def _deterministic_labeled_relation_seed(
+    *,
+    source_raster_path: str | None,
+    raw_bbox: object,
+    region_id: str,
+    deterministic_visual_direction: Literal["horizontal", "vertical"] | None,
+    profile_inventory: list[object],
+) -> Literal[
+    "overall_extent",
+    "overall_min_to_profile_transition",
+    "overall_max_to_profile_transition",
+    "between_profile_boundaries",
+] | None:
+    """Resolve only topology-provable short labeled-dimension relations.
+
+    Raster positions are identity/topology evidence only. No pixel distance is
+    converted into an engineering value. The seed is intentionally conservative:
+    every plausible witness pair must map uniquely to the same pair of supported
+    structural profile boundaries and therefore to the same relation family.
+    """
+
+    if (
+        source_raster_path is None
+        or deterministic_visual_direction is None
+        or not isinstance(profile_inventory, list)
+    ):
+        return None
+
+    topology = infer_short_dimension_visual_topology(
+        source_raster_path,
+        raw_bbox,
+    )
+    if topology is None or topology[0] != deterministic_visual_direction:
+        return None
+
+    expected_profile_orientation = (
+        "vertical"
+        if deterministic_visual_direction == "horizontal"
+        else "horizontal"
+    )
+    candidates: list[
+        tuple[float, float, str | None, str]
+    ] = []
+    for item in profile_inventory:
+        if (
+            not isinstance(item, dict)
+            or item.get("kind") != "profile_edge_candidate"
+            or str(item.get("region_id") or "") != region_id
+            or str(item.get("source_orientation") or "")
+            != expected_profile_orientation
+        ):
+            continue
+        position = item.get("position_px")
+        if (
+            not isinstance(position, (int, float))
+            or isinstance(position, bool)
+        ):
+            continue
+        non_dimension_support = item.get(
+            "non_dimension_crossing_source_count"
+        )
+        independent_support = item.get(
+            "independent_geometry_source_count",
+            0,
+        )
+        if not (
+            (
+                isinstance(non_dimension_support, int)
+                and not isinstance(non_dimension_support, bool)
+                and non_dimension_support > 0
+            )
+            or (
+                isinstance(independent_support, int)
+                and not isinstance(independent_support, bool)
+                and independent_support >= 2
+            )
+        ):
+            continue
+        axis_tolerance = item.get("axis_tolerance_px")
+        tolerance = max(
+            5.0,
+            float(axis_tolerance)
+            if (
+                isinstance(axis_tolerance, (int, float))
+                and not isinstance(axis_tolerance, bool)
+            )
+            else 0.0,
+        )
+        extreme = item.get("relative_extreme_side")
+        candidates.append(
+            (
+                float(position),
+                tolerance,
+                str(extreme) if extreme in {"min", "max"} else None,
+                str(item.get("ref") or ""),
+            )
+        )
+
+    if not candidates:
+        return None
+
+    def _match_profile(
+        position: float,
+    ) -> tuple[float, float, str | None, str] | None:
+        matches = [
+            candidate
+            for candidate in candidates
+            if abs(candidate[0] - float(position)) <= candidate[1]
+        ]
+        unique_refs = {
+            candidate[3]
+            for candidate in matches
+            if candidate[3]
+        }
+        if len(matches) != 1 or len(unique_refs) != 1:
+            return None
+        return matches[0]
+
+    resolved_relations: list[
+        Literal[
+            "overall_extent",
+            "overall_min_to_profile_transition",
+            "overall_max_to_profile_transition",
+            "between_profile_boundaries",
+        ]
+    ] = []
+    for pair in topology[1]:
+        if not isinstance(pair, tuple) or len(pair) != 2:
+            return None
+        first = _match_profile(float(pair[0]))
+        second = _match_profile(float(pair[1]))
+        if first is None or second is None or first[3] == second[3]:
+            return None
+
+        first_extreme = first[2]
+        second_extreme = second[2]
+        extremes = {
+            item
+            for item in (first_extreme, second_extreme)
+            if item is not None
+        }
+
+        if extremes == {"min", "max"}:
+            relation: Literal[
+                "overall_extent",
+                "overall_min_to_profile_transition",
+                "overall_max_to_profile_transition",
+                "between_profile_boundaries",
+            ] = "overall_extent"
+        elif len(extremes) == 1 and (
+            (first_extreme is None) != (second_extreme is None)
+        ):
+            visual_extreme = next(iter(extremes))
+            engineering_extreme = visual_extreme
+            if deterministic_visual_direction == "vertical":
+                engineering_extreme = (
+                    "max" if visual_extreme == "min" else "min"
+                )
+            relation = (
+                "overall_min_to_profile_transition"
+                if engineering_extreme == "min"
+                else "overall_max_to_profile_transition"
+            )
+        elif first_extreme is None and second_extreme is None:
+            relation = "between_profile_boundaries"
+        else:
+            return None
+
+        resolved_relations.append(relation)
+
+    if not resolved_relations or len(set(resolved_relations)) != 1:
+        return None
+    return resolved_relations[0]
+
+
 def _labeled_dimension_targets_by_region(
     regions: list[object],
     hybrid_report: dict | None,
@@ -336,6 +520,9 @@ def _labeled_dimension_targets_by_region(
         if isinstance(source_raster, str) and source_raster
         else None
     )
+    profile_inventory = hybrid_report.get("structural_profile_inventory")
+    if not isinstance(profile_inventory, list):
+        profile_inventory = []
 
     output: dict[str, list[StructuralLabeledDimensionTarget]] = {}
     seen_sources: set[int] = set()
@@ -411,6 +598,13 @@ def _labeled_dimension_targets_by_region(
             if source_raster_path is not None
             else None
         )
+        deterministic_relation_seed = _deterministic_labeled_relation_seed(
+            source_raster_path=source_raster_path,
+            raw_bbox=item.get("bbox"),
+            region_id=region_id,
+            deterministic_visual_direction=deterministic_visual_direction,
+            profile_inventory=profile_inventory,
+        )
         output.setdefault(region_id, []).append(
             StructuralLabeledDimensionTarget(
                 target_id=f"LD_{source_index:04d}",
@@ -418,6 +612,7 @@ def _labeled_dimension_targets_by_region(
                 source_text=text.strip(),
                 value=token_value,
                 deterministic_visual_direction=deterministic_visual_direction,
+                deterministic_relation_seed=deterministic_relation_seed,
             )
         )
         seen_sources.add(source_index)
@@ -916,6 +1111,8 @@ def build_structural_context_queries(
             "labeled_dimension_relation_only": True,
             "labeled_dimension_direction_from_topology_only": True,
             "labeled_dimension_direction_hint_must_be_preserved": True,
+            "labeled_dimension_relation_seed_from_topology_only": True,
+            "labeled_dimension_seeded_decisions_must_be_preserved": True,
             "labeled_dimension_overall_relation_requires_actual_overall_boundary": True,
             "labeled_dimension_resolved_reason_must_be_null": True,
             "labeled_dimension_unresolved_reason_required": True,
@@ -942,13 +1139,25 @@ def build_structural_context_queries(
                     "labeled_dimension_decisions": [
                         {
                             "target_id": target.target_id,
-                            "status": "unresolved",
-                            "visual_direction": None,
-                            "relation": None,
+                            "status": (
+                                "resolved"
+                                if target.deterministic_relation_seed is not None
+                                else "unresolved"
+                            ),
+                            "visual_direction": (
+                                target.deterministic_visual_direction
+                                if target.deterministic_relation_seed is not None
+                                else None
+                            ),
+                            "relation": target.deterministic_relation_seed,
                             "profile_transition_geometry": None,
                             "symmetry_scope": None,
                             "evidence": [query.evidence_label],
-                            "reason": "pending_labeled_dimension_relation_read",
+                            "reason": (
+                                None
+                                if target.deterministic_relation_seed is not None
+                                else "pending_labeled_dimension_relation_read"
+                            ),
                         }
                         for target in query.labeled_dimension_targets
                     ],
@@ -1073,6 +1282,16 @@ def assemble_structural_context(
                 query.evidence_label,
                 query_id=query.query_id,
             )
+            if target.deterministic_relation_seed is not None and (
+                decision.status != "resolved"
+                or decision.visual_direction
+                != target.deterministic_visual_direction
+                or decision.relation != target.deterministic_relation_seed
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} labeled dimension "
+                    f"{target_id!r} changed deterministic relation seed"
+                )
             if decision.status != "resolved":
                 raise StructuralContextError(
                     f"query {query.query_id!r} labeled dimension "

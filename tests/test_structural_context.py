@@ -1631,6 +1631,127 @@ def test_structural_labeled_dimension_uses_deterministic_short_direction(
     assert target.deterministic_visual_direction == expected_direction
     assert plan.rules["labeled_dimension_direction_from_topology_only"] is True
     assert plan.rules["labeled_dimension_direction_hint_must_be_preserved"] is True
+    assert plan.rules["labeled_dimension_relation_seed_from_topology_only"] is True
+    assert plan.rules["labeled_dimension_seeded_decisions_must_be_preserved"] is True
+
+
+def test_structural_labeled_dimension_prefills_topology_proven_relation(
+    tmp_path: Path,
+):
+    source_raster, bbox = _write_short_dimension_direction_fixture(
+        tmp_path,
+        witness_orientation="vertical",
+    )
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = source_raster
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+    report["structural_profile_inventory"] = [
+        {
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.001",
+            "region_id": "R1",
+            "source_orientation": "vertical",
+            "position_px": 185.0,
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "non_dimension_crossing_source_count": 0,
+            "relative_extreme_side": None,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.002",
+            "region_id": "R1",
+            "source_orientation": "vertical",
+            "position_px": 210.0,
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "non_dimension_crossing_source_count": 0,
+            "relative_extreme_side": None,
+        },
+    ]
+
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+
+    target = next(
+        target
+        for query in plan.queries
+        for target in query.labeled_dimension_targets
+        if target.target_id == "LD_0017"
+    )
+    assert target.deterministic_visual_direction == "horizontal"
+    assert target.deterministic_relation_seed == "between_profile_boundaries"
+
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    decision = template.answers[0].labeled_dimension_decisions[0]
+    assert decision.status == "resolved"
+    assert decision.visual_direction == "horizontal"
+    assert decision.relation == "between_profile_boundaries"
+    assert decision.profile_transition_geometry is None
+    assert decision.symmetry_scope is None
+    assert decision.reason is None
+
+
+def test_structural_context_rejects_changed_deterministic_relation_seed(
+    tmp_path: Path,
+):
+    source_raster, bbox = _write_short_dimension_direction_fixture(
+        tmp_path,
+        witness_orientation="vertical",
+    )
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = source_raster
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+    report["structural_profile_inventory"] = [
+        {
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.001",
+            "region_id": "R1",
+            "source_orientation": "vertical",
+            "position_px": 185.0,
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "non_dimension_crossing_source_count": 0,
+        },
+        {
+            "kind": "profile_edge_candidate",
+            "ref": "R1.structural.vertical.002",
+            "region_id": "R1",
+            "source_orientation": "vertical",
+            "position_px": 210.0,
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "non_dimension_crossing_source_count": 0,
+        },
+    ]
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "resolved",
+            "visual_direction": "horizontal",
+            "relation": "overall_extent",
+            "profile_transition_geometry": None,
+            "symmetry_scope": None,
+            "evidence": ["structural:R1:crop"],
+            "reason": None,
+        }
+    ]
+    answers = StructuralContextAnswers.model_validate(payload)
+
+    with pytest.raises(
+        StructuralContextError,
+        match="changed deterministic relation seed",
+    ):
+        assemble_structural_context(plan, answers)
 
 
 def test_short_direction_ignores_nearby_perpendicular_profile_pair(

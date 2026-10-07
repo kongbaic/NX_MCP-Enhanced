@@ -7,7 +7,10 @@ from collections import defaultdict
 from typing import Any
 
 from .evidence import DirectValueEvidence, EvidenceGraph, RelationEvidence
-from .metric_profile_arc_solver import solve_orthogonal_tangent_arc
+from .metric_profile_arc_solver import (
+    solve_orthogonal_tangent_arc,
+    solve_tangent_arc_between_segments,
+)
 from .metric_profile_solver import MetricProfileSpec, solve_metric_profile
 from .resolver import ResolutionResult
 
@@ -1547,6 +1550,270 @@ def _resolved_labeled_profile_transition_levels(
     return output
 
 
+def _apply_unique_taper_terminal_fillet(
+    working: list[dict[str, Any]],
+    *,
+    item: dict[str, Any],
+    graph: EvidenceGraph,
+    resolution: ResolutionResult,
+    axes: tuple[str, str],
+    rotation_axis: str,
+) -> list[dict[str, Any]] | None:
+    """Apply one topology-unique taper-terminal fillet to engineering geometry.
+
+    Identity comes from a unique bilateral taper with exactly one directly
+    labeled terminal. The opposite terminal is therefore topology-unique.
+    Metric tangent points and the center come only from the already-resolved
+    adjacent profile segments and the explicit engineering radius.
+    """
+
+    physical_arc_id = str(item.get("physical_arc_id") or "")
+    identity_source_id = str(item.get("identity_source_id") or "")
+    direct_target_id = str(item.get("direct_transition_target_id") or "")
+    if (
+        item.get("profile_arc_identity_kind")
+        != "unique_bilateral_taper_unowned_terminal"
+        or not physical_arc_id
+        or not identity_source_id.startswith(
+            "hybrid:taper-terminal-fillet-identity:"
+        )
+        or not direct_target_id
+        or item.get("direct_transition_overall_role")
+        not in {"overall_min", "overall_max"}
+        or item.get("engineering_coordinate_inferred_from_pixels") is not False
+        or item.get("pixel_geometry_used_for_identity_only") is not True
+    ):
+        return None
+
+    radius_target = (
+        "constraints.profile_arc_radii."
+        f"{physical_arc_id}.radius"
+    )
+    raw_radius = resolution.values.get(radius_target)
+    raw_item_radius = item.get("engineering_radius")
+    if (
+        isinstance(raw_radius, bool)
+        or not isinstance(raw_radius, (int, float))
+        or float(raw_radius) <= 0.0
+        or isinstance(raw_item_radius, bool)
+        or not isinstance(raw_item_radius, (int, float))
+        or abs(float(raw_radius) - float(raw_item_radius)) > 1e-7
+    ):
+        return None
+    radius = float(raw_radius)
+
+    matching_relations = [
+        relation
+        for relation in graph.relations
+        if (
+            relation.kind == "edge_offset"
+            and relation.axis == rotation_axis
+            and relation.metadata.get("basis")
+            == "labeled_overall_to_profile_transition"
+            and str(
+                relation.metadata.get("labeled_target_id") or ""
+            )
+            == direct_target_id
+            and relation.targets
+        )
+    ]
+    if len(matching_relations) != 1:
+        return None
+    direct_relation = matching_relations[0]
+    direct_values = [
+        resolution.values[target]
+        for target in direct_relation.targets
+        if target in resolution.values
+    ]
+    if (
+        len(direct_values) != len(direct_relation.targets)
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            for value in direct_values
+        )
+    ):
+        return None
+    direct_levels = [float(value) for value in direct_values]
+    if max(direct_levels) - min(direct_levels) > 1e-7:
+        return None
+    direct_level = direct_levels[0]
+
+    def locate_and_solve(
+        segments: list[dict[str, Any]],
+    ) -> tuple[
+        int,
+        int,
+        dict[str, Any],
+    ] | None:
+        nonorthogonal_indices: list[int] = []
+        for index, segment in enumerate(segments):
+            if segment.get("type") != "line":
+                continue
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                continue
+            first_delta = abs(
+                float(end[axes[0]]) - float(start[axes[0]])
+            )
+            second_delta = abs(
+                float(end[axes[1]]) - float(start[axes[1]])
+            )
+            if first_delta > 1e-7 and second_delta > 1e-7:
+                nonorthogonal_indices.append(index)
+        if len(nonorthogonal_indices) != 1:
+            return None
+
+        taper_index = nonorthogonal_indices[0]
+        taper = segments[taper_index]
+        start_level = float(taper["start"][rotation_axis])
+        end_level = float(taper["end"][rotation_axis])
+        start_is_direct = abs(start_level - direct_level) <= 1e-7
+        end_is_direct = abs(end_level - direct_level) <= 1e-7
+        if start_is_direct == end_is_direct:
+            return None
+
+        if start_is_direct:
+            first_index = taper_index
+            second_index = (taper_index + 1) % len(segments)
+        else:
+            first_index = (taper_index - 1) % len(segments)
+            second_index = taper_index
+
+        first_segment = segments[first_index]
+        second_segment = segments[second_index]
+        if (
+            first_segment.get("type") != "line"
+            or second_segment.get("type") != "line"
+            or _point_key(first_segment["end"], axes)
+            != _point_key(second_segment["start"], axes)
+        ):
+            return None
+
+        solved = solve_tangent_arc_between_segments(
+            axes=axes,
+            first_segment=first_segment,
+            second_segment=second_segment,
+            radius=radius,
+        )
+        if solved.get("status") != "resolved":
+            return None
+        return first_index, second_index, solved
+
+    oriented = copy.deepcopy(working)
+    located = locate_and_solve(oriented)
+    if located is None:
+        return None
+    first_index, second_index, solved = located
+    if float(solved["traversal_sweep_deg"]) < 0.0:
+        oriented = _reverse_profile_cycle(oriented)
+        located = locate_and_solve(oriented)
+        if located is None:
+            return None
+        first_index, second_index, solved = located
+
+    sweep = float(solved["traversal_sweep_deg"])
+    if sweep <= 1e-7 or sweep >= 180.0 - 1e-7:
+        return None
+
+    first_segment = copy.deepcopy(oriented[first_index])
+    second_segment = copy.deepcopy(oriented[second_index])
+    first_tangent = {
+        axis: float(solved["first_tangent"][axis])
+        for axis in axes
+    }
+    second_tangent = {
+        axis: float(solved["second_tangent"][axis])
+        for axis in axes
+    }
+    center = {
+        axis: float(solved["center"][axis])
+        for axis in axes
+    }
+
+    if (
+        _point_key(first_segment["start"], axes)
+        == _point_key(first_tangent, axes)
+        or _point_key(second_tangent, axes)
+        == _point_key(second_segment["end"], axes)
+    ):
+        return None
+
+    arc_sources = list(
+        dict.fromkeys(
+            [
+                physical_arc_id,
+                identity_source_id,
+                *[
+                    value
+                    for value in item.get("source_ids", [])
+                    if isinstance(value, str) and value
+                ],
+            ]
+        )
+    )
+    arc_targets = list(
+        dict.fromkeys(
+            [
+                radius_target,
+                *[
+                    target
+                    for target in direct_relation.targets
+                    if isinstance(target, str) and target
+                ],
+            ]
+        )
+    )
+
+    first_segment["end"] = first_tangent
+    second_segment["start"] = second_tangent
+    for segment in (first_segment, second_segment):
+        segment["source_ids"] = list(
+            dict.fromkeys(
+                [
+                    *segment.get("source_ids", []),
+                    *arc_sources,
+                ]
+            )
+        )
+        segment["source_targets"] = list(
+            dict.fromkeys(
+                [
+                    *segment.get("source_targets", []),
+                    *arc_targets,
+                ]
+            )
+        )
+        segment["solver"] = "rotational_profile_arc_solver"
+
+    start_angle = float(solved["start_angle_deg"])
+    end_angle = start_angle + sweep
+    arc_segment = {
+        "type": "arc",
+        "center": center,
+        "radius": radius,
+        "start_angle": start_angle,
+        "end_angle": end_angle,
+        "start": first_tangent,
+        "end": second_tangent,
+        "source_ids": arc_sources,
+        "source_targets": arc_targets,
+        "solver": "rotational_profile_arc_solver",
+        "physical_arc_id": physical_arc_id,
+    }
+
+    if second_index == 0:
+        oriented[first_index] = first_segment
+        oriented[0] = second_segment
+        oriented.append(arc_segment)
+    else:
+        oriented[first_index] = first_segment
+        oriented[second_index] = second_segment
+        oriented.insert(second_index, arc_segment)
+    return oriented
+
+
 def _apply_resolved_multilevel_profile_arcs(
     profile_segments: list[dict[str, Any]],
     *,
@@ -1620,6 +1887,24 @@ def _apply_resolved_multilevel_profile_arcs(
                 and str(item.get("rotation_axis") or "").upper() == rotation_axis
             ):
                 arc_items.append(item)
+
+    taper_terminal_items = [
+        item
+        for item in arc_items
+        if item.get("profile_arc_identity_kind")
+        == "unique_bilateral_taper_unowned_terminal"
+    ]
+    if taper_terminal_items:
+        if len(taper_terminal_items) != 1 or len(arc_items) != 1:
+            return None
+        return _apply_unique_taper_terminal_fillet(
+            working,
+            item=taper_terminal_items[0],
+            graph=graph,
+            resolution=resolution,
+            axes=axes,
+            rotation_axis=rotation_axis,
+        )
 
     for item in sorted(
         arc_items,

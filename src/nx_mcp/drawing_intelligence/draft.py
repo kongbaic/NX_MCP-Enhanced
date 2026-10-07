@@ -2471,14 +2471,142 @@ def _materialize_symmetric_tapered_annular_profile(
                 start_level = axial_extent
                 neck_level = 0.0
 
-            points = [
-                {radial_axis: inner_radius, rotation_axis: start_level},
-                {radial_axis: flange_radius, rotation_axis: start_level},
-            ]
-            current_radius = flange_radius
+            # A centered radial layer can be a local boss on the overall
+            # side (for example a raised sealing face) rather than the first
+            # inward body layer.  Prove that topology from a one-sided axial
+            # material boundary joined to exactly one centered radial span.
+            # Raster geometry supplies only identity/connectivity; the metric
+            # radii and levels remain Resolver/overall-dimension values.
+            raw_edges = working_item.get("edges")
+            raw_junctions = working_item.get("junctions")
+            start_side_hub_index: int | None = None
+            ambiguous_start_side_topology = False
+            if isinstance(raw_edges, list) and isinstance(raw_junctions, list):
+                edges_by_ref = {
+                    str(edge.get("ref") or ""): edge
+                    for edge in raw_edges
+                    if isinstance(edge, dict) and str(edge.get("ref") or "")
+                }
+                adjacency: dict[str, set[str]] = {
+                    ref: set() for ref in edges_by_ref
+                }
+                topology_valid = True
+                for pair in raw_junctions:
+                    if (
+                        not isinstance(pair, list)
+                        or len(pair) != 2
+                        or not all(
+                            isinstance(ref, str) and ref in edges_by_ref
+                            for ref in pair
+                        )
+                    ):
+                        topology_valid = False
+                        break
+                    adjacency[pair[0]].add(pair[1])
+                    adjacency[pair[1]].add(pair[0])
+
+                if topology_valid:
+                    expected_material_direction = (
+                        "positive" if side == "min" else "negative"
+                    )
+                    start_boundary_refs = {
+                        ref
+                        for ref, edge in edges_by_ref.items()
+                        if (
+                            str(edge.get("constant_axis") or "").upper()
+                            == rotation_axis
+                            and edge.get("material_axis_direction")
+                            == expected_material_direction
+                            and edge.get("background_axis_direction")
+                            != expected_material_direction
+                        )
+                    }
+                    matched_hub_indices: set[int] = set()
+                    for hub_index, candidate in enumerate(hub_candidates):
+                        candidate_targets = {
+                            str(target)
+                            for target in candidate.get("targets", [])
+                            if isinstance(target, str) and target
+                        }
+                        radial_refs = {
+                            ref
+                            for ref, edge in edges_by_ref.items()
+                            if (
+                                str(edge.get("constant_axis") or "").upper()
+                                == radial_axis
+                                and str(edge.get("boundary_target") or "")
+                                in candidate_targets
+                            )
+                        }
+                        if any(
+                            radial_ref in adjacency.get(start_ref, set())
+                            for start_ref in start_boundary_refs
+                            for radial_ref in radial_refs
+                        ):
+                            matched_hub_indices.add(hub_index)
+
+                    if len(matched_hub_indices) == 1:
+                        start_side_hub_index = next(
+                            iter(matched_hub_indices)
+                        )
+                    elif len(matched_hub_indices) > 1:
+                        ambiguous_start_side_topology = True
+
+            if ambiguous_start_side_topology:
+                continue
+
+            raised_boss_start = start_side_hub_index is not None
+            if raised_boss_start and start_side_hub_index != 0:
+                # More complicated non-monotonic radial ordering is not yet
+                # uniquely representable by this strict materializer.
+                continue
+
+            if raised_boss_start:
+                points = [
+                    {
+                        radial_axis: inner_radius,
+                        rotation_axis: start_level,
+                    },
+                    {
+                        radial_axis: hub_radii[0],
+                        rotation_axis: start_level,
+                    },
+                ]
+                first_transition = physical_transitions[0]
+                first_level = float(first_transition["level"])
+                points.extend(
+                    [
+                        {
+                            radial_axis: hub_radii[0],
+                            rotation_axis: first_level,
+                        },
+                        {
+                            radial_axis: flange_radius,
+                            rotation_axis: first_level,
+                        },
+                    ]
+                )
+                current_radius = flange_radius
+                remaining_transitions = physical_transitions[1:]
+                remaining_hub_radii = hub_radii[1:]
+            else:
+                points = [
+                    {
+                        radial_axis: inner_radius,
+                        rotation_axis: start_level,
+                    },
+                    {
+                        radial_axis: flange_radius,
+                        rotation_axis: start_level,
+                    },
+                ]
+                current_radius = flange_radius
+                remaining_transitions = physical_transitions
+                remaining_hub_radii = hub_radii
+
             for transition, hub_radius in zip(
-                physical_transitions,
-                hub_radii,
+                remaining_transitions,
+                remaining_hub_radii,
                 strict=True,
             ):
                 level = float(transition["level"])

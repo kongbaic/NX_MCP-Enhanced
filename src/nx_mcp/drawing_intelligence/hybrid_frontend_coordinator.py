@@ -353,6 +353,33 @@ def resume_hybrid_frontend(
             "errors": [f"{type(exc).__name__}: {exc}"],
         }
 
+    timing_markers = manifest.get("timing_markers_epoch_s")
+    wait_started = (
+        timing_markers.get("structural_context_wait_started")
+        if isinstance(timing_markers, dict)
+        else None
+    )
+    if isinstance(wait_started, (int, float)) and not isinstance(
+        wait_started,
+        bool,
+    ):
+        answers_written = answers_path.stat().st_mtime
+        resumed_at = time.time()
+        if answers_written >= float(wait_started):
+            manifest.setdefault("timing_seconds", {})[
+                "structural_context_agent_wait"
+            ] = round(
+                max(0.0, answers_written - float(wait_started)),
+                6,
+            )
+            manifest.setdefault("timing_seconds", {})[
+                "structural_context_resume_lag"
+            ] = round(
+                max(0.0, resumed_at - answers_written),
+                6,
+            )
+            _write_json(manifest_path, manifest)
+
     stage = "structural_context"
     started = time.monotonic()
     try:

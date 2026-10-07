@@ -263,6 +263,9 @@ def start_hybrid_frontend(
         may_retry=None,
         may_edit_structural_answers=None,
     )
+    manifest.setdefault("timing_markers_epoch_s", {})[
+        "structural_context_wait_started"
+    ] = round(time.time(), 6)
     _write_json(paths["manifest"], manifest)
     return 4, _report(manifest, paths["manifest"])
 

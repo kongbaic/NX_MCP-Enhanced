@@ -1246,14 +1246,14 @@ def _unique_bilateral_taper_terminal_arc_identity(
                         if isinstance(value, str)
                         and value.startswith("hybrid:oblique-line:")
                     }
-                    source_ids = {
+                    terminal_source_ids = {
                         value
                         for value in item.get("source_ids", [])
                         if isinstance(value, str) and value
                     }
                     if (
                         sources == family_sources
-                        and silhouette["id"] in source_ids
+                        and silhouette["id"] in terminal_source_ids
                         and item.get("overall_role") in {"overall_min", "overall_max"}
                     ):
                         direct_terminals.append(item)

@@ -1809,7 +1809,7 @@ def test_multilevel_tapered_profile_materializes_unique_terminal_fillet():
 
 
 def test_unique_terminal_fillet_stays_blocked_when_radius_does_not_fit():
-    graph = _multilevel_tapered_graph_with_terminal_fillet(radius=20.0)
+    graph = _multilevel_tapered_graph_with_terminal_fillet(radius=30.0)
     result = resolve_evidence_graph(graph)
     draft = build_semantic_draft(graph, result)
 

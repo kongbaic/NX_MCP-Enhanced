@@ -6649,3 +6649,162 @@ def test_projected_profile_bridge_never_overrides_ambiguous_owner():
         and "ambiguous_owner" in item.get("endpoint_unresolved_kinds", [])
         for item in linked.evidence.unresolved_evidence
     )
+
+
+
+def _taper_terminal_identity_observations():
+    silhouette_id = "BILATERAL_STRAIGHT_SILHOUETTE_TEST"
+    return [
+        {
+            "kind": "hybrid_bilateral_rotational_straight_silhouette_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": silhouette_id,
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "radial_axis": "X",
+                    "negative_side_source_ids": [
+                        "hybrid:oblique-line:left",
+                    ],
+                    "positive_side_source_ids": [
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "source_ids": [
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "bilateral_mirrored_continuous_straight_"
+                        "exterior_silhouette"
+                    ),
+                    "basis": (
+                        "full_support_exterior_fragments_plus_"
+                        "independent_symmetric_span_midpoint"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "kind": "hybrid_labeled_profile_transition_boundary_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "target_id": "LD_TAPER_DIRECT",
+                    "region_id": "R_MAIN",
+                    "view_kind": "front",
+                    "axis": "Z",
+                    "overall_role": "overall_max",
+                    "profile_refs": [],
+                    "oblique_source_ids": [
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "identity_kind": (
+                        "bilateral_oblique_transition_endpoint_level"
+                    ),
+                    "source_ids": [
+                        silhouette_id,
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+                {
+                    "target_id": "LD_ROOT_LEVEL",
+                    "region_id": "R_DIM",
+                    "view_kind": "front",
+                    "axis": "Z",
+                    "overall_role": "overall_min",
+                    "profile_refs": ["R_DIM.profile.root"],
+                    "identity_kind": "physical_profile_boundary",
+                    "source_ids": ["hybrid:profile-edge:R_DIM.profile.root"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+
+
+def test_unique_bilateral_taper_unowned_terminal_produces_arc_identity():
+    observations = _taper_terminal_identity_observations()
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is not None
+    assert identity["profile_arc_identity_kind"] == (
+        "unique_bilateral_taper_unowned_terminal"
+    )
+    assert identity["direct_transition_target_id"] == "LD_TAPER_DIRECT"
+    assert identity["direct_transition_overall_role"] == "overall_max"
+    assert identity["opposite_transition_target_ids"] == ["LD_ROOT_LEVEL"]
+    assert identity["engineering_coordinate_inferred_from_pixels"] is False
+    assert identity["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_taper_terminal_arc_identity_fails_closed_with_two_direct_terminals():
+    observations = _taper_terminal_identity_observations()
+    ledger = next(
+        observation
+        for observation in observations
+        if observation.get("kind")
+        == "hybrid_labeled_profile_transition_boundary_ledger"
+    )
+    duplicate = dict(ledger["items"][0])
+    duplicate["target_id"] = "LD_TAPER_OTHER_END"
+    duplicate["overall_role"] = "overall_min"
+    ledger["items"].append(duplicate)
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is None
+
+
+def test_taper_terminal_arc_identity_fails_closed_with_multiple_silhouettes():
+    observations = _taper_terminal_identity_observations()
+    silhouette_ledger = next(
+        observation
+        for observation in observations
+        if observation.get("kind")
+        == "hybrid_bilateral_rotational_straight_silhouette_ledger"
+    )
+    duplicate = dict(silhouette_ledger["items"][0])
+    duplicate["id"] = "BILATERAL_STRAIGHT_SILHOUETTE_OTHER"
+    duplicate["negative_side_source_ids"] = ["hybrid:oblique-line:other-left"]
+    duplicate["positive_side_source_ids"] = ["hybrid:oblique-line:other-right"]
+    duplicate["source_ids"] = [
+        "hybrid:oblique-line:other-left",
+        "hybrid:oblique-line:other-right",
+    ]
+    silhouette_ledger["items"].append(duplicate)
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is not None
+    assert identity["silhouette_id"] == "BILATERAL_STRAIGHT_SILHOUETTE_TEST"

@@ -2487,7 +2487,7 @@ def _materialize_symmetric_tapered_annular_profile(
                     for edge in raw_edges
                     if isinstance(edge, dict) and str(edge.get("ref") or "")
                 }
-                adjacency: dict[str, set[str]] = {
+                start_adjacency: dict[str, set[str]] = {
                     ref: set() for ref in edges_by_ref
                 }
                 topology_valid = True
@@ -2502,8 +2502,8 @@ def _materialize_symmetric_tapered_annular_profile(
                     ):
                         topology_valid = False
                         break
-                    adjacency[pair[0]].add(pair[1])
-                    adjacency[pair[1]].add(pair[0])
+                    start_adjacency[pair[0]].add(pair[1])
+                    start_adjacency[pair[1]].add(pair[0])
 
                 if topology_valid:
                     expected_material_direction = (
@@ -2539,7 +2539,7 @@ def _materialize_symmetric_tapered_annular_profile(
                             )
                         }
                         if any(
-                            radial_ref in adjacency.get(start_ref, set())
+                            radial_ref in start_adjacency.get(start_ref, set())
                             for start_ref in start_boundary_refs
                             for radial_ref in radial_refs
                         ):

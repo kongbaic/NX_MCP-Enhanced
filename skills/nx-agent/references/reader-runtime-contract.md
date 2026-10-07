@@ -101,21 +101,21 @@ python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-fronten
 ~~~
 
 Before that one call, choose `<fresh-mode-b-prefix>` as a fresh **direct child prefix**
-of the current `workspace_root` / `NX_MCP_WORKSPACE`. The prefix is a filename stem,
-not a path that will itself exist. Therefore **never use only `Test-Path <prefix>` as
-the freshness check**. A prefix is fresh only when none of the coordinator outputs
-derived from it already exist, especially `<prefix>-mode-b-state.json`; also reject
-pre-existing `-reader-capture.json`, `-drawing-evidence.json`,
-`-semantic-draft.json`, `-confirmation-request.json`,
-`-drawing-evidence-confirmed.json`, `-semantic-draft-confirmed.json`, or
-`-drawing.json`. Derive the prefix from the current fresh Hybrid Frontend run name
-(e.g. `<workspace_root>\\<fresh-run-directory-name>-mode-b`) rather than reusing a
+of the current `workspace_root` / `NX_MCP_WORKSPACE`, deterministically derived from
+the current fresh Hybrid Frontend run name
+(e.g. `<workspace_root>\\<fresh-run-directory-name>-mode-b`). Do not reuse a
 drawing/date-only prefix from an earlier attempt. For example,
 `<workspace_root>\\hybrid-run-20260929-140233-mode-b` is valid, while
 `<workspace_root>\\mode-b-runs\\hybrid-run-20260929-140233-mode-b` is invalid.
 The Hybrid Frontend run directory may be nested anywhere inside the workspace; the
-Mode B artifact prefix may not. If any derived artifact already exists, STOP before
-the single resume call; do not switch to another prefix after resume has started.
+Mode B artifact prefix may not.
+
+After writing structural answers, **do not issue a separate PowerShell/Test-Path/
+Get-ChildItem or other derived-artifact freshness scan before resume**. The Mode B
+coordinator performs the authoritative `state_exists` / stale-output gate inside the
+single resume call. Invoke resume immediately after the answer file is written. If the
+coordinator reports an existing state, stale output, or invalid prefix/path, STOP and
+do not switch to another prefix or retry.
 
 The resume path owns Structural Context assembly → Hybrid Adapter → Reader Observation
 Finalizer → deterministic Mode B coordinator. Do not hand-write
@@ -172,7 +172,12 @@ Hard boundaries:
 ### Hybrid raster Structural Reader
 
 For each structural query, inspect exactly its listed `image_path` once and answer
-only the fields allowed by the generated query contract. Evidence must be exactly the
+only the fields allowed by the generated query contract. When the runtime image reader
+supports multiple image paths in one call, batch all current structural-query images
+into one visual-read call and still answer each `query_id` independently. Do not insert
+per-image progress narration, rule re-reading, or unrelated tool calls between those
+visual reads; after all judgments are complete, write `structural-context-answers.json`
+once. Fall back to sequential image reads only when the runtime cannot batch images. Evidence must be exactly the
 query's `evidence_label`. If view_kind is unresolved, provide a structured unresolved
 reason and no overall facts. Never use OCR output, pixel scale, old artifacts, or
 another crop to fill a missing structural answer.

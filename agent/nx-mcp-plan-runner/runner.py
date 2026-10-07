@@ -3157,6 +3157,203 @@ def _profile_line_polygon(
     return axes, polygon[:-1], []
 
 
+
+def _rotational_profile_axis_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    """Intersect an axis-of-revolution query line with a canonical meridian.
+
+    The meridian may contain exact line and arc primitives.  The transverse
+    query is reduced to its engineering radial distance from the canonical
+    rotation axis; raster coordinates never participate.
+    """
+    geometry, geometry_errors = _rotational_profile_geometry(drawing)
+    if geometry_errors or geometry is None:
+        return [], [
+            f"material_interval_violation: {item}"
+            for item in geometry_errors
+        ]
+
+    axis = str(axis or "").upper()
+    if str(geometry.get("axis") or "").upper() != axis:
+        return [], [
+            "material_interval_violation: rotational profile query axis does "
+            "not match rotation_axis"
+        ]
+
+    transverse = _axis_transverse_center(axis, transverse_point)
+    if transverse is None:
+        return [], [
+            "material_interval_violation: rotational profile query center is invalid"
+        ]
+    radial = math.hypot(float(transverse[0]), float(transverse[1]))
+
+    plane = str(geometry.get("plane") or "").upper()
+    axes = (plane[0], plane[1])
+    axis_index = axes.index(axis)
+    radial_index = 1 - axis_index
+    local_keys = ("x", "y")
+    axial_key = local_keys[axis_index]
+    radial_key = local_keys[radial_index]
+    tolerance = 1e-7
+    crossings: list[float] = []
+
+    def angle_on_arc(angle: float, start: float, end: float) -> bool:
+        sweep = (end - start) % 360.0
+        if sweep <= tolerance:
+            return False
+        relative = (angle - start) % 360.0
+        return relative <= sweep + tolerance
+
+    for index, segment in enumerate(geometry.get("segments") or []):
+        segment_type = str(segment.get("type") or "").lower()
+
+        if segment_type == "line":
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                return [], [
+                    f"material_interval_violation: rotational profile line {index} "
+                    "is malformed"
+                ]
+            start_radial = _num(start.get(radial_key))
+            end_radial = _num(end.get(radial_key))
+            start_axial = _num(start.get(axial_key))
+            end_axial = _num(end.get(axial_key))
+            if any(
+                value is None
+                for value in (
+                    start_radial,
+                    end_radial,
+                    start_axial,
+                    end_axial,
+                )
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile line {index} "
+                    "has incomplete engineering coordinates"
+                ]
+
+            start_radial = float(start_radial)
+            end_radial = float(end_radial)
+            start_axial = float(start_axial)
+            end_axial = float(end_axial)
+            if (
+                abs(start_radial - radial) <= tolerance
+                and abs(end_radial - radial) <= tolerance
+            ):
+                return [], [
+                    "material_interval_violation: rotational profile scan "
+                    f"coincides with profile line {index}"
+                ]
+            if abs(end_radial - start_radial) <= tolerance:
+                continue
+            if (
+                radial < min(start_radial, end_radial) - tolerance
+                or radial > max(start_radial, end_radial) + tolerance
+            ):
+                continue
+
+            ratio = (radial - start_radial) / (end_radial - start_radial)
+            if -tolerance <= ratio <= 1.0 + tolerance:
+                crossings.append(
+                    float(start_axial + ratio * (end_axial - start_axial))
+                )
+            continue
+
+        if segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if (
+                not isinstance(center, dict)
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile arc {index} "
+                    "is malformed"
+                ]
+
+            center_radial = _num(center.get(radial_key))
+            center_axial = _num(center.get(axial_key))
+            center_x = _num(center.get("x"))
+            center_y = _num(center.get("y"))
+            if any(
+                value is None
+                for value in (
+                    center_radial,
+                    center_axial,
+                    center_x,
+                    center_y,
+                )
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile arc {index} "
+                    "has incomplete engineering center"
+                ]
+
+            radius_value = float(radius)
+            delta = radial - float(center_radial)
+            remaining = radius_value * radius_value - delta * delta
+            if remaining < -tolerance:
+                continue
+            if remaining <= tolerance:
+                # A tangential touch does not toggle inside/outside parity.
+                continue
+
+            offset = math.sqrt(max(0.0, remaining))
+            for axial_value in (
+                float(center_axial) - offset,
+                float(center_axial) + offset,
+            ):
+                point = {
+                    radial_key: radial,
+                    axial_key: axial_value,
+                }
+                angle = math.degrees(
+                    math.atan2(
+                        float(point["y"]) - float(center_y),
+                        float(point["x"]) - float(center_x),
+                    )
+                )
+                if angle_on_arc(
+                    angle,
+                    float(start_angle),
+                    float(end_angle),
+                ):
+                    crossings.append(float(axial_value))
+            continue
+
+        return [], [
+            f"material_interval_violation: rotational profile segment {index} "
+            f"uses unsupported primitive type {segment_type!r}"
+        ]
+
+    unique: list[float] = []
+    for value in sorted(crossings):
+        if not unique or abs(value - unique[-1]) > tolerance:
+            unique.append(value)
+
+    if len(unique) % 2:
+        return [], [
+            "material_interval_violation: rotational profile scan has an odd "
+            "number of boundary crossings"
+        ]
+
+    intervals = [
+        [unique[index], unique[index + 1]]
+        for index in range(0, len(unique), 2)
+        if unique[index + 1] > unique[index] + tolerance
+    ]
+    return _merge_intervals(intervals), []
+
+
 def _point_on_segment_2d(
     point: tuple[float, float],
     start: tuple[float, float],
@@ -3245,6 +3442,19 @@ def _profile_material_intervals(
 ) -> tuple[list[list[float]], list[str]]:
     """Intersect one principal-axis query line with canonical body profile."""
     axis = axis.upper()
+    profile = drawing.get("profile")
+    rotation_axis = (
+        str(profile.get("rotation_axis") or "").upper()
+        if isinstance(profile, dict)
+        else ""
+    )
+    if rotation_axis == axis:
+        return _rotational_profile_axis_material_intervals(
+            drawing,
+            axis,
+            transverse_point,
+        )
+
     bounds = _axis_bounds(drawing, axis)
     fixed = _fixed_global_coordinates(axis, transverse_point)
     profile_axes, polygon, errors = _profile_line_polygon(drawing)

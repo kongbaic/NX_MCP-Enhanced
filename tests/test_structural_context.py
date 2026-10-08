@@ -1696,6 +1696,130 @@ def test_structural_context_uses_ocr_value_for_labeled_dimension_fact():
     assert fact.evidence == ["hybrid:whole:17", "structural:R1:crop"]
 
 
+def _labeled_overall_rotation_fixture(
+    *,
+    relation: str = "overall_extent",
+    with_direct_z: bool = False,
+) -> tuple[StructuralContextQueryPlan, StructuralContextAnswers]:
+    """OCR value is 12; compact visual decision supplies no number."""
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    first, second = payload["answers"]
+    first["overall_dimension_facts"] = [
+        first["overall_dimension_facts"][0],
+    ]
+    if with_direct_z:
+        first["overall_dimension_facts"].append({
+            "axis": "Z",
+            "value": 66,
+            "evidence": ["structural:R1:crop"],
+        })
+    first["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "centerline_direction": "vertical",
+        "evidence": ["structural:R1:crop"],
+    }
+    first["labeled_dimension_decisions"] = [{
+        "target_id": "LD_0017",
+        "status": "resolved",
+        "visual_direction": "vertical",
+        "relation": relation,
+        "evidence": ["structural:R1:crop"],
+        "reason": None,
+    }]
+    second["view_kind"] = "front"
+    second["overall_dimension_facts"] = []
+    second["rotational_symmetry"] = None
+    second["unresolved"] = ["rotational_symmetry_not_visible_in_region"]
+    return plan, StructuralContextAnswers.model_validate(payload)
+
+
+def test_ocr_labeled_overall_dimension_closes_rotational_missing_axis():
+    plan, answers = _labeled_overall_rotation_fixture()
+    context = assemble_structural_context(plan, answers)
+
+    by_axis = {fact.axis: fact for fact in context.overall_dimension_facts}
+    assert set(by_axis) == {"X", "Z"}
+    assert by_axis["X"].value == 40.0
+    assert by_axis["Z"].value == 12.0
+    assert by_axis["Z"].evidence == [
+        "hybrid:whole:17", "structural:R1:crop",
+    ]
+    assert len(context.rotational_symmetry_facts) == 1
+    assert context.rotational_symmetry_facts[0].axis == "Z"
+    assert len(context.labeled_dimension_facts) == 1
+    assert context.labeled_dimension_facts[0].value == 12.0
+    assert context.labeled_dimension_facts[0].relation == "overall_extent"
+
+
+def test_local_labeled_dimension_does_not_fill_missing_overall_axis():
+    plan, answers = _labeled_overall_rotation_fixture(
+        relation="between_profile_boundaries",
+    )
+    with pytest.raises(
+        StructuralContextError, match="missing structural overall fact"
+    ):
+        assemble_structural_context(plan, answers)
+
+
+def test_labeled_overall_conflicting_with_direct_overall_is_rejected():
+    plan, answers = _labeled_overall_rotation_fixture(with_direct_z=True)
+    with pytest.raises(
+        StructuralContextError,
+        match="labeled overall_extent conflicts with direct overall for axis Z",
+    ):
+        assemble_structural_context(plan, answers)
+
+
+def test_multiple_labeled_overalls_on_one_axis_fail_closed():
+    reader = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["coverage"]["unassigned_linear_observations"].append({
+        "source_item_index": 23,
+        "text": "Q4 - 18 mm",
+        "bbox": [[52, 143], [135, 143], [135, 167], [52, 167]],
+        "primary_tokens": ["18"],
+        "token": "18",
+        "reason": "no_unique_DG_assignment",
+    })
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    assert len(plan.queries[0].labeled_dimension_targets) == 2
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    first, second = payload["answers"]
+    first["overall_dimension_facts"] = [first["overall_dimension_facts"][0]]
+    first["rotational_symmetry"] = {
+        "status": "established",
+        "basis": "centerline",
+        "centerline_direction": "vertical",
+        "evidence": ["structural:R1:crop"],
+    }
+    first["labeled_dimension_decisions"] = [
+        {
+            "target_id": target.target_id,
+            "status": "resolved",
+            "visual_direction": "vertical",
+            "relation": "overall_extent",
+            "evidence": ["structural:R1:crop"],
+            "reason": None,
+        }
+        for target in plan.queries[0].labeled_dimension_targets
+    ]
+    second["view_kind"] = "front"
+    second["overall_dimension_facts"] = []
+    second["rotational_symmetry"] = None
+    second["unresolved"] = ["rotational_symmetry_not_visible_in_region"]
+    with pytest.raises(
+        StructuralContextError, match="ambiguous labeled overall_extent for axis Z"
+    ):
+        assemble_structural_context(
+            plan, StructuralContextAnswers.model_validate(payload)
+        )
+
+
 def test_structural_context_allows_local_relation_without_optional_topology_metadata():
     plan = build_structural_context_queries(
         _reader_input_with_labeled_dimension_regions(),

@@ -1358,9 +1358,39 @@ def compose_structural_visual_answers(
     """
     import copy
 
-    by_id = {item.query_id: item for item in visual.decisions}
-    if len(by_id) != len(visual.decisions):
+    submitted = {item.query_id: item for item in visual.decisions}
+    if len(submitted) != len(visual.decisions):
         raise StructuralContextError("duplicate compact visual query id")
+    queries_by_id = {item.query_id: item for item in plan.queries}
+    by_id: dict[str, StructuralCompactRegionDecision] = {}
+    for query_id, patch in submitted.items():
+        query = queries_by_id.get(query_id)
+        if query is None:
+            by_id[query_id] = patch
+            continue
+        reason = (
+            "non_geometric_reference_region"
+            if query.deterministic_non_geometric_reference
+            else "rotational_symmetry_not_visible_in_region"
+            if query.deterministic_view_owner_region_id is not None
+            else None
+        )
+        if reason is None:
+            by_id[query_id] = patch
+            continue
+        # Old Agent revisions may redundantly include Reader-owned regions.
+        # Only their empty, equivalent observations are harmless. Any new
+        # engineering value, view, or contrary status remains forbidden.
+        if (
+            patch.view_kind is not None
+            or patch.overall_dimension_facts
+            or patch.rotational_symmetry is not None
+            or patch.labeled_dimension_decisions
+            or patch.unresolved not in ([], [reason])
+        ):
+            raise StructuralContextError(
+                f"query {query_id!r} overrides Reader-owned region"
+            )
     expected_queries = {
         query.query_id
         for query in plan.queries

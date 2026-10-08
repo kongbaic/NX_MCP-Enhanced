@@ -3169,8 +3169,8 @@ def _contract_wiring_fixture():
             {
                 "contract_ref": [0, 0, 1],
                 "requires": {
-                    "sketch_id": "SKETCH_MAIN",
-                    "target_body_id": "BODY_MAIN",
+                    "sketch_id": "sketch_main",
+                    "target_body_id": "body_main",
                 },
                 "topology_changes": True,
             },
@@ -3200,8 +3200,8 @@ def test_contract_wiring_copies_every_fixed_arg_and_operation_field():
         "reverse": False,
         "start_offset": 0,
         "metadata": {},
-        "sketch_id": "SKETCH_MAIN",
-        "target_body_id": "BODY_MAIN",
+        "sketch_id": "sketch_main",
+        "target_body_id": "body_main",
     }
     assert plan["operations"][2]["thread_surrogate_use"] == {
         "implementation": "contract-owned"
@@ -3234,6 +3234,39 @@ def test_contract_wiring_rejects_missing_duplicate_or_unauthorized_operations():
         )
         assert plan is None, variant
         assert errors, variant
+
+
+def test_contract_wiring_rejects_symbols_builder_cannot_bind():
+    import copy
+
+    dispatches, source = _contract_wiring_fixture()
+    for field, bad_symbol in (
+        ("sketch_id", "SKETCH_MAIN"),
+        ("target_body_id", "BODY_MAIN"),
+        ("sketch_id", "sketch_"),
+        ("target_body_id", "body_"),
+        ("target_body_id", "arbitrary_alias"),
+    ):
+        wiring = copy.deepcopy(source)
+        wiring["operations"][2]["requires"][field] = bad_symbol
+        plan, errors = R.materialize_frozen_from_contract_wiring(
+            "current-drawing.json", dispatches, wiring
+        )
+        assert plan is None, (field, bad_symbol)
+        assert any("unsupported symbolic binding" in e for e in errors)
+
+
+def test_contract_wiring_symbols_survive_executable_compilation():
+    dispatches, wiring = _contract_wiring_fixture()
+    frozen, errors = R.materialize_frozen_from_contract_wiring(
+        "current-drawing.json", dispatches, wiring
+    )
+    assert errors == []
+    executable = R.build_executable_plan(frozen)
+    args = executable["operations"][2]["tool_args"]
+    assert args["sketch_id"] == "$sketch_main"
+    assert args["target_body_id"] == "$body_main"
+    assert executable["operations"][1]["result_bindings"]["object"] == "sketch_main"
 
 
 def test_materialize_frozen_cli_rejects_existing_frozen_without_reading_drawing(tmp_path=None):

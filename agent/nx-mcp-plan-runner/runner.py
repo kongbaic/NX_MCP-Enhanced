@@ -4783,6 +4783,7 @@ def _principal_axis_circle_operation_contract(
             {
                 "tool": "nx_create_sketch",
                 "fixed_args": {"plane": plane},
+                "requires": [],
             },
             {
                 "tool": "nx_sketch_circle",
@@ -5100,6 +5101,7 @@ def _rotational_profile_operation_contract(
         {
             "tool": "nx_create_sketch",
             "fixed_args": {"plane": plane},
+                "requires": [],
         }
     ]
     for segment_index, segment in enumerate(segments):
@@ -5659,6 +5661,7 @@ def _continuous_hole_slot_operation_contract(
         {
             "tool": "nx_create_sketch",
             "fixed_args": {"plane": plane},
+                "requires": [],
         },
         {
             "tool": "nx_sketch_line",
@@ -6218,6 +6221,37 @@ def dispatch_planner_adapter(
     )
     if materialization_errors:
         return None, materialization_errors
+    # Adapter/Plan Contracts must be directly consumable by materialize-frozen.
+    # Every operation declares its exact symbolic dependencies, including []
+    # for independent tools such as nx_create_sketch. Fail at the producer
+    # instead of making Agent or Frozen Plan guess a missing contract field.
+    for group_index, group in enumerate(operation_contracts):
+        operations = group.get("operations")
+        if not isinstance(operations, list):
+            return None, [
+                f"capability_materialization_violation: operation contract "
+                f"group {group_index} has no operation list"
+            ]
+        for op_index, operation in enumerate(operations):
+            if not isinstance(operation, dict):
+                return None, [
+                    f"capability_materialization_violation: operation "
+                    f"{group_index}:{op_index} is not an object"
+                ]
+            requirements = operation.get("requires")
+            fixed_args = operation.get("fixed_args")
+            if (
+                not isinstance(requirements, list)
+                or any(not isinstance(req, str) or not req for req in requirements)
+                or len(set(requirements)) != len(requirements)
+                or not isinstance(fixed_args, dict)
+                or any(req in fixed_args for req in requirements)
+            ):
+                return None, [
+                    f"capability_materialization_violation: operation "
+                    f"{group_index}:{op_index} must declare requires list "
+                    "and disjoint fixed_args"
+                ]
     payload["operation_contracts"] = operation_contracts
     return payload, []
 

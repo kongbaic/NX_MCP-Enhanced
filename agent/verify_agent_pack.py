@@ -24,6 +24,7 @@ REQUIRED = [
     "references/certified-tool-contract.json",
     "references/pipeline-contract.md",
     "references/reader-bounded-query-contract.md",
+    "references/legacy-structural-context-contract.md",
     "references/chinese-output.md",
     "examples/example-output.json",
     "examples/modeling-plan-example.json",
@@ -43,6 +44,12 @@ def main() -> None:
             fail(f"missing nx-agent file: {rel}")
 
     top = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    legacy_structural = (SKILL / "references" / "legacy-structural-context-contract.md").read_text(encoding="utf-8")
+    if "4. **【历史完整答案契约" in top or len(legacy_structural) < 7000:
+        fail("legacy structural full-answer rules must stay archived outside Fresh SKILL")
+    if "Fresh 生产禁止加载" not in top or "正常生产的 Structural Agent 精简规则" not in top:
+        fail("Fresh structural short contract is missing from SKILL")
+    structural_contract = top + "\n" + legacy_structural
     match = re.search(r"(?m)^name:\s*(\S+)\s*$", top)
     if not match or match.group(1) != "nx-agent":
         fail("nx-agent frontmatter name mismatch")
@@ -296,7 +303,7 @@ def main() -> None:
         "mode-b-state",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
-        if token not in top:
+        if token not in structural_contract:
             fail(f"Mode B current-request isolation regression: missing {token}")
     for token in (
         "labeled_dimension_targets",
@@ -311,7 +318,7 @@ def main() -> None:
         "尺寸箭头从一端到另一端的方向",
         "整件 overall 外包边界",
     ):
-        if token not in top:
+        if token not in structural_contract:
             fail(f"bounded labeled-dimension structural contract missing: {token}")
 
     for token in (
@@ -592,13 +599,14 @@ def main() -> None:
             fail(f"Reader prep deterministic symmetry regression: missing {token}")
 
     reader_prep_texts = {
-        "SKILL.md": top,
+        "SKILL.md + compatibility archive": structural_contract,
         "pipeline-contract.md": pipeline_contract,
         "reader-runtime-contract.md": reader_runtime,
     }
     for name, tokens in reader_prep_contracts.items():
+        target = "SKILL.md + compatibility archive" if name == "SKILL.md" else name
         for token in tokens:
-            if token not in reader_prep_texts[name]:
+            if token not in reader_prep_texts[target]:
                 fail(f"Reader preparation contract regression in {name}: missing {token}")
 
 

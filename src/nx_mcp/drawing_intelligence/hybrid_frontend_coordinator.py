@@ -22,10 +22,12 @@ from .reader_observation_finalizer import (
 )
 from .reader_semantic_answers import PartialReaderObservations
 from .structural_context import (
+    StructuralCompactVisualAnswers,
     StructuralContextAnswers,
     StructuralContextError,
     StructuralContextQueryPlan,
     assemble_structural_context,
+    compose_structural_visual_answers,
     build_structural_context_queries,
 )
 
@@ -94,6 +96,7 @@ def _run_paths(run_dir: Path) -> dict[str, Path]:
         "ocr_artifacts": run_dir / "hybrid-ocr-artifacts",
         "structural_queries": run_dir / "structural-context-queries.json",
         "structural_answers": run_dir / "structural-context-answers.json",
+        "structural_visual_decisions": run_dir / "structural-visual-decisions.json",
         "structural_context": run_dir / "hybrid-adapter-context.json",
         "partial_observations": run_dir / "partial-reader-observations.json",
         "reader_observations": run_dir / "reader-observations.json",
@@ -368,7 +371,13 @@ def resume_hybrid_frontend(
         paths = _run_paths(run_dir)
         if paths["manifest"].resolve() != manifest_path.resolve():
             raise HybridFrontendCoordinatorError("manifest/run directory mismatch")
-        if answers_path.resolve() != paths["structural_answers"].resolve():
+        is_compact_visual = answers_path.resolve() == paths[
+            "structural_visual_decisions"
+        ].resolve()
+        if (
+            not is_compact_visual
+            and answers_path.resolve() != paths["structural_answers"].resolve()
+        ):
             raise HybridFrontendCoordinatorError(
                 "structural answers must be the current Hybrid Frontend run artifact: "
                 + str(paths["structural_answers"])
@@ -424,8 +433,25 @@ def resume_hybrid_frontend(
     started = time.monotonic()
     try:
         plan = StructuralContextQueryPlan.model_validate(_load_json(paths["structural_queries"]))
-        answers = StructuralContextAnswers.model_validate(_load_json(answers_path))
+        if is_compact_visual:
+            if paths["structural_answers"].exists():
+                raise HybridFrontendCoordinatorError(
+                    "canonical structural answers already exist before compact resume"
+                )
+            visual = StructuralCompactVisualAnswers.model_validate(
+                _load_json(answers_path)
+            )
+            answers = compose_structural_visual_answers(plan, visual)
+        else:
+            answers = StructuralContextAnswers.model_validate(
+                _load_json(answers_path)
+            )
         context = assemble_structural_context(plan, answers)
+        if is_compact_visual:
+            _write_json(
+                paths["structural_answers"],
+                answers.model_dump(mode="json", by_alias=True),
+            )
         _write_json(
             paths["structural_context"],
             context.model_dump(mode="json", by_alias=True),

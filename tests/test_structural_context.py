@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence.structural_context import (
+    StructuralCompactVisualAnswers,
     StructuralContextAnswers,
     StructuralContextError,
     StructuralContextQueryPlan,
@@ -14,6 +15,7 @@ from nx_mcp.drawing_intelligence.structural_context import (
     StructuralRegionQuery,
     assemble_structural_context,
     build_structural_context_queries,
+    compose_structural_visual_answers,
 )
 
 
@@ -95,6 +97,156 @@ def _answers() -> StructuralContextAnswers:
             ],
         }
     )
+
+
+def _compact_answers() -> StructuralCompactVisualAnswers:
+    return StructuralCompactVisualAnswers.model_validate(
+        {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [
+                {
+                    "query_id": "S001",
+                    "view_kind": "front",
+                    "overall_dimension_facts": [
+                        {"axis": "X", "value": 40},
+                        {"axis": "Z", "value": 66},
+                    ],
+                    "rotational_symmetry": {"status": "not_established"},
+                },
+                {
+                    "query_id": "S002",
+                    "view_kind": "side",
+                    "overall_dimension_facts": [{"axis": "Y", "value": 32}],
+                    "rotational_symmetry": {"status": "not_established"},
+                },
+            ],
+        }
+    )
+
+
+def test_machine_composes_minimal_visual_responses_with_provenance():
+    plan = build_structural_context_queries(_reader_input())
+    answers = compose_structural_visual_answers(plan, _compact_answers())
+    assert answers.model_dump(mode="json", by_alias=True) == _answers().model_dump(
+        mode="json", by_alias=True
+    )
+    context = assemble_structural_context(plan, answers)
+    assert len(context.region_views) == 2
+    assert len(context.overall_dimension_facts) == 3
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_region", "extra_region", "duplicate_region"],
+)
+def test_machine_composer_rejects_incomplete_or_extra_queries(failure):
+    plan = build_structural_context_queries(_reader_input())
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    if failure == "missing_region":
+        payload["decisions"].pop()
+    elif failure == "extra_region":
+        payload["decisions"].append(
+            {"query_id": "S999", "view_kind": "top"}
+        )
+    elif failure == "duplicate_region":
+        payload["decisions"].append(dict(payload["decisions"][0]))
+    with pytest.raises(StructuralContextError, match="compact visual query"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
+def test_machine_composer_preserves_proven_ocr_view():
+    reader, report = _view_label_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    payload = {
+        "schema": "structural-visual-decisions-v1",
+        "decisions": [
+            {
+                "query_id": "S001",
+                "overall_dimension_facts": [
+                    {"axis": "X", "value": 40},
+                    {"axis": "Z", "value": 66},
+                ],
+                "rotational_symmetry": {"status": "not_established"},
+            }
+        ],
+    }
+    answers = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    assert answers.answers[0].view_kind == "front"
+    assert answers.answers[1].view_kind is None
+    assert answers.answers[1].unresolved == ["non_geometric_reference_region"]
+
+    payload["decisions"][0]["view_kind"] = "top"
+    with pytest.raises(StructuralContextError, match="overrides deterministic OCR view"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
+def test_machine_composer_does_not_invent_missing_rotation():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    payload["decisions"][0].pop("rotational_symmetry")
+    with pytest.raises(ValidationError, match="rotational symmetry"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
+def test_machine_composer_forbids_missing_labeled_target_decision():
+    plan = build_structural_context_queries(_reader_input())
+    query = plan.queries[0]
+    from nx_mcp.drawing_intelligence.structural_context import (
+        StructuralLabeledDimensionTarget,
+    )
+
+    query.labeled_dimension_targets.append(
+        StructuralLabeledDimensionTarget(
+            target_id="LD_0042",
+            source_item_index=42,
+            source_text="H- 12 mm",
+            value=12.0,
+            deterministic_visual_direction="horizontal",
+        )
+    )
+    plan.answer_template["answers"][0]["labeled_dimension_decisions"].append(
+        {
+            "target_id": "LD_0042",
+            "status": "unresolved",
+            "visual_direction": None,
+            "relation": None,
+            "profile_transition_geometry": None,
+            "symmetry_scope": None,
+            "evidence": ["structural:R1:crop"],
+            "reason": "pending_labeled_dimension_relation_read",
+        }
+    )
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    with pytest.raises(StructuralContextError, match="compact labeled coverage mismatch"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+    payload["decisions"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0042",
+            "status": "resolved",
+            "visual_direction": "vertical",
+            "relation": "between_profile_boundaries",
+        }
+    ]
+    with pytest.raises(StructuralContextError, match="conflicts with deterministic topology"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+    payload["decisions"][0]["labeled_dimension_decisions"][0]["visual_direction"] = "horizontal"
+    answers = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    assert answers.answers[0].labeled_dimension_decisions[0].evidence == [
+        "structural:R1:crop"
+    ]
 
 
 def test_structural_query_builder_only_requests_region_structure():

@@ -1118,6 +1118,167 @@ class StructuralContextAnswers(_StrictStructuralModel):
     answers: list[StructuralRegionAnswer] = Field(min_length=1, max_length=4)
 
 
+class StructuralCompactOverallFact(_StrictStructuralModel):
+    axis: Axis
+    value: float = Field(gt=0)
+
+
+class StructuralCompactRotationalDecision(_StrictStructuralModel):
+    status: Literal["established", "not_established"]
+    basis: Literal["centerline", "axial_section_symmetry"] | None = None
+    centerline_direction: Literal["horizontal", "vertical"] | None = None
+
+
+class StructuralCompactLabeledDecision(_StrictStructuralModel):
+    target_id: str = Field(min_length=1)
+    status: Literal["resolved", "unresolved"]
+    visual_direction: Literal["horizontal", "vertical"] | None = None
+    relation: Literal[
+        "overall_extent",
+        "overall_min_to_profile_transition",
+        "overall_max_to_profile_transition",
+        "between_profile_boundaries",
+    ] | None = None
+    profile_transition_geometry: Literal[
+        "orthogonal", "non_orthogonal", "mixed"
+    ] | None = None
+    symmetry_scope: Literal["single", "bilateral"] | None = None
+    reason: str | None = None
+
+
+class StructuralCompactRegionDecision(_StrictStructuralModel):
+    query_id: str = Field(min_length=1)
+    view_kind: ViewKind | None = None
+    overall_dimension_facts: list[StructuralCompactOverallFact] = Field(
+        default_factory=list
+    )
+    rotational_symmetry: StructuralCompactRotationalDecision | None = None
+    labeled_dimension_decisions: list[StructuralCompactLabeledDecision] = Field(
+        default_factory=list
+    )
+    unresolved: list[str] = Field(default_factory=list)
+
+
+class StructuralCompactVisualAnswers(_StrictStructuralModel):
+    """Only decisions not already owned by deterministic Reader evidence."""
+
+    schema_version: Literal["structural-visual-decisions-v1"] = Field(
+        default="structural-visual-decisions-v1",
+        alias="schema",
+    )
+    decisions: list[StructuralCompactRegionDecision] = Field(
+        default_factory=list, max_length=4
+    )
+
+
+def compose_structural_visual_answers(
+    plan: StructuralContextQueryPlan,
+    visual: StructuralCompactVisualAnswers,
+) -> StructuralContextAnswers:
+    """Merge sparse visual decisions into machine-owned full answers.
+
+    Query identities, evidence, deterministic view labels, known relation
+    seeds, and all OCR engineering values stay under Reader ownership.
+    Never invent missing geometry or silently accept omitted decisions.
+    """
+    import copy
+
+    by_id = {item.query_id: item for item in visual.decisions}
+    if len(by_id) != len(visual.decisions):
+        raise StructuralContextError("duplicate compact visual query id")
+    expected_queries = {
+        query.query_id
+        for query in plan.queries
+        if not query.deterministic_non_geometric_reference
+    }
+    if set(by_id) != expected_queries:
+        raise StructuralContextError(
+            "compact visual query coverage mismatch: "
+            f"missing={sorted(expected_queries - set(by_id))} "
+            f"extra={sorted(set(by_id) - expected_queries)}"
+        )
+
+    template = copy.deepcopy(plan.answer_template)
+    entries = template.get("answers")
+    if not isinstance(entries, list) or len(entries) != len(plan.queries):
+        raise StructuralContextError("invalid deterministic structural answer template")
+
+    for query, entry in zip(plan.queries, entries, strict=True):
+        if not isinstance(entry, dict) or entry.get("query_id") != query.query_id:
+            raise StructuralContextError("structural template query identity mismatch")
+        if query.deterministic_non_geometric_reference:
+            continue
+
+        patch = by_id[query.query_id]
+        if (
+            query.deterministic_view_kind is not None
+            and patch.view_kind is not None
+            and patch.view_kind != query.deterministic_view_kind
+        ):
+            raise StructuralContextError(
+                f"query {query.query_id!r} overrides deterministic OCR view"
+            )
+        entry["view_kind"] = query.deterministic_view_kind or patch.view_kind
+        entry["overall_dimension_facts"] = [
+            {**fact.model_dump(), "evidence": [query.evidence_label]}
+            for fact in patch.overall_dimension_facts
+        ]
+        entry["rotational_symmetry"] = (
+            {
+                **patch.rotational_symmetry.model_dump(),
+                "evidence": [query.evidence_label],
+            }
+            if patch.rotational_symmetry is not None
+            else None
+        )
+        entry["unresolved"] = list(patch.unresolved)
+
+        target_by_id = {
+            item.target_id: item
+            for item in query.labeled_dimension_targets
+        }
+        pending_ids = {
+            item.target_id
+            for item in query.labeled_dimension_targets
+            if item.deterministic_relation_seed is None
+        }
+        submitted_ids = [
+            item.target_id for item in patch.labeled_dimension_decisions
+        ]
+        if len(submitted_ids) != len(set(submitted_ids)):
+            raise StructuralContextError(
+                f"query {query.query_id!r} repeats compact labeled decision"
+            )
+        if set(submitted_ids) != pending_ids:
+            raise StructuralContextError(
+                f"query {query.query_id!r} compact labeled coverage mismatch: "
+                f"missing={sorted(pending_ids - set(submitted_ids))} "
+                f"extra={sorted(set(submitted_ids) - pending_ids)}"
+            )
+        patch_by_id = {
+            item.target_id: item for item in patch.labeled_dimension_decisions
+        }
+        for target_entry in entry["labeled_dimension_decisions"]:
+            target_id = target_entry["target_id"]
+            if target_id not in patch_by_id:
+                continue
+            target = target_by_id[target_id]
+            decision = patch_by_id[target_id]
+            if (
+                decision.status == "resolved"
+                and target.deterministic_visual_direction is not None
+                and decision.visual_direction != target.deterministic_visual_direction
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} compact labeled direction conflicts "
+                    f"with deterministic topology: {target_id!r}"
+                )
+            target_entry.update(decision.model_dump())
+            target_entry["evidence"] = [query.evidence_label]
+
+    return StructuralContextAnswers.model_validate(template)
+
+
 def build_structural_context_queries(
     reader_input: dict,
     *,

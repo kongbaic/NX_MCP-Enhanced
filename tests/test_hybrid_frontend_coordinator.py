@@ -236,6 +236,75 @@ def test_resume_builds_reader_observations_and_hands_off_to_mode_b(
         assert report["errors"][-1]["stage"] == "mode_b_coordinator"
 
 
+def test_resume_accepts_compact_visual_decisions_and_writes_canonical_answers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "compact-resume")
+    compact = run_dir / "structural-visual-decisions.json"
+    _write_json(
+        compact,
+        {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [
+                {
+                    "query_id": "S001",
+                    "view_kind": "front",
+                    "overall_dimension_facts": [
+                        {"axis": "X", "value": 40},
+                        {"axis": "Z", "value": 66},
+                    ],
+                    "rotational_symmetry": {"status": "not_established"},
+                },
+                {
+                    "query_id": "S002",
+                    "view_kind": "side",
+                    "overall_dimension_facts": [
+                        {"axis": "Y", "value": 32},
+                        {"axis": "Z", "value": 66},
+                    ],
+                    "rotational_symmetry": {"status": "not_established"},
+                },
+            ],
+        },
+    )
+    _install_resume_fakes(monkeypatch, 0)
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest, compact, tmp_path / "compact-resume-mode-b"
+    )
+    assert code == 0, report
+    canonical = run_dir / "structural-context-answers.json"
+    assert canonical.is_file()
+    data = json.loads(canonical.read_text(encoding="utf-8"))
+    assert data["schema"] == "structural-context-answers-v1"
+    assert data["answers"][0]["evidence"] == ["structural:R1:crop"]
+    assert data["answers"][0]["overall_dimension_facts"][0]["evidence"] == [
+        "structural:R1:crop"
+    ]
+
+
+def test_compact_resume_rejects_incomplete_visual_input_without_canonical_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "incomplete-compact")
+    compact = run_dir / "structural-visual-decisions.json"
+    _write_json(
+        compact,
+        {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [{"query_id": "S001", "view_kind": "front"}],
+        },
+    )
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest, compact, tmp_path / "incomplete-compact-mode-b"
+    )
+    assert code == 1
+    assert report["terminal"] is True
+    assert report["errors"][0]["stage"] == "structural_context"
+    assert not (run_dir / "structural-context-answers.json").exists()
+
+
 def test_structural_context_wait_timing_spans_agent_answer_write_and_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -113,7 +113,26 @@ never invent it to satisfy the Adapter, derive it arithmetically, or estimate it
 pixels. Do not answer feature inventory, cross-view identity, local feature values,
 dimension endpoint ownership, start side, termination, or pixel-derived coordinates.
 
-Resume exactly once with:
+Production now prefers compact, evidence-free visual decisions:
+write exactly one `structural-visual-decisions.json` with schema
+`structural-visual-decisions-v1` and one `decisions` item per remaining
+non-reference query. Items report only view_kind when not already proven,
+direct overall_dimension_facts as {axis,value}, rotational_symmetry
+(status/basis/centerline_direction), unresolved reasons, and only pending
+labeled_dimension_decisions without evidence or OCR value. The Reader
+automatically composes the strict canonical `structural-context-answers-v1`
+in the same single resume invocation. It restores all fixed evidence,
+machine-owned OCR view and seeded topology decisions; omission of any
+pending region/target remains an error, not a guess. The new production
+command is:
+
+~~~text
+python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-visual-decisions.json> <fresh-mode-b-prefix>
+~~~
+
+The following full-answer format is retained only for older callers.
+Do not attempt both formats during one Fresh run. For legacy compatibility,
+resume exactly once with:
 
 ~~~text
 python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>

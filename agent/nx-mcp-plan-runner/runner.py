@@ -8509,9 +8509,12 @@ def materialize_frozen_from_contract_wiring(
             elif isinstance(note, dict) and all(
                 isinstance(key, str) for key in note
             ):
-                normalized_notes.append(
-                    json.dumps(note, ensure_ascii=False, sort_keys=True)
-                )
+                try:
+                    normalized_notes.append(
+                        json.dumps(note, ensure_ascii=False, sort_keys=True)
+                    )
+                except (TypeError, ValueError):
+                    return None, ["contract_wiring_invalid_notes"]
             else:
                 return None, ["contract_wiring_invalid_notes"]
         plan["notes"] = normalized_notes

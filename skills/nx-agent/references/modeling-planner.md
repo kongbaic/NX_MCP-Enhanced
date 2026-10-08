@@ -385,6 +385,7 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
 → Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
   `capabilities --feature-kind <kind> --axis <X|Y|Z>`
 → 无 capability / adapter / operation materialization 时 fail closed
+→ 对新建 part 使用本轮 fresh Hybrid run-id 后缀预先确定 workspace-relative PRT/STEP 输出文件名（同一 run-id；只影响命名，不影响 geometry 或 fixed_args）；禁止先 build/check，再在 Stage C 碰撞时改名重跑
 → 生成 FAST plan（含版本号）
 → 发布前静态自检 selection_criteria
 → frozen plan 落盘

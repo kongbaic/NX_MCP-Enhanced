@@ -239,6 +239,8 @@ Loader 日志固定写入 `NX_MCP_WORKSPACE\nx_mcp_loader.log`；安装器会持
 
 Runner 只做 repair 门禁与安全 preflight，不自行修改 plan。
 
+新建零件的 PRT/STEP 输出名应在 frozen plan 创建**之前**由本轮 fresh Hybrid run-id 生成并固定；仅添加本轮 run-id 后缀、保持 workspace-relative 路径，不得改变任何工程尺寸、Adapter fixed_args 或绘图绑定；Stage C 因 `planned_part_exists` 阻塞后绝不允许改名并重新 build/check。这项规则不削弱 Runner 的保护，也不允许查询旧任务或覆盖已有零件。
+
 若本轮 part-entry tool 为 `nx_create_part`，Runner 首先检查 planned PRT 是否已存在于磁盘：正常 attempt 1 已存在则 `precheck_blocked / planned_part_exists`；Loader 自身禁止 `File.Delete` 或覆盖已有目标。只有合法 Controlled Self-Healing attempt 2（`repair_attempt=1 + benchmark + --allow-overwrite + previous failed report 同一 planned_part`）可由 Runner 删除该精确失败目标。安全 preflight 同时允许其它已打开零件继续保持打开，**包括 Runner history 中的上一轮零件**，状态记为 `unrelated_part_preserved_for_create`；Runner 不得关闭它。Loader 执行 `nx_create_part` 时必须使用 `Parts.FileNew()` + `DisplayPartOption.AllowAdditional`，不得使用 `NewDisplay` 替换现有 display；创建后 Runner 必须调用 `nx_status`，同时验证真实 active/Work Part 路径与 planned_part 完全一致，并验证 preflight 中要求保留的旧零件仍存在于 `displayed_parts`，两项都通过后才可继续。若 part-entry tool 为 `nx_open_part` 或其它非新建情形，preflight 返回 `precheck_blocked` / reason=`unrelated_part_open` 时调用方必须 STOP；该状态不是 repair，也不得生成关闭用户零件的计划或自动重跑。
 
 ## 11. 当前路径与版本

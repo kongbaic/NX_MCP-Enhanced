@@ -269,6 +269,10 @@ def main() -> None:
         "runner.py build <current-frozen> <current-executable> --drawing <current-drawing>",
         "runner.py check <current-executable> --drawing <current-drawing>",
         "从零写本轮新的 frozen plan",
+        "fresh Hybrid run directory",
+        "precheck_blocked / planned_part_exists",
+        "不得事后改 frozen/executable 文件名",
+        "第二次 build/check",
         "mode-b-state",
         "禁止扫描工作区寻找可复用历史 plan",
     ):
@@ -316,6 +320,8 @@ def main() -> None:
         "`requires`",
         "runner build --drawing <current-drawing.json>",
         "runner check --drawing <current-drawing.json>",
+        "run-id 后缀",
+        "禁止先 build/check，再在 Stage C 碰撞时改名重跑",
     ):
         if token not in planner_rules:
             fail(f"Mode B Planner isolation regression: missing {token}")
@@ -341,6 +347,7 @@ def main() -> None:
         "active/Work Part",
         "`nx_open_part`",
         "unrelated_part_open",
+        "Stage C 因 `planned_part_exists` 阻塞后绝不允许改名并重新 build/check",
     ):
         if token not in runner_contract:
             fail(f"Runner create-new work-part contract regression: missing {token}")

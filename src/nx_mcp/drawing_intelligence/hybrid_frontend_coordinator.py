@@ -245,6 +245,14 @@ def start_hybrid_frontend(
             plan.model_dump(mode="json", by_alias=True),
         )
         manifest["summary"]["structural_query_count"] = len(plan.queries)
+        manifest["summary"]["structural_reader_preclassified_reference_count"] = sum(
+            1 for item in plan.queries
+            if item.deterministic_non_geometric_reference
+        )
+        manifest["summary"]["structural_agent_pending_region_count"] = sum(
+            1 for item in plan.queries
+            if not item.deterministic_non_geometric_reference
+        )
         manifest["summary"]["structural_unique_image_count"] = len(
             {item.image_path for item in plan.queries}
         )

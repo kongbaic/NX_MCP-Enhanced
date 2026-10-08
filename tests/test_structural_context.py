@@ -144,6 +144,92 @@ def test_structural_query_builder_only_requests_region_structure():
     assert all(item.unresolved == ["pending_structural_visual_read"] for item in template.answers)
 
 
+def _reference_fixture() -> tuple[dict, dict]:
+    reader = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "R1", "crop_path": "C:/work/R1.png",
+                "source_bbox_px": [0, 0, 240, 240],
+                "circle_group_count": 1, "linear_pattern_candidate_count": 0,
+                "candidate_overlay_count": 0,
+            },
+            {
+                "region_id": "R2", "crop_path": "C:/work/R2.png",
+                "source_bbox_px": [300, 0, 240, 240],
+                "circle_group_count": 0, "linear_pattern_candidate_count": 0,
+                "candidate_overlay_count": 0,
+            },
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2", "coverage": {},
+        "candidates": [], "structural_profile_inventory": [],
+        "whole_drawing_items": [
+            {"text": "PARTS LIST",
+             "bbox": [[310, 20], [415, 20], [415, 38], [310, 38]]},
+            {"text": "MATERIAL",
+             "bbox": [[310, 45], [430, 45], [430, 63], [310, 63]]},
+        ],
+    }
+    return reader, report
+
+
+def test_reader_owns_explicit_non_geometric_reference_detection():
+    reader, report = _reference_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    assert plan.queries[0].deterministic_non_geometric_reference is False
+    assert plan.queries[1].deterministic_non_geometric_reference is True
+    answers = StructuralContextAnswers.model_validate(plan.answer_template)
+    assert answers.answers[0].unresolved == ["pending_structural_visual_read"]
+    assert answers.answers[1].unresolved == ["non_geometric_reference_region"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing_title", "unknown_geometry_inventory", "profile_present",
+        "candidate_present", "circle_present", "target_present",
+        "overlapping_region",
+    ],
+)
+def test_reader_reference_classifier_stays_fail_closed(failure):
+    reader, report = _reference_fixture()
+    region = reader["regions"][1]
+    if failure == "missing_title":
+        report["whole_drawing_items"][0]["text"] = "12"
+    elif failure == "unknown_geometry_inventory":
+        region.pop("candidate_overlay_count")
+    elif failure == "profile_present":
+        report["structural_profile_inventory"].append({"region_id": "R2"})
+    elif failure == "candidate_present":
+        report["candidates"].append({"region_id": "R2"})
+    elif failure == "circle_present":
+        region["circle_group_count"] = 1
+    elif failure == "target_present":
+        report["coverage"]["unassigned_linear_observations"] = [
+            {
+                "source_item_index": 7, "text": "H- 12 mm", "token": "12",
+                "bbox": [[350, 85], [440, 85], [440, 100], [350, 100]],
+            }
+        ]
+    elif failure == "overlapping_region":
+        reader["regions"][0]["source_bbox_px"] = [100, 0, 300, 240]
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    assert plan.queries[1].deterministic_non_geometric_reference is False
+
+
+def test_reader_reference_classification_cannot_be_overwritten_by_agent():
+    reader, report = _reference_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    payload = _answers().model_dump(mode="json", by_alias=True)
+    payload["answers"][1]["unresolved"] = []
+    with pytest.raises(StructuralContextError, match="changed deterministic reference classification"):
+        assemble_structural_context(
+            plan, StructuralContextAnswers.model_validate(payload)
+        )
+
+
 def test_structural_query_builder_prefers_shared_full_drawing_context_image():
     reader_input = _reader_input()
     reader_input["structural_context_overview_path"] = (

@@ -701,12 +701,89 @@ def _accepted_linear_span_lower_bounds_by_region(
     return output
 
 
+_REFERENCE_REGION_HEADER_RE = re.compile(
+    r"(?i)^(?:BOM|BILL OF MATERIALS|PARTS LIST|PARTS TABLE|"
+    r"MATERIAL LIST|SPECIFICATIONS?|GENERAL NOTES|TECHNICAL NOTES|"
+    r"明细表|零件明细|零件明细表|材料明细|材料表|规格表|技术要求|技术说明)$"
+)
+
+
+def _deterministic_non_geometric_reference_region(
+    region: dict,
+    all_regions: list[object],
+    hybrid_report: dict | None,
+    *,
+    has_structural_targets: bool,
+) -> bool:
+    """OCR-labeled reference block with positively checked absence of geometry.
+
+    Missing geometry detections alone are never sufficient to claim that a
+    region is a reference table. Pixels are identity evidence, not mm.
+    """
+    if hybrid_report is None or has_structural_targets:
+        return False
+    box = _region_source_bbox(region)
+    region_id = region.get("region_id")
+    if box is None or not isinstance(region_id, str) or not region_id:
+        return False
+    for key in ("circle_group_count", "linear_pattern_candidate_count",
+                "candidate_overlay_count"):
+        count = region.get(key)
+        if not isinstance(count, int) or isinstance(count, bool) or count != 0:
+            return False
+    inventory = hybrid_report.get("structural_profile_inventory")
+    candidates = hybrid_report.get("candidates")
+    ocr_items = hybrid_report.get("whole_drawing_items")
+    if not all(isinstance(items, list) for items in (inventory, candidates, ocr_items)):
+        return False
+    if any(
+        not isinstance(item, dict) or item.get("region_id") == region_id
+        for item in inventory
+    ):
+        return False
+    if any(
+        not isinstance(item, dict)
+        or item.get("region_id") == region_id
+        or region_id in (item.get("source_region_ids") or [])
+        for item in candidates
+    ):
+        return False
+
+    x, y, w, h = box
+    other_boxes: list[tuple[float, float, float, float]] = []
+    for other in all_regions:
+        if isinstance(other, dict) and other.get("region_id") != region_id:
+            other_box = _region_source_bbox(other)
+            if other_box is not None:
+                other_boxes.append(other_box)
+
+    matched_texts: list[str] = []
+    for item in ocr_items:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            continue
+        text_box = _ocr_bbox_rect(item.get("bbox"))
+        if text_box is None:
+            continue
+        tx, ty, tw, th = text_box
+        if tx < x or ty < y or tx + tw > x + w or ty + th > y + h:
+            continue
+        if any(_rect_rect_distance(text_box, other) == 0.0 for other in other_boxes):
+            continue
+        matched_texts.append(item["text"].strip())
+
+    return (
+        len(matched_texts) >= 2
+        and any(_REFERENCE_REGION_HEADER_RE.fullmatch(text) for text in matched_texts)
+    )
+
+
 class StructuralRegionQuery(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     kind: Literal["structural_context"] = "structural_context"
     region_id: str = Field(min_length=1)
     image_path: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
+    deterministic_non_geometric_reference: bool = False
     labeled_dimension_targets: list[StructuralLabeledDimensionTarget] = Field(
         default_factory=list
     )
@@ -1027,19 +1104,23 @@ def build_structural_context_queries(
                     method,
                 )
 
+        region_targets = labeled_targets_by_region.get(region_id, [])
+        region_bounds = accepted_span_bounds_by_region.get(region_id, [])
+        reference_region = _deterministic_non_geometric_reference_region(
+            region,
+            regions,
+            hybrid_report,
+            has_structural_targets=bool(region_targets or region_bounds),
+        )
         queries.append(
             StructuralRegionQuery(
                 query_id=f"S{index:03d}",
                 region_id=region_id,
                 image_path=image_path,
                 evidence_label=evidence_label,
-                labeled_dimension_targets=labeled_targets_by_region.get(
-                    region_id,
-                    [],
-                ),
-                accepted_linear_span_lower_bounds=(
-                    accepted_span_bounds_by_region.get(region_id, [])
-                ),
+                deterministic_non_geometric_reference=reference_region,
+                labeled_dimension_targets=region_targets,
+                accepted_linear_span_lower_bounds=region_bounds,
                 deterministic_profile_symmetry_axis=deterministic_axis,
                 deterministic_profile_symmetry_method=deterministic_method,
                 deterministic_profile_symmetry_overlay=(
@@ -1080,6 +1161,8 @@ def build_structural_context_queries(
             "insufficient_rotation_evidence_is_unresolved": True,
             "region_local_rotation_unobservable_may_defer": True,
             "allow_non_geometric_reference_region": True,
+            "deterministic_reference_requires_explicit_ocr_header_and_no_geometry": True,
+            "preclassified_reference_regions_skip_agent_visual_read": True,
             "global_rotation_closure_remains_fail_closed": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
@@ -1140,7 +1223,11 @@ def build_structural_context_queries(
                         }
                         for target in query.labeled_dimension_targets
                     ],
-                    "unresolved": ["pending_structural_visual_read"],
+                    "unresolved": (
+                        ["non_geometric_reference_region"]
+                        if query.deterministic_non_geometric_reference
+                        else ["pending_structural_visual_read"]
+                    ),
                 }
                 for query in queries
             ],
@@ -1184,6 +1271,10 @@ def assemble_structural_context(
         answer = answers_by_id[query.query_id]
         unresolved = set(answer.unresolved)
         non_geometric_reference = unresolved == {_NON_GEOMETRIC_REFERENCE_REGION}
+        if query.deterministic_non_geometric_reference and not non_geometric_reference:
+            raise StructuralContextError(
+                f"query {query.query_id!r} changed deterministic reference classification"
+            )
         if non_geometric_reference:
             if answer.view_kind is not None:
                 raise StructuralContextError(

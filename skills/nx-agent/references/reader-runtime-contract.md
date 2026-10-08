@@ -17,8 +17,16 @@ python_exe -m nx_mcp.drawing_intelligence run-hybrid-frontend <current-raster-pa
 
 That coordinator owns deterministic Reader input preparation, production Whole +
 Wide-Local Hybrid OCR, and the structural query plan. It intentionally stops at
-`phase=awaiting_structural_context`. The Agent then acts only as the bounded
-Structural Reader: inspect each distinct listed `query.image_path` once. Multiple
+`phase=awaiting_structural_context`. Current production still uses the Agent for unresolved structural image
+semantics; this is a transitional architecture debt, not a coordinator-only
+Reader. The deterministic Reader may certify strictly evidenced text-only
+reference regions with `deterministic_non_geometric_reference=true`. For these
+queries the answer template already contains the only allowed unresolved code
+`non_geometric_reference_region`. The Agent must preserve such entries
+unchanged, must not open the image on account of that query, and must never
+use missing geometry detections alone as proof of a reference region.
+Only the remaining visual queries require a bounded image read: inspect each
+distinct image_path referenced by those remaining queries once. Multiple
 queries may intentionally share one deterministic full-drawing structural overview;
 when they do, open that shared image once and answer each query independently by its
 `query_id` / `region_id`. Production query images prefer a deterministic

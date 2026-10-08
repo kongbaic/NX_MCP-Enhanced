@@ -191,6 +191,8 @@ def test_start_runs_deterministic_prep_ocr_and_structural_query_plan(
     assert payload["summary"]["hybrid_ocr"]["accepted_count"] == 5
     assert payload["summary"]["hybrid_ocr"]["unresolved_count"] == 21
     assert payload["summary"]["structural_query_count"] == 2
+    assert payload["summary"]["structural_reader_preclassified_reference_count"] == 0
+    assert payload["summary"]["structural_agent_pending_region_count"] == 2
     assert payload["summary"]["structural_unique_image_count"] == 2
     assert payload["summary"]["structural_labeled_target_count"] == 0
     assert payload["summary"]["structural_seeded_target_count"] == 0

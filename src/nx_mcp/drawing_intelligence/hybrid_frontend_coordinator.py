@@ -330,8 +330,13 @@ def resume_hybrid_frontend(
             workspace,
             "structural answers",
         )
+        # A relative prefix names a direct workspace child, not a child of
+        # the Agent tool's unpredictable current working directory.
+        prefix_path = Path(mode_b_prefix)
+        if not prefix_path.is_absolute():
+            prefix_path = workspace / prefix_path
         prefix = _inside_workspace(
-            Path(mode_b_prefix),
+            prefix_path,
             workspace,
             "Mode B artifact prefix",
         )
@@ -438,8 +443,40 @@ def resume_hybrid_frontend(
                 raise HybridFrontendCoordinatorError(
                     "canonical structural answers already exist before compact resume"
                 )
+            compact_payload = _load_json(answers_path)
+            # Legacy full answers asked the Agent to copy provenance. In the
+            # compact contract provenance belongs to Reader. Tolerate only a
+            # redundant, byte-for-byte identical rotation evidence label;
+            # forged labels and every other extra field remain forbidden.
+            query_evidence = {
+                query.query_id: query.evidence_label
+                for query in plan.queries
+                if not query.deterministic_non_geometric_reference
+            }
+            decisions = compact_payload.get("decisions")
+            if isinstance(decisions, list):
+                for decision in decisions:
+                    if not isinstance(decision, dict):
+                        continue
+                    rotation = decision.get("rotational_symmetry")
+                    if not isinstance(rotation, dict) or "evidence" not in rotation:
+                        continue
+                    query_id = decision.get("query_id")
+                    expected_evidence = (
+                        query_evidence.get(query_id)
+                        if isinstance(query_id, str)
+                        else None
+                    )
+                    if (
+                        expected_evidence is None
+                        or rotation["evidence"] != [expected_evidence]
+                    ):
+                        raise HybridFrontendCoordinatorError(
+                            "compact rotation evidence conflicts with current Reader query"
+                        )
+                    del rotation["evidence"]
             visual = StructuralCompactVisualAnswers.model_validate(
-                _load_json(answers_path)
+                compact_payload
             )
             answers = compose_structural_visual_answers(plan, visual)
         else:

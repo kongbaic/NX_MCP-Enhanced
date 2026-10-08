@@ -2031,13 +2031,14 @@ def assemble_structural_context(
     # Require a single corroborating label for any previously missing axis.
     # Reconcile with independently reported global facts; never select a
     # competing value or silently override an existing overall.
+    all_axes: tuple[Axis, Axis, Axis] = ("X", "Y", "Z")
     labeled_overall_by_axis: dict[Axis, list[HybridLabeledDimensionFact]] = {
         "X": [], "Y": [], "Z": [],
     }
     for fact in labeled_dimension_facts:
         if fact.relation == "overall_extent":
             labeled_overall_by_axis[fact.axis].append(fact)
-    for axis in ("X", "Y", "Z"):
+    for axis in all_axes:
         candidates = labeled_overall_by_axis[axis]
         if not candidates:
             continue
@@ -2073,7 +2074,6 @@ def assemble_structural_context(
         by_axis[overall_fact.axis].append(overall_fact.value)
 
     direct_values: dict[Axis, float] = {}
-    all_axes: tuple[Axis, Axis, Axis] = ("X", "Y", "Z")
     for axis in all_axes:
         values = by_axis[axis]
         if not values:

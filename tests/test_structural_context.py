@@ -460,6 +460,14 @@ def _table_annotation_fixture() -> tuple[dict, dict]:
 
 def test_reader_proves_table_and_annotation_view_owner_without_new_geometry():
     reader, report = _table_annotation_fixture()
+    # Symmetric table grid and annotation witness lines may have false
+    # profile symmetry hints; neither may become geometric rotation evidence.
+    for region in reader["regions"][1:]:
+        region["bilateral_symmetry_hint"] = {
+            "status": "established",
+            "axis_direction": "vertical",
+            "method": "profile_edge_midpoint_consensus_v2",
+        }
     plan = build_structural_context_queries(reader, hybrid_report=report)
     main, table, annotation = plan.queries
     assert not main.deterministic_non_geometric_reference

@@ -8373,7 +8373,7 @@ def mode_b_contract_reference_catalog(
                 # but never has to calculate or rewrite any contract_ref.
                 operations.append({
                     "contract_ref": list(contract_ref),
-                    "requires": {name: None for name in required},
+                    "requires": dict.fromkeys(required),
                     "topology_changes": None,
                 })
     return catalog, {"schema": "mode-b-contract-wiring-v1",

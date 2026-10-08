@@ -510,10 +510,12 @@ def _proven_labeled_vertical_overall(
             horizontal_surfaces.append(edge)
 
         def matching_surface(
-            terminal: float, material_side: int
+            terminal: float,
+            material_side: int,
+            surfaces: list[dict] = horizontal_surfaces,
         ) -> list[dict]:
             return [
-                edge for edge in horizontal_surfaces
+                edge for edge in surfaces
                 if edge.get("material_side_index") == material_side
                 and edge.get("background_side_index") == 1 - material_side
                 and abs(float(edge["position_px"]) - terminal)

@@ -1438,6 +1438,28 @@ class StructuralCompactRotationalDecision(_StrictStructuralModel):
     basis: Literal["centerline", "axial_section_symmetry"] | None = None
     centerline_direction: Literal["horizontal", "vertical"] | None = None
 
+    @model_validator(mode="after")
+    def _shape(self) -> StructuralCompactRotationalDecision:
+        """Enforce the same evidence-bearing shape as the full Reader decision."""
+        if self.status == "not_established":
+            if self.basis is not None or self.centerline_direction is not None:
+                raise ValueError(
+                    "not_established rotational symmetry forbids basis and centerline_direction"
+                )
+            return self
+        if self.basis is None:
+            raise ValueError("established rotational symmetry requires visual basis")
+        if self.basis == "centerline" and self.centerline_direction is None:
+            raise ValueError("centerline basis requires centerline_direction")
+        if (
+            self.basis == "axial_section_symmetry"
+            and self.centerline_direction is not None
+        ):
+            raise ValueError(
+                "axial_section_symmetry basis forbids centerline_direction"
+            )
+        return self
+
 
 class StructuralCompactLabeledDecision(_StrictStructuralModel):
     target_id: str = Field(min_length=1)

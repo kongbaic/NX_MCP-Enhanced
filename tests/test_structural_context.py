@@ -124,6 +124,52 @@ def _compact_answers() -> StructuralCompactVisualAnswers:
     )
 
 
+def test_compact_rotational_decision_basis_requires_exclusive_fields():
+    # Regression: a Fresh axial-section decision cannot also claim a drawn
+    # centerline direction, even before the canonical answer is assembled.
+    valid = [
+        {"status": "established", "basis": "centerline",
+         "centerline_direction": "vertical"},
+        {"status": "established", "basis": "axial_section_symmetry"},
+        {"status": "not_established"},
+    ]
+    for decision in valid:
+        payload = {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [{"query_id": "S001", "rotational_symmetry": decision}],
+        }
+        visual = StructuralCompactVisualAnswers.model_validate(payload)
+        assert visual.decisions[0].rotational_symmetry.status == decision["status"]
+
+    invalid = [
+        {"status": "established", "basis": "axial_section_symmetry",
+         "centerline_direction": "vertical"},
+        {"status": "established", "basis": "centerline"},
+        {"status": "established"},
+        {"status": "not_established", "basis": "centerline",
+         "centerline_direction": "horizontal"},
+    ]
+    for decision in invalid:
+        payload = {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [{"query_id": "S001", "rotational_symmetry": decision}],
+        }
+        with pytest.raises(ValidationError):
+            StructuralCompactVisualAnswers.model_validate(payload)
+
+
+def test_fresh_skill_lists_mutually_exclusive_rotational_decision_shapes():
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / "skills" / "nx-agent" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert '"basis":"axial_section_symmetry"}' in skill
+    assert "绝对禁止携带 `centerline_direction`" in skill
+    assert '"status":"not_established"}' in skill
+    assert "第一次落盘前检查" in skill
+    assert "首次 resume 失败后修 JSON 重试" in skill
+
+
 def test_machine_composes_minimal_visual_responses_with_provenance():
     plan = build_structural_context_queries(_reader_input())
     answers = compose_structural_visual_answers(plan, _compact_answers())

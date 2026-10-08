@@ -118,8 +118,20 @@ write exactly one `structural-visual-decisions.json` with schema
 `structural-visual-decisions-v1` and one `decisions` item per remaining
 non-reference query. Items report only view_kind when not already proven,
 direct overall_dimension_facts as {axis,value}, rotational_symmetry
-(status/basis/centerline_direction), unresolved reasons, and only pending
-labeled_dimension_decisions without evidence or OCR value. The Reader
+with EXACTLY ONE evidence-backed shape:
+`{"status":"established","basis":"centerline","centerline_direction":"vertical"}`
+(or actual visible horizontal direction) for a drawn, whole-part centerline;
+`{"status":"established","basis":"axial_section_symmetry"}` for a uniquely
+supported axial/diametral section (NO `centerline_direction` key, not even
+a guessed orientation); or `{"status":"not_established"}` only for explicit
+counterevidence (NO `basis` or `centerline_direction`). If uncertain, supply
+`rotational_symmetry:null` and a real unresolved reason. These alternatives
+are mutually exclusive. Never use the orientation of the drawing or the
+blue dashed topology overlay as a substitute for a drawn centerline. Do a
+single in-memory shape/visual-evidence check BEFORE writing the one-shot
+`structural-visual-decisions.json`; never edit/resubmit after a terminal
+resume failure. Other unresolved reasons and only pending
+labeled_dimension_decisions are supplied without evidence or OCR value. The Reader
 automatically composes the strict canonical `structural-context-answers-v1`
 in the same single resume invocation. It restores all fixed evidence,
 machine-owned OCR view and seeded topology decisions; omission of any

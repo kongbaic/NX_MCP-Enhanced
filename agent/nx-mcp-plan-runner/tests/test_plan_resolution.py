@@ -4230,19 +4230,21 @@ def test_mode_b_compact_group_wiring_matches_explicit_contracts():
         "schema": "mode-b-contract-wiring-v1",
         "operations": [
             {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
-             "topology_changes": False, "topology_change_indices": [1]},
+             "topology_changes": False, "topology_change_indices": [1],
+             "goal": "Create profile"},
             {"contract_dispatch_ref": 0, "requires": {"body_id": "body_main"},
-             "topology_changes": True},
+             "topology_changes": True, "goal": "Repeated cuts"},
         ],
     }
     explicit = {
         "schema": "mode-b-contract-wiring-v1",
         "operations": [
-            {"contract_ref": [1, 0, 0], "requires": {}, "topology_changes": False},
+            {"contract_ref": [1, 0, 0], "requires": {}, "topology_changes": False,
+             "goal": "Create profile"},
             {"contract_ref": [1, 0, 1], "requires": {"sketch_id": "sketch_main"},
              "topology_changes": True},
             {"contract_ref": [0, 0, 0], "requires": {"body_id": "body_main"},
-             "topology_changes": True},
+             "topology_changes": True, "goal": "Repeated cuts"},
             {"contract_ref": [0, 1, 0], "requires": {"body_id": "body_main"},
              "topology_changes": True},
         ],
@@ -4262,6 +4264,10 @@ def test_mode_b_compact_group_wiring_matches_explicit_contracts():
     assert compact_plan["operations"][1]["tool_args"]["metadata"] == {}
     assert compact_plan["operations"][2]["tool_args"]["reverse"] is False
     assert compact_plan["operations"][3]["tool_args"]["reverse"] is True
+    assert compact_plan["operations"][0]["goal"] == "Create profile"
+    assert compact_plan["operations"][2]["goal"] == "Repeated cuts"
+    assert "goal" not in compact_plan["operations"][1]
+    assert "goal" not in compact_plan["operations"][3]
 
     # No grouped shorthand may bypass exact-once coverage or silently supply
     # missing/extra bindings, topology or unrecognized geometry.
@@ -4280,6 +4286,10 @@ def test_mode_b_compact_group_wiring_matches_explicit_contracts():
          "topology_changes": False, "topology_change_indices": [1, 1]},
         {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
          "topology_changes": False, "fixed_args": {"angle": 180}},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "goal": {"bad": "geometry"}},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "goal": ""},
         {"contract_dispatch_ref": 9, "requires": {}, "topology_changes": False},
         {"contract_dispatch_ref": 0, "requires": {"body_id": "bad_id"},
          "topology_changes": True},
@@ -4300,6 +4310,38 @@ def test_mode_b_compact_group_wiring_matches_explicit_contracts():
     assert plan is None and errors
     assert any("duplicate" in error for error in errors)
 
+
+
+def test_mode_b_compact_dispatch_goal_preserves_all_contract_ops_once():
+    """Regression: group annotation is not an unknown geometry argument."""
+    import copy
+
+    dispatches = [{"payload": {"operation_contracts": [
+        {"operations": [
+            {"tool": "nx_extrude", "requires": ["body_id"],
+             "fixed_args": {"distance": step + 1, "reverse": False}},
+        ]}
+        for step in range(8)
+    ]}}]
+    before = copy.deepcopy(dispatches)
+    shared = {
+        "schema": "mode-b-contract-wiring-v1",
+        "operations": [
+            {"contract_dispatch_ref": 0, "requires": {"body_id": "body_main"},
+             "topology_changes": True, "goal": "Repeated group"},
+        ],
+    }
+    plan, errors = R.materialize_frozen_from_contract_wiring(
+        "fresh-drawing.json", dispatches, shared
+    )
+    assert errors == [] and plan is not None
+    ops = plan["operations"]
+    assert len(ops) == 8
+    assert [op["tool_args"]["distance"] for op in ops] == list(range(1, 9))
+    assert all(op["topology_changes"] is True for op in ops)
+    assert ops[0]["goal"] == "Repeated group"
+    assert all("goal" not in op for op in ops[1:])
+    assert dispatches == before
 
 
 def test_mode_b_compact_wiring_candidates_derive_true_refs_and_requirements():

@@ -8468,8 +8468,15 @@ def _expand_mode_b_compact_wiring(
             is_group == is_dispatch
             or set(item) - {
                 "contract_group_ref", "contract_dispatch_ref", "requires",
-                "topology_changes", "topology_change_indices",
+                "topology_changes", "topology_change_indices", "goal",
             }
+            or (
+                "goal" in item
+                and (
+                    not isinstance(item["goal"], str)
+                    or not item["goal"].strip()
+                )
+            )
             or not isinstance(item.get("requires"), dict)
             or not isinstance(item.get("topology_changes"), bool)
         ):
@@ -8529,11 +8536,16 @@ def _expand_mode_b_compact_wiring(
             return None, [f"contract_wiring_block_{position}: invalid topology overrides"]
         flagged = set(overrides)
         for i, (contract_ref, required) in enumerate(selected):
-            expanded.append({
+            operation_entry = {
                 "contract_ref": contract_ref,
                 "requires": {name: bindings[name] for name in required},
                 "topology_changes": item["topology_changes"] or i in flagged,
-            })
+            }
+            # A group-level goal is commentary, not geometry or an NX
+            # operation parameter. Attach it only to the first operation.
+            if i == 0 and "goal" in item:
+                operation_entry["goal"] = item["goal"]
+            expanded.append(operation_entry)
     return expanded, []
 
 

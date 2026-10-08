@@ -8333,7 +8333,6 @@ _MODE_B_NON_GEOMETRY_TOOLS = {
 }
 
 
-
 def mode_b_contract_reference_catalog(
     dispatches: list[dict],
 ) -> tuple[list[dict], dict, list[str]]:

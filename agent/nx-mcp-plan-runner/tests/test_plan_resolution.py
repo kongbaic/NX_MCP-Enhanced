@@ -4048,7 +4048,6 @@ def test_load_plan_accepts_utf8_bom_from_powershell_51(tmp_path=None):
     assert loaded == payload
 
 
-
 def test_contract_reference_catalog_uses_actual_nested_indices_not_hole_count():
     import copy
 
@@ -4199,8 +4198,6 @@ def test_materialize_frozen_cli_terminal_lock_blocks_corrected_wiring_and_new_ou
             R._drawing_modeling_context = original_model
             R.check_plan = original_check
             R.capability_plan_errors = original_gate
-
-
 
 
 # --------------------------------------------------------------------------

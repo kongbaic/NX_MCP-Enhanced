@@ -1484,15 +1484,36 @@ def compose_structural_visual_answers(
             raise StructuralContextError(
                 f"query {query.query_id!r} repeats compact labeled decision"
             )
-        if set(submitted_ids) != pending_ids:
+        # Some Agent versions echo Reader-seeded labeled relations despite
+        # the compact contract. Such an echo is redundant only when every
+        # semantic field exactly matches the Reader's frozen seed. Ignore
+        # it rather than wasting the one-shot resume opportunity. Do not
+        # permit changing the seed or smuggling profile topology metadata.
+        submitted_pending: dict[str, StructuralCompactLabeledDecision] = {}
+        for decision in patch.labeled_dimension_decisions:
+            target = target_by_id.get(decision.target_id)
+            if target is None or target.deterministic_relation_seed is None:
+                submitted_pending[decision.target_id] = decision
+                continue
+            if (
+                decision.status != "resolved"
+                or decision.visual_direction != target.deterministic_visual_direction
+                or decision.relation != target.deterministic_relation_seed
+                or decision.profile_transition_geometry is not None
+                or decision.symmetry_scope is not None
+                or decision.reason is not None
+            ):
+                raise StructuralContextError(
+                    f"query {query.query_id!r} overrides deterministic labeled "
+                    f"relation seed: {decision.target_id!r}"
+                )
+        if set(submitted_pending) != pending_ids:
             raise StructuralContextError(
                 f"query {query.query_id!r} compact labeled coverage mismatch: "
-                f"missing={sorted(pending_ids - set(submitted_ids))} "
-                f"extra={sorted(set(submitted_ids) - pending_ids)}"
+                f"missing={sorted(pending_ids - set(submitted_pending))} "
+                f"extra={sorted(set(submitted_pending) - pending_ids)}"
             )
-        patch_by_id = {
-            item.target_id: item for item in patch.labeled_dimension_decisions
-        }
+        patch_by_id = submitted_pending
         for target_entry in entry["labeled_dimension_decisions"]:
             target_id = target_entry["target_id"]
             if target_id not in patch_by_id:

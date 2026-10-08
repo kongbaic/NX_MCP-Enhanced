@@ -371,6 +371,218 @@ def test_reader_reference_classifier_stays_fail_closed(failure):
     assert plan.queries[1].deterministic_non_geometric_reference is False
 
 
+
+def _table_annotation_fixture() -> tuple[dict, dict]:
+    """Independent synthetic geometry: no DN150 strings, dimensions or R3 rules."""
+    reader = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "GEOMETRY", "crop_path": "C:/work/geometry.png",
+                "source_bbox_px": [150, 200, 1250, 710],
+                "circle_group_count": 0, "linear_pattern_candidate_count": 8,
+                "candidate_overlay_count": 4,
+            },
+            {
+                "region_id": "REFERENCE", "crop_path": "C:/work/ref.png",
+                "source_bbox_px": [20, 1010, 1700, 210],
+                "circle_group_count": 0, "linear_pattern_candidate_count": 12,
+                "candidate_overlay_count": 6,
+            },
+            {
+                "region_id": "ANNOTATION", "crop_path": "C:/work/top.png",
+                "source_bbox_px": [450, 210, 750, 260],
+                "circle_group_count": 0, "linear_pattern_candidate_count": 1,
+                "candidate_overlay_count": 2,
+            },
+        ],
+    }
+    inventory = [
+        {
+            "region_id": "REFERENCE", "source_orientation": "horizontal",
+            "span_px": [22, 1718],
+        }
+        for _ in range(3)
+    ] + [
+        {"region_id": "REFERENCE", "source_orientation": "vertical"}
+        for _ in range(10)
+    ]
+    def text_item(value, left, top):
+        return {
+            "text": value,
+            "bbox": [
+                [left, top], [left + 45, top],
+                [left + 45, top + 22], [left, top + 22],
+            ],
+        }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "coverage": {},
+        "structural_profile_inventory": inventory,
+        "whole_drawing_items": [
+            text_item(f"COL{index}", 40 + index * 120, 1030)
+            for index in range(9)
+        ] + [
+            text_item(str(100 + index), 40 + index * 120, 1100)
+            for index in range(9)
+        ],
+        "candidates": [
+            {
+                "candidate_id": key,
+                "region_id": "GEOMETRY",
+                "source_region_ids": ["GEOMETRY", "ANNOTATION"],
+                "axis_px": axis_px,
+                "accepted_token": token,
+            }
+            for key, axis_px, token in (
+                ("D_A", 221.0, "87"),
+                ("D_B", 279.0, "75.4"),
+            )
+        ] + [
+            {
+                "candidate_id": "GRID_DIM",
+                "region_id": "REFERENCE",
+                "source_region_ids": ["REFERENCE"],
+                "axis_px": 1120.0,
+                "accepted_token": None,
+            },
+            {
+                "candidate_id": "LOCAL_UNACCEPTED",
+                "region_id": "ANNOTATION",
+                "source_region_ids": ["ANNOTATION"],
+                "axis_px": 300.0,
+                "accepted_token": None,
+            },
+        ],
+    }
+    return reader, report
+
+
+def test_reader_proves_table_and_annotation_view_owner_without_new_geometry():
+    reader, report = _table_annotation_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    main, table, annotation = plan.queries
+    assert not main.deterministic_non_geometric_reference
+    assert table.deterministic_non_geometric_reference
+    assert table.deterministic_profile_symmetry_axis is None
+    assert annotation.deterministic_view_owner_region_id == "GEOMETRY"
+    assert annotation.deterministic_view_kind is None
+    assert plan.rules["annotation_view_owner_supplies_only_view_identity"] is True
+    visual = StructuralCompactVisualAnswers.model_validate(
+        {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [
+                {
+                    "query_id": main.query_id, "view_kind": "front",
+                    "overall_dimension_facts": [
+                        {"axis": "X", "value": 175},
+                        {"axis": "Z", "value": 90},
+                    ],
+                    "rotational_symmetry": {
+                        "status": "established", "basis": "centerline",
+                        "centerline_direction": "vertical",
+                    },
+                },
+            ],
+        }
+    )
+    answers = compose_structural_visual_answers(plan, visual)
+    assert answers.answers[1].view_kind is None
+    assert answers.answers[1].unresolved == ["non_geometric_reference_region"]
+    assert answers.answers[2].view_kind == "front"
+    assert answers.answers[2].rotational_symmetry is None
+    assert answers.answers[2].overall_dimension_facts == []
+    assert answers.answers[2].unresolved == ["rotational_symmetry_not_visible_in_region"]
+    assert answers.answers[2].evidence == ["structural:ANNOTATION:crop"]
+
+
+@pytest.mark.parametrize(
+    "counterexample",
+    ["missing_grid", "missing_row", "accepted_grid_value",
+     "cross_region_grid_candidate", "circle_geometry", "bad_alignment"],
+)
+def test_grid_reference_proof_rejects_weak_or_conflicting_evidence(counterexample):
+    reader, report = _table_annotation_fixture()
+    table = reader["regions"][1]
+    if counterexample == "missing_grid":
+        report["structural_profile_inventory"] = []
+    elif counterexample == "missing_row":
+        report["whole_drawing_items"] = report["whole_drawing_items"][:9]
+    elif counterexample == "accepted_grid_value":
+        report["candidates"][-2]["accepted_token"] = "900"
+    elif counterexample == "cross_region_grid_candidate":
+        report["candidates"][-2]["source_region_ids"] = [
+            "REFERENCE", "GEOMETRY",
+        ]
+    elif counterexample == "circle_geometry":
+        table["circle_group_count"] = 1
+    else:
+        for item in report["whole_drawing_items"][9:]:
+            item["bbox"] = [
+                [a + 58, b] for a, b in item["bbox"]
+            ]
+    query = build_structural_context_queries(
+        reader, hybrid_report=report
+    ).queries[1]
+    assert query.deterministic_non_geometric_reference is False
+
+
+@pytest.mark.parametrize(
+    "counterexample",
+    ["single_dimension", "unaccepted_dimension", "local_accepted",
+     "no_overlap", "ambiguous_owner", "real_circle", "same_dimension_axis"],
+)
+def test_annotation_owner_requires_unique_accepted_cross_region_identity(counterexample):
+    reader, report = _table_annotation_fixture()
+    annotation = reader["regions"][2]
+    if counterexample == "single_dimension":
+        report["candidates"].pop(1)
+    elif counterexample == "unaccepted_dimension":
+        report["candidates"][1]["accepted_token"] = None
+    elif counterexample == "local_accepted":
+        report["candidates"][-1]["accepted_token"] = "20"
+    elif counterexample == "no_overlap":
+        annotation["source_bbox_px"] = [1500, 210, 170, 200]
+    elif counterexample == "ambiguous_owner":
+        report["candidates"].extend([
+            {
+                "candidate_id": "COMPETE_1", "region_id": "OTHER",
+                "source_region_ids": ["OTHER", "ANNOTATION"],
+                "axis_px": 321.0, "accepted_token": "45",
+            },
+        ])
+    elif counterexample == "real_circle":
+        annotation["circle_group_count"] = 1
+    else:
+        report["candidates"][1]["axis_px"] = 221.0
+    query = build_structural_context_queries(
+        reader, hybrid_report=report
+    ).queries[2]
+    assert query.deterministic_view_owner_region_id is None
+
+
+def test_compact_annotation_cannot_inject_an_independent_view_decision():
+    reader, report = _table_annotation_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    payload = {
+        "schema": "structural-visual-decisions-v1",
+        "decisions": [
+            {
+                "query_id": "S001", "view_kind": "front",
+                "rotational_symmetry": {"status": "not_established"},
+            },
+            {
+                "query_id": "S003", "view_kind": "top",
+                "rotational_symmetry": {"status": "not_established"},
+            },
+        ],
+    }
+    with pytest.raises(StructuralContextError, match="coverage mismatch"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
 def _view_label_fixture() -> tuple[dict, dict]:
     reader, report = _reference_fixture()
     report["whole_drawing_items"].append(

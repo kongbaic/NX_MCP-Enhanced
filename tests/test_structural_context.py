@@ -170,6 +170,68 @@ def test_fresh_skill_lists_mutually_exclusive_rotational_decision_shapes():
     assert "首次 resume 失败后修 JSON 重试" in skill
 
 
+def test_compact_labeled_relation_resolved_requires_direction_and_relation():
+    # Regression from 220020: a pending C2-style target cannot be marked
+    # resolved with no arrow direction. The compact input must fail before
+    # composing/serializing any full structural answer.
+    def validate(decision):
+        payload = {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [
+                {"query_id": "S004", "labeled_dimension_decisions": [decision]}
+            ],
+        }
+        return StructuralCompactVisualAnswers.model_validate(payload)
+
+    valid_resolved = validate({
+        "target_id": "LD_0011", "status": "resolved",
+        "visual_direction": "vertical",
+        "relation": "between_profile_boundaries",
+    })
+    assert valid_resolved.decisions[0].labeled_dimension_decisions[0].relation == (
+        "between_profile_boundaries"
+    )
+    valid_unresolved = validate({
+        "target_id": "LD_0011", "status": "unresolved",
+        "reason": "dimension arrow direction not established from visual evidence",
+    })
+    assert valid_unresolved.decisions[0].labeled_dimension_decisions[0].reason
+
+    invalid = [
+        {"target_id": "LD_0011", "status": "resolved"},
+        {"target_id": "LD_0011", "status": "resolved",
+         "relation": "between_profile_boundaries", "visual_direction": None},
+        {"target_id": "LD_0011", "status": "resolved",
+         "visual_direction": "vertical", "relation": None},
+        {"target_id": "LD_0011", "status": "resolved",
+         "visual_direction": "vertical", "relation": "overall_extent",
+         "profile_transition_geometry": "orthogonal"},
+        {"target_id": "LD_0011", "status": "resolved",
+         "visual_direction": "vertical", "relation": "between_profile_boundaries",
+         "reason": "uncertain"},
+        {"target_id": "LD_0011", "status": "unresolved"},
+        {"target_id": "LD_0011", "status": "unresolved",
+         "visual_direction": "vertical", "reason": "uncertain"},
+        {"target_id": "LD_0011", "status": "unresolved",
+         "relation": "between_profile_boundaries", "reason": "uncertain"},
+    ]
+    for decision in invalid:
+        with pytest.raises(ValidationError):
+            validate(decision)
+
+
+def test_fresh_skill_forbids_labeled_resolved_with_missing_direction():
+    text = (
+        Path(__file__).resolve().parents[1]
+        / "skills" / "nx-agent" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "4d. **精简标注尺寸决策的互斥字段契约" in text
+    assert '"visual_direction":"vertical","relation":"between_profile_boundaries"' in text
+    assert '"status":"unresolved","reason":"' in text
+    assert "未确定箭头方向时不得填写 resolved" in text
+    assert "首次 resume 失败后不得修改文件重试" in text
+
+
 def test_machine_composes_minimal_visual_responses_with_provenance():
     plan = build_structural_context_queries(_reader_input())
     answers = compose_structural_visual_answers(plan, _compact_answers())

@@ -131,7 +131,20 @@ blue dashed topology overlay as a substitute for a drawn centerline. Do a
 single in-memory shape/visual-evidence check BEFORE writing the one-shot
 `structural-visual-decisions.json`; never edit/resubmit after a terminal
 resume failure. Other unresolved reasons and only pending
-labeled_dimension_decisions are supplied without evidence or OCR value. The Reader
+labeled_dimension_decisions are supplied without evidence or OCR value. For each unseeded labeled target, `resolved` requires BOTH an evidence-backed
+`visual_direction` (`horizontal` or `vertical`) and `relation`
+(`overall_extent`, `overall_min_to_profile_transition`,
+`overall_max_to_profile_transition`, or `between_profile_boundaries`).
+A dimension label such as C2=28 alone cannot prove arrow direction or
+endpoint ownership. When either is uncertain, use
+`{"target_id":"...","status":"unresolved","reason":"..."}` with a genuine
+nonempty reason and NO semantic fields; this may block Gate A and must never
+be auto-filled, interpreted as successful resolution, or repaired after a
+terminal resume. Do not echo Reader-seeded targets or numeric OCR values.
+`resolved` must not include `reason`; `overall_extent` cannot include
+local profile transition metadata. Check these mutually exclusive forms
+before the one and only Fresh visual decision file is written.
+The Reader
 automatically composes the strict canonical `structural-context-answers-v1`
 in the same single resume invocation. It restores all fixed evidence,
 machine-owned OCR view and seeded topology decisions; omission of any

@@ -1477,6 +1477,45 @@ class StructuralCompactLabeledDecision(_StrictStructuralModel):
     symmetry_scope: Literal["single", "bilateral"] | None = None
     reason: str | None = None
 
+    @model_validator(mode="after")
+    def _shape(self) -> StructuralCompactLabeledDecision:
+        """Mirror full-answer labeled semantics without guessing missing fields."""
+        if self.status == "unresolved":
+            if (
+                self.visual_direction is not None
+                or self.relation is not None
+                or self.profile_transition_geometry is not None
+                or self.symmetry_scope is not None
+            ):
+                raise ValueError(
+                    "unresolved compact labeled dimension forbids semantic fields"
+                )
+            if not isinstance(self.reason, str) or not self.reason.strip():
+                raise ValueError(
+                    "unresolved compact labeled dimension requires reason"
+                )
+            return self
+        if self.visual_direction is None or self.relation is None:
+            raise ValueError(
+                "resolved compact labeled dimension requires visual_direction "
+                "and relation"
+            )
+        if self.reason is not None:
+            raise ValueError(
+                "resolved compact labeled dimension forbids unresolved reason"
+            )
+        if (
+            self.relation == "overall_extent"
+            and (
+                self.profile_transition_geometry is not None
+                or self.symmetry_scope is not None
+            )
+        ):
+            raise ValueError(
+                "overall_extent compact labeled dimension forbids profile fields"
+            )
+        return self
+
 
 class StructuralCompactRegionDecision(_StrictStructuralModel):
     query_id: str = Field(min_length=1)

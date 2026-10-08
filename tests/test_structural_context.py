@@ -1695,6 +1695,45 @@ def test_structural_labeled_dimension_prefills_topology_proven_relation(
     assert decision.reason is None
 
 
+def test_structural_labeled_relation_seed_does_not_promote_region_extremes(
+    tmp_path: Path,
+):
+    source_raster, bbox = _write_short_dimension_direction_fixture(
+        tmp_path,
+        witness_orientation="vertical",
+    )
+    reader_input = _reader_input_with_labeled_dimension_regions()
+    report = _hybrid_report_with_labeled_unassigned_dimension()
+    report["source_raster"] = source_raster
+    report["coverage"]["unassigned_linear_observations"][0]["bbox"] = bbox
+    report["structural_profile_inventory"] = [
+        {
+            "kind": "profile_edge_candidate",
+            "ref": f"R1.structural.vertical.00{index}",
+            "region_id": "R1",
+            "source_orientation": "vertical",
+            "position_px": position,
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "relative_extreme_side": extreme,
+        }
+        for index, (position, extreme) in enumerate(
+            [(185.0, "min"), (210.0, "max")], start=1
+        )
+    ]
+    plan = build_structural_context_queries(
+        reader_input,
+        hybrid_report=report,
+    )
+    target = plan.queries[0].labeled_dimension_targets[0]
+    assert target.deterministic_visual_direction == "horizontal"
+    assert target.deterministic_relation_seed is None
+    template = StructuralContextAnswers.model_validate(plan.answer_template)
+    decision = template.answers[0].labeled_dimension_decisions[0]
+    assert decision.status == "unresolved"
+    assert decision.reason == "pending_labeled_dimension_relation_read"
+
+
 def test_structural_context_rejects_changed_deterministic_relation_seed(
     tmp_path: Path,
 ):

@@ -288,7 +288,7 @@ def _deterministic_labeled_relation_seed(
     if (
         source_raster_path is None
         or deterministic_visual_direction is None
-        or not isinstance(profile_inventory, list)
+        or not profile_inventory
     ):
         return None
 
@@ -406,31 +406,14 @@ def _deterministic_labeled_relation_seed(
             if item is not None
         }
 
-        if extremes == {"min", "max"}:
-            relation: Literal[
-                "overall_extent",
-                "overall_min_to_profile_transition",
-                "overall_max_to_profile_transition",
-                "between_profile_boundaries",
-            ] = "overall_extent"
-        elif len(extremes) == 1 and (
-            (first_extreme is None) != (second_extreme is None)
-        ):
-            visual_extreme = next(iter(extremes))
-            engineering_extreme = visual_extreme
-            if deterministic_visual_direction == "vertical":
-                engineering_extreme = (
-                    "max" if visual_extreme == "min" else "min"
-                )
-            relation = (
-                "overall_min_to_profile_transition"
-                if engineering_extreme == "min"
-                else "overall_max_to_profile_transition"
-            )
-        elif first_extreme is None and second_extreme is None:
-            relation = "between_profile_boundaries"
-        else:
+        # These physical edge candidates are region-relative, not a proven
+        # whole-part overall. Do not turn region extrema into overall
+        # dimensions or overall-contact relations before the assembler/adapter
+        # has global view ownership evidence. Only two uniquely identified
+        # *internal* profile boundaries can establish this local relation.
+        if extremes:
             return None
+        relation = "between_profile_boundaries"
 
         resolved_relations.append(relation)
 

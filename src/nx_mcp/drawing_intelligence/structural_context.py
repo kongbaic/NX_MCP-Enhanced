@@ -1610,8 +1610,12 @@ def build_structural_context_queries(
                 ),
                 labeled_dimension_targets=region_targets,
                 accepted_linear_span_lower_bounds=region_bounds,
-                deterministic_profile_symmetry_axis=deterministic_axis,
-                deterministic_profile_symmetry_method=deterministic_method,
+                deterministic_profile_symmetry_axis=(
+                    None if reference_region or annotation_owner else deterministic_axis
+                ),
+                deterministic_profile_symmetry_method=(
+                    None if reference_region or annotation_owner else deterministic_method
+                ),
                 deterministic_profile_symmetry_overlay=(
                     "blue_dashed_topology_axis"
                     if using_structural_context_image

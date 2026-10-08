@@ -249,6 +249,17 @@ def start_hybrid_frontend(
             1 for item in plan.queries
             if item.deterministic_non_geometric_reference
         )
+        manifest["summary"]["structural_reader_preclassified_view_count"] = sum(
+            1 for item in plan.queries
+            if item.deterministic_view_kind is not None
+        )
+        manifest["summary"]["structural_agent_pending_view_count"] = sum(
+            1 for item in plan.queries
+            if (
+                not item.deterministic_non_geometric_reference
+                and item.deterministic_view_kind is None
+            )
+        )
         manifest["summary"]["structural_agent_pending_region_count"] = sum(
             1 for item in plan.queries
             if not item.deterministic_non_geometric_reference

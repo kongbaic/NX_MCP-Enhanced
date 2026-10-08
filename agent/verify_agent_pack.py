@@ -285,6 +285,9 @@ def main() -> None:
         "pending_labeled_dimension_relation_read",
         "between_profile_boundaries",
         "deterministic_visual_direction",
+        "deterministic_view_kind",
+        "deterministic_view_label_source_index",
+        "不再亲自判断视图名称",
         "尺寸箭头从一端到另一端的方向",
         "整件 overall 外包边界",
     ):

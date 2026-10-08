@@ -219,6 +219,108 @@ def test_reader_reference_classifier_stays_fail_closed(failure):
     assert plan.queries[1].deterministic_non_geometric_reference is False
 
 
+def _view_label_fixture() -> tuple[dict, dict]:
+    reader, report = _reference_fixture()
+    report["whole_drawing_items"].append(
+        {
+            "source_item_index": 29,
+            "text": "FRONT VIEW",
+            "bbox": [[12, 25], [125, 25], [125, 42], [12, 42]],
+        }
+    )
+    return reader, report
+
+
+def test_reader_owns_unique_explicit_ocr_view_caption():
+    reader, report = _view_label_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    first, second = plan.queries
+    assert first.deterministic_view_kind == "front"
+    assert first.deterministic_view_label_source_index == 29
+    assert second.deterministic_view_kind is None
+    assert second.deterministic_non_geometric_reference is True
+    answers = StructuralContextAnswers.model_validate(plan.answer_template)
+    assert answers.answers[0].view_kind == "front"
+    assert answers.answers[0].rotational_symmetry is None
+    assert answers.answers[0].unresolved == ["pending_structural_visual_read"]
+    assert answers.answers[1].unresolved == ["non_geometric_reference_region"]
+    assert plan.rules["explicit_ocr_view_title_is_reader_owned"] is True
+    assert plan.rules["agent_must_preserve_deterministic_view_kind"] is True
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_kind"),
+    [
+        ("FRONT VIEW", "front"),
+        ("SIDE VIEW", "side"),
+        ("TOP VIEW", "top"),
+        ("主视图", "front"),
+        ("左视图", "side"),
+        ("俯视图", "top"),
+    ],
+)
+def test_reader_accepts_explicit_multilingual_view_titles(text, expected_kind):
+    reader, report = _view_label_fixture()
+    report["whole_drawing_items"][-1]["text"] = text
+    query = build_structural_context_queries(
+        reader, hybrid_report=report
+    ).queries[0]
+    assert query.deterministic_view_kind == expected_kind
+
+
+@pytest.mark.parametrize(
+    "counterexample",
+    [
+        "missing_geometry", "unknown_label", "bad_bbox", "other_region_overlap",
+        "conflicting_titles", "duplicate_title", "missing_source_index",
+        "unassigned_bbox",
+    ],
+)
+def test_reader_view_caption_fails_closed_on_ambiguous_evidence(counterexample):
+    reader, report = _view_label_fixture()
+    item = report["whole_drawing_items"][-1]
+    if counterexample == "missing_geometry":
+        reader["regions"][0]["circle_group_count"] = 0
+    elif counterexample == "unknown_label":
+        item["text"] = "FRONT?"
+    elif counterexample == "bad_bbox":
+        item["bbox"] = [[12, 25], [12, 25]]
+    elif counterexample == "other_region_overlap":
+        reader["regions"][1]["source_bbox_px"] = [50, 0, 290, 240]
+    elif counterexample == "conflicting_titles":
+        report["whole_drawing_items"].append({
+            "source_item_index": 30, "text": "SIDE VIEW",
+            "bbox": [[12, 50], [125, 50], [125, 67], [12, 67]],
+        })
+    elif counterexample == "duplicate_title":
+        report["whole_drawing_items"].append({
+            "source_item_index": 30, "text": "FRONT VIEW",
+            "bbox": [[12, 50], [125, 50], [125, 67], [12, 67]],
+        })
+    elif counterexample == "missing_source_index":
+        item.pop("source_item_index")
+    elif counterexample == "unassigned_bbox":
+        item["bbox"] = [[10, 230], [125, 230], [125, 260], [10, 260]]
+    query = build_structural_context_queries(
+        reader, hybrid_report=report
+    ).queries[0]
+    assert query.deterministic_view_kind is None
+    assert query.deterministic_view_label_source_index is None
+
+
+def test_reader_view_caption_cannot_be_changed_during_assembly():
+    reader, report = _view_label_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    answers = _answers().model_dump(mode="json", by_alias=True)
+    answers["answers"][0]["view_kind"] = "top"
+    with pytest.raises(
+        StructuralContextError, match="changed deterministic OCR view kind"
+    ):
+        assemble_structural_context(
+            plan, StructuralContextAnswers.model_validate(answers)
+        )
+
+
 def test_reader_reference_classification_cannot_be_overwritten_by_agent():
     reader, report = _reference_fixture()
     plan = build_structural_context_queries(reader, hybrid_report=report)

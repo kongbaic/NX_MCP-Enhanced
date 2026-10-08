@@ -781,6 +781,110 @@ def _deterministic_non_geometric_reference_region(
     )
 
 
+_VIEW_LABEL_KIND: dict[str, ViewKind] = {
+    "FRONT VIEW": "front",
+    "FRONT ELEVATION": "front",
+    "主视图": "front",
+    "正视图": "front",
+    "SIDE VIEW": "side",
+    "LEFT SIDE VIEW": "side",
+    "RIGHT SIDE VIEW": "side",
+    "LEFT VIEW": "side",
+    "RIGHT VIEW": "side",
+    "侧视图": "side",
+    "左视图": "side",
+    "右视图": "side",
+    "TOP VIEW": "top",
+    "PLAN VIEW": "top",
+    "俯视图": "top",
+    "顶视图": "top",
+}
+
+
+def _deterministic_ocr_view_kind(
+    region: dict,
+    all_regions: list[object],
+    hybrid_report: dict | None,
+) -> tuple[ViewKind | None, int | None]:
+    """Only an exclusive, exact view caption on a geometry-bearing region.
+
+    Text boxes prove view-label ownership; they never provide numeric geometry.
+    Other regions, conflicting captions, and missing geometry proof fail closed.
+    """
+    if hybrid_report is None:
+        return None, None
+    box = _region_source_bbox(region)
+    rid = region.get("region_id")
+    items = hybrid_report.get("whole_drawing_items")
+    inventory = hybrid_report.get("structural_profile_inventory")
+    if (
+        box is None
+        or not isinstance(rid, str)
+        or not rid
+        or not isinstance(items, list)
+        or not isinstance(inventory, list)
+    ):
+        return None, None
+
+    geometry_counts = (
+        region.get("circle_group_count"),
+        region.get("linear_pattern_candidate_count"),
+        region.get("candidate_overlay_count"),
+    )
+    has_geometry = any(
+        isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for value in geometry_counts
+    ) or any(
+        isinstance(item, dict) and item.get("region_id") == rid
+        for item in inventory
+    )
+    if not has_geometry:
+        return None, None
+
+    other_boxes: list[tuple[float, float, float, float]] = []
+    for other in all_regions:
+        if isinstance(other, dict) and other.get("region_id") != rid:
+            other_box = _region_source_bbox(other)
+            if other_box is None:
+                return None, None
+            other_boxes.append(other_box)
+
+    x, y, width, height = box
+    matches: list[tuple[ViewKind, int]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_text = item.get("text")
+        source_index = item.get("source_item_index")
+        if (
+            not isinstance(raw_text, str)
+            or not isinstance(source_index, int)
+            or isinstance(source_index, bool)
+            or source_index < 0
+        ):
+            continue
+        normalized = " ".join(raw_text.upper().split())
+        kind = _VIEW_LABEL_KIND.get(normalized)
+        if kind is None:
+            continue
+        text_box = _ocr_bbox_rect(item.get("bbox"))
+        if text_box is None:
+            continue
+        tx, ty, tw, th = text_box
+        if tx < x or ty < y or tx + tw > x + width or ty + th > y + height:
+            continue
+        if any(
+            _rect_rect_distance(text_box, other_box) == 0.0
+            for other_box in other_boxes
+        ):
+            continue
+        matches.append((kind, source_index))
+
+    if len(matches) != 1:
+        return None, None
+    return matches[0]
+
+
 class StructuralRegionQuery(_StrictStructuralModel):
     query_id: str = Field(min_length=1)
     kind: Literal["structural_context"] = "structural_context"
@@ -788,6 +892,8 @@ class StructuralRegionQuery(_StrictStructuralModel):
     image_path: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
     deterministic_non_geometric_reference: bool = False
+    deterministic_view_kind: ViewKind | None = None
+    deterministic_view_label_source_index: int | None = Field(default=None, ge=0)
     labeled_dimension_targets: list[StructuralLabeledDimensionTarget] = Field(
         default_factory=list
     )
@@ -1110,6 +1216,11 @@ def build_structural_context_queries(
 
         region_targets = labeled_targets_by_region.get(region_id, [])
         region_bounds = accepted_span_bounds_by_region.get(region_id, [])
+        view_kind, view_label_source = _deterministic_ocr_view_kind(
+            region,
+            regions,
+            hybrid_report,
+        )
         reference_region = _deterministic_non_geometric_reference_region(
             region,
             regions,
@@ -1123,6 +1234,12 @@ def build_structural_context_queries(
                 image_path=image_path,
                 evidence_label=evidence_label,
                 deterministic_non_geometric_reference=reference_region,
+                deterministic_view_kind=(
+                    None if reference_region else view_kind
+                ),
+                deterministic_view_label_source_index=(
+                    None if reference_region else view_label_source
+                ),
                 labeled_dimension_targets=region_targets,
                 accepted_linear_span_lower_bounds=region_bounds,
                 deterministic_profile_symmetry_axis=deterministic_axis,
@@ -1167,6 +1284,9 @@ def build_structural_context_queries(
             "allow_non_geometric_reference_region": True,
             "deterministic_reference_requires_explicit_ocr_header_and_no_geometry": True,
             "preclassified_reference_regions_skip_agent_visual_read": True,
+            "explicit_ocr_view_title_is_reader_owned": True,
+            "reader_view_caption_requires_geometry_and_unique_ownership": True,
+            "agent_must_preserve_deterministic_view_kind": True,
             "global_rotation_closure_remains_fail_closed": True,
             "derive_missing_dimensions": False,
             "cross_view_identity": False,
@@ -1198,7 +1318,7 @@ def build_structural_context_queries(
             "answers": [
                 {
                     "query_id": query.query_id,
-                    "view_kind": None,
+                    "view_kind": query.deterministic_view_kind,
                     "evidence": [query.evidence_label],
                     "overall_dimension_facts": [],
                     "rotational_symmetry": None,
@@ -1278,6 +1398,13 @@ def assemble_structural_context(
         if query.deterministic_non_geometric_reference and not non_geometric_reference:
             raise StructuralContextError(
                 f"query {query.query_id!r} changed deterministic reference classification"
+            )
+        if (
+            query.deterministic_view_kind is not None
+            and answer.view_kind != query.deterministic_view_kind
+        ):
+            raise StructuralContextError(
+                f"query {query.query_id!r} changed deterministic OCR view kind"
             )
         if non_geometric_reference:
             if answer.view_kind is not None:

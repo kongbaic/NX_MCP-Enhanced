@@ -25,6 +25,14 @@ queries the answer template already contains the only allowed unresolved code
 `non_geometric_reference_region`. The Agent must preserve such entries
 unchanged, must not open the image on account of that query, and must never
 use missing geometry detections alone as proof of a reference region.
+The deterministic Reader may also extract an explicit OCR view caption
+(FRONT/SIDE/TOP VIEW, or its unambiguous Chinese counterpart) only when its
+full text bbox belongs to exactly one geometry-bearing region. The result is
+`deterministic_view_kind` plus `deterministic_view_label_source_index`,
+copied into the answer template and enforced by the structural assembler.
+Agent must preserve this `view_kind` without reclassification. A caption
+is NOT evidence for overall dimensions, full-part rotation, or endpoint
+ownership; any ambiguity leaves `deterministic_view_kind=null`.
 Only the remaining visual queries require a bounded image read: inspect each
 distinct image_path referenced by those remaining queries once. Multiple
 queries may intentionally share one deterministic full-drawing structural overview;

@@ -260,12 +260,14 @@ def start_hybrid_frontend(
             1 for item in plan.queries
             if (
                 not item.deterministic_non_geometric_reference
+                and item.deterministic_view_owner_region_id is None
                 and item.deterministic_view_kind is None
             )
         )
         manifest["summary"]["structural_agent_pending_region_count"] = sum(
             1 for item in plan.queries
             if not item.deterministic_non_geometric_reference
+            and item.deterministic_view_owner_region_id is None
         )
         manifest["summary"]["structural_unique_image_count"] = len(
             {item.image_path for item in plan.queries}

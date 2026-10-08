@@ -391,8 +391,6 @@ def _deterministic_labeled_relation_seed(
         ]
     ] = []
     for pair in topology[1]:
-        if not isinstance(pair, tuple) or len(pair) != 2:
-            return None
         first = _match_profile(float(pair[0]))
         second = _match_profile(float(pair[1]))
         if first is None or second is None or first[3] == second[3]:
@@ -413,9 +411,7 @@ def _deterministic_labeled_relation_seed(
         # *internal* profile boundaries can establish this local relation.
         if extremes:
             return None
-        relation = "between_profile_boundaries"
-
-        resolved_relations.append(relation)
+        resolved_relations.append("between_profile_boundaries")
 
     if not resolved_relations or len(set(resolved_relations)) != 1:
         return None

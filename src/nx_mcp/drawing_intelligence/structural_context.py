@@ -701,6 +701,178 @@ def _accepted_linear_span_lower_bounds_by_region(
     return output
 
 
+
+def _tabular_grid_reference_region(
+    region: dict,
+    other_regions: list[object],
+    report: dict,
+) -> bool:
+    """Recognize a measured table grid, not merely axis-aligned ink.
+
+    Two OCR-aligned header/data rows and independent grid lines are required.
+    Candidate edges from table borders do not establish solid geometry.
+    Coordinates here only prove region identity, never engineering values.
+    """
+    bounds = _region_source_bbox(region)
+    region_id = region.get("region_id")
+    if bounds is None or not isinstance(region_id, str):
+        return False
+    if region.get("circle_group_count") != 0:
+        return False
+    items = report.get("whole_drawing_items")
+    inventory = report.get("structural_profile_inventory")
+    candidates = report.get("candidates")
+    if not all(isinstance(group, list) for group in (items, inventory, candidates)):
+        return False
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return False
+        involved = candidate.get("source_region_ids") or []
+        if candidate.get("region_id") == region_id or region_id in involved:
+            if candidate.get("accepted_token") is not None:
+                return False
+            if any(other != region_id for other in involved):
+                return False
+    x, y, width, height = bounds
+    grid = [
+        edge for edge in inventory
+        if isinstance(edge, dict) and edge.get("region_id") == region_id
+    ]
+    spanning = [
+        edge for edge in grid
+        if edge.get("source_orientation") == "horizontal"
+        and isinstance(edge.get("span_px"), list)
+        and len(edge["span_px"]) == 2
+        and all(isinstance(v, (int, float)) for v in edge["span_px"])
+        and abs(edge["span_px"][1] - edge["span_px"][0]) >= width * 0.7
+    ]
+    columns = sum(edge.get("source_orientation") == "vertical" for edge in grid)
+    if len(spanning) < 2 or columns < 6:
+        return False
+    other_boxes = [
+        _region_source_bbox(other)
+        for other in other_regions
+        if isinstance(other, dict) and other.get("region_id") != region_id
+    ]
+    if any(other is None for other in other_boxes):
+        return False
+    rows: list[list[tuple[float, str]]] = []
+    row_centers: list[float] = []
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            continue
+        rect = _ocr_bbox_rect(item.get("bbox"))
+        if rect is None:
+            continue
+        tx, ty, tw, th = rect
+        if tx < x or ty < y or tx + tw > x + width or ty + th > y + height:
+            continue
+        if any(_rect_rect_distance(rect, other) == 0 for other in other_boxes):
+            continue
+        cy = ty + th / 2
+        cx = tx + tw / 2
+        existing = next(
+            (index for index, center in enumerate(row_centers)
+             if abs(center - cy) <= max(8.0, height * 0.045)),
+            None,
+        )
+        if existing is None:
+            row_centers.append(cy)
+            rows.append([])
+            existing = len(rows) - 1
+        rows[existing].append((cx, item["text"].strip()))
+    headers = [
+        (row_centers[index], sorted(row))
+        for index, row in enumerate(rows)
+        if len(row) >= 7
+        and sum(any(ch.isalpha() for ch in label) for _cx, label in row) >= 6
+    ]
+    data_rows = [
+        (row_centers[index], sorted(row))
+        for index, row in enumerate(rows)
+        if len(row) >= 7
+        and sum(any(ch.isdigit() for ch in label) for _cx, label in row) >= 6
+    ]
+    for header_y, header in headers:
+        for data_y, data in data_rows:
+            if data_y <= header_y + max(8.0, height * 0.045):
+                continue
+            aligned = sum(
+                any(abs(hx - dx) <= width * 0.03 for dx, _ in data)
+                for hx, _ in header
+            )
+            if aligned >= 7:
+                return True
+    return False
+
+
+def _linked_annotation_view_owner(
+    region: dict,
+    all_regions: list[object],
+    report: dict | None,
+    *,
+    has_structural_targets: bool,
+) -> str | None:
+    """Recover unique annotation-to-view ownership, not view geometry.
+
+    At least two distinct accepted dimension axes must link the child to
+    the same larger overlapping region. Conflicts fail closed.
+    """
+    if report is None or has_structural_targets:
+        return None
+    child_id = region.get("region_id")
+    child = _region_source_bbox(region)
+    candidates = report.get("candidates")
+    if not isinstance(child_id, str) or child is None or not isinstance(candidates, list):
+        return None
+    if region.get("circle_group_count") != 0:
+        return None
+    if any(
+        not isinstance(item, dict)
+        or (item.get("region_id") == child_id and item.get("accepted_token") is not None)
+        for item in candidates
+    ):
+        return None
+    owners: dict[str, set[float]] = {}
+    for item in candidates:
+        sources = item.get("source_region_ids")
+        owner = item.get("region_id")
+        if (
+            not isinstance(sources, list)
+            or child_id not in sources
+            or not isinstance(owner, str)
+            or owner == child_id
+            or owner not in sources
+            or len(set(sources)) != 2
+            or _positive_number(item.get("accepted_token")) is None
+        ):
+            continue
+        position = item.get("axis_px")
+        if not isinstance(position, (int, float)) or isinstance(position, bool):
+            continue
+        owners.setdefault(owner, set()).add(round(float(position), 1))
+    eligible = []
+    cx, cy, cw, ch = child
+    for owner_id, positions in owners.items():
+        if len(positions) < 2:
+            continue
+        matches = [
+            item for item in all_regions
+            if isinstance(item, dict) and item.get("region_id") == owner_id
+        ]
+        if len(matches) != 1:
+            continue
+        parent = _region_source_bbox(matches[0])
+        if parent is None:
+            continue
+        px, py, pw, ph = parent
+        overlap = max(0, min(cx + cw, px + pw) - max(cx, px))
+        overlap *= max(0, min(cy + ch, py + ph) - max(cy, py))
+        if pw * ph >= 2 * cw * ch and overlap >= 0.5 * cw * ch:
+            eligible.append(owner_id)
+    return eligible[0] if len(eligible) == 1 and len(owners) == 1 else None
+
+
 _REFERENCE_REGION_HEADER_RE = re.compile(
     r"(?i)^(?:BOM|BILL OF MATERIALS|PARTS LIST|PARTS TABLE|"
     r"MATERIAL LIST|SPECIFICATIONS?|GENERAL NOTES|TECHNICAL NOTES|"
@@ -726,6 +898,8 @@ def _deterministic_non_geometric_reference_region(
     region_id = region.get("region_id")
     if box is None or not isinstance(region_id, str) or not region_id:
         return False
+    if _tabular_grid_reference_region(region, all_regions, hybrid_report):
+        return True
     for key in ("circle_group_count", "linear_pattern_candidate_count",
                 "candidate_overlay_count"):
         count = region.get(key)
@@ -892,6 +1066,7 @@ class StructuralRegionQuery(_StrictStructuralModel):
     image_path: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
     deterministic_non_geometric_reference: bool = False
+    deterministic_view_owner_region_id: str | None = None
     deterministic_view_kind: ViewKind | None = None
     deterministic_view_label_source_index: int | None = Field(default=None, ge=0)
     labeled_dimension_targets: list[StructuralLabeledDimensionTarget] = Field(
@@ -1190,6 +1365,7 @@ def compose_structural_visual_answers(
         query.query_id
         for query in plan.queries
         if not query.deterministic_non_geometric_reference
+        and query.deterministic_view_owner_region_id is None
     }
     if set(by_id) != expected_queries:
         raise StructuralContextError(
@@ -1207,6 +1383,30 @@ def compose_structural_visual_answers(
         if not isinstance(entry, dict) or entry.get("query_id") != query.query_id:
             raise StructuralContextError("structural template query identity mismatch")
         if query.deterministic_non_geometric_reference:
+            continue
+        if query.deterministic_view_owner_region_id is not None:
+            owner_region_id = query.deterministic_view_owner_region_id
+            owners = [
+                other for other in plan.queries
+                if other.region_id == owner_region_id
+                and not other.deterministic_non_geometric_reference
+                and other.deterministic_view_owner_region_id is None
+            ]
+            if len(owners) != 1:
+                raise StructuralContextError(
+                    f"query {query.query_id!r} has invalid annotation view owner"
+                )
+            owner = owners[0]
+            owner_patch = by_id.get(owner.query_id)
+            kind = owner.deterministic_view_kind or (
+                owner_patch.view_kind if owner_patch is not None else None
+            )
+            if kind is None:
+                raise StructuralContextError(
+                    f"query {query.query_id!r} annotation owner view unresolved"
+                )
+            entry["view_kind"] = kind
+            entry["unresolved"] = ["rotational_symmetry_not_visible_in_region"]
             continue
 
         patch = by_id[query.query_id]
@@ -1388,6 +1588,12 @@ def build_structural_context_queries(
             hybrid_report,
             has_structural_targets=bool(region_targets or region_bounds),
         )
+        annotation_owner = (
+            None if reference_region else _linked_annotation_view_owner(
+                region, regions, hybrid_report,
+                has_structural_targets=bool(region_targets or region_bounds),
+            )
+        )
         queries.append(
             StructuralRegionQuery(
                 query_id=f"S{index:03d}",
@@ -1395,6 +1601,7 @@ def build_structural_context_queries(
                 image_path=image_path,
                 evidence_label=evidence_label,
                 deterministic_non_geometric_reference=reference_region,
+                deterministic_view_owner_region_id=annotation_owner,
                 deterministic_view_kind=(
                     None if reference_region else view_kind
                 ),
@@ -1445,6 +1652,8 @@ def build_structural_context_queries(
             "allow_non_geometric_reference_region": True,
             "deterministic_reference_requires_explicit_ocr_header_and_no_geometry": True,
             "preclassified_reference_regions_skip_agent_visual_read": True,
+            "annotation_view_ownership_requires_two_accepted_cross_region_dimensions": True,
+            "annotation_view_owner_supplies_only_view_identity": True,
             "explicit_ocr_view_title_is_reader_owned": True,
             "reader_view_caption_requires_geometry_and_unique_ownership": True,
             "agent_must_preserve_deterministic_view_kind": True,
@@ -1511,6 +1720,8 @@ def build_structural_context_queries(
                     "unresolved": (
                         ["non_geometric_reference_region"]
                         if query.deterministic_non_geometric_reference
+                        else ["rotational_symmetry_not_visible_in_region"]
+                        if query.deterministic_view_owner_region_id is not None
                         else ["pending_structural_visual_read"]
                     ),
                 }

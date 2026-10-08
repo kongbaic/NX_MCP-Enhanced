@@ -4200,6 +4200,102 @@ def test_materialize_frozen_cli_terminal_lock_blocks_corrected_wiring_and_new_ou
             R.capability_plan_errors = original_gate
 
 
+def test_mode_b_compact_group_wiring_matches_explicit_contracts():
+    import copy
+
+    dispatches = [
+        {"payload": {"operation_contracts": [
+            {"operations": [{"tool": "nx_extrude", "requires": ["body_id"],
+                             "fixed_args": {"distance": 4, "reverse": False}}]},
+            {"operations": [{"tool": "nx_extrude", "requires": ["body_id"],
+                             "fixed_args": {"distance": 6, "reverse": True}}]},
+        ]}},
+        {"payload": {"operation_contracts": [
+            {"operations": [
+                {"tool": "nx_create_sketch", "requires": [],
+                 "fixed_args": {"plane": "XZ", "offset": 0}},
+                {"tool": "nx_revolve", "requires": ["sketch_id"],
+                 "fixed_args": {"angle": 360, "reverse": False, "metadata": {}}},
+            ]},
+        ]}},
+    ]
+    unchanged = copy.deepcopy(dispatches)
+    compact = {
+        "schema": "mode-b-contract-wiring-v1",
+        "operations": [
+            {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+             "topology_changes": False, "topology_change_indices": [1]},
+            {"contract_dispatch_ref": 0, "requires": {"body_id": "body_main"},
+             "topology_changes": True},
+        ],
+    }
+    explicit = {
+        "schema": "mode-b-contract-wiring-v1",
+        "operations": [
+            {"contract_ref": [1, 0, 0], "requires": {}, "topology_changes": False},
+            {"contract_ref": [1, 0, 1], "requires": {"sketch_id": "sketch_main"},
+             "topology_changes": True},
+            {"contract_ref": [0, 0, 0], "requires": {"body_id": "body_main"},
+             "topology_changes": True},
+            {"contract_ref": [0, 1, 0], "requires": {"body_id": "body_main"},
+             "topology_changes": True},
+        ],
+    }
+    compact_plan, compact_errors = R.materialize_frozen_from_contract_wiring(
+        "fresh-drawing.json", dispatches, compact
+    )
+    explicit_plan, explicit_errors = R.materialize_frozen_from_contract_wiring(
+        "fresh-drawing.json", dispatches, explicit
+    )
+    assert compact_errors == explicit_errors == []
+    assert compact_plan == explicit_plan
+    assert dispatches == unchanged
+    assert [s["tool"] for s in compact_plan["operations"]] == [
+        "nx_create_sketch", "nx_revolve", "nx_extrude", "nx_extrude"
+    ]
+    assert compact_plan["operations"][1]["tool_args"]["metadata"] == {}
+    assert compact_plan["operations"][2]["tool_args"]["reverse"] is False
+    assert compact_plan["operations"][3]["tool_args"]["reverse"] is True
+
+    # No grouped shorthand may bypass exact-once coverage or silently supply
+    # missing/extra bindings, topology or unrecognized geometry.
+    bad_cases = [
+        {"contract_group_ref": [1, 5], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False},
+        {"contract_group_ref": [True, 0], "requires": {}, "topology_changes": False},
+        {"contract_group_ref": [1, 0], "requires": {}, "topology_changes": False},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main", "body_id": "body_main"},
+         "topology_changes": False},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": None},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "topology_change_indices": [2]},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "topology_change_indices": [1, 1]},
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "fixed_args": {"angle": 180}},
+        {"contract_dispatch_ref": 9, "requires": {}, "topology_changes": False},
+        {"contract_dispatch_ref": 0, "requires": {"body_id": "bad_id"},
+         "topology_changes": True},
+    ]
+    for replacement in bad_cases:
+        invalid = copy.deepcopy(compact)
+        invalid["operations"][0] = replacement
+        plan, errors = R.materialize_frozen_from_contract_wiring(
+            "fresh-drawing.json", dispatches, invalid
+        )
+        assert plan is None and errors, replacement
+
+    duplicate = copy.deepcopy(compact)
+    duplicate["operations"].append(copy.deepcopy(compact["operations"][0]))
+    plan, errors = R.materialize_frozen_from_contract_wiring(
+        "fresh-drawing.json", dispatches, duplicate
+    )
+    assert plan is None and errors
+    assert any("duplicate" in error for error in errors)
+
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------

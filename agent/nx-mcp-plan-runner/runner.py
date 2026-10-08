@@ -8403,6 +8403,97 @@ def _reserve_mode_b_materialize_attempt(
     return state_path
 
 
+def _expand_mode_b_compact_wiring(
+    dispatches: list[dict], spec: list,
+) -> tuple[list[dict] | None, list[str]]:
+    """Expand grouped symbolic wiring without guessing geometry or NX IDs.
+
+    Group sequence is supplied by the Planner. Nested operation indices, order
+    and required names come exclusively from the selected Adapter contracts.
+    """
+    expanded: list[dict] = []
+    for position, item in enumerate(spec, start=1):
+        if not isinstance(item, dict):
+            expanded.append(item)
+            continue
+        is_group = "contract_group_ref" in item
+        is_dispatch = "contract_dispatch_ref" in item
+        if not is_group and not is_dispatch:
+            expanded.append(item)
+            continue
+        if (
+            is_group == is_dispatch
+            or set(item) - {
+                "contract_group_ref", "contract_dispatch_ref", "requires",
+                "topology_changes", "topology_change_indices",
+            }
+            or not isinstance(item.get("requires"), dict)
+            or not isinstance(item.get("topology_changes"), bool)
+        ):
+            return None, [f"contract_wiring_block_{position}: invalid grouped entry"]
+        if is_group:
+            ref = item["contract_group_ref"]
+            if (
+                not isinstance(ref, list) or len(ref) != 2
+                or any(type(v) is not int or v < 0 for v in ref)
+            ):
+                return None, [f"contract_wiring_block_{position}: invalid group ref"]
+            selected_dispatches = [(ref[0], ref[1])]
+        else:
+            d = item["contract_dispatch_ref"]
+            if type(d) is not int or d < 0 or d >= len(dispatches):
+                return None, [f"contract_wiring_block_{position}: invalid dispatch ref"]
+            payload = dispatches[d].get("payload") if isinstance(dispatches[d], dict) else None
+            groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+            if not isinstance(groups, list):
+                return None, [f"contract_wiring_block_{position}: invalid dispatch groups"]
+            selected_dispatches = [(d, g) for g in range(len(groups))]
+
+        selected: list[tuple[list[int], list[str]]] = []
+        required_names: set[str] = set()
+        for d, g in selected_dispatches:
+            if d >= len(dispatches) or not isinstance(dispatches[d], dict):
+                return None, [f"contract_wiring_block_{position}: missing dispatch"]
+            payload = dispatches[d].get("payload")
+            groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+            if not isinstance(groups, list) or g >= len(groups):
+                return None, [f"contract_wiring_block_{position}: missing group"]
+            group = groups[g]
+            operations = group.get("operations") if isinstance(group, dict) else None
+            if not isinstance(operations, list):
+                return None, [f"contract_wiring_block_{position}: malformed group"]
+            for op_id, operation in enumerate(operations):
+                required = operation.get("requires") if isinstance(operation, dict) else None
+                if (
+                    not isinstance(required, list)
+                    or any(not isinstance(v, str) or not v for v in required)
+                    or len(set(required)) != len(required)
+                ):
+                    return None, [f"contract_wiring_block_{position}: malformed requires"]
+                selected.append(([d, g, op_id], required))
+                required_names.update(required)
+        if not selected:
+            return None, [f"contract_wiring_block_{position}: empty group"]
+        bindings = item["requires"]
+        if set(bindings) != required_names:
+            return None, [f"contract_wiring_block_{position}: missing/extra bindings"]
+        overrides = item.get("topology_change_indices", [])
+        if (
+            not isinstance(overrides, list)
+            or any(type(i) is not int or i < 0 or i >= len(selected) for i in overrides)
+            or len(set(overrides)) != len(overrides)
+        ):
+            return None, [f"contract_wiring_block_{position}: invalid topology overrides"]
+        flagged = set(overrides)
+        for i, (contract_ref, required) in enumerate(selected):
+            expanded.append({
+                "contract_ref": contract_ref,
+                "requires": {name: bindings[name] for name in required},
+                "topology_changes": item["topology_changes"] or i in flagged,
+            })
+    return expanded, []
+
+
 def materialize_frozen_from_contract_wiring(
     drawing_path: str,
     dispatches: list[dict],
@@ -8421,6 +8512,11 @@ def materialize_frozen_from_contract_wiring(
     spec = wiring.get("operations")
     if not isinstance(spec, list) or not spec:
         return None, ["contract_wiring_operations_missing"]
+
+    spec, expansion_errors = _expand_mode_b_compact_wiring(dispatches, spec)
+    if expansion_errors:
+        return None, expansion_errors
+    assert spec is not None
 
     contract_ops: dict[tuple[int, int, int], dict] = {}
     for dispatch_id, dispatch in enumerate(dispatches):

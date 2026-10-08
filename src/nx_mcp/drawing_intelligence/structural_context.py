@@ -2022,6 +2022,52 @@ def assemble_structural_context(
                 )
             )
 
+    # An OCR-owned labeled value may be a global overall when the bounded
+    # visual decision explicitly established overall_extent. This is the
+    # missing bridge between labeled dimensions and global closure: the
+    # numeric value comes ONLY from the validated OCR target, never pixels
+    # or a newly supplied Agent value. Local labeled relations are excluded.
+    #
+    # Require a single corroborating label for any previously missing axis.
+    # Reconcile with independently reported global facts; never select a
+    # competing value or silently override an existing overall.
+    labeled_overall_by_axis: dict[Axis, list[HybridLabeledDimensionFact]] = {
+        "X": [], "Y": [], "Z": [],
+    }
+    for fact in labeled_dimension_facts:
+        if fact.relation == "overall_extent":
+            labeled_overall_by_axis[fact.axis].append(fact)
+    for axis in ("X", "Y", "Z"):
+        candidates = labeled_overall_by_axis[axis]
+        if not candidates:
+            continue
+        previously_proven = [
+            item.value for item in overall_facts if item.axis == axis
+        ]
+        if previously_proven:
+            if any(
+                not math.isclose(candidate.value, value, abs_tol=1e-9)
+                for candidate in candidates
+                for value in previously_proven
+            ):
+                raise StructuralContextError(
+                    f"labeled overall_extent conflicts with direct overall for axis {axis}"
+                )
+            continue
+        if len(candidates) != 1:
+            raise StructuralContextError(
+                f"ambiguous labeled overall_extent for axis {axis}: "
+                f"{[candidate.target_id for candidate in candidates]}"
+            )
+        candidate = candidates[0]
+        overall_facts.append(
+            PartialOverallDimensionFact(
+                axis=axis,
+                value=candidate.value,
+                evidence=list(candidate.evidence),
+            )
+        )
+
     by_axis: dict[Axis, list[float]] = {"X": [], "Y": [], "Z": []}
     for overall_fact in overall_facts:
         by_axis[overall_fact.axis].append(overall_fact.value)

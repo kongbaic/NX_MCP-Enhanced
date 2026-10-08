@@ -722,7 +722,11 @@ def _tabular_grid_reference_region(
     items = report.get("whole_drawing_items")
     inventory = report.get("structural_profile_inventory")
     candidates = report.get("candidates")
-    if not all(isinstance(group, list) for group in (items, inventory, candidates)):
+    if (
+        not isinstance(items, list)
+        or not isinstance(inventory, list)
+        or not isinstance(candidates, list)
+    ):
         return False
     for candidate in candidates:
         if not isinstance(candidate, dict):
@@ -749,13 +753,14 @@ def _tabular_grid_reference_region(
     columns = sum(edge.get("source_orientation") == "vertical" for edge in grid)
     if len(spanning) < 2 or columns < 6:
         return False
-    other_boxes = [
-        _region_source_bbox(other)
-        for other in other_regions
-        if isinstance(other, dict) and other.get("region_id") != region_id
-    ]
-    if any(other is None for other in other_boxes):
-        return False
+    other_boxes: list[tuple[float, float, float, float]] = []
+    for other in other_regions:
+        if not isinstance(other, dict) or other.get("region_id") == region_id:
+            continue
+        other_box = _region_source_bbox(other)
+        if other_box is None:
+            return False
+        other_boxes.append(other_box)
     rows: list[list[tuple[float, str]]] = []
     row_centers: list[float] = []
     for item in items:

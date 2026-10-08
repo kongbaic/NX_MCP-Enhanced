@@ -2035,9 +2035,9 @@ def assemble_structural_context(
     labeled_overall_by_axis: dict[Axis, list[HybridLabeledDimensionFact]] = {
         "X": [], "Y": [], "Z": [],
     }
-    for fact in labeled_dimension_facts:
-        if fact.relation == "overall_extent":
-            labeled_overall_by_axis[fact.axis].append(fact)
+    for labeled_fact in labeled_dimension_facts:
+        if labeled_fact.relation == "overall_extent":
+            labeled_overall_by_axis[labeled_fact.axis].append(labeled_fact)
     for axis in all_axes:
         candidates = labeled_overall_by_axis[axis]
         if not candidates:

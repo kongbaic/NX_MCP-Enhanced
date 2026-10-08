@@ -227,6 +227,20 @@ def main() -> None:
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     runner_contract = (SKILL / "references" / "runner-contract.md").read_text(encoding="utf-8")
+    if "materialize-frozen" not in runner_contract:
+        fail("Runner contract is missing deterministic frozen materializer")
+    runner_source = (ROOT / "agent" / "nx-mcp-plan-runner" / "runner.py").read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        "def materialize_frozen_from_contract_wiring(",
+        "contract_wiring_missing_adapter_ops",
+        "def _cmd_materialize_frozen(",
+        "materialize-frozen",
+    ):
+        if token not in runner_source:
+            fail(f"Mode B frozen materializer regression: missing {token}")
+
     for token in (
         "当前上传工程图",
         "唯一权威几何输入",
@@ -256,6 +270,8 @@ def main() -> None:
         "mode_b_coordinator resume <mode-b-state.json> <user-confirmations.json>",
         "禁止第二轮确认",
         "runner.py plan-contracts <current-drawing.json>",
+        "mode-b-contract-wiring-v1",
+        "runner.py materialize-frozen <current-drawing.json> <current-wiring.json> <fresh-frozen-plan.json>",
         "operation_contracts",
         "planner_contract",
         "完整 key set + 完整 value",

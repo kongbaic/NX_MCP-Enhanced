@@ -249,3 +249,10 @@ Runner 只做 repair 门禁与安全 preflight，不自行修改 plan。
 - plan_schema：`<runtime-config.workspace_root>\nx-mcp-plan-runner\plan_schema.json`（schema_version 1.1）
 - certified 参数来源：runner.py TOOL_PARAMS（冻结镜像于 certified-tool-contract.json v1.0）
 - 本契约版本：`runner_contract_version = 1.0`；`certified_tool_contract_version = 1.0`
+
+
+## Mode B: deterministic frozen materialization
+
+Normal Mode B now prefers `runner.py materialize-frozen <current-drawing.json> <current-wiring.json> <fresh-frozen-plan.json>` after one successful `plan-contracts` call. The wiring JSON has schema `mode-b-contract-wiring-v1`, a nonempty `operations` array and optional `notes`. Each operation is either a `contract_ref:[dispatch_index,operation_contract_index,operation_index]` plus precisely declared `requires` string symbols, or a `manual:{tool,tool_args}` for strictly non-geometric create/save/export/list tools. An explicit boolean `topology_changes` is mandatory. Optional `goal`, `target`, `selection_criteria`, `expectation`, and refresh metadata carry no engineering values. All selected Adapter operations must be referenced exactly once; missing, duplicate, additional or overridden fixed geometry fails closed.
+
+The materializer recomputes the current drawing's selected Capability/Adapter contract, copies every `fixed_args` key/value (including `reverse:false`, zero, and empty dict) and all `operation_fields` unchanged, adds only required symbol links, enforces Frozen Plan + Gate B, then creates a previously nonexistent frozen file. It never reads older plans and never changes Loader or NX core. The generated file then follows the existing single-pass `build` / `check` / Stage C path. Any failure is a Stage B STOP; there is no fallback to rewriting numeric parameters by Agent.

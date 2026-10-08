@@ -382,6 +382,9 @@ X/Y 轴孔不要用 centroid_radius 代替完整 centroid。
   `fixed_args` 完整 key set 与 value 原样复制到 tool_args（含 false / 0 / 空对象）；
   `operation_fields` 若存在则逐 key 原样展开到 frozen operation 顶层，禁止放入 tool_args；
   Planner 只补 `requires` 指定的 symbol wiring 与步骤顺序
+→ Mode B：**不再由 Agent 把固定参数誊写成整份 Frozen Plan**。Planner 仅生成本轮简短 `mode-b-contract-wiring-v1` JSON，列出所选 contract operation 的 `contract_ref:[dispatch_index,group_index,operation_index]`、严格匹配 `requires` 的 symbol wiring、`topology_changes`、必要的非工程 `selection_criteria`；新零件建立/保存/STEP 导出等纯流程操作使用 `manual:{tool,tool_args}`。每项必须恰好一种来源；所有 Adapter operation 必须各引用恰好一次。禁止在 manual 项内创建/修改任意实体几何，禁止在 wiring 中重算、改写或抄写 fixed_args。首轮唯一调用：
+  `runner.py materialize-frozen <current-drawing.json> <current-wiring.json> <fresh-frozen-plan.json>`
+  Runner 直接从**当前 drawing** 重新解析 selected capability / Adapter contract，把每个 fixed_args、operation_fields 原样展开，严格核对 requires，使用 Gate B 校验后才输出首次 frozen。任何契约、身份、权限或 Gate B 检查失败必须 STOP，禁止换回手工 Frozen Plan 或重试。保留原 `plan-contracts` 一次输出用于确定 index/role/required symbols，但无须 Agent 再抄几百行操作参数。
 → Mode A 若没有 canonical drawing，才按 Feature Contract 调用：
   `capabilities --feature-kind <kind> --axis <X|Y|Z>`
 → 无 capability / adapter / operation materialization 时 fail closed

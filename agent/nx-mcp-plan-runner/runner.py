@@ -8293,6 +8293,197 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     return finish(report, 0 if report["status"] == "success" else 1)
 
 
+_MODE_B_NON_GEOMETRY_TOOLS = {
+    "nx_create_part", "nx_save_part", "nx_export_step", "nx_list_bodies",
+    "nx_list_edges", "nx_list_faces", "nx_list_features", "nx_list_sketches",
+}
+
+
+def materialize_frozen_from_contract_wiring(
+    drawing_path: str,
+    dispatches: list[dict],
+    wiring: dict,
+) -> tuple[dict | None, list[str]]:
+    """Expand compact symbolic wiring; never ask Agent to copy fixed geometry.
+
+    Every selected adapter operation must be referenced once. Only declared
+    requires may be supplied, all fixed_args and operation_fields are copied
+    exactly, and non-contract operations are limited to non-geometry tools.
+    Gate B remains authoritative over the resulting complete plan.
+    """
+    errors: list[str] = []
+    if not isinstance(wiring, dict) or wiring.get("schema") != "mode-b-contract-wiring-v1":
+        return None, ["contract_wiring_invalid_schema"]
+    spec = wiring.get("operations")
+    if not isinstance(spec, list) or not spec:
+        return None, ["contract_wiring_operations_missing"]
+
+    contract_ops: dict[tuple[int, int, int], dict] = {}
+    for dispatch_id, dispatch in enumerate(dispatches):
+        payload = dispatch.get("payload")
+        if not isinstance(payload, dict):
+            return None, ["contract_wiring_invalid_dispatch"]
+        groups = payload.get("operation_contracts")
+        if not isinstance(groups, list):
+            return None, ["contract_wiring_missing_adapter_operations"]
+        for group_id, group in enumerate(groups):
+            if not isinstance(group, dict):
+                return None, ["contract_wiring_invalid_operation_group"]
+            operations = group.get("operations")
+            if not isinstance(operations, list):
+                return None, ["contract_wiring_invalid_operation_group"]
+            for op_id, operation in enumerate(operations):
+                if not isinstance(operation, dict):
+                    return None, ["contract_wiring_invalid_adapter_operation"]
+                contract_ops[(dispatch_id, group_id, op_id)] = operation
+
+    used: set[tuple[int, int, int]] = set()
+    expanded: list[dict] = []
+    metadata = ("goal", "target", "expectation", "selection_criteria",
+                "refresh_edges_after", "refresh_faces_after")
+    for position, entry in enumerate(spec, start=1):
+        if not isinstance(entry, dict) or not isinstance(entry.get("topology_changes"), bool):
+            errors.append(f"contract_wiring_step_{position}: topology_changes must be bool")
+            continue
+        has_contract = "contract_ref" in entry
+        has_manual = "manual" in entry
+        if has_contract == has_manual:
+            errors.append(f"contract_wiring_step_{position}: exactly one source required")
+            continue
+        allowed = {"contract_ref", "manual", "requires", "topology_changes", *metadata}
+        if set(entry) - allowed:
+            errors.append(f"contract_wiring_step_{position}: unknown metadata")
+            continue
+
+        if has_contract:
+            ref = entry["contract_ref"]
+            if (
+                not isinstance(ref, list) or len(ref) != 3
+                or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in ref)
+            ):
+                errors.append(f"contract_wiring_step_{position}: invalid adapter reference")
+                continue
+            key = (ref[0], ref[1], ref[2])
+            if key not in contract_ops or key in used:
+                errors.append(f"contract_wiring_step_{position}: missing/duplicate adapter op {key}")
+                continue
+            used.add(key)
+            operation = contract_ops[key]
+            fixed = operation.get("fixed_args")
+            required = operation.get("requires")
+            fields = operation.get("operation_fields", {})
+            supplied = entry.get("requires", {})
+            if (
+                not isinstance(fixed, dict)
+                or not isinstance(required, list)
+                or not isinstance(fields, dict)
+                or not isinstance(supplied, dict)
+                or any(not isinstance(k, str) or not k for k in required)
+                or len(required) != len(set(required))
+                or set(supplied) != set(required)
+                or set(fixed).intersection(required)
+                or any(not isinstance(v, str) or not v for v in supplied.values())
+            ):
+                errors.append(f"contract_wiring_step_{position}: requires/fixed_args mismatch")
+                continue
+            name = operation.get("tool")
+            if not isinstance(name, str) or name not in CERTIFIED_TOOLS:
+                errors.append(f"contract_wiring_step_{position}: uncertified contract tool")
+                continue
+            op = {
+                "step": position,
+                "tool": name,
+                "tool_args": {**copy.deepcopy(fixed), **copy.deepcopy(supplied)},
+                "topology_changes": entry["topology_changes"],
+            }
+            for field, value in fields.items():
+                if field in op or field == "tool_args":
+                    errors.append(f"contract_wiring_step_{position}: conflicting operation_field")
+                    continue
+                op[field] = copy.deepcopy(value)
+        else:
+            if "requires" in entry or not isinstance(entry["manual"], dict):
+                errors.append(f"contract_wiring_step_{position}: invalid non-geometry step")
+                continue
+            manual = entry["manual"]
+            if (
+                manual.get("tool") not in _MODE_B_NON_GEOMETRY_TOOLS
+                or not isinstance(manual.get("tool_args"), dict)
+                or set(manual) - {"tool", "tool_args"}
+            ):
+                errors.append(f"contract_wiring_step_{position}: geometry may only come from Adapter")
+                continue
+            op = {
+                "step": position,
+                "tool": manual["tool"],
+                "tool_args": copy.deepcopy(manual["tool_args"]),
+                "topology_changes": entry["topology_changes"],
+            }
+        for field in metadata:
+            if field in entry:
+                if field in op:
+                    errors.append(f"contract_wiring_step_{position}: protected operation field {field}")
+                else:
+                    op[field] = copy.deepcopy(entry[field])
+        expanded.append(op)
+
+    missing = set(contract_ops) - used
+    if missing:
+        errors.append(f"contract_wiring_missing_adapter_ops: {sorted(missing)}")
+    if errors:
+        return None, errors
+    plan: dict[str, Any] = {
+        "mode": "FAST",
+        "source_drawing": os.path.abspath(drawing_path),
+        "operations": expanded,
+    }
+    if "notes" in wiring:
+        if not isinstance(wiring["notes"], list) or any(
+            not isinstance(item, str) for item in wiring["notes"]
+        ):
+            return None, ["contract_wiring_invalid_notes"]
+        plan["notes"] = copy.deepcopy(wiring["notes"])
+    if set(wiring) - {"schema", "operations", "notes"}:
+        return None, ["contract_wiring_unknown_top_level"]
+    return plan, []
+
+
+def _cmd_materialize_frozen(args: argparse.Namespace) -> int:
+    """Write a fresh frozen plan from the current drawing and minimal wiring."""
+    result: dict[str, Any] = {
+        "built": None, "ok": False, "errors": [],
+    }
+    try:
+        if os.path.exists(args.out):
+            raise PlanError("frozen plan output already exists: never overwrite")
+        with open(args.wiring, encoding="utf-8-sig") as handle:
+            wiring = json.load(handle)
+        _drawing, dispatches, errors = _drawing_modeling_context(args.drawing)
+        if errors:
+            result["errors"] = errors
+        else:
+            plan, errors = materialize_frozen_from_contract_wiring(
+                args.drawing, dispatches, wiring
+            )
+            if not errors and plan is not None:
+                errors = check_plan(
+                    plan, executable=False, validate_embedded_thread_contract=False,
+                )
+                errors.extend(_mode_b_source_drawing_errors(plan, args.drawing))
+                errors.extend(capability_plan_errors(plan, dispatches))
+                if not errors:
+                    with open(args.out, "x", encoding="utf-8") as handle:
+                        json.dump(plan, handle, ensure_ascii=False, indent=2)
+                    result["built"] = args.out
+                    result["operations"] = len(plan["operations"])
+                    result["ok"] = True
+            result["errors"] = errors
+    except (OSError, ValueError, TypeError, PlanError) as exc:
+        result["errors"] = [f"{type(exc).__name__}: {exc}"]
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 1
+
+
 def _cmd_plan_contracts(args: argparse.Namespace) -> int:
     """Expose deterministic capability/geometry/operation contracts to Planner."""
     timing_state = _begin_command_timing("B2_PLAN_CONTRACTS", args.drawing)
@@ -8492,6 +8683,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     pcontracts.add_argument("drawing")
     pcontracts.set_defaults(func=_cmd_plan_contracts)
+
+    materialize = sub.add_parser(
+        "materialize-frozen",
+        help="expand current deterministic operation contracts plus symbolic wiring",
+    )
+    materialize.add_argument("drawing")
+    materialize.add_argument("wiring")
+    materialize.add_argument("out")
+    materialize.set_defaults(func=_cmd_materialize_frozen)
 
     pcap = sub.add_parser(
         "capabilities",

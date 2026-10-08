@@ -3114,6 +3114,43 @@ def _capture_json_command(command, args):
     return exit_code, json.loads(output.getvalue())
 
 
+def test_materialize_frozen_cli_writes_only_validated_plan(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    wiring_path = os.path.join(directory, "wiring.json")
+    drawing_path = os.path.join(directory, "drawing.json")
+    out = os.path.join(directory, "fresh-frozen.json")
+    dispatches, wiring = _contract_wiring_fixture()
+    with open(wiring_path, "w", encoding="utf-8") as handle:
+        json.dump(wiring, handle)
+
+    original_model = R._drawing_modeling_context
+    original_check = R.check_plan
+    original_gate = R.capability_plan_errors
+    try:
+        R._drawing_modeling_context = lambda path: ({}, dispatches, [])
+        R.check_plan = lambda *args, **kwargs: []
+        R.capability_plan_errors = lambda *args, **kwargs: []
+        args = SimpleNamespace(drawing=drawing_path, wiring=wiring_path, out=out)
+        code, result = _capture_json_command(R._cmd_materialize_frozen, args)
+    finally:
+        R._drawing_modeling_context = original_model
+        R.check_plan = original_check
+        R.capability_plan_errors = original_gate
+
+    assert code == 0, result
+    assert result["ok"] is True
+    assert result["operations"] == 4
+    with open(out, encoding="utf-8") as handle:
+        frozen = json.load(handle)
+    assert frozen["source_drawing"] == os.path.abspath(drawing_path)
+    assert frozen["operations"][2]["tool_args"]["reverse"] is False
+    assert frozen["operations"][2]["tool_args"]["start_offset"] == 0
+    assert frozen["operations"][2]["tool_args"]["metadata"] == {}
+
+
 def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
     import tempfile
     from types import SimpleNamespace

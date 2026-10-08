@@ -3114,6 +3114,158 @@ def _capture_json_command(command, args):
     return exit_code, json.loads(output.getvalue())
 
 
+def _contract_wiring_fixture():
+    """Synthetic Adapter output: fixed geometry belongs only to the Adapter."""
+    dispatches = [
+        {
+            "capability": {"implementation_id": "synthetic-test-v1"},
+            "payload": {
+                "operation_contracts": [
+                    {
+                        "feature_id": "F1",
+                        "role": "synthetic",
+                        "operations": [
+                            {
+                                "tool": "nx_create_sketch",
+                                "fixed_args": {"plane": "XZ", "offset": 0.0},
+                                "requires": [],
+                            },
+                            {
+                                "tool": "nx_extrude",
+                                "fixed_args": {
+                                    "distance": 10.0,
+                                    "reverse": False,
+                                    "start_offset": 0,
+                                    "metadata": {},
+                                },
+                                "requires": ["sketch_id", "target_body_id"],
+                                "operation_fields": {
+                                    "thread_surrogate_use": {
+                                        "implementation": "contract-owned",
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    ]
+    wiring = {
+        "schema": "mode-b-contract-wiring-v1",
+        "operations": [
+            {
+                "manual": {
+                    "tool": "nx_create_part",
+                    "tool_args": {"path": "fresh-test.prt", "units": "mm"},
+                },
+                "topology_changes": False,
+            },
+            {
+                "contract_ref": [0, 0, 0],
+                "requires": {},
+                "topology_changes": False,
+            },
+            {
+                "contract_ref": [0, 0, 1],
+                "requires": {
+                    "sketch_id": "SKETCH_MAIN",
+                    "target_body_id": "BODY_MAIN",
+                },
+                "topology_changes": True,
+            },
+            {
+                "manual": {"tool": "nx_save_part", "tool_args": {}},
+                "topology_changes": False,
+            },
+        ],
+    }
+    return dispatches, wiring
+
+
+def test_contract_wiring_copies_every_fixed_arg_and_operation_field():
+    import copy
+
+    dispatches, wiring = _contract_wiring_fixture()
+    original = copy.deepcopy(dispatches)
+    plan, errors = R.materialize_frozen_from_contract_wiring(
+        "current-drawing.json", dispatches, wiring
+    )
+    assert errors == []
+    assert plan is not None
+    assert dispatches == original
+    assert [op["step"] for op in plan["operations"]] == [1, 2, 3, 4]
+    assert plan["operations"][2]["tool_args"] == {
+        "distance": 10.0,
+        "reverse": False,
+        "start_offset": 0,
+        "metadata": {},
+        "sketch_id": "SKETCH_MAIN",
+        "target_body_id": "BODY_MAIN",
+    }
+    assert plan["operations"][2]["thread_surrogate_use"] == {
+        "implementation": "contract-owned"
+    }
+
+
+def test_contract_wiring_rejects_missing_duplicate_or_unauthorized_operations():
+    import copy
+
+    dispatches, source = _contract_wiring_fixture()
+    for variant in (
+        "missing", "duplicate", "manual_geometry", "extra_requires",
+        "bad_ref", "bad_topology_type",
+    ):
+        wiring = copy.deepcopy(source)
+        if variant == "missing":
+            wiring["operations"].pop(2)
+        elif variant == "duplicate":
+            wiring["operations"][3] = copy.deepcopy(wiring["operations"][2])
+        elif variant == "manual_geometry":
+            wiring["operations"][0]["manual"]["tool"] = "nx_extrude"
+        elif variant == "extra_requires":
+            wiring["operations"][2]["requires"]["distance"] = "12"
+        elif variant == "bad_ref":
+            wiring["operations"][1]["contract_ref"] = [9, 0, 0]
+        elif variant == "bad_topology_type":
+            wiring["operations"][2]["topology_changes"] = "true"
+        plan, errors = R.materialize_frozen_from_contract_wiring(
+            "current-drawing.json", dispatches, wiring
+        )
+        assert plan is None, variant
+        assert errors, variant
+
+
+def test_materialize_frozen_cli_rejects_existing_frozen_without_reading_drawing(tmp_path=None):
+    import tempfile
+    from types import SimpleNamespace
+
+    directory = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp()
+    out = os.path.join(directory, "frozen.json")
+    with open(out, "w", encoding="utf-8") as handle:
+        handle.write("do-not-overwrite")
+    original = R._drawing_modeling_context
+    try:
+        def forbidden(_path):
+            raise AssertionError("existing frozen file must stop before drawing")
+        R._drawing_modeling_context = forbidden
+        code, report = _capture_json_command(
+            R._cmd_materialize_frozen,
+            SimpleNamespace(
+                drawing=os.path.join(directory, "drawing.json"),
+                wiring=os.path.join(directory, "wiring.json"),
+                out=out,
+            ),
+        )
+    finally:
+        R._drawing_modeling_context = original
+    assert code == 1
+    assert report["ok"] is False
+    assert "already exists" in report["errors"][0]
+    with open(out, encoding="utf-8") as handle:
+        assert handle.read() == "do-not-overwrite"
+
+
 def test_materialize_frozen_cli_writes_only_validated_plan(tmp_path=None):
     import tempfile
     from types import SimpleNamespace

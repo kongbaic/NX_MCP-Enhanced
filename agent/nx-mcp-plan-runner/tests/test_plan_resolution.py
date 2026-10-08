@@ -3654,6 +3654,12 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
         "topology_changes": None,
     }]
 
+    assert result["compact_wiring_candidates"]["dispatch_blocks"] == [
+        {"contract_dispatch_ref": 0,
+         "requires": {"sketch_id": None, "target_body_id": None},
+         "topology_changes": None}
+    ]
+
 
 def test_mode_b_source_drawing_binding_requires_exact_current_path(tmp_path=None):
     import tempfile
@@ -4294,6 +4300,63 @@ def test_mode_b_compact_group_wiring_matches_explicit_contracts():
     assert plan is None and errors
     assert any("duplicate" in error for error in errors)
 
+
+
+def test_mode_b_compact_wiring_candidates_derive_true_refs_and_requirements():
+    import copy
+
+    dispatches = [
+        {"payload": {"operation_contracts": [
+            {"operations": []},
+            {"operations": [
+                {"tool": "nx_create_sketch", "fixed_args": {"plane": "XZ"},
+                 "requires": []},
+                {"tool": "nx_sketch_line", "fixed_args": {"start": [0, 0]},
+                 "requires": ["sketch_id"]},
+                {"tool": "nx_revolve", "fixed_args": {"angle": 360.0},
+                 "requires": ["sketch_id"]},
+            ]},
+        ]}},
+        {"payload": {"operation_contracts": [
+            {"operations": [
+                {"tool": "nx_hole", "fixed_args": {"diameter": 26.0},
+                 "requires": ["body_id"]},
+            ]},
+            {"operations": [
+                {"tool": "nx_hole", "fixed_args": {"diameter": 26.0},
+                 "requires": ["body_id"]},
+            ]},
+        ]}},
+    ]
+    saved = copy.deepcopy(dispatches)
+    result, errors = R.mode_b_compact_wiring_candidates(dispatches)
+    assert errors == []
+    assert result is not None
+    assert result["schema"] == "mode-b-compact-wiring-candidates-v1"
+    assert result["group_blocks"] == [
+        {"contract_group_ref": [0, 1], "requires": {"sketch_id": None},
+         "topology_changes": None},
+        {"contract_group_ref": [1, 0], "requires": {"body_id": None},
+         "topology_changes": None},
+        {"contract_group_ref": [1, 1], "requires": {"body_id": None},
+         "topology_changes": None},
+    ]
+    assert result["dispatch_blocks"] == [
+        {"contract_dispatch_ref": 0, "requires": {"sketch_id": None},
+         "topology_changes": None},
+        {"contract_dispatch_ref": 1, "requires": {"body_id": None},
+         "topology_changes": None},
+    ]
+    assert dispatches == saved
+    # Candidates are not executable without explicit, validated symbols/topology.
+    assert all(x["topology_changes"] is None for x in result["dispatch_blocks"])
+    assert all(x["topology_changes"] is None for x in result["group_blocks"])
+    for bad_dispatches in (
+        [{"payload": {"operation_contracts": None}}],
+        [{"payload": {"operation_contracts": [{"operations": [None]}]}}],
+    ):
+        unavailable, errors = R.mode_b_compact_wiring_candidates(bad_dispatches)
+        assert unavailable is None and errors
 
 
 # --------------------------------------------------------------------------

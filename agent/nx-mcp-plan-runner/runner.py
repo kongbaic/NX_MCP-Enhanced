@@ -8380,6 +8380,49 @@ def mode_b_contract_reference_catalog(
                      "operations": operations}, []
 
 
+def mode_b_compact_wiring_candidates(
+    dispatches: list[dict],
+) -> tuple[dict | None, list[str]]:
+    """Offer deterministic group/dispatch refs; never infer bind values or topology.
+
+    Candidate order reflects Adapter enumeration, NOT producer/consumer order.
+    Planner must select disjoint blocks and order producers before consumers.
+    """
+    catalog, _template, errors = mode_b_contract_reference_catalog(dispatches)
+    if errors:
+        return None, errors
+    per_dispatch: dict[int, set[str]] = {}
+    per_group: dict[tuple[int, int], set[str]] = {}
+    for item in catalog:
+        d, g, _o = item["contract_ref"]
+        names = item["requires"]
+        per_dispatch.setdefault(d, set()).update(names)
+        per_group.setdefault((d, g), set()).update(names)
+
+    group_blocks = [
+        {
+            "contract_group_ref": [d, g],
+            "requires": dict.fromkeys(sorted(names)),
+            "topology_changes": None,
+        }
+        for (d, g), names in sorted(per_group.items())
+    ]
+    dispatch_blocks = [
+        {
+            "contract_dispatch_ref": d,
+            "requires": dict.fromkeys(sorted(names)),
+            "topology_changes": None,
+        }
+        for d, names in sorted(per_dispatch.items())
+    ]
+    return {
+        "schema": "mode-b-compact-wiring-candidates-v1",
+        "dispatch_blocks": dispatch_blocks,
+        "group_blocks": group_blocks,
+        "policy": "choose disjoint full coverage; reorder producer-first; fill shared bindings and per-operation topology flags; fall back to explicit contract_ref on conflicting bindings",
+    }, []
+
+
 def _reserve_mode_b_materialize_attempt(
     drawing_path: str, wiring_path: str, output_path: str,
 ) -> str:
@@ -8771,9 +8814,15 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
         if not errors else ([], {}, [])
     )
     errors.extend(reference_errors)
+    compact_candidates, compact_errors = (
+        mode_b_compact_wiring_candidates(dispatches)
+        if not errors else (None, [])
+    )
+    errors.extend(compact_errors)
     result = {
         "drawing": drawing_path,
         "contract_ref_index": contract_ref_index if not errors else [],
+        "compact_wiring_candidates": compact_candidates if not errors else None,
         "wiring_template": wiring_template if not errors else None,
         "planner_contract": {
             "fixed_args_policy": "copy_exact_key_set_and_values",

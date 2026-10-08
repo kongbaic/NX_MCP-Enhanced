@@ -17,6 +17,7 @@ from .reader_semantic_answers import (
     PartialRotationalSymmetryFact,
 )
 from .short_dimension_orientation import (
+    infer_labeled_dimension_axis_span,
     infer_short_dimension_visual_direction,
     infer_short_dimension_visual_topology,
 )
@@ -418,6 +419,121 @@ def _deterministic_labeled_relation_seed(
     return resolved_relations[0]
 
 
+def _proven_labeled_vertical_overall(
+    *,
+    source_raster_path: str | None,
+    raw_bbox: object,
+    region_id: str,
+    regions: list[object],
+    profile_inventory: list[object],
+) -> bool:
+    """Require a labeled dimension line to span two proven material surfaces.
+
+    This checks *identity* of the drawn arrow endpoints against a unique
+    geometry-bearing region with two opposite one-sided material boundaries.
+    It does not measure millimeters, infer a numeric dimension, or derive
+    geometric coordinates from image pixels. The OCR target owns the value.
+    Missing/ambiguous topology remains a visual-query responsibility.
+    """
+
+    if not source_raster_path:
+        return False
+    label_rect = _ocr_bbox_rect(raw_bbox)
+    if label_rect is None:
+        return False
+    span = infer_labeled_dimension_axis_span(
+        source_raster_path, raw_bbox, expected_direction="vertical"
+    )
+    if span is None:
+        return False
+    low, high = span
+    if low >= high:
+        return False
+
+    labeled_region = next(
+        (
+            item for item in regions
+            if isinstance(item, dict) and item.get("region_id") == region_id
+        ),
+        None,
+    )
+    if labeled_region is None:
+        return False
+    label_region_box = _region_source_bbox(labeled_region)
+    if label_region_box is None:
+        return False
+
+    lx, ly, lw, lh = label_region_box
+    text_x, _text_y, text_w, _text_h = label_rect
+    owner_candidates: list[str] = []
+    for other in regions:
+        if not isinstance(other, dict):
+            continue
+        owner_id = other.get("region_id")
+        if not isinstance(owner_id, str) or owner_id == region_id:
+            continue
+        owner_box = _region_source_bbox(other)
+        if owner_box is None:
+            continue
+        ox, oy, ow, oh = owner_box
+        # Label is outside a larger body-view region, not an inside-span
+        # label. Region adjacency is only evidence identity, never mm truth.
+        if (
+            ow <= lw * 2
+            or oh <= lh * 1.25
+            or not (oy <= low < high <= oy + oh)
+            or min(abs(lx - (ox + ow)), abs(ox - (lx + lw)))
+            > max(160.0, ow * 0.15)
+            or text_x < ox + ow - 8.0
+            and text_x + text_w > ox + 8.0
+        ):
+            continue
+
+        horizontal_surfaces: list[dict] = []
+        for edge in profile_inventory:
+            if (
+                not isinstance(edge, dict)
+                or edge.get("kind") != "profile_edge_candidate"
+                or edge.get("region_id") != owner_id
+                or edge.get("source_orientation") != "horizontal"
+                or edge.get("one_sided_boundary_candidate") is not True
+                or not isinstance(edge.get("position_px"), (int, float))
+                or isinstance(edge.get("position_px"), bool)
+                or not isinstance(edge.get("span_px"), list)
+                or len(edge["span_px"]) != 2
+                or not all(isinstance(v, (int, float)) for v in edge["span_px"])
+                or abs(edge["span_px"][1] - edge["span_px"][0]) < ow * 0.20
+                or not isinstance(edge.get("independent_geometry_source_count"), int)
+                or edge["independent_geometry_source_count"] < 2
+            ):
+                continue
+            horizontal_surfaces.append(edge)
+
+        def matching_surface(
+            terminal: float, material_side: int
+        ) -> list[dict]:
+            return [
+                edge for edge in horizontal_surfaces
+                if edge.get("material_side_index") == material_side
+                and edge.get("background_side_index") == 1 - material_side
+                and abs(float(edge["position_px"]) - terminal)
+                <= max(
+                    14.0,
+                    float(edge.get("junction_tolerance_px") or 0.0),
+                )
+            ]
+
+        upper = matching_surface(low, 1)
+        lower = matching_surface(high, 0)
+        if (
+            len(upper) == 1
+            and len(lower) == 1
+            and upper[0].get("ref") != lower[0].get("ref")
+        ):
+            owner_candidates.append(owner_id)
+    return len(owner_candidates) == 1
+
+
 def _labeled_dimension_targets_by_region(
     regions: list[object],
     hybrid_report: dict | None,
@@ -584,6 +700,18 @@ def _labeled_dimension_targets_by_region(
             deterministic_visual_direction=deterministic_visual_direction,
             profile_inventory=profile_inventory,
         )
+        if (
+            deterministic_relation_seed is None
+            and _proven_labeled_vertical_overall(
+                source_raster_path=source_raster_path,
+                raw_bbox=item.get("bbox"),
+                region_id=region_id,
+                regions=regions,
+                profile_inventory=profile_inventory,
+            )
+        ):
+            deterministic_visual_direction = "vertical"
+            deterministic_relation_seed = "overall_extent"
         output.setdefault(region_id, []).append(
             StructuralLabeledDimensionTarget(
                 target_id=f"LD_{source_index:04d}",

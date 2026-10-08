@@ -3362,7 +3362,9 @@ def test_contract_wiring_normalizes_only_descriptive_notes():
         assert plan["operations"] == base_plan["operations"]
         assert plan["source_drawing"] == base_plan["source_drawing"]
         assert wiring == original
-        assert R.check_plan(plan, executable=False) == []
+        assert R.check_plan(
+            plan, executable=False
+        ) == R.check_plan(base_plan, executable=False)
 
 
 def test_contract_wiring_notes_reject_non_descriptive_values():

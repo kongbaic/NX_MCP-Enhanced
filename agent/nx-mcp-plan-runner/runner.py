@@ -8489,11 +8489,32 @@ def materialize_frozen_from_contract_wiring(
         "operations": expanded,
     }
     if "notes" in wiring:
-        if not isinstance(wiring["notes"], list) or any(
-            not isinstance(item, str) for item in wiring["notes"]
-        ):
+        # Notes are descriptive metadata, never geometry or an executable
+        # instruction. Accept common JSON note representations without
+        # forcing Agent to rewrite a one-shot wiring file. Structured notes
+        # are preserved as JSON *text* in the plan's list[str] format.
+        raw_notes = wiring["notes"]
+        if raw_notes is None:
+            note_items: list = []
+        elif isinstance(raw_notes, (str, dict)):
+            note_items = [raw_notes]
+        elif isinstance(raw_notes, list):
+            note_items = raw_notes
+        else:
             return None, ["contract_wiring_invalid_notes"]
-        plan["notes"] = copy.deepcopy(wiring["notes"])
+        normalized_notes: list[str] = []
+        for note in note_items:
+            if isinstance(note, str):
+                normalized_notes.append(note)
+            elif isinstance(note, dict) and all(
+                isinstance(key, str) for key in note
+            ):
+                normalized_notes.append(
+                    json.dumps(note, ensure_ascii=False, sort_keys=True)
+                )
+            else:
+                return None, ["contract_wiring_invalid_notes"]
+        plan["notes"] = normalized_notes
     if set(wiring) - {"schema", "operations", "notes"}:
         return None, ["contract_wiring_unknown_top_level"]
     return plan, []

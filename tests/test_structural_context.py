@@ -769,6 +769,194 @@ def test_compact_annotation_cannot_inject_an_independent_view_decision():
         )
 
 
+def _material_contact_fixture() -> tuple[dict, dict]:
+    """An unrelated axial part with an exterior vertical length callout."""
+    reader = {
+        "schema": "reader-input-v1",
+        "regions": [
+            {
+                "region_id": "BODY",
+                "crop_path": "C:/work/body.png",
+                "source_bbox_px": [70, 30, 700, 570],
+                "circle_group_count": 0,
+                "linear_pattern_candidate_count": 1,
+                "candidate_overlay_count": 1,
+            },
+            {
+                "region_id": "DIMENSIONS",
+                "crop_path": "C:/work/callout.png",
+                "source_bbox_px": [760, 100, 220, 380],
+                "circle_group_count": 0,
+                "linear_pattern_candidate_count": 0,
+                "candidate_overlay_count": 1,
+            },
+        ],
+    }
+    report = {
+        "schema": "dg-hybrid-ocr-bakeoff-v2",
+        "source_raster": "synthetic-drawing.png",
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 42,
+                    "text": "T - 62 mm",
+                    "token": "62",
+                    "primary_tokens": ["62"],
+                    "bbox": [[820, 295], [915, 295], [915, 327], [820, 327]],
+                    "reason": "no_unique_DG_assignment",
+                },
+            ]
+        },
+        "candidates": [],
+        "structural_profile_inventory": [
+            {
+                "kind": "profile_edge_candidate",
+                "region_id": "BODY",
+                "ref": "body-top",
+                "source_orientation": "horizontal",
+                "position_px": 120,
+                "span_px": [160, 620],
+                "one_sided_boundary_candidate": True,
+                "material_side_index": 1,
+                "background_side_index": 0,
+                "independent_geometry_source_count": 3,
+                "junction_tolerance_px": 12,
+            },
+            {
+                "kind": "profile_edge_candidate",
+                "region_id": "BODY",
+                "ref": "body-bottom",
+                "source_orientation": "horizontal",
+                "position_px": 500,
+                "span_px": [140, 640],
+                "one_sided_boundary_candidate": True,
+                "material_side_index": 0,
+                "background_side_index": 1,
+                "independent_geometry_source_count": 3,
+                "junction_tolerance_px": 12,
+            },
+        ],
+    }
+    return reader, report
+
+
+def test_material_boundaries_prove_reader_owned_labeled_global_overall(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from nx_mcp.drawing_intelligence import structural_context as sc
+
+    reader, report = _material_contact_fixture()
+    monkeypatch.setattr(
+        sc, "infer_labeled_dimension_axis_span",
+        lambda *_args, **_kwargs: (121.0, 500.0),
+    )
+    monkeypatch.setattr(
+        sc, "infer_short_dimension_visual_direction",
+        lambda *_args, **_kwargs: None,
+    )
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    target = plan.queries[1].labeled_dimension_targets[0]
+    assert target.source_item_index == 42
+    assert target.value == 62.0
+    assert target.deterministic_visual_direction == "vertical"
+    assert target.deterministic_relation_seed == "overall_extent"
+
+    compact = StructuralCompactVisualAnswers.model_validate({
+        "schema": "structural-visual-decisions-v1",
+        "decisions": [
+            {
+                "query_id": "S001",
+                "view_kind": "front",
+                "overall_dimension_facts": [{"axis": "X", "value": 100}],
+                "rotational_symmetry": {
+                    "status": "established",
+                    "basis": "centerline",
+                    "centerline_direction": "vertical",
+                },
+            },
+            {
+                "query_id": "S002",
+                "view_kind": "front",
+                "rotational_symmetry": None,
+                "unresolved": ["rotational_symmetry_not_visible_in_region"],
+            },
+        ],
+    })
+    answers = compose_structural_visual_answers(plan, compact)
+    context = assemble_structural_context(plan, answers)
+    assert {(f.axis, f.value) for f in context.overall_dimension_facts} == {
+        ("X", 100), ("Z", 62),
+    }
+    assert [f.axis for f in context.rotational_symmetry_facts] == ["Z"]
+    assert [(f.source_item_index, f.relation) for f in context.labeled_dimension_facts] == [
+        (42, "overall_extent"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "wrong_terminal", "missing_bottom", "same_material_side",
+        "ambiguous_top", "insufficient_geometry", "short_surface",
+        "distant_view", "conflicting_second_owner",
+    ],
+)
+def test_material_boundary_overall_proof_stays_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+):
+    from nx_mcp.drawing_intelligence import structural_context as sc
+
+    reader, report = _material_contact_fixture()
+    surfaces = report["structural_profile_inventory"]
+    pair = (120.0, 500.0)
+    if failure == "wrong_terminal":
+        pair = (160.0, 500.0)
+    elif failure == "missing_bottom":
+        surfaces.pop()
+    elif failure == "same_material_side":
+        surfaces[1]["material_side_index"] = 1
+        surfaces[1]["background_side_index"] = 0
+    elif failure == "ambiguous_top":
+        surfaces.append(dict(surfaces[0], ref="other-top"))
+    elif failure == "insufficient_geometry":
+        surfaces[0]["independent_geometry_source_count"] = 1
+    elif failure == "short_surface":
+        surfaces[0]["span_px"] = [200, 250]
+    elif failure == "distant_view":
+        reader["regions"][1]["source_bbox_px"] = [1500, 100, 220, 380]
+        report["coverage"]["unassigned_linear_observations"][0]["bbox"] = [
+            [1560, 295], [1655, 295], [1655, 327], [1560, 327],
+        ]
+    elif failure == "conflicting_second_owner":
+        reader["regions"].insert(1, {
+            "region_id": "OTHER",
+            "crop_path": "C:/work/other.png",
+            "source_bbox_px": [70, 30, 700, 570],
+            "circle_group_count": 0,
+            "linear_pattern_candidate_count": 1,
+            "candidate_overlay_count": 1,
+        })
+        surfaces.extend([
+            dict(edge, region_id="OTHER", ref=edge["ref"] + "-other")
+            for edge in surfaces[:2]
+        ])
+    monkeypatch.setattr(
+        sc, "infer_labeled_dimension_axis_span",
+        lambda *_args, **_kwargs: pair,
+    )
+    monkeypatch.setattr(
+        sc, "infer_short_dimension_visual_direction",
+        lambda *_args, **_kwargs: None,
+    )
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    targets = [
+        t for q in plan.queries for t in q.labeled_dimension_targets
+        if t.source_item_index == 42
+    ]
+    if targets:
+        assert targets[0].deterministic_relation_seed is None
+
+
 def _view_label_fixture() -> tuple[dict, dict]:
     reader, report = _reference_fixture()
     report["whole_drawing_items"].append(

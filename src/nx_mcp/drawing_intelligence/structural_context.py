@@ -734,7 +734,11 @@ def _deterministic_non_geometric_reference_region(
     inventory = hybrid_report.get("structural_profile_inventory")
     candidates = hybrid_report.get("candidates")
     ocr_items = hybrid_report.get("whole_drawing_items")
-    if not all(isinstance(items, list) for items in (inventory, candidates, ocr_items)):
+    if (
+        not isinstance(inventory, list)
+        or not isinstance(candidates, list)
+        or not isinstance(ocr_items, list)
+    ):
         return False
     if any(
         not isinstance(item, dict) or item.get("region_id") == region_id

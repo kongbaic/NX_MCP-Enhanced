@@ -155,6 +155,145 @@ def test_machine_composer_rejects_incomplete_or_extra_queries(failure):
         )
 
 
+def _compact_seed_echo_fixture():
+    """Synthetic Reader-seeded target alongside a genuinely pending target."""
+    from nx_mcp.drawing_intelligence.structural_context import (
+        StructuralLabeledDimensionTarget,
+    )
+
+    plan = build_structural_context_queries(
+        _reader_input_with_labeled_dimension_regions(),
+        hybrid_report=_hybrid_report_with_labeled_unassigned_dimension(),
+    )
+    seeded = plan.queries[0].labeled_dimension_targets[0]
+    assert seeded.target_id == "LD_0017"
+    seeded.deterministic_visual_direction = "horizontal"
+    seeded.deterministic_relation_seed = "between_profile_boundaries"
+
+    pending = StructuralLabeledDimensionTarget(
+        target_id="LD_0023",
+        source_item_index=23,
+        source_text="Q4 - 18 mm",
+        value=18,
+    )
+    plan.queries[0].labeled_dimension_targets.append(pending)
+
+    entries = plan.answer_template["answers"][0]["labeled_dimension_decisions"]
+    entries[0]["status"] = "resolved"
+    entries[0]["visual_direction"] = "horizontal"
+    entries[0]["relation"] = "between_profile_boundaries"
+    entries[0]["reason"] = None
+    entries.append(
+        {
+            "target_id": pending.target_id,
+            "status": "unresolved",
+            "visual_direction": None,
+            "relation": None,
+            "profile_transition_geometry": None,
+            "symmetry_scope": None,
+            "evidence": ["structural:R1:crop"],
+            "reason": "pending_labeled_dimension_relation_read",
+        }
+    )
+    compact = _compact_answers().model_dump(mode="json", by_alias=True)
+    compact["decisions"][0]["labeled_dimension_decisions"] = [
+        {
+            "target_id": "LD_0017",
+            "status": "resolved",
+            "visual_direction": "horizontal",
+            "relation": "between_profile_boundaries",
+        },
+        {
+            "target_id": "LD_0023",
+            "status": "resolved",
+            "visual_direction": "vertical",
+            "relation": "between_profile_boundaries",
+        },
+    ]
+    return plan, compact
+
+
+def test_compact_exact_seed_echo_ignored_while_pending_target_preserved():
+    plan, payload = _compact_seed_echo_fixture()
+    answers = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    seeded, pending = answers.answers[0].labeled_dimension_decisions
+    assert seeded.target_id == "LD_0017"
+    assert seeded.status == "resolved"
+    assert seeded.visual_direction == "horizontal"
+    assert seeded.relation == "between_profile_boundaries"
+    assert seeded.profile_transition_geometry is None
+    assert seeded.symmetry_scope is None
+    assert seeded.evidence == ["structural:R1:crop"]
+    assert pending.target_id == "LD_0023"
+    assert pending.status == "resolved"
+    assert pending.visual_direction == "vertical"
+    assert pending.relation == "between_profile_boundaries"
+    context = assemble_structural_context(plan, answers)
+    by_id = {fact.target_id: fact for fact in context.labeled_dimension_facts}
+    assert set(by_id) == {"LD_0017", "LD_0023"}
+    assert by_id["LD_0017"].value == 12
+    assert by_id["LD_0023"].value == 18
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_error"),
+    [
+        ("seed_direction_changed", "overrides deterministic labeled relation seed"),
+        ("seed_relation_changed", "overrides deterministic labeled relation seed"),
+        ("seed_unresolved", "overrides deterministic labeled relation seed"),
+        ("seed_extra_metadata", "overrides deterministic labeled relation seed"),
+        ("missing_pending", "compact labeled coverage mismatch"),
+        ("extra_unknown", "compact labeled coverage mismatch"),
+        ("duplicate_seed", "repeats compact labeled decision"),
+    ],
+)
+def test_compact_seed_echo_cannot_override_reader_or_hide_pending(
+    case: str, expected_error: str
+):
+    plan, payload = _compact_seed_echo_fixture()
+    decisions = payload["decisions"][0]["labeled_dimension_decisions"]
+    seeded = decisions[0]
+    if case == "seed_direction_changed":
+        seeded["visual_direction"] = "vertical"
+    elif case == "seed_relation_changed":
+        seeded["relation"] = "overall_extent"
+    elif case == "seed_unresolved":
+        seeded.update(
+            status="unresolved", visual_direction=None,
+            relation=None, reason="changed",
+        )
+    elif case == "seed_extra_metadata":
+        seeded["symmetry_scope"] = "bilateral"
+    elif case == "missing_pending":
+        decisions.pop(1)
+    elif case == "extra_unknown":
+        decisions.append(
+            {
+                "target_id": "LD_0099",
+                "status": "resolved",
+                "visual_direction": "vertical",
+                "relation": "overall_extent",
+            }
+        )
+    else:
+        decisions.append(dict(seeded))
+    with pytest.raises(StructuralContextError, match=expected_error):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
+def test_compact_seed_echo_cannot_supply_engineering_value():
+    plan, payload = _compact_seed_echo_fixture()
+    payload["decisions"][0]["labeled_dimension_decisions"][0]["value"] = 500
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
 def test_machine_composer_preserves_proven_ocr_view():
     reader, report = _view_label_fixture()
     plan = build_structural_context_queries(reader, hybrid_report=report)

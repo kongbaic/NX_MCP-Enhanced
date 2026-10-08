@@ -283,6 +283,109 @@ def test_resume_accepts_compact_visual_decisions_and_writes_canonical_answers(
     ]
 
 
+@pytest.mark.parametrize(
+    ("rotation_evidence", "should_pass"),
+    [
+        (["structural:R1:crop"], True),
+        (["forged:previous-run"], False),
+    ],
+)
+def test_compact_resume_only_tolerates_reader_identical_rotation_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rotation_evidence: list[str],
+    should_pass: bool,
+):
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "rotation-provenance")
+    compact = run_dir / "structural-visual-decisions.json"
+    _write_json(
+        compact,
+        {
+            "schema": "structural-visual-decisions-v1",
+            "decisions": [
+                {
+                    "query_id": "S001",
+                    "view_kind": "front",
+                    "overall_dimension_facts": [
+                        {"axis": "X", "value": 40},
+                        {"axis": "Z", "value": 66},
+                    ],
+                    "rotational_symmetry": {
+                        "status": "not_established",
+                        "evidence": rotation_evidence,
+                    },
+                },
+                {
+                    "query_id": "S002",
+                    "view_kind": "side",
+                    "overall_dimension_facts": [
+                        {"axis": "Y", "value": 32},
+                        {"axis": "Z", "value": 66},
+                    ],
+                    "rotational_symmetry": {"status": "not_established"},
+                },
+            ],
+        },
+    )
+    _install_resume_fakes(monkeypatch, 0)
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest, compact, tmp_path / "rotation-provenance-mode-b"
+    )
+    canonical = run_dir / "structural-context-answers.json"
+    if should_pass:
+        assert code == 0, report
+        full = json.loads(canonical.read_text(encoding="utf-8"))
+        assert full["answers"][0]["rotational_symmetry"]["evidence"] == [
+            "structural:R1:crop"
+        ]
+    else:
+        assert code == 1
+        assert report["terminal"] is True
+        assert report["may_retry"] is False
+        assert "conflicts with current Reader query" in report["errors"][0]["message"]
+        assert not canonical.exists()
+
+
+def test_resume_relative_prefix_anchors_to_workspace_not_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "relative-prefix")
+    answers = run_dir / "structural-context-answers.json"
+    _write_structural_answers(answers)
+    _install_resume_fakes(monkeypatch, 0)
+    other_cwd = tmp_path / "unrelated-working-directory"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest, answers, "relative-mode-b-prefix"
+    )
+    assert code == 0, report
+    assert report["mode_b"]["state"] == str(
+        tmp_path / "relative-mode-b-prefix-mode-b-state.json"
+    )
+
+
+def test_resume_relative_prefix_cannot_escape_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest, run_dir = _start_ready(tmp_path, monkeypatch, "escaped-prefix")
+    answers = run_dir / "structural-context-answers.json"
+    _write_structural_answers(answers)
+    code, report = coordinator.resume_hybrid_frontend(
+        manifest, answers, "../outside-workspace"
+    )
+    assert code == 2
+    assert report["phase"] == "resume_check"
+    assert report["must_stop"] is True
+    assert report["may_retry"] is False
+    assert json.loads(manifest.read_text(encoding="utf-8"))["phase"] == (
+        "awaiting_structural_context"
+    )
+
+
 def test_compact_resume_rejects_incomplete_visual_input_without_canonical_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

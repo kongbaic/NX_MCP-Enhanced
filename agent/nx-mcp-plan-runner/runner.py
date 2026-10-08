@@ -8386,6 +8386,23 @@ def materialize_frozen_from_contract_wiring(
             ):
                 errors.append(f"contract_wiring_step_{position}: requires/fixed_args mismatch")
                 continue
+            # The executable Builder only binds logical names with these
+            # prefixes. Reject opaque/uppercase aliases now instead of passing
+            # them as literal NX IDs in an otherwise valid Frozen Plan.
+            if any(
+                key not in ("sketch_id", "body_id", "target_body_id")
+                or re.fullmatch(
+                    r"sketch_[A-Za-z0-9_]+" if key == "sketch_id"
+                    else r"body_[A-Za-z0-9_]+",
+                    value,
+                ) is None
+                for key, value in supplied.items()
+            ):
+                errors.append(
+                    f"contract_wiring_step_{position}: unsupported symbolic binding "
+                    "(use sketch_* or body_* logical names)"
+                )
+                continue
             name = operation.get("tool")
             if not isinstance(name, str) or name not in CERTIFIED_TOOLS:
                 errors.append(f"contract_wiring_step_{position}: uncertified contract tool")

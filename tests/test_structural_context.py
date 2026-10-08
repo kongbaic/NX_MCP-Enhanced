@@ -569,6 +569,45 @@ def test_annotation_owner_requires_unique_accepted_cross_region_identity(counter
     assert query.deterministic_view_owner_region_id is None
 
 
+def test_reader_owned_regions_ignore_only_benign_legacy_compact_records():
+    reader, report = _table_annotation_fixture()
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    visual = {
+        "schema": "structural-visual-decisions-v1",
+        "decisions": [
+            {
+                "query_id": "S001", "view_kind": "front",
+                "rotational_symmetry": {"status": "not_established"},
+            },
+            {
+                "query_id": "S002",
+                "view_kind": None,
+                "rotational_symmetry": None,
+                "unresolved": ["non_geometric_reference_region"],
+            },
+            {
+                "query_id": "S003",
+                "view_kind": None,
+                "rotational_symmetry": None,
+                "unresolved": ["rotational_symmetry_not_visible_in_region"],
+            },
+        ],
+    }
+    answers = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(visual)
+    )
+    assert answers.answers[2].view_kind == "front"
+    assert answers.answers[2].rotational_symmetry is None
+    assert answers.answers[2].overall_dimension_facts == []
+    visual["decisions"][1]["overall_dimension_facts"] = [
+        {"axis": "X", "value": 12},
+    ]
+    with pytest.raises(StructuralContextError, match="overrides Reader-owned"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(visual)
+        )
+
+
 def test_compact_annotation_cannot_inject_an_independent_view_decision():
     reader, report = _table_annotation_fixture()
     plan = build_structural_context_queries(reader, hybrid_report=report)

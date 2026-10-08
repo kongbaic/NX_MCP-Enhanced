@@ -238,7 +238,7 @@ def main() -> None:
         "answer_template",
         "原样复制 answer_template",
         "structural-visual-decisions-v1",
-        "只提交仍未 seeded",
+        "每个未 seed 的",
         "structural-visual-decisions.json",
         "本规则覆盖第4条",
         "view_axis_map",

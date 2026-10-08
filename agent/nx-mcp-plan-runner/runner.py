@@ -8333,6 +8333,77 @@ _MODE_B_NON_GEOMETRY_TOOLS = {
 }
 
 
+
+def mode_b_contract_reference_catalog(
+    dispatches: list[dict],
+) -> tuple[list[dict], dict, list[str]]:
+    """Enumerate actual Adapter operations, never infer three-level indices."""
+    catalog: list[dict] = []
+    operations: list[dict] = []
+    for dispatch_index, dispatch in enumerate(dispatches):
+        payload = dispatch.get("payload") if isinstance(dispatch, dict) else None
+        groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+        if not isinstance(groups, list):
+            return [], {}, ["contract_reference_catalog_invalid_dispatch"]
+        for group_index, group in enumerate(groups):
+            group_ops = group.get("operations") if isinstance(group, dict) else None
+            if not isinstance(group_ops, list):
+                return [], {}, ["contract_reference_catalog_invalid_group"]
+            for operation_index, operation in enumerate(group_ops):
+                if not isinstance(operation, dict):
+                    return [], {}, ["contract_reference_catalog_invalid_operation"]
+                required = operation.get("requires")
+                if (
+                    not isinstance(required, list)
+                    or any(not isinstance(name, str) or not name for name in required)
+                    or len(set(required)) != len(required)
+                    or not isinstance(operation.get("fixed_args"), dict)
+                    or not isinstance(operation.get("tool"), str)
+                ):
+                    return [], {}, ["contract_reference_catalog_invalid_operation"]
+                contract_ref = [dispatch_index, group_index, operation_index]
+                catalog.append({
+                    "contract_ref": contract_ref,
+                    "feature_id": group.get("feature_id"),
+                    "role": group.get("role"),
+                    "tool": operation["tool"],
+                    "requires": list(required),
+                })
+                # This is an intentionally INCOMPLETE template. The Planner
+                # supplies semantic symbol bindings and a real topology flag,
+                # but never has to calculate or rewrite any contract_ref.
+                operations.append({
+                    "contract_ref": list(contract_ref),
+                    "requires": {name: None for name in required},
+                    "topology_changes": None,
+                })
+    return catalog, {"schema": "mode-b-contract-wiring-v1",
+                     "operations": operations}, []
+
+
+def _reserve_mode_b_materialize_attempt(
+    drawing_path: str, wiring_path: str, output_path: str,
+) -> str:
+    """One production materialization attempt per fresh canonical drawing.
+
+    Exclusive sidecar creation is persistent even when materialization fails
+    before a Frozen Plan is written. A changed wiring or output filename must
+    never turn the same terminal task into a second production attempt.
+    Diagnostic callers can test the pure materialization function offline.
+    """
+    state_path = os.path.abspath(drawing_path) + ".stage-b-materialize-attempt.json"
+    with open(state_path, "x", encoding="utf-8") as handle:
+        json.dump({
+            "schema": "mode-b-stage-b-materialize-attempt-v1",
+            "drawing": os.path.abspath(drawing_path),
+            "initial_wiring": os.path.abspath(wiring_path),
+            "initial_output": os.path.abspath(output_path),
+            "attempt_consumed": True,
+            "may_retry": False,
+        }, handle, ensure_ascii=False, indent=2)
+    return state_path
+
+
 def materialize_frozen_from_contract_wiring(
     drawing_path: str,
     dispatches: list[dict],
@@ -8529,6 +8600,9 @@ def _cmd_materialize_frozen(args: argparse.Namespace) -> int:
         "built": None, "ok": False, "errors": [],
     }
     try:
+        # Reserve the one-shot production attempt BEFORE parsing wiring, drawing
+        # or checking output existence. A failed attempt still consumes this run.
+        _reserve_mode_b_materialize_attempt(args.drawing, args.wiring, args.out)
         if os.path.exists(args.out):
             raise PlanError("frozen plan output already exists: never overwrite")
         with open(args.wiring, encoding="utf-8-sig") as handle:
@@ -8555,6 +8629,9 @@ def _cmd_materialize_frozen(args: argparse.Namespace) -> int:
             result["errors"] = errors
     except (OSError, ValueError, TypeError, PlanError) as exc:
         result["errors"] = [f"{type(exc).__name__}: {exc}"]
+    result["terminal"] = not result["ok"]
+    result["must_stop"] = not result["ok"]
+    result["may_retry"] = False
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
 
@@ -8594,8 +8671,15 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
                 }
             )
 
+    contract_ref_index, wiring_template, reference_errors = (
+        mode_b_contract_reference_catalog(dispatches)
+        if not errors else ([], {}, [])
+    )
+    errors.extend(reference_errors)
     result = {
         "drawing": drawing_path,
+        "contract_ref_index": contract_ref_index if not errors else [],
+        "wiring_template": wiring_template if not errors else None,
         "planner_contract": {
             "fixed_args_policy": "copy_exact_key_set_and_values",
             "preserve_explicit_false_zero_and_empty_objects": True,

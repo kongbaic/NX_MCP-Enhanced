@@ -256,3 +256,24 @@ Runner 只做 repair 门禁与安全 preflight，不自行修改 plan。
 Normal Mode B now prefers `runner.py materialize-frozen <current-drawing.json> <current-wiring.json> <fresh-frozen-plan.json>` after one successful `plan-contracts` call. The wiring JSON has schema `mode-b-contract-wiring-v1`, a nonempty `operations` array and optional `notes`. Each operation is either a `contract_ref:[dispatch_index,operation_contract_index,operation_index]` plus precisely declared `requires` string symbols, or a `manual:{tool,tool_args}` for strictly non-geometric create/save/export/list tools. An explicit boolean `topology_changes` is mandatory. Optional `goal`, `target`, `selection_criteria`, `expectation`, and refresh metadata carry no engineering values. All selected Adapter operations must be referenced exactly once; missing, duplicate, additional or overridden fixed geometry fails closed.
 
 The materializer recomputes the current drawing's selected Capability/Adapter contract, copies every `fixed_args` key/value (including `reverse:false`, zero, and empty dict) and all `operation_fields` unchanged, adds only required symbol links, enforces Frozen Plan + Gate B, then creates a previously nonexistent frozen file. It never reads older plans and never changes Loader or NX core. The generated file then follows the existing single-pass `build` / `check` / Stage C path. Any failure is a Stage B STOP; there is no fallback to rewriting numeric parameters by Agent.
+
+
+### Mode B deterministic contract references and one-shot materialization
+
+`plan-contracts` additionally returns `contract_ref_index` and an intentionally
+incomplete `wiring_template`. The Runner enumerates actual dispatch, group,
+and operation arrays to provide each `contract_ref`; the Agent copies those
+references without counting or generating indices. Template `requires` values
+and `topology_changes` are `null` placeholders that must be resolved before
+the single production materialization call. Existing valid three-integer
+`contract_ref` wiring remains compatible.
+
+`materialize-frozen` reserves a persistent
+`<canonical-drawing>.stage-b-materialize-attempt.json` sidecar via exclusive
+creation before parsing the wiring or drawing. A failure returns
+`terminal=true`, `must_stop=true`, `may_retry=false`. A second production
+materialization using the same canonical drawing is forbidden even if the
+Planner edits wiring or changes the output filename. Truly independent fresh
+production runs use their own canonical drawing artifact. For offline
+diagnosis and unit tests, use `materialize_frozen_from_contract_wiring()`
+directly rather than creating or bypassing a production retry.

@@ -3641,6 +3641,18 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
         "reverse": True,
         "operation": "subtract",
     }
+    assert result["contract_ref_index"] == [{
+        "contract_ref": [0, 0, 0],
+        "feature_id": "T1",
+        "role": "thread_surrogate",
+        "tool": "nx_extrude",
+        "requires": ["sketch_id", "target_body_id"],
+    }]
+    assert result["wiring_template"]["operations"] == [{
+        "contract_ref": [0, 0, 0],
+        "requires": {"sketch_id": None, "target_body_id": None},
+        "topology_changes": None,
+    }]
 
 
 def test_mode_b_source_drawing_binding_requires_exact_current_path(tmp_path=None):
@@ -4036,6 +4048,161 @@ def test_load_plan_accepts_utf8_bom_from_powershell_51(tmp_path=None):
     assert loaded == payload
 
 
+
+def test_contract_reference_catalog_uses_actual_nested_indices_not_hole_count():
+    import copy
+
+    dispatches = [
+        {"payload": {"operation_contracts": [
+            {"feature_id": "EMPTY", "role": "none", "operations": []},
+            {"feature_id": "BODY", "role": "rotational_body", "operations": [
+                {"tool": "nx_create_sketch",
+                 "fixed_args": {"plane": "XZ", "offset": 0.0}, "requires": []},
+                {"tool": "nx_revolve", "fixed_args": {"angle": 360.0,
+                 "reverse": False}, "requires": ["sketch_id"]},
+            ]},
+            {"feature_id": "HOLE_A", "role": "hole", "operations": [
+                {"tool": "nx_extrude", "fixed_args": {"distance": 4.0,
+                 "reverse": False, "metadata": {}},
+                 "requires": ["sketch_id", "target_body_id"]},
+            ]},
+        ]}},
+        {"payload": {"operation_contracts": [
+            {"feature_id": "HOLE_B", "role": "hole", "operations": [
+                {"tool": "nx_extrude", "fixed_args": {"distance": 6.0,
+                 "reverse": True}, "requires": ["sketch_id"]},
+            ]},
+            {"feature_id": "EMPTY2", "operations": []},
+        ]}},
+    ]
+    unchanged = copy.deepcopy(dispatches)
+    index, template, errors = R.mode_b_contract_reference_catalog(dispatches)
+    assert errors == []
+    assert dispatches == unchanged
+    assert [item["contract_ref"] for item in index] == [
+        [0, 1, 0], [0, 1, 1], [0, 2, 0], [1, 0, 0],
+    ]
+    assert [item["feature_id"] for item in index] == [
+        "BODY", "BODY", "HOLE_A", "HOLE_B",
+    ]
+    assert template["schema"] == "mode-b-contract-wiring-v1"
+    assert [item["contract_ref"] for item in template["operations"]] == [
+        item["contract_ref"] for item in index
+    ]
+    assert template["operations"][0]["requires"] == {}
+    assert template["operations"][2]["requires"] == {
+        "sketch_id": None, "target_body_id": None,
+    }
+    # A template cannot accidentally become a valid production Frozen Plan.
+    incomplete, errors = R.materialize_frozen_from_contract_wiring(
+        "synthetic-drawing.json", dispatches, template
+    )
+    assert incomplete is None
+    assert errors
+
+    ready = copy.deepcopy(template)
+    for item in ready["operations"]:
+        item["requires"] = {
+            key: ("sketch_main" if key == "sketch_id" else "body_main")
+            for key in item["requires"]
+        }
+        item["topology_changes"] = index[
+            ready["operations"].index(item)
+        ]["tool"] in {"nx_revolve", "nx_extrude"}
+    plan, errors = R.materialize_frozen_from_contract_wiring(
+        "synthetic-drawing.json", dispatches, ready
+    )
+    assert errors == []
+    assert plan is not None
+    assert plan["operations"][2]["tool_args"]["reverse"] is False
+    assert plan["operations"][2]["tool_args"]["metadata"] == {}
+    assert plan["operations"][3]["tool_args"]["reverse"] is True
+
+
+def test_contract_reference_catalog_fails_closed_on_malformed_input():
+    for dispatches in (
+        [{"payload": {"operation_contracts": None}}],
+        [{"payload": {"operation_contracts": [None]}}],
+        [{"payload": {"operation_contracts": [{"operations": [None]}]}}],
+        [{"payload": {"operation_contracts": [
+            {"operations": [{"tool": "nx_extrude", "fixed_args": {},
+                             "requires": None}]}
+        ]}}],
+    ):
+        catalog, template, errors = R.mode_b_contract_reference_catalog(dispatches)
+        assert catalog == []
+        assert template == {}
+        assert errors
+
+
+def test_materialize_frozen_cli_terminal_lock_blocks_corrected_wiring_and_new_output():
+    import copy
+    import tempfile
+    from types import SimpleNamespace
+
+    with tempfile.TemporaryDirectory() as directory:
+        drawing = os.path.join(directory, "fresh-drawing.json")
+        wiring_path = os.path.join(directory, "wiring.json")
+        out = os.path.join(directory, "frozen.json")
+        dispatches, good = _contract_wiring_fixture()
+        bad = copy.deepcopy(good)
+        bad["operations"][1]["contract_ref"] = [0, 9, 0]
+        with open(wiring_path, "w", encoding="utf-8") as handle:
+            json.dump(bad, handle)
+        original_model = R._drawing_modeling_context
+        original_check = R.check_plan
+        original_gate = R.capability_plan_errors
+        calls = []
+        try:
+            def model(path):
+                calls.append(path)
+                return {}, dispatches, []
+
+            R._drawing_modeling_context = model
+            R.check_plan = lambda *args, **kwargs: []
+            R.capability_plan_errors = lambda *args, **kwargs: []
+            code, first = _capture_json_command(
+                R._cmd_materialize_frozen,
+                SimpleNamespace(drawing=drawing, wiring=wiring_path, out=out),
+            )
+            assert code == 1
+            assert first["terminal"] is True
+            assert first["must_stop"] is True
+            assert first["may_retry"] is False
+            assert not os.path.exists(out)
+            assert os.path.exists(drawing + ".stage-b-materialize-attempt.json")
+            with open(wiring_path, "w", encoding="utf-8") as handle:
+                json.dump(good, handle)
+            code, second = _capture_json_command(
+                R._cmd_materialize_frozen,
+                SimpleNamespace(drawing=drawing, wiring=wiring_path,
+                                out=os.path.join(directory, "different-out.json")),
+            )
+            assert code == 1
+            assert second["terminal"] is True
+            assert "FileExistsError" in second["errors"][0]
+            assert len(calls) == 1  # No second adapter/geometry processing.
+
+            # A distinct canonical drawing is a genuinely distinct task.
+            independent = os.path.join(directory, "independent-drawing.json")
+            code, third = _capture_json_command(
+                R._cmd_materialize_frozen,
+                SimpleNamespace(drawing=independent, wiring=wiring_path,
+                                out=os.path.join(directory, "independent-out.json")),
+            )
+            assert code == 0, third
+            assert third["ok"] is True
+            assert third["terminal"] is False
+            assert third["may_retry"] is False
+            assert len(calls) == 2
+        finally:
+            R._drawing_modeling_context = original_model
+            R.check_plan = original_check
+            R.capability_plan_errors = original_gate
+
+
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
@@ -4055,3 +4222,5 @@ def _run_all():
 
 if __name__ == "__main__":
     sys.exit(_run_all())
+
+

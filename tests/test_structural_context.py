@@ -840,6 +840,36 @@ def _material_contact_fixture() -> tuple[dict, dict]:
     return reader, report
 
 
+def test_labeled_vertical_overall_with_actual_dimension_line_raster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Exercise the raster axis helper, not a mocked dimensions result."""
+    import cv2
+    import numpy as np
+    from nx_mcp.drawing_intelligence import structural_context as sc
+
+    reader, report = _material_contact_fixture()
+    canvas = np.full((700, 1100), 255, np.uint8)
+    cv2.rectangle(canvas, (160, 120), (620, 500), 180, -1)
+    cv2.line(canvas, (160, 120), (620, 120), 0, 2)
+    cv2.line(canvas, (160, 500), (620, 500), 0, 2)
+    cv2.line(canvas, (620, 120), (815, 120), 0, 2)
+    cv2.line(canvas, (620, 500), (815, 500), 0, 2)
+    cv2.line(canvas, (815, 120), (815, 500), 0, 2)
+    raster = tmp_path / "independent_axial_part.png"
+    assert cv2.imwrite(str(raster), canvas)
+    report["source_raster"] = str(raster)
+
+    monkeypatch.setattr(
+        sc, "infer_short_dimension_visual_direction",
+        lambda *_args, **_kwargs: None,
+    )
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    target = plan.queries[1].labeled_dimension_targets[0]
+    assert target.deterministic_visual_direction == "vertical"
+    assert target.deterministic_relation_seed == "overall_extent"
+
+
 def test_material_boundaries_prove_reader_owned_labeled_global_overall(
     monkeypatch: pytest.MonkeyPatch,
 ):

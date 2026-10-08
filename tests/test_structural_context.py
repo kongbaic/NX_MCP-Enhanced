@@ -624,7 +624,7 @@ def test_compact_annotation_cannot_inject_an_independent_view_decision():
             },
         ],
     }
-    with pytest.raises(StructuralContextError, match="coverage mismatch"):
+    with pytest.raises(StructuralContextError, match="overrides Reader-owned region"):
         compose_structural_visual_answers(
             plan, StructuralCompactVisualAnswers.model_validate(payload)
         )

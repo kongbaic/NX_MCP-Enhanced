@@ -3328,6 +3328,65 @@ def test_adapter_dispatch_rejects_missing_contract_requires_early():
     assert any("must declare requires list" in item for item in errors)
 
 
+def test_contract_wiring_normalizes_only_descriptive_notes():
+    import copy
+
+    dispatches, baseline = _contract_wiring_fixture()
+    base_plan, errors = R.materialize_frozen_from_contract_wiring(
+        "current-drawing.json", dispatches, baseline
+    )
+    assert errors == []
+    assert base_plan is not None
+    cases = [
+        (["旋转主体", "Eight holes"], ["旋转主体", "Eight holes"]),
+        ("说明性备注", ["说明性备注"]),
+        ({"summary": "尺寸已闭合", "query_count": 2}, [
+            '{"query_count": 2, "summary": "尺寸已闭合"}'
+        ]),
+        (["text", {"why": "geometry from Adapter"}], [
+            "text", '{"why": "geometry from Adapter"}'
+        ]),
+        (None, []),
+        ([], []),
+    ]
+    for raw_notes, expected_notes in cases:
+        wiring = copy.deepcopy(baseline)
+        wiring["notes"] = copy.deepcopy(raw_notes)
+        original = copy.deepcopy(wiring)
+        plan, errors = R.materialize_frozen_from_contract_wiring(
+            "current-drawing.json", dispatches, wiring
+        )
+        assert errors == [], (raw_notes, errors)
+        assert plan is not None
+        assert plan["notes"] == expected_notes
+        assert plan["operations"] == base_plan["operations"]
+        assert plan["source_drawing"] == base_plan["source_drawing"]
+        assert wiring == original
+        assert R.check_plan(plan, executable=False) == []
+
+
+def test_contract_wiring_notes_reject_non_descriptive_values():
+    import copy
+
+    dispatches, baseline = _contract_wiring_fixture()
+    for bad_notes in (
+        42, True, 0.1, ["text", False], ["text", 12],
+        [["nested", "notes"]], {"ok": "fine", "bad": set()},
+    ):
+        wiring = copy.deepcopy(baseline)
+        wiring["notes"] = bad_notes
+        try:
+            plan, errors = R.materialize_frozen_from_contract_wiring(
+                "current-drawing.json", dispatches, wiring
+            )
+        except TypeError:
+            # Python-only unserializable values such as sets cannot arrive
+            # from the real JSON wiring input; never accept them as notes.
+            continue
+        assert plan is None, bad_notes
+        assert errors == ["contract_wiring_invalid_notes"], (bad_notes, errors)
+
+
 def test_contract_wiring_copies_every_fixed_arg_and_operation_field():
     import copy
 

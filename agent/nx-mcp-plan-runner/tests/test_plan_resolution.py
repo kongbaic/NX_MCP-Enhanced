@@ -3183,6 +3183,151 @@ def _contract_wiring_fixture():
     return dispatches, wiring
 
 
+def test_adapter_sketch_contracts_have_explicit_empty_dependencies():
+    """All supported sketch producers agree with strict frozen materialization."""
+    import copy
+
+    revolved, errors = R.resolve_drawing_capability_dispatches(
+        _rotational_body_drawing()
+    )
+    assert errors == []
+    principal, errors = R._principal_axis_circle_operation_contract(
+        feature_id="hole-test",
+        role="hole",
+        axis="Y",
+        center=[0.0, 8.0],
+        diameter=4.0,
+        axial_range=[0.0, 10.0],
+    )
+    assert errors == []
+    assert principal is not None
+    slot_drawing = _r6_continuous_hole_slot_drawing()
+    hole_capability = R.resolve_modeling_capabilities("hole", "Y")[0][0]
+    slot_payload, errors = R.dispatch_planner_adapter(
+        hole_capability, slot_drawing
+    )
+    assert errors == []
+    assert slot_payload is not None
+    groups = [
+        revolved[0]["payload"]["operation_contracts"][0],
+        principal,
+        slot_payload["operation_contracts"][0],
+    ]
+    for group in groups:
+        operations = group["operations"]
+        assert operations[0]["tool"] == "nx_create_sketch"
+        assert operations[0]["requires"] == []
+        assert all(isinstance(op.get("requires"), list) for op in operations)
+        assert all(
+            set(op["requires"]).isdisjoint(op["fixed_args"])
+            for op in operations
+        )
+
+    for group_index, group in enumerate(groups):
+        dispatches = [
+            {
+                "capability": {"implementation_id": f"test-adapter-{group_index}"},
+                "payload": {"operation_contracts": [copy.deepcopy(group)]},
+            }
+        ]
+        wiring = {
+            "schema": "mode-b-contract-wiring-v1",
+            "operations": [
+                {
+                    "manual": {
+                        "tool": "nx_create_part",
+                        "tool_args": {
+                            "path": f"fresh-adapter-{group_index}.prt",
+                            "units": "mm",
+                        },
+                    },
+                    "topology_changes": False,
+                },
+            ],
+        }
+        for op_index, op in enumerate(group["operations"]):
+            symbolic = {
+                k: (
+                    f"sketch_generated_{group_index}"
+                    if k == "sketch_id"
+                    else "body_main"
+                )
+                for k in op["requires"]
+            }
+            wiring["operations"].append(
+                {
+                    "contract_ref": [0, 0, op_index],
+                    "requires": symbolic,
+                    "topology_changes": op["tool"] in {
+                        "nx_revolve", "nx_extrude"
+                    },
+                }
+            )
+        frozen, errors = R.materialize_frozen_from_contract_wiring(
+            "current-drawing.json", dispatches, wiring
+        )
+        assert errors == [], (group_index, errors)
+        assert frozen is not None
+        sketch = frozen["operations"][1]
+        assert sketch["tool"] == "nx_create_sketch"
+        assert sketch["tool_args"] == group["operations"][0]["fixed_args"]
+        assert frozen["operations"][-1]["tool_args"] == {
+            **group["operations"][-1]["fixed_args"],
+            **{
+                k: (
+                    f"sketch_generated_{group_index}"
+                    if k == "sketch_id"
+                    else "body_main"
+                )
+                for k in group["operations"][-1]["requires"]
+            },
+        }
+
+
+def test_contract_wiring_rejects_missing_or_null_sketch_requires():
+    import copy
+
+    dispatches, wiring = _contract_wiring_fixture()
+    for variant in ("missing", "null"):
+        malformed = copy.deepcopy(dispatches)
+        operation = malformed[0]["payload"]["operation_contracts"][0]["operations"][0]
+        if variant == "missing":
+            del operation["requires"]
+        else:
+            operation["requires"] = None
+        frozen, errors = R.materialize_frozen_from_contract_wiring(
+            "current-drawing.json", malformed, wiring
+        )
+        assert frozen is None, variant
+        assert any("requires/fixed_args mismatch" in error for error in errors)
+
+
+def test_adapter_dispatch_rejects_missing_contract_requires_early():
+    capability = R.resolve_modeling_capabilities(
+        "rotational_body", "Z"
+    )[0][0]
+    original = R.materialize_capability_operation_contracts
+    try:
+        def malformed(_capability, _payload):
+            return [
+                {
+                    "feature_id": "test",
+                    "operations": [{
+                        "tool": "nx_create_sketch",
+                        "fixed_args": {"plane": "XZ"},
+                    }],
+                },
+            ], []
+        R.materialize_capability_operation_contracts = malformed
+        payload, errors = R.dispatch_planner_adapter(
+            capability, _rotational_body_drawing()
+        )
+    finally:
+        R.materialize_capability_operation_contracts = original
+    assert payload is None
+    assert any("must declare requires list" in item for item in errors)
+
+
 def test_contract_wiring_copies_every_fixed_arg_and_operation_field():
     import copy
 

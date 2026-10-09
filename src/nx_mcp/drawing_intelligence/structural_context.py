@@ -1835,10 +1835,17 @@ def build_structural_context_queries(
             hybrid_report,
             has_structural_targets=bool(region_targets or region_bounds),
         )
+        # A machine-seeded dimension is not an outstanding Agent task.
+        # Ownership still requires independent, accepted cross-region links;
+        # an unseeded target or accepted span must keep the region pending.
+        has_pending_structural_targets = bool(region_bounds) or any(
+            target.deterministic_relation_seed is None
+            for target in region_targets
+        )
         annotation_owner = (
             None if reference_region else _linked_annotation_view_owner(
                 region, regions, hybrid_report,
-                has_structural_targets=bool(region_targets or region_bounds),
+                has_structural_targets=has_pending_structural_targets,
             )
         )
         queries.append(

@@ -782,6 +782,104 @@ def test_grid_reference_proof_rejects_weak_or_conflicting_evidence(counterexampl
     assert query.deterministic_non_geometric_reference is False
 
 
+def _annotation_with_labeled_target_fixture():
+    reader, report = _table_annotation_fixture()
+    report["source_raster"] = "C:/synthetic/source.png"
+    report["coverage"]["unassigned_linear_observations"] = [{
+        "source_item_index": 901,
+        "text": "H9 - 24 mm",
+        "token": "24",
+        "bbox": [[900, 260], [1040, 260], [1040, 280], [900, 280]],
+        "candidate_id": "LOCAL_LABEL",
+    }]
+    report["candidates"].append({
+        "candidate_id": "LOCAL_LABEL",
+        "region_id": "ANNOTATION",
+        "source_region_ids": ["ANNOTATION"],
+        "axis_px": 310.0,
+        "accepted_token": None,
+    })
+    return reader, report
+
+
+def test_proven_annotation_owner_preserves_all_seeded_targets(monkeypatch):
+    from nx_mcp.drawing_intelligence import structural_context as structural
+
+    reader, report = _annotation_with_labeled_target_fixture()
+    monkeypatch.setattr(
+        structural, "infer_short_dimension_visual_direction",
+        lambda *_: "vertical",
+    )
+    monkeypatch.setattr(
+        structural, "_deterministic_labeled_relation_seed",
+        lambda **_: "between_profile_boundaries",
+    )
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    main, reference, annotation = plan.queries
+    assert reference.deterministic_non_geometric_reference is True
+    assert annotation.deterministic_view_owner_region_id == main.region_id
+    assert len(annotation.labeled_dimension_targets) == 1
+    assert annotation.labeled_dimension_targets[0].deterministic_relation_seed == (
+        "between_profile_boundaries"
+    )
+    visual = StructuralCompactVisualAnswers.model_validate({
+        "schema": "structural-visual-decisions-v1",
+        "decisions": [{
+            "query_id": main.query_id,
+            "view_kind": "front",
+            "overall_dimension_facts": [
+                {"axis": "X", "value": 175},
+                {"axis": "Z", "value": 90},
+            ],
+            "rotational_symmetry": {
+                "status": "established",
+                "basis": "centerline",
+                "centerline_direction": "vertical",
+            },
+        }],
+    })
+    answers = compose_structural_visual_answers(plan, visual)
+    retained = answers.answers[2]
+    assert retained.view_kind == "front"
+    assert retained.rotational_symmetry is None
+    assert retained.unresolved == ["rotational_symmetry_not_visible_in_region"]
+    assert len(retained.labeled_dimension_decisions) == 1
+    labeled = retained.labeled_dimension_decisions[0]
+    assert labeled.status == "resolved"
+    assert labeled.relation == "between_profile_boundaries"
+    assert labeled.visual_direction == "vertical"
+    assert labeled.evidence == ["structural:ANNOTATION:crop"]
+
+
+@pytest.mark.parametrize("counterexample", ["pending_target", "missing_cross_link"])
+def test_annotation_owner_never_skips_pending_target_or_missing_proof(
+    monkeypatch, counterexample
+):
+    from nx_mcp.drawing_intelligence import structural_context as structural
+
+    reader, report = _annotation_with_labeled_target_fixture()
+    monkeypatch.setattr(
+        structural, "infer_short_dimension_visual_direction",
+        lambda *_: "vertical",
+    )
+    monkeypatch.setattr(
+        structural, "_deterministic_labeled_relation_seed",
+        lambda **_: (
+            None if counterexample == "pending_target"
+            else "between_profile_boundaries"
+        ),
+    )
+    monkeypatch.setattr(
+        structural, "_proven_labeled_vertical_overall", lambda **_: False,
+    )
+    if counterexample == "missing_cross_link":
+        report["candidates"].pop(1)
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    annotation = plan.queries[2]
+    assert len(annotation.labeled_dimension_targets) == 1
+    assert annotation.deterministic_view_owner_region_id is None
+
+
 @pytest.mark.parametrize(
     "counterexample",
     ["single_dimension", "unaccepted_dimension", "local_accepted",

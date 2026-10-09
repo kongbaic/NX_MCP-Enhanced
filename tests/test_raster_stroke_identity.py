@@ -12,6 +12,9 @@ from nx_mcp.drawing_intelligence.dimension_endpoint_candidates import (
 from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
     _resolve_raster_proven_endpoint_aliases,
 )
+from nx_mcp.drawing_intelligence.view_metric_calibration import (
+    derive_view_axis_boundaries,
+)
 
 
 def _pair():
@@ -105,3 +108,66 @@ def test_endpoint_narrowing_uses_only_raster_proven_identity(tmp_path):
         bare, source_raster_path=_raster(tmp_path, two_lines=True)
     )
     assert rejected["endpoints"][1]["status"] == "ambiguous_physical_candidates"
+
+
+def _profile_overall_fixture():
+    first, second = _pair()
+    first = {**first, "region_id": "R_TEST"}
+    second = {**second, "region_id": "R_TEST"}
+    minimum = {
+        **first,
+        "ref": "independent_upper_contour",
+        "relative_extreme_side": "min",
+        "position_px": 200.0,
+        "span_px": [85.0, 470.0],
+        "non_dimension_crossing_source_count": 8,
+    }
+    return [minimum, first, second]
+
+
+def _derive_overall(profile_inventory, raster):
+    return derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R_TEST": "front"},
+        overall_dimensions={"length_x": 50.0, "width_y": 35.0, "height_z": 80.0},
+        profile_inventory=profile_inventory,
+        region_overall_fact_axes={("R_TEST", "Z")},
+        source_raster_path=raster,
+    )
+
+
+def test_shared_stroke_identity_closes_independent_overall_extreme(tmp_path):
+    # The 80mm comes exclusively from the independent structural evidence.
+    # The image ONLY verifies duplicate detections of one physical edge.
+    inventory = _profile_overall_fixture()
+    assert _derive_overall(inventory, None) == []
+    resolved = _derive_overall(inventory, _raster(tmp_path))
+    assert len(resolved) == 1
+    boundary = resolved[0]
+    assert boundary["status"] == "resolved"
+    assert boundary["axis"] == "Z"
+    assert boundary["overall_dimension_value"] == 80.0
+    assert boundary["engineering_coordinate_inferred_from_pixels"] is False
+    assert {item["role"] for item in boundary["anchors"]} == {
+        "overall_min", "overall_max"
+    }
+    assert any(
+        item["ref"] == "edge_strong" and item["role"] == "overall_min"
+        for item in boundary["anchors"]
+    )
+
+
+def test_overall_extreme_does_not_promote_parallel_lines_or_wrong_scope(tmp_path):
+    inventory = _profile_overall_fixture()
+    assert _derive_overall(inventory, _raster(tmp_path, two_lines=True)) == []
+    inventory[2]["non_dimension_crossing_source_count"] = 0
+    assert _derive_overall(inventory, _raster(tmp_path)) == []
+    # Global Z in another region does not prove this contour's Z bounds.
+    assert derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"R_TEST": "front"},
+        overall_dimensions={"length_x": 50.0, "width_y": 35.0, "height_z": 80.0},
+        profile_inventory=_profile_overall_fixture(),
+        region_overall_fact_axes={("OTHER", "Z")},
+        source_raster_path=_raster(tmp_path),
+    ) == []

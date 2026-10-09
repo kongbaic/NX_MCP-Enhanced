@@ -14,6 +14,7 @@ ENGINEERING_AUTHORITATIVE = False
 from typing import Any
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
+from .raster_stroke_identity import single_ink_stroke_alias
 
 _AXIS_BY_VIEW_ORIENTATION: dict[tuple[str, str], str] = {
     ("front", "horizontal"): "X",
@@ -383,6 +384,7 @@ def derive_view_axis_boundaries(
     profile_inventory: list[dict[str, Any]] | None = None,
     region_overall_fact_axes: set[tuple[str, Any]] | None = None,
     relative_tolerance: float = 1e-6,
+    source_raster_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Identify overall boundary owners without inferring mm from pixel distance.
 
@@ -524,6 +526,17 @@ def derive_view_axis_boundaries(
                 maximum = [
                     item for item in edges if item.get("relative_extreme_side") == "max"
                 ]
+                # The SAME-REGION structural overall supplies engineering
+                # truth. Raster evidence only collapses duplicate physical
+                # contours; it never establishes millimeter values.
+                if len(minimum) == 1 and len(maximum) == 2:
+                    alias = single_ink_stroke_alias(maximum, source_raster_path)
+                    if alias is not None:
+                        maximum = [alias]
+                elif len(maximum) == 1 and len(minimum) == 2:
+                    alias = single_ink_stroke_alias(minimum, source_raster_path)
+                    if alias is not None:
+                        minimum = [alias]
                 if len(minimum) != 1 or len(maximum) != 1:
                     continue
 

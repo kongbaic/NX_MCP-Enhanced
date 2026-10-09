@@ -10258,6 +10258,11 @@ def adapt_hybrid_ocr_report(
         overall_dimensions=overall_dimensions,
         profile_inventory=profile_inventory,
         region_overall_fact_axes=region_overall_fact_axes,
+        source_raster_path=(
+            report.get("source_raster")
+            if isinstance(report.get("source_raster"), str)
+            else None
+        ),
     )
     boundary_roles = _boundary_role_lookup(boundaries)
     labeled_dimension_facts = _reconcile_labeled_dimension_relations(

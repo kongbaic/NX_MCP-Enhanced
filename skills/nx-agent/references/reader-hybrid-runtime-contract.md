@@ -47,20 +47,16 @@ boundary. An explicit overall dimension anywhere in that query image may be repo
 when it unambiguously belongs to the boxed region's same orthographic view and spans
 that view's complete visible part/profile extent, even when its dimension line or text
 is outside the box. Never borrow an overall dimension from another view; ambiguous
-ownership stays unresolved. Legacy reader-input without `structural_context_path` may
-still point at the region crop. Then write
-`structural-context-answers-v1` containing only view_kind, directly visible overall
-X/Y/Z facts allowed by that view, the required explicit `rotational_symmetry`
-decision, the exact query evidence label, and unresolved reasons. For every resolved
-answer that is allowed to continue, `rotational_symmetry` must be either
-`{"status":"established","basis":"centerline","centerline_direction":"horizontal|vertical","evidence":[exact_query_evidence]}`, `{"status":"established","basis":"axial_section_symmetry","evidence":[exact_query_evidence]}`, or `{"status":"not_established","evidence":[exact_query_evidence]}`.
-Omitting the field is not equivalent to `not_established` and must fail schema
-validation. The template may carry `rotational_symmetry:null` only while the answer
-is pending/unresolved. If the visual evidence cannot decide the question, keep it null,
-record an unresolved reason, and fail closed; do not invent an unknown/uncertain state
-that can continue. Use `established` only when the complete drawing explicitly and uniquely establishes
-whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name is
-not required. Two visual bases are allowed.
+ownership stays unresolved. Normal Fresh Hybrid production writes ONLY
+`structural-visual-decisions-v1`, not legacy full answers; Reader supplies all
+evidence labels when composing canonical structural answers. Never put `evidence`
+inside a compact decision. A resolved rotational decision must follow exactly
+one permitted shape specified below, with no extra keys. Missing rotation is not
+equivalent to `not_established`: use `rotational_symmetry:null` and a genuine
+unresolved reason, and fail closed when evidence is insufficient.
+Use `established` only when the drawing explicitly and uniquely establishes
+whole-part revolution about one visible engineering axis. A printed X/Y/Z axis name
+is not required. Two visual bases are allowed.
 
 (1) Centerline basis: a longitudinal orthographic or axial/longitudinal section has an
 explicit whole-part centerline, and the principal stepped/cylindrical body stages are
@@ -157,13 +153,8 @@ command is:
 python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-visual-decisions.json> <fresh-mode-b-prefix>
 ~~~
 
-The following full-answer format is retained only for older callers.
-Do not attempt both formats during one Fresh run. For legacy compatibility,
-resume exactly once with:
-
-~~~text
-python_exe -m nx_mcp.drawing_intelligence resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>
-~~~
+The legacy full-answer command is documented only in the separate compatibility
+contract; Fresh Hybrid must never invoke it.
 
 Before that one call, choose `<fresh-mode-b-prefix>` as a fresh **direct child prefix**
 of the current `workspace_root` / `NX_MCP_WORKSPACE`, deterministically derived from
@@ -251,10 +242,11 @@ supports multiple image paths in one call, deduplicate paths first, then batch a
 remaining structural-query images into one visual-read call and still answer each
 `query_id` independently. Do not insert
 per-image progress narration, rule re-reading, or unrelated tool calls between those
-visual reads; after all judgments are complete, write `structural-context-answers.json`
-once. Fall back to sequential image reads only when the runtime cannot batch images. Evidence must be exactly the
-query's `evidence_label`. If view_kind is unresolved, provide a structured unresolved
-reason and no overall facts. Never use OCR output, pixel scale, old artifacts, or
+visual reads; after all judgments are complete, write the one Fresh
+`structural-visual-decisions.json` and call resume exactly once, without extra
+`evidence` fields. Only if batch image reading is unsupported may images be read
+sequentially. If view_kind is unresolved, provide a structured unresolved reason
+and no overall facts. Never use OCR output, pixel scale, old artifacts, or
 another crop to fill a missing structural answer.
 
 

@@ -270,6 +270,16 @@ def main() -> None:
             fail(f"Hybrid reader runtime safety contract regression: missing {token}")
     if "## 3. Observation shape" in hybrid_runtime:
         fail("Fallback observation schema leaked into Hybrid hot path")
+    for forbidden in (
+        "write `structural-context-answers.json`",
+        "Then write\n`structural-context-answers-v1`",
+        "resume-hybrid-frontend <hybrid-frontend-manifest.json> <structural-context-answers.json> <fresh-mode-b-prefix>",
+        '"evidence":[exact_query_evidence]',
+    ):
+        if forbidden in hybrid_runtime:
+            fail(f"Legacy full-answer production instruction in Hybrid hot path: {forbidden}")
+    if "write the one Fresh\n`structural-visual-decisions.json`" not in hybrid_runtime:
+        fail("Fresh Hybrid visual-decision write instruction missing")
 
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")

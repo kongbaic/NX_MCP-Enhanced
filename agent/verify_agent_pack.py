@@ -44,6 +44,15 @@ def main() -> None:
             fail(f"missing nx-agent file: {rel}")
 
     top = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    for token in (
+        "4e. **Structural Agent 工具往返优化",
+        "10e. **Stage B 生产工具往返优化",
+        "structural-visual-decisions.json> <fresh-mode-b-prefix>",
+        "写入后不再做额外检查",
+        "任何阶段首次失败、terminal 或命令异常",
+    ):
+        if token not in top:
+            fail(f"one-shot tool-roundtrip contract missing: {token}")
     legacy_structural = (SKILL / "references" / "legacy-structural-context-contract.md").read_text(encoding="utf-8")
     if "4. **【历史完整答案契约" in top or len(legacy_structural) < 7000:
         fail("legacy structural full-answer rules must stay archived outside Fresh SKILL")

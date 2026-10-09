@@ -176,8 +176,15 @@ Mode B artifact prefix may not.
 After writing structural answers, **do not issue a separate PowerShell/Test-Path/
 Get-ChildItem or other derived-artifact freshness scan before resume**. The Mode B
 coordinator performs the authoritative `state_exists` / stale-output gate inside the
-single resume call. Invoke resume immediately after the answer file is written. If the
-coordinator reports an existing state, stale output, or invalid prefix/path, STOP and
+single resume call. Invoke resume immediately after the answer file is written. Where the Agent's
+code execution tool safely supports sequential commands in ONE tool invocation,
+prefer writing the fully reviewed, evidence-backed compact JSON once and
+immediately invoking the one allowed `resume-hybrid-frontend` process in that
+same invocation. Check write success before the process; never retry, alter
+decisions, or change prefix on any error. If a one-call write+resume is not
+supported, keep two calls, with no intervening narration, tooling or freshness
+checks. This removes an optional Agent tool round-trip, not any Reader gates.
+If the coordinator reports an existing state, stale output, or invalid prefix/path, STOP and
 do not switch to another prefix or retry.
 
 The resume path owns Structural Context assembly → Hybrid Adapter → Reader Observation

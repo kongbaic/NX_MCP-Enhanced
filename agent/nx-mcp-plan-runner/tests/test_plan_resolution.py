@@ -4481,6 +4481,54 @@ def test_mode_b_compact_wiring_candidates_derive_true_refs_and_requirements():
         assert unavailable is None and errors
 
 
+def test_bounded_dependency_hint_proves_only_unique_profile_then_holes():
+    # Deliberately use Adapter enumeration order opposite to execution order.
+    catalog = [
+        {"contract_ref": [0, 0, i], "role": "hole",
+         "tool": "nx_hole", "requires": ["body_id"]}
+        for i in range(3)
+    ] + [
+        {"contract_ref": [1, 0, i], "role": "rotational_body",
+         "tool": tool, "requires": [] if i == 0 else ["sketch_id"]}
+        for i, tool in enumerate((
+            "nx_create_sketch", "nx_sketch_line", "nx_sketch_arc",
+            "nx_finish_sketch", "nx_revolve",
+        ))
+    ]
+    before = json.dumps(catalog, sort_keys=True)
+    result = R.mode_b_bounded_dependency_hint(catalog)
+    assert result is not None and result["status"] == "candidate_requires_planner_review"
+    assert result["adapter_blocks_only"] == [
+        {"contract_group_ref": [1, 0], "requires": {"sketch_id": "sketch_main"},
+         "topology_changes": False, "topology_change_indices": [4]},
+        {"contract_dispatch_ref": 0, "requires": {"body_id": "body_main"},
+         "topology_changes": True},
+    ]
+    assert json.dumps(catalog, sort_keys=True) == before
+    bad_cases = []
+    extra_producer = json.loads(json.dumps(catalog))
+    extra_producer[0]["tool"] = "nx_create_sketch"
+    bad_cases.append(extra_producer)
+    wrong_requires = json.loads(json.dumps(catalog))
+    wrong_requires[0]["requires"] = ["target_body_id"]
+    bad_cases.append(wrong_requires)
+    unfinished = json.loads(json.dumps(catalog))
+    unfinished[-2]["tool"] = "nx_sketch_line"
+    bad_cases.append(unfinished)
+    unknown = json.loads(json.dumps(catalog))
+    unknown[0]["tool"] = "nx_unknown_future_tool"
+    bad_cases.append(unknown)
+    mixed_dispatch = json.loads(json.dumps(catalog))
+    mixed_dispatch[0]["contract_ref"] = [1, 2, 0]
+    bad_cases.append(mixed_dispatch)
+    duplicate = json.loads(json.dumps(catalog))
+    duplicate.append(json.loads(json.dumps(duplicate[-1])))
+    bad_cases.append(duplicate)
+    for bad in bad_cases:
+        assert R.mode_b_bounded_dependency_hint(bad) is None
+    assert R.mode_b_bounded_dependency_hint([]) is None
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------

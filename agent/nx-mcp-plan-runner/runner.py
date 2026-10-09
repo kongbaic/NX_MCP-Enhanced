@@ -8423,6 +8423,100 @@ def mode_b_compact_wiring_candidates(
     }, []
 
 
+def mode_b_bounded_dependency_hint(catalog: list[dict]) -> dict | None:
+    """Conservative symbolic ORDER hint, not a frozen/executable plan.
+
+    Only the tool-contract pattern with exactly one sketch producer, one
+    revolve body producer and hole consumers is sufficiently unambiguous.
+    All other graphs defer unchanged to the Agent. Never infer geometry,
+    part names, body counts, or human confirmation from this catalog.
+    """
+    if not isinstance(catalog, list) or not catalog:
+        return None
+    groups: dict[tuple[int, int], list[dict]] = {}
+    seen: set[tuple[int, int, int]] = set()
+    for item in catalog:
+        if not isinstance(item, dict):
+            return None
+        ref = item.get("contract_ref")
+        if (
+            not isinstance(ref, list) or len(ref) != 3
+            or any(type(n) is not int or n < 0 for n in ref)
+            or tuple(ref) in seen
+            or not isinstance(item.get("requires"), list)
+            or not isinstance(item.get("tool"), str)
+        ):
+            return None
+        seen.add(tuple(ref))
+        groups.setdefault((ref[0], ref[1]), []).append(item)
+
+    sketches = [x for x in catalog if x["tool"] == "nx_create_sketch"]
+    revolved = [x for x in catalog if x["tool"] == "nx_revolve"]
+    if len(sketches) != 1 or len(revolved) != 1:
+        return None
+    profile_key = tuple(sketches[0]["contract_ref"][:2])
+    if tuple(revolved[0]["contract_ref"][:2]) != profile_key:
+        return None
+    profile = sorted(groups[profile_key], key=lambda x: x["contract_ref"][2])
+    tools = [x["tool"] for x in profile]
+    if (
+        len(profile) < 4
+        or [x["contract_ref"][2] for x in profile] != list(range(len(profile)))
+        or tools[0] != "nx_create_sketch"
+        or tools[-2:] != ["nx_finish_sketch", "nx_revolve"]
+        or any(x not in ("nx_sketch_line", "nx_sketch_arc") for x in tools[1:-2])
+        or any(
+            x["requires"] != ([] if i == 0 else ["sketch_id"])
+            for i, x in enumerate(profile)
+        )
+        or any(x.get("role") != "rotational_body" for x in profile)
+    ):
+        return None
+
+    consumers = [x for key, entries in groups.items()
+                 if key != profile_key for x in entries]
+    if not consumers or any(
+        x["tool"] != "nx_hole"
+        or x["requires"] != ["body_id"]
+        or x.get("role") != "hole"
+        or x["contract_ref"][0] == profile_key[0]
+        for x in consumers
+    ):
+        return None
+    hole_dispatches = sorted({x["contract_ref"][0] for x in consumers})
+    # A dispatch block must contain exactly the intended consumers, with
+    # no other operation from the profile or an unrelated adapter.
+    if any(
+        len([x for x in catalog if x["contract_ref"][0] == d])
+        != len([x for x in consumers if x["contract_ref"][0] == d])
+        for d in hole_dispatches
+    ):
+        return None
+
+    return {
+        "schema": "mode-b-bounded-dependency-hint-v1",
+        "status": "candidate_requires_planner_review",
+        "scope": "single_sketch_single_revolve_body_with_hole_consumers",
+        "adapter_blocks_only": [
+            {
+                "contract_group_ref": list(profile_key),
+                "requires": {"sketch_id": "sketch_main"},
+                "topology_changes": False,
+                "topology_change_indices": [len(profile) - 1],
+            },
+            *[
+                {
+                    "contract_dispatch_ref": d,
+                    "requires": {"body_id": "body_main"},
+                    "topology_changes": True,
+                }
+                for d in hole_dispatches
+            ],
+        ],
+        "safety": "no manual steps, file paths or engineering values inferred; all final wiring must pass materialize/build/check",
+    }
+
+
 def _reserve_mode_b_materialize_attempt(
     drawing_path: str, wiring_path: str, output_path: str,
 ) -> str:
@@ -8858,6 +8952,9 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
         # Agent sees the immutable contract *index*, not repeated geometry.
         # All geometry is re-derived and Gate-B checked by materialize-frozen.
         result["agent_output_mode"] = "compact_planner_contracts"
+        result["bounded_dependency_hint"] = (
+            mode_b_bounded_dependency_hint(contract_ref_index) if not errors else None
+        )
     _attach_command_timing(result, timing_state)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if not errors else 1

@@ -408,6 +408,23 @@ def test_ambiguous_dimension_still_requires_unique_distance_margin():
     assert module._item_orientation(clearly_vertical_item) == "vertical"
     assert module._candidate_matches_item(candidates[0], clearly_vertical_item) is False
 
+    # Preserve the existing structured-scalar safety contract: a single
+    # ambiguous bare glyph must not bind to an otherwise plausible line.
+    one_digit = {
+        "text": "4",
+        "bbox": [[80, 80], [98, 80], [98, 96], [80, 96]],
+    }
+    assert module._item_orientation(one_digit) == "ambiguous"
+    for orientation in ("horizontal", "vertical"):
+        line = {
+            "candidate_id": "noise",
+            "orientation": orientation,
+            "axis_px": 90,
+            "wide": roi,
+        }
+        assert module._candidate_matches_item(line, one_digit) is False
+        assert module._assign_global_items([line], [one_digit]) == {"noise": []}
+
 
 def test_global_proposal_prefers_structured_scalar_over_bare_glyph():
     module = _load_module()

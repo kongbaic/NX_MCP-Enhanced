@@ -172,7 +172,7 @@ def analyze_bundle(path: Path) -> dict[str, Any]:
         raise ValueError("bundle contains no Fresh Mode B runs")
     runs = [analyze_run(run, scopes) for run, scopes in sorted(loaded.items())]
     changes: list[dict[str, Any]] = []
-    for before, after in zip(runs, runs[1:]):
+    for before, after in zip(runs, runs[1:], strict=True):
         left, right = before["ocr"]["accepted"], after["ocr"]["accepted"]
         changes.append({
             "before": before["run"], "after": after["run"],

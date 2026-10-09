@@ -914,6 +914,38 @@ def test_annotation_owner_requires_unique_accepted_cross_region_identity(counter
     assert query.deterministic_view_owner_region_id is None
 
 
+def test_single_shared_profile_boundary_does_not_establish_annotation_owner():
+    """A shared crop-edge segment is not independent dimension/view ownership."""
+    reader, report = _table_annotation_fixture()
+    report["candidates"] = [
+        item for item in report["candidates"]
+        if item.get("source_region_ids") != ["GEOMETRY", "ANNOTATION"]
+    ]
+    # The same physical contour segment may be detected by overlapping
+    # Reader regions; this alone cannot make the narrow region annotation-only.
+    for region_id, ref in (
+        ("GEOMETRY", "geometry.shared.vertical"),
+        ("ANNOTATION", "annotation.shared.vertical"),
+    ):
+        report["structural_profile_inventory"].append({
+            "kind": "profile_edge_candidate",
+            "region_id": region_id,
+            "ref": ref,
+            "source_orientation": "vertical",
+            "position_px": 1096.0,
+            "span_px": [300.0, 445.0],
+            "axis_tolerance_px": 5.0,
+            "independent_geometry_source_count": 2,
+            "non_dimension_crossing_source_count": 0,
+            "relative_extreme_side": "max",
+        })
+    plan = build_structural_context_queries(reader, hybrid_report=report)
+    annotation = plan.queries[2]
+    assert annotation.deterministic_view_owner_region_id is None
+    assert annotation.deterministic_non_geometric_reference is False
+    assert annotation.deterministic_view_kind is None
+
+
 def test_reader_owned_regions_ignore_only_benign_legacy_compact_records():
     reader, report = _table_annotation_fixture()
     plan = build_structural_context_queries(reader, hybrid_report=report)

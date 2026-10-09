@@ -5,6 +5,7 @@ If any precondition or scan fails, preserve both possible physical owners.
 """
 from __future__ import annotations
 
+import importlib
 import math
 from pathlib import Path
 from typing import Any
@@ -76,7 +77,7 @@ def single_ink_stroke_alias(
                 return None
 
     try:
-        import cv2
+        cv2 = importlib.import_module("cv2")
         image = cv2.imread(str(Path(raster_path)), cv2.IMREAD_GRAYSCALE)
     except (ImportError, OSError, ValueError, TypeError):
         return None

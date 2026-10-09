@@ -9,6 +9,9 @@ from nx_mcp.drawing_intelligence.raster_stroke_identity import (
 from nx_mcp.drawing_intelligence.dimension_endpoint_candidates import (
     derive_dimension_endpoint_candidates,
 )
+from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+    _resolve_raster_proven_endpoint_aliases,
+)
 
 
 def _pair():
@@ -89,8 +92,8 @@ def test_endpoint_narrowing_uses_only_raster_proven_identity(tmp_path):
     }
     bare = derive_dimension_endpoint_candidates(candidate)
     assert bare["endpoints"][1]["status"] == "ambiguous_physical_candidates"
-    resolved = derive_dimension_endpoint_candidates(
-        candidate, source_raster_path=_raster(tmp_path)
+    resolved = _resolve_raster_proven_endpoint_aliases(
+        bare, source_raster_path=_raster(tmp_path)
     )
     assert resolved["endpoints"][1]["status"] == "unique_physical_candidate"
     assert resolved["endpoints"][1]["ownership_narrowing_basis"] == (
@@ -98,7 +101,7 @@ def test_endpoint_narrowing_uses_only_raster_proven_identity(tmp_path):
     )
     assert resolved["numeric_value_used_for_geometry"] is False
     # A second nearby real line must keep BOTH physical possibilities.
-    rejected = derive_dimension_endpoint_candidates(
-        candidate, source_raster_path=_raster(tmp_path, two_lines=True)
+    rejected = _resolve_raster_proven_endpoint_aliases(
+        bare, source_raster_path=_raster(tmp_path, two_lines=True)
     )
     assert rejected["endpoints"][1]["status"] == "ambiguous_physical_candidates"

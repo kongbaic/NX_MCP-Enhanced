@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .circle_datum_alignment import derive_circle_overall_center_alignments
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
+from .raster_stroke_identity import single_ink_stroke_alias
 from .engineering_callout_binding import (
     bind_callout_to_circle_entity,
     bind_callout_to_curve_candidate,
@@ -5097,6 +5098,47 @@ def _reconcile_centered_symmetric_dimension_endpoint_roles(
     )
 
 
+def _resolve_raster_proven_endpoint_aliases(
+    endpoint_candidates: dict[str, Any],
+    *,
+    source_raster_path: str | None,
+) -> dict[str, Any]:
+    """Postprocess only raster-PROVEN duplicated line identities.
+
+    Keep the public dimension-endpoint recognizer API unchanged. No inference
+    of engineering distance, axis, sign or missing bounds is permitted.
+    """
+    endpoints = endpoint_candidates.get("endpoints")
+    if not isinstance(endpoints, list) or len(endpoints) != 2:
+        return endpoint_candidates
+    selected: list[dict[str, Any]] = []
+    for item in endpoints:
+        if not isinstance(item, dict):
+            return endpoint_candidates
+        if (
+            item.get("status") != "ambiguous_physical_candidates"
+            or item.get("ownership_narrowing_basis") is not None
+        ):
+            selected.append(item)
+            continue
+        candidates = item.get("physical_candidates")
+        alias = (
+            single_ink_stroke_alias(candidates, source_raster_path)
+            if isinstance(candidates, list)
+            else None
+        )
+        if alias is None:
+            selected.append(item)
+            continue
+        selected.append({
+            **item,
+            "status": "unique_physical_candidate",
+            "physical_candidates": [alias],
+            "ownership_narrowing_basis": "unique_single_raster_stroke_profile_identity",
+        })
+    return {**endpoint_candidates, "endpoints": selected}
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
@@ -5108,8 +5150,9 @@ def _dimension_endpoints_from_candidates(
     pattern_entity_by_ref: dict[str, str] | None = None,
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
-    endpoint_candidates = derive_dimension_endpoint_candidates(
-        candidate, source_raster_path=source_raster_path
+    endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
+    endpoint_candidates = _resolve_raster_proven_endpoint_aliases(
+        endpoint_candidates, source_raster_path=source_raster_path
     )
     raw_endpoints = endpoint_candidates.get("endpoints")
     if not isinstance(raw_endpoints, list) or len(raw_endpoints) != 2:

@@ -33,7 +33,8 @@ copied into the answer template and enforced by the structural assembler.
 Agent must preserve this `view_kind` without reclassification. A caption
 is NOT evidence for overall dimensions, full-part rotation, or endpoint
 ownership; any ambiguity leaves `deterministic_view_kind=null`.
-Only the remaining visual queries require a bounded image read: inspect each
+Fresh production reads only the machine-created `structural-agent-worklist.json`
+from the current Hybrid Frontend manifest, not the full\n`structural-context-queries.json` with `answer_template` and internal rules.\nThat complete query file remains the Reader's immutable validation input.\nThe worklist provides `pending_queries`, evidence-owned region identifiers,\nunseeded labeled targets and de-duplicated `image_paths`, never editable\nengineering truth; a missing/invalid worklist means STOP, not manual fallback.\nOnly the remaining visual queries require a bounded image read: inspect each
 distinct image_path referenced by those remaining queries once. Multiple
 queries may intentionally share one deterministic full-drawing structural overview;
 when they do, open that shared image once and answer each query independently by its

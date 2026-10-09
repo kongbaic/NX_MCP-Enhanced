@@ -19,6 +19,58 @@ from nx_mcp.drawing_intelligence.structural_context import (
 )
 
 
+def test_structural_agent_worklist_is_pending_only_and_not_a_second_truth():
+    from nx_mcp.drawing_intelligence.structural_context import (
+        StructuralLabeledDimensionTarget,
+        build_structural_agent_worklist,
+    )
+
+    plan = build_structural_context_queries(_reader_input())
+    main, reference = plan.queries
+    reference.deterministic_non_geometric_reference = True
+    main.deterministic_view_kind = "front"
+    main.deterministic_profile_symmetry_axis = "vertical"
+    main.labeled_dimension_targets.extend([
+        StructuralLabeledDimensionTarget(
+            target_id="LD_SEEDED", source_item_index=17,
+            source_text="H2 - 75 mm", value=75,
+            deterministic_visual_direction="vertical",
+            deterministic_relation_seed="overall_extent",
+        ),
+        StructuralLabeledDimensionTarget(
+            target_id="LD_PENDING", source_item_index=18,
+            source_text="C2 - 28 mm", value=28,
+        ),
+    ])
+    original = plan.model_dump(mode="json", by_alias=True)
+    tasks = build_structural_agent_worklist(plan)
+    assert tasks["schema"] == "structural-agent-worklist-v1"
+    assert tasks["visual_decision_schema"] == "structural-visual-decisions-v1"
+    assert tasks["read_only"] is True
+    assert tasks["source_query_contract"] == "structural-context-queries-v1"
+    assert len(tasks["pending_queries"]) == 1
+    work = tasks["pending_queries"][0]
+    assert work["query_id"] == main.query_id
+    assert work["image_path"] == main.image_path
+    assert work["deterministic_view_kind"] == "front"
+    assert work["deterministic_profile_symmetry_axis"] == "vertical"
+    assert [t["target_id"] for t in work["labeled_dimension_targets"]] == [
+        "LD_PENDING"
+    ]
+    assert tasks["image_paths"] == [main.image_path]
+    assert "answer_template" not in tasks
+    assert "rules" not in tasks
+    assert "LD_SEEDED" not in str(tasks)
+    assert plan.model_dump(mode="json", by_alias=True) == original
+
+    # A linked annotation view is also machine-owned, not Agent input.
+    reference.deterministic_non_geometric_reference = False
+    reference.deterministic_view_owner_region_id = "R1"
+    assert len(build_structural_agent_worklist(plan)["pending_queries"]) == 1
+    reference.deterministic_view_owner_region_id = None
+    assert len(build_structural_agent_worklist(plan)["pending_queries"]) == 2
+
+
 def test_nx_agent_skill_keeps_structural_topology_axis_contract():
     skill = (
         Path(__file__).resolve().parents[1]

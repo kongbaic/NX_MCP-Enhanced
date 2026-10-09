@@ -1542,6 +1542,62 @@ class StructuralCompactVisualAnswers(_StrictStructuralModel):
     )
 
 
+def build_structural_agent_worklist(
+    plan: StructuralContextQueryPlan,
+) -> dict[str, object]:
+    """Render only pending visual tasks; canonical plan remains Reader-owned.
+
+    This is a lossless view of AGENT responsibilities, not a replacement for
+    the immutable query plan used by compose_structural_visual_answers.
+    Already-proven reference regions, view-owned annotation regions and
+    deterministically seeded labeled targets must never be sent back to Agent.
+    """
+    pending: list[dict[str, object]] = []
+    for query in plan.queries:
+        if (
+            query.deterministic_non_geometric_reference
+            or query.deterministic_view_owner_region_id is not None
+        ):
+            continue
+        targets = [
+            {
+                "target_id": target.target_id,
+                "source_item_index": target.source_item_index,
+                "source_text": target.source_text,
+                "deterministic_visual_direction": target.deterministic_visual_direction,
+            }
+            for target in query.labeled_dimension_targets
+            if target.deterministic_relation_seed is None
+        ]
+        pending.append({
+            "query_id": query.query_id,
+            "region_id": query.region_id,
+            "image_path": query.image_path,
+            "deterministic_view_kind": query.deterministic_view_kind,
+            "deterministic_profile_symmetry_axis": query.deterministic_profile_symmetry_axis,
+            "deterministic_profile_symmetry_overlay": query.deterministic_profile_symmetry_overlay,
+            "accepted_linear_span_lower_bounds": [
+                bound.model_dump(mode="json")
+                for bound in query.accepted_linear_span_lower_bounds
+            ],
+            "labeled_dimension_targets": targets,
+        })
+    return {
+        "schema": "structural-agent-worklist-v1",
+        "visual_decision_schema": "structural-visual-decisions-v1",
+        "source_query_contract": "structural-context-queries-v1",
+        "read_only": True,
+        "pending_queries": pending,
+        "image_paths": list(dict.fromkeys(
+            str(item["image_path"]) for item in pending
+        )),
+        "view_axis_map": {
+            name: axes.model_dump(mode="json")
+            for name, axes in plan.view_axis_map.items()
+        },
+    }
+
+
 def compose_structural_visual_answers(
     plan: StructuralContextQueryPlan,
     visual: StructuralCompactVisualAnswers,

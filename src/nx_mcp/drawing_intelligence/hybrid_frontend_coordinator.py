@@ -29,6 +29,7 @@ from .structural_context import (
     assemble_structural_context,
     compose_structural_visual_answers,
     build_structural_context_queries,
+    build_structural_agent_worklist,
 )
 
 MANIFEST_SCHEMA = "hybrid-frontend-run-v1"
@@ -95,6 +96,7 @@ def _run_paths(run_dir: Path) -> dict[str, Path]:
         "hybrid_report": run_dir / "hybrid-ocr-report.json",
         "ocr_artifacts": run_dir / "hybrid-ocr-artifacts",
         "structural_queries": run_dir / "structural-context-queries.json",
+        "structural_agent_worklist": run_dir / "structural-agent-worklist.json",
         "structural_answers": run_dir / "structural-context-answers.json",
         "structural_visual_decisions": run_dir / "structural-visual-decisions.json",
         "structural_context": run_dir / "hybrid-adapter-context.json",
@@ -246,6 +248,14 @@ def start_hybrid_frontend(
         _write_json(
             paths["structural_queries"],
             plan.model_dump(mode="json", by_alias=True),
+        )
+        worklist = build_structural_agent_worklist(plan)
+        _write_json(paths["structural_agent_worklist"], worklist)
+        manifest["summary"]["structural_agent_task_count"] = len(
+            worklist["pending_queries"]
+        )
+        manifest["summary"]["structural_agent_task_image_count"] = len(
+            worklist["image_paths"]
         )
         manifest["summary"]["structural_query_count"] = len(plan.queries)
         manifest["summary"]["structural_reader_preclassified_reference_count"] = sum(

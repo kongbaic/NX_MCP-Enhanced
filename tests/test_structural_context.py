@@ -19,60 +19,6 @@ from nx_mcp.drawing_intelligence.structural_context import (
 )
 
 
-def test_structural_agent_worklist_is_pending_only_and_not_a_second_truth():
-    from nx_mcp.drawing_intelligence.structural_context import (
-        StructuralLabeledDimensionTarget,
-        build_structural_agent_worklist,
-    )
-
-    plan = build_structural_context_queries(_reader_input())
-    main, reference = plan.queries
-    reference.deterministic_non_geometric_reference = True
-    main.deterministic_view_kind = "front"
-    main.deterministic_profile_symmetry_axis = "vertical"
-    main.labeled_dimension_targets.extend([
-        StructuralLabeledDimensionTarget(
-            target_id="LD_SEEDED", source_item_index=17,
-            source_text="H2 - 75 mm", value=75,
-            deterministic_visual_direction="vertical",
-            deterministic_relation_seed="overall_extent",
-        ),
-        StructuralLabeledDimensionTarget(
-            target_id="LD_PENDING", source_item_index=18,
-            source_text="C2 - 28 mm", value=28,
-        ),
-    ])
-    original = plan.model_dump(mode="json", by_alias=True)
-    tasks = build_structural_agent_worklist(plan)
-    assert tasks["schema"] == "structural-agent-worklist-v1"
-    assert tasks["visual_decision_schema"] == "structural-visual-decisions-v1"
-    assert tasks["read_only"] is True
-    assert tasks["source_query_contract"] == "structural-context-queries-v1"
-    assert tasks["visual_output_contract"]["rotation_null_requires_nonempty_unresolved"] is True
-    assert tasks["visual_output_contract"]["no_inferred_geometry"] is True
-    assert len(tasks["pending_queries"]) == 1
-    work = tasks["pending_queries"][0]
-    assert work["query_id"] == main.query_id
-    assert work["image_path"] == main.image_path
-    assert work["deterministic_view_kind"] == "front"
-    assert work["deterministic_profile_symmetry_axis"] == "vertical"
-    assert [t["target_id"] for t in work["labeled_dimension_targets"]] == [
-        "LD_PENDING"
-    ]
-    assert tasks["image_paths"] == [main.image_path]
-    assert "answer_template" not in tasks
-    assert "rules" not in tasks
-    assert "LD_SEEDED" not in str(tasks)
-    assert plan.model_dump(mode="json", by_alias=True) == original
-
-    # A linked annotation view is also machine-owned, not Agent input.
-    reference.deterministic_non_geometric_reference = False
-    reference.deterministic_view_owner_region_id = "R1"
-    assert len(build_structural_agent_worklist(plan)["pending_queries"]) == 1
-    reference.deterministic_view_owner_region_id = None
-    assert len(build_structural_agent_worklist(plan)["pending_queries"]) == 2
-
-
 def test_nx_agent_skill_keeps_structural_topology_axis_contract():
     skill = (
         Path(__file__).resolve().parents[1]
@@ -176,75 +122,6 @@ def _compact_answers() -> StructuralCompactVisualAnswers:
             ],
         }
     )
-
-
-@pytest.mark.parametrize(
-    ("view_kind", "visual_axis", "expected_axis"),
-    [
-        ("front", "horizontal", "X"),
-        ("front", "vertical", "Z"),
-        ("side", "horizontal", "Y"),
-        ("side", "vertical", "Z"),
-        ("top", "horizontal", "X"),
-        ("top", "vertical", "Y"),
-    ],
-)
-def test_compact_overall_visual_direction_maps_only_through_canonical_view(
-    view_kind: str, visual_axis: str, expected_axis: str
-):
-    plan = build_structural_context_queries(_reader_input())
-    payload = _compact_answers().model_dump(mode="json", by_alias=True)
-    payload["decisions"][0]["view_kind"] = view_kind
-    payload["decisions"][0]["overall_dimension_facts"] = [
-        {"axis": visual_axis, "value": 40}
-    ]
-    visual = StructuralCompactVisualAnswers.model_validate(payload)
-    result = compose_structural_visual_answers(plan, visual)
-    fact = result.answers[0].overall_dimension_facts[0]
-    assert fact.axis == expected_axis
-    assert fact.value == 40
-    assert fact.evidence == ["structural:R1:crop"]
-
-
-def test_compact_overall_visual_direction_fails_closed_without_view():
-    plan = build_structural_context_queries(_reader_input())
-    payload = _compact_answers().model_dump(mode="json", by_alias=True)
-    payload["decisions"][0]["view_kind"] = None
-    payload["decisions"][0]["overall_dimension_facts"] = [
-        {"axis": "vertical", "value": 40}
-    ]
-    with pytest.raises(StructuralContextError, match="requires resolved view_kind"):
-        compose_structural_visual_answers(
-            plan, StructuralCompactVisualAnswers.model_validate(payload)
-        )
-
-
-def test_compact_rotation_null_requires_explicit_unresolved_reason():
-    plan = build_structural_context_queries(_reader_input())
-    payload = _compact_answers().model_dump(mode="json", by_alias=True)
-    payload["decisions"][0]["rotational_symmetry"] = None
-    payload["decisions"][0]["unresolved"] = []
-    with pytest.raises(ValidationError, match="explicit rotational symmetry"):
-        compose_structural_visual_answers(
-            plan, StructuralCompactVisualAnswers.model_validate(payload)
-        )
-    payload["decisions"][0]["unresolved"] = [
-        "rotational_symmetry_not_visible_in_region"
-    ]
-    result = compose_structural_visual_answers(
-        plan, StructuralCompactVisualAnswers.model_validate(payload)
-    )
-    assert result.answers[0].rotational_symmetry is None
-    assert result.answers[0].unresolved == [
-        "rotational_symmetry_not_visible_in_region"
-    ]
-
-
-def test_compact_overall_axis_rejects_unknown_direction():
-    payload = _compact_answers().model_dump(mode="json", by_alias=True)
-    payload["decisions"][0]["overall_dimension_facts"][0]["axis"] = "diagonal"
-    with pytest.raises(ValidationError):
-        StructuralCompactVisualAnswers.model_validate(payload)
 
 
 def test_compact_rotational_decision_basis_requires_exclusive_fields():

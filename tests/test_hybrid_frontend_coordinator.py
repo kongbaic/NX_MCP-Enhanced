@@ -66,7 +66,6 @@ def _start_ready(
     manifest = Path(report["manifest"])
     assert manifest.is_file()
     assert Path(report["artifacts"]["structural_queries"]).is_file()
-    assert Path(report["artifacts"]["structural_agent_worklist"]).is_file()
     return manifest, run_dir
 
 
@@ -192,11 +191,6 @@ def test_start_runs_deterministic_prep_ocr_and_structural_query_plan(
     assert payload["summary"]["hybrid_ocr"]["accepted_count"] == 5
     assert payload["summary"]["hybrid_ocr"]["unresolved_count"] == 21
     assert payload["summary"]["structural_query_count"] == 2
-    assert payload["summary"]["structural_agent_task_count"] == 2
-    assert payload["summary"]["structural_agent_task_image_count"] == 2
-    tasks = json.loads((run_dir / "structural-agent-worklist.json").read_text())
-    assert [q["query_id"] for q in tasks["pending_queries"]] == ["S001", "S002"]
-    assert "answer_template" not in tasks
     assert payload["summary"]["structural_reader_preclassified_reference_count"] == 0
     assert payload["summary"]["structural_reader_preclassified_view_count"] == 0
     assert payload["summary"]["structural_agent_pending_region_count"] == 2

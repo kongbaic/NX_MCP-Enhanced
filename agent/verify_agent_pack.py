@@ -25,6 +25,7 @@ REQUIRED = [
     "references/pipeline-contract.md",
     "references/reader-bounded-query-contract.md",
     "references/legacy-structural-context-contract.md",
+    "references/reader-hybrid-runtime-contract.md",
     "references/chinese-output.md",
     "examples/example-output.json",
     "examples/modeling-plan-example.json",
@@ -240,6 +241,36 @@ def main() -> None:
     reader_runtime = (SKILL / "references" / "reader-runtime-contract.md").read_text(
         encoding="utf-8"
     )
+    hybrid_runtime = (SKILL / "references" / "reader-hybrid-runtime-contract.md").read_text(
+        encoding="utf-8"
+    )
+    # The raster Agent reads a lean dedicated contract; legacy fallback stays intact.
+    if "references/reader-hybrid-runtime-contract.md" not in top:
+        fail("Mode B raster path missing dedicated Hybrid runtime contract")
+    if "不加载仅用于 non-raster fallback 的 references/reader-runtime-contract.md" not in top:
+        fail("Mode B raster path might reread the full fallback contract")
+    if len(hybrid_runtime) >= len(reader_runtime) * 0.80:
+        fail("Hybrid reader contract must materially reduce normal-path text")
+    for token in (
+        "run-hybrid-frontend <current-raster-path> <fresh-hybrid-run-directory>",
+        "structural-visual-decisions-v1",
+        "rotational_symmetry_not_visible_in_region",
+        "The Agent must not report X/Y/Z",
+        "Local dimensions must never be promoted to `overall_dimension_facts`",
+        "phase=awaiting_structural_context",
+        "must_stop=true",
+        "may_retry=false",
+        "may_edit_structural_answers=false",
+        "Human Confirmation",
+        "Only `exit code=0` with `phase=gate_a_pass` may continue to Planner",
+        "A Mode B front-end failure from Reader input preparation through Gate A is never",
+        "do not offer restart/fallback/retry as recovery",
+    ):
+        if token not in hybrid_runtime:
+            fail(f"Hybrid reader runtime safety contract regression: missing {token}")
+    if "## 3. Observation shape" in hybrid_runtime:
+        fail("Fallback observation schema leaked into Hybrid hot path")
+
     planner_rules = (SKILL / "references" / "modeling-planner.md").read_text(encoding="utf-8")
     pipeline_contract = (SKILL / "references" / "pipeline-contract.md").read_text(encoding="utf-8")
     runner_contract = (SKILL / "references" / "runner-contract.md").read_text(encoding="utf-8")

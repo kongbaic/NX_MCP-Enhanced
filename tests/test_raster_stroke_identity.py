@@ -76,8 +76,16 @@ def test_endpoint_narrowing_uses_only_raster_proven_identity(tmp_path):
             }]},
             {"witness_index": 1, "nearest_anchors": pair},
         ],
-        "witness_line_evidence": [],
-        "axis_px": 460.0,
+        "witness_line_evidence": [{
+            "witness_index": 1,
+            "source_lines": [{
+                "orientation": "horizontal",
+                "axis_px": 550.5,
+                "span_px": [180.0, 410.0],
+                "crosses_dimension_axis": True,
+            }],
+        }],
+        "axis_px": 400.0,
     }
     bare = derive_dimension_endpoint_candidates(candidate)
     assert bare["endpoints"][1]["status"] == "ambiguous_physical_candidates"

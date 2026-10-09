@@ -1429,8 +1429,32 @@ class StructuralContextAnswers(_StrictStructuralModel):
 
 
 class StructuralCompactOverallFact(_StrictStructuralModel):
-    axis: Axis
+    # An Agent may report either a known engineering axis, or an observed
+    # visual direction.  Only the machine, using a validated view-axis map,
+    # may turn a visual direction into X/Y/Z.
+    axis: Axis | None = None
+    visual_direction: Literal["horizontal", "vertical"] | None = None
     value: float = Field(gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_visual_axis(cls, value: object) -> object:
+        # Older Agents wrote a VISUAL direction into "axis". This is safe
+        # to interpret as direction, never as an engineering axis, only
+        # when composition later proves a specific view_kind.
+        if isinstance(value, dict) and value.get("axis") in ("horizontal", "vertical"):
+            if "visual_direction" in value:
+                raise ValueError("ambiguous compact overall visual axis fields")
+            return {**value, "axis": None, "visual_direction": value["axis"]}
+        return value
+
+    @model_validator(mode="after")
+    def _require_exactly_one_axis_form(self) -> StructuralCompactOverallFact:
+        if (self.axis is None) == (self.visual_direction is None):
+            raise ValueError(
+                "compact overall requires exactly one of axis or visual_direction"
+            )
+        return self
 
 
 class StructuralCompactRotationalDecision(_StrictStructuralModel):
@@ -1645,10 +1669,24 @@ def compose_structural_visual_answers(
                 f"query {query.query_id!r} overrides deterministic OCR view"
             )
         entry["view_kind"] = query.deterministic_view_kind or patch.view_kind
-        entry["overall_dimension_facts"] = [
-            {**fact.model_dump(), "evidence": [query.evidence_label]}
-            for fact in patch.overall_dimension_facts
-        ]
+        view_kind = query.deterministic_view_kind or patch.view_kind
+        if patch.overall_dimension_facts and view_kind is None:
+            raise StructuralContextError(
+                f"query {query.query_id!r} overall visual direction requires resolved view"
+            )
+        overall_facts = []
+        for fact in patch.overall_dimension_facts:
+            axis = fact.axis
+            if fact.visual_direction is not None:
+                # The query plan validates this entire map against canonical
+                # view semantics. No pixel or inferred geometry is involved.
+                assert view_kind is not None
+                axis = getattr(plan.view_axis_map[view_kind], fact.visual_direction)
+            assert axis is not None
+            overall_facts.append(
+                {"axis": axis, "value": fact.value, "evidence": [query.evidence_label]}
+            )
+        entry["overall_dimension_facts"] = overall_facts
         entry["rotational_symmetry"] = (
             {
                 **patch.rotational_symmetry.model_dump(),

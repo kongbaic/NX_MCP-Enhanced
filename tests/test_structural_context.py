@@ -232,6 +232,70 @@ def test_fresh_skill_forbids_labeled_resolved_with_missing_direction():
     assert "首次 resume 失败后不得修改文件重试" in text
 
 
+def test_compact_overall_visual_direction_maps_to_engineering_axes_only_with_view():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    # The original Agent direction vocabulary maps differently per view:
+    # front horizontal=X, front vertical=Z, side horizontal=Y.
+    payload["decisions"][0]["overall_dimension_facts"] = [
+        {"visual_direction": "horizontal", "value": 40},
+        {"visual_direction": "vertical", "value": 66},
+    ]
+    payload["decisions"][1]["overall_dimension_facts"] = [
+        {"visual_direction": "horizontal", "value": 32},
+    ]
+    mapped = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    assert mapped.model_dump(mode="json", by_alias=True) == _answers().model_dump(
+        mode="json", by_alias=True
+    )
+    # Old output shape is accepted only as a visual direction and goes
+    # through the same validated query map. It never becomes an axis label.
+    payload["decisions"][0]["overall_dimension_facts"] = [
+        {"axis": "horizontal", "value": 40},
+        {"axis": "vertical", "value": 66},
+    ]
+    payload["decisions"][1]["overall_dimension_facts"] = [
+        {"axis": "horizontal", "value": 32},
+    ]
+    legacy_mapped = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    assert legacy_mapped.model_dump(mode="json", by_alias=True) == mapped.model_dump(
+        mode="json", by_alias=True
+    )
+    # If view identity is not confirmed, visual directions cannot map.
+    payload["decisions"][0].pop("view_kind")
+    with pytest.raises(StructuralContextError, match="requires resolved view"):
+        compose_structural_visual_answers(
+            plan, StructuralCompactVisualAnswers.model_validate(payload)
+        )
+
+
+def test_compact_overall_axis_forms_remain_strict_and_fail_closed():
+    from nx_mcp.drawing_intelligence.structural_context import (
+        StructuralCompactOverallFact,
+    )
+
+    for invalid in (
+        {"value": 40},
+        {"axis": "X", "visual_direction": "horizontal", "value": 40},
+        {"axis": "horizontal", "visual_direction": "horizontal", "value": 40},
+        {"visual_direction": "diagonal", "value": 40},
+        {"axis": "W", "value": 40},
+        {"axis": "horizontal", "value": -1},
+    ):
+        with pytest.raises(ValidationError):
+            StructuralCompactOverallFact.model_validate(invalid)
+
+    # The full/canonical contract NEVER accepts visual directions as axes.
+    with pytest.raises(ValidationError):
+        StructuralOverallFact.model_validate({
+            "axis": "horizontal", "value": 40, "evidence": ["observed"]
+        })
+
+
 def test_machine_composes_minimal_visual_responses_with_provenance():
     plan = build_structural_context_queries(_reader_input())
     answers = compose_structural_visual_answers(plan, _compact_answers())

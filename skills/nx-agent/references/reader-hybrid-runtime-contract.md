@@ -115,7 +115,7 @@ Production now prefers compact, evidence-free visual decisions:
 write exactly one `structural-visual-decisions.json` with schema
 `structural-visual-decisions-v1` and one `decisions` item per remaining
 non-reference query. Items report only view_kind when not already proven,
-direct overall_dimension_facts as {axis,value}, rotational_symmetry
+direct overall_dimension_facts preferably as {visual_direction,value} (visual_direction is exactly horizontal or vertical), or {axis,value} ONLY when that X/Y/Z engineering axis is already unambiguously established. Never submit both axis and visual_direction on one fact. For legacy Agent compatibility, axis:horizontal/vertical is treated only as a visual direction, then mapped by the validated view_axis_map after a view_kind is established; with unknown view_kind this must fail closed. No pixel-to-engineering conversion is permitted. rotational_symmetry
 with EXACTLY ONE evidence-backed shape:
 `{"status":"established","basis":"centerline","centerline_direction":"vertical"}`
 (or actual visible horizontal direction) for a drawn, whole-part centerline;

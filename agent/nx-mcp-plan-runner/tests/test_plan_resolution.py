@@ -3664,6 +3664,7 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
 def test_plan_contracts_agent_compact_omits_only_repeated_geometry():
     """Planner compact output keeps binding/safety truth while shrinking payload."""
     import copy
+    from types import SimpleNamespace
 
     data = {
         "capability": {

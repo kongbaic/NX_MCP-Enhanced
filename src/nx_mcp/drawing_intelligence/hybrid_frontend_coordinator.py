@@ -251,12 +251,14 @@ def start_hybrid_frontend(
         )
         worklist = build_structural_agent_worklist(plan)
         _write_json(paths["structural_agent_worklist"], worklist)
-        manifest["summary"]["structural_agent_task_count"] = len(
-            worklist["pending_queries"]
-        )
-        manifest["summary"]["structural_agent_task_image_count"] = len(
-            worklist["image_paths"]
-        )
+        pending_queries = worklist["pending_queries"]
+        image_paths = worklist["image_paths"]
+        if not isinstance(pending_queries, list) or not isinstance(image_paths, list):
+            raise HybridFrontendCoordinatorError(
+                "invalid Structural Agent worklist task/image lists"
+            )
+        manifest["summary"]["structural_agent_task_count"] = len(pending_queries)
+        manifest["summary"]["structural_agent_task_image_count"] = len(image_paths)
         manifest["summary"]["structural_query_count"] = len(plan.queries)
         manifest["summary"]["structural_reader_preclassified_reference_count"] = sum(
             1 for item in plan.queries

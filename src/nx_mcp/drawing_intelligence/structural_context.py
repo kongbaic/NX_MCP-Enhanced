@@ -1429,7 +1429,8 @@ class StructuralContextAnswers(_StrictStructuralModel):
 
 
 class StructuralCompactOverallFact(_StrictStructuralModel):
-    axis: Axis
+    # Agent may report visual orientation; Reader maps it through a proven view.
+    axis: Axis | Literal["horizontal", "vertical"]
     value: float = Field(gt=0)
 
 
@@ -1595,6 +1596,12 @@ def build_structural_agent_worklist(
             name: axes.model_dump(mode="json")
             for name, axes in plan.view_axis_map.items()
         },
+        "visual_output_contract": {
+            "overall_fact_axis": "X/Y/Z or horizontal/vertical (Reader maps via view_axis_map)",
+            "rotation_null_requires_nonempty_unresolved": True,
+            "region_local_defer_code": "rotational_symmetry_not_visible_in_region",
+            "no_inferred_geometry": True,
+        },
     }
 
 
@@ -1700,11 +1707,20 @@ def compose_structural_visual_answers(
             raise StructuralContextError(
                 f"query {query.query_id!r} overrides deterministic OCR view"
             )
-        entry["view_kind"] = query.deterministic_view_kind or patch.view_kind
-        entry["overall_dimension_facts"] = [
-            {**fact.model_dump(), "evidence": [query.evidence_label]}
-            for fact in patch.overall_dimension_facts
-        ]
+        view_kind = query.deterministic_view_kind or patch.view_kind
+        entry["view_kind"] = view_kind
+        facts = []
+        for fact in patch.overall_dimension_facts:
+            axis = fact.axis
+            if axis in ("horizontal", "vertical"):
+                if view_kind is None:
+                    raise StructuralContextError(
+                        f"query {query.query_id!r} visual overall axis requires resolved view_kind"
+                    )
+                view_axes = plan.view_axis_map[view_kind]
+                axis = view_axes.horizontal if axis == "horizontal" else view_axes.vertical
+            facts.append({"axis": axis, "value": fact.value, "evidence": [query.evidence_label]})
+        entry["overall_dimension_facts"] = facts
         entry["rotational_symmetry"] = (
             {
                 **patch.rotational_symmetry.model_dump(),

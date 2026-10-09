@@ -38,8 +38,13 @@ from the current Hybrid Frontend manifest, not the full
 `structural-context-queries.json` with `answer_template` and internal rules.
 That complete query file remains the Reader's immutable validation input.
 The worklist provides `pending_queries`, evidence-owned region identifiers,
-unseeded labeled targets and de-duplicated `image_paths`, never editable
-engineering truth; a missing/invalid worklist means STOP, not manual fallback.
+unseeded labeled targets, de-duplicated `image_paths`, and a small
+`visual_output_contract`, never editable engineering truth. Visual overall axes
+may be `horizontal`/`vertical` or `X`/`Y`/`Z`; the Reader maps the former only
+through the validated `view_kind` and canonical `view_axis_map` (no pixel conversion
+or guessed coordinates). When `rotational_symmetry` is null, a real nonempty
+`unresolved` reason is mandatory; region-local deferral is not positive rotation
+evidence. A missing/invalid worklist means STOP, not manual fallback.
 Only the remaining visual queries require a bounded image read: inspect each
 distinct image_path referenced by those remaining queries once. Multiple
 queries may intentionally share one deterministic full-drawing structural overview;

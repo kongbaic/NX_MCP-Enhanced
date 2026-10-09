@@ -53,21 +53,31 @@ def single_ink_stroke_alias(
     if (first.get("relative_extreme_side") not in ("min", "max")
         or first.get("relative_extreme_side") != second.get("relative_extreme_side")):
         return None
-    spans = [_span(item) for item in profiles]
-    if any(span is None for span in spans):
+    first_span = _span(first)
+    second_span = _span(second)
+    if first_span is None or second_span is None:
         return None
-    low = max(spans[0][0], spans[1][0])
-    high = min(spans[0][1], spans[1][1])
+    low = max(first_span[0], second_span[0])
+    high = min(first_span[1], second_span[1])
     if high <= low or (high - low) / max(
-        spans[0][1] - spans[0][0], spans[1][1] - spans[1][0]
+        first_span[1] - first_span[0], second_span[1] - second_span[0]
     ) < 0.80:
         return None
-    positions = [_number(item.get("position_px")) for item in profiles]
-    tolerances = [_number(item.get("axis_tolerance_px")) for item in profiles]
-    if any(value is None for value in (*positions, *tolerances)):
+    first_position = _number(first.get("position_px"))
+    second_position = _number(second.get("position_px"))
+    first_tolerance = _number(first.get("axis_tolerance_px"))
+    second_tolerance = _number(second.get("axis_tolerance_px"))
+    if (
+        first_position is None
+        or second_position is None
+        or first_tolerance is None
+        or second_tolerance is None
+    ):
         return None
-    if min(tolerances) < 1 or abs(positions[0] - positions[1]) > min(
-        1.5, min(tolerances) / 2
+    positions = (first_position, second_position)
+    minimum_tolerance = min(first_tolerance, second_tolerance)
+    if minimum_tolerance < 1 or abs(first_position - second_position) > min(
+        1.5, minimum_tolerance / 2
     ):
         return None
     for item in profiles:

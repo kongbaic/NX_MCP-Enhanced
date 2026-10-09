@@ -5100,6 +5100,7 @@ def _reconcile_centered_symmetric_dimension_endpoint_roles(
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
+    source_raster_path: str | None = None,
     entity_keys: set[str],
     boundary_roles: dict[str, Literal["overall_min", "overall_max"]],
     profile_entity_by_ref: dict[str, str],
@@ -5107,7 +5108,9 @@ def _dimension_endpoints_from_candidates(
     pattern_entity_by_ref: dict[str, str] | None = None,
     evidence: list[str],
 ) -> tuple[list[ObservationDimensionEndpoint], str | None]:
-    endpoint_candidates = derive_dimension_endpoint_candidates(candidate)
+    endpoint_candidates = derive_dimension_endpoint_candidates(
+        candidate, source_raster_path=source_raster_path
+    )
     raw_endpoints = endpoint_candidates.get("endpoints")
     if not isinstance(raw_endpoints, list) or len(raw_endpoints) != 2:
         return (
@@ -10549,6 +10552,7 @@ def adapt_hybrid_ocr_report(
         else:
             dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
                 raw_candidate,
+                source_raster_path=report.get("source_raster"),
                 entity_keys={item.key for item in entities},
                 boundary_roles=boundary_roles,
                 profile_entity_by_ref=profile_entity_by_ref,
@@ -10571,6 +10575,7 @@ def adapt_hybrid_ocr_report(
                 dimension_endpoints, unresolved_reason = (
                     _dimension_endpoints_from_candidates(
                         raw_candidate,
+                        source_raster_path=report.get("source_raster"),
                         entity_keys={item.key for item in entities},
                         boundary_roles={},
                         profile_entity_by_ref=profile_entity_by_ref,

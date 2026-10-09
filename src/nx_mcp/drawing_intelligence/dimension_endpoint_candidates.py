@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .raster_stroke_identity import single_ink_stroke_alias
+
 _PHYSICAL_ANCHOR_KINDS = {
     "profile_edge_candidate",
     "profile_vertex_candidate",
@@ -357,6 +359,8 @@ def _witness_anchor_lookup(
 
 def derive_dimension_endpoint_candidates(
     candidate: dict[str, Any],
+    *,
+    source_raster_path: str | None = None,
 ) -> dict[str, Any]:
     """Derive endpoint candidates without claiming endpoint ownership.
 
@@ -535,6 +539,12 @@ def derive_dimension_endpoint_candidates(
                     narrowing_basis = (
                         "unique_collinear_crossing_witness_profile_continuation"
                     )
+
+        if narrowing_basis is None:
+            alias = single_ink_stroke_alias(physical_candidates, source_raster_path)
+            if alias is not None:
+                physical_candidates = [alias]
+                narrowing_basis = "unique_single_raster_stroke_profile_identity"
 
         endpoint_status = (
             "unique_physical_candidate"

@@ -167,8 +167,12 @@ def _candidate_matches_item(
     candidate_orientation = str(candidate["orientation"])
     if (
         _linear_text_strength(str(item.get("text") or "")) < 2
-        and item_orientation != candidate_orientation
+        and item_orientation not in ("ambiguous", candidate_orientation)
     ):
+        # A nearly square OCR text box has no proven orientation.
+        # Keep it eligible for ROI/distance/margin matching (as in the
+        # historical hybrid path); NEVER infer its engineering direction
+        # or accept a dimension merely because orientation is unknown.
         return False
 
     return _inside_box(

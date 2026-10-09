@@ -358,6 +358,57 @@ def test_structured_scalar_can_bind_vertical_candidate_with_horizontal_text():
     assert module._candidate_matches_item(candidate, bare) is False
 
 
+def test_ambiguous_bare_dimension_text_keeps_geometry_matching():
+    module = _load_module()
+    # Synthetic orientation-neutral OCR glyphs: text-box aspect ratio
+    # below 1.25 gives 'ambiguous', which is NOT a mismatched direction.
+    roi = {"source_roi_bbox_px": [0, 0, 240, 240]}
+    cases = (
+        ("24", 46, 40, "horizontal"),
+        ("40", 48, 45, "horizontal"),
+        ("18", 39, 39, "vertical"),
+    )
+    for token, width, height, direction in cases:
+        bbox = [[80, 80], [80 + width, 80],
+                [80 + width, 80 + height], [80, 80 + height]]
+        item = {"text": token, "bbox": bbox}
+        assert module._item_orientation(item) == "ambiguous"
+        axis = (80 + height / 2) if direction == "horizontal" else (80 + width / 2)
+        candidate = {
+            "candidate_id": "DG_unique",
+            "orientation": direction, "axis_px": axis, "wide": roi,
+        }
+        assert module._candidate_matches_item(candidate, item)
+        assigned = module._assign_global_items([candidate], [item])
+        assert [a["token"] for a in assigned["DG_unique"]] == [token]
+
+
+def test_ambiguous_dimension_still_requires_unique_distance_margin():
+    module = _load_module()
+    item = {"text": "24", "bbox": [[80, 80], [126, 80],
+                                    [126, 120], [80, 120]]}
+    roi = {"source_roi_bbox_px": [0, 0, 240, 240]}
+    # The same ambiguous OCR glyph is near two dimension axes;
+    # the unchanged geometric margin gate MUST keep both unassigned.
+    candidates = [
+        {"candidate_id": "DG_a", "orientation": "horizontal",
+         "axis_px": 99, "wide": roi},
+        {"candidate_id": "DG_b", "orientation": "horizontal",
+         "axis_px": 102, "wide": roi},
+    ]
+    assigned = module._assign_global_items(candidates, [item])
+    assert assigned == {"DG_a": [], "DG_b": []}
+
+    # A truly perpendicular bare number is still rejected; structured
+    # scalar direction handling is covered by the existing test above.
+    clearly_vertical_item = {
+        "text": "24",
+        "bbox": [[90, 50], [110, 50], [110, 130], [90, 130]],
+    }
+    assert module._item_orientation(clearly_vertical_item) == "vertical"
+    assert module._candidate_matches_item(candidates[0], clearly_vertical_item) is False
+
+
 def test_global_proposal_prefers_structured_scalar_over_bare_glyph():
     module = _load_module()
     candidate = {

@@ -8793,6 +8793,7 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
     _drawing, dispatches, errors = _drawing_modeling_context(drawing_path)
 
     contracts: list[dict] = []
+    agent_compact = bool(getattr(args, "agent_compact", False))
     if not errors:
         for item in dispatches:
             capability = item.get("capability")
@@ -8803,23 +8804,23 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
                 )
                 continue
 
-            contracts.append(
-                {
-                    "implementation_id": capability.get("implementation_id"),
-                    "feature_kind": capability.get("feature_kind"),
-                    "exactness": capability.get("exactness"),
-                    "supported_axes": list(
-                        capability.get("supported_axes") or []
-                    ),
-                    "planner_adapter": capability.get("planner_adapter"),
-                    "gate_b_validator": capability.get("gate_b_validator"),
+            contract_summary = {
+                "implementation_id": capability.get("implementation_id"),
+                "feature_kind": capability.get("feature_kind"),
+                "exactness": capability.get("exactness"),
+                "supported_axes": list(capability.get("supported_axes") or []),
+                "planner_adapter": capability.get("planner_adapter"),
+                "gate_b_validator": capability.get("gate_b_validator"),
+            }
+            if not agent_compact:
+                contract_summary.update({
                     "geometries": list(payload.get("geometries") or []),
                     "recipes": list(payload.get("recipes") or []),
                     "operation_contracts": list(
                         payload.get("operation_contracts") or []
                     ),
-                }
-            )
+                })
+            contracts.append(contract_summary)
 
     contract_ref_index, wiring_template, reference_errors = (
         mode_b_contract_reference_catalog(dispatches)
@@ -8853,6 +8854,10 @@ def _cmd_plan_contracts(args: argparse.Namespace) -> int:
         "errors": errors,
         "ok": not errors,
     }
+    if agent_compact:
+        # Agent sees the immutable contract *index*, not repeated geometry.
+        # All geometry is re-derived and Gate-B checked by materialize-frozen.
+        result["agent_output_mode"] = "compact_planner_contracts"
     _attach_command_timing(result, timing_state)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if not errors else 1
@@ -8997,6 +9002,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     pcontracts.add_argument("drawing")
+    pcontracts.add_argument(
+        "--agent-compact", action="store_true",
+        help="send Planner only contract identity and symbolic index; full "
+             "geometry remains owned by materialize-frozen",
+    )
     pcontracts.set_defaults(func=_cmd_plan_contracts)
 
     materialize = sub.add_parser(

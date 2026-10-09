@@ -3661,6 +3661,85 @@ def test_plan_contracts_cli_exposes_adapter_operation_contracts(tmp_path=None):
     ]
 
 
+def test_plan_contracts_agent_compact_omits_only_repeated_geometry():
+    """Planner compact output keeps binding/safety truth while shrinking payload."""
+    import copy
+
+    data = {
+        "capability": {
+            "implementation_id": "generic-profile-and-cut",
+            "feature_kind": "profile",
+            "exactness": "exact",
+            "supported_axes": ["X", "Z"],
+            "planner_adapter": "profile_adapter",
+            "gate_b_validator": "geometry_gate",
+        },
+        "payload": {
+            "geometries": [{"stable": "geometry" * 300}],
+            "recipes": [{"stable": "recipe" * 300}],
+            "operation_contracts": [{
+                "feature_id": "F1",
+                "role": "revolve_body",
+                "operations": [
+                    {"tool": "nx_create_sketch",
+                     "fixed_args": {"plane": "XZ", "offset": 0},
+                     "requires": []},
+                    {"tool": "nx_revolve",
+                     "fixed_args": {"angle": 360, "reverse": False,
+                                    "stable": "fixed" * 300},
+                     "requires": ["sketch_id"]},
+                ],
+            }],
+        },
+    }
+    baseline = copy.deepcopy(data)
+    original = R._drawing_modeling_context
+    try:
+        R._drawing_modeling_context = lambda path: ({}, [data], [])
+        verbose_status, verbose = _capture_json_command(
+            R._cmd_plan_contracts,
+            SimpleNamespace(drawing="fresh-drawing.json"),
+        )
+        compact_status, compact = _capture_json_command(
+            R._cmd_plan_contracts,
+            SimpleNamespace(drawing="fresh-drawing.json", agent_compact=True),
+        )
+    finally:
+        R._drawing_modeling_context = original
+
+    assert verbose_status == compact_status == 0
+    assert verbose["ok"] is compact["ok"] is True
+    assert verbose["errors"] == compact["errors"] == []
+    for key in ("drawing", "contract_ref_index", "compact_wiring_candidates",
+                "wiring_template", "planner_contract"):
+        assert compact[key] == verbose[key]
+    assert compact["contracts"] == [{
+        k: v for k, v in verbose["contracts"][0].items()
+        if k not in ("geometries", "recipes", "operation_contracts")
+    }]
+    assert compact["agent_output_mode"] == "compact_planner_contracts"
+    assert len(json.dumps(compact)) < len(json.dumps(verbose)) * 0.6
+    assert data == baseline
+    # The selected Adapter and machine-owned geometry still materialize
+    # identically: compact output is a display optimization, not input.
+    group = {
+        "schema": "mode-b-contract-wiring-v1",
+        "operations": [{
+            "contract_group_ref": [0, 0],
+            "requires": {"sketch_id": "sketch_main"},
+            "topology_changes": False,
+            "topology_change_indices": [1],
+        }],
+    }
+    plan, materialize_errors = R.materialize_frozen_from_contract_wiring(
+        "fresh-drawing.json", [data], group
+    )
+    assert materialize_errors == []
+    assert plan is not None
+    assert plan["operations"][1]["tool_args"]["stable"] == "fixed" * 300
+    assert plan["operations"][1]["tool_args"]["reverse"] is False
+
+
 def test_mode_b_source_drawing_binding_requires_exact_current_path(tmp_path=None):
     import tempfile
 

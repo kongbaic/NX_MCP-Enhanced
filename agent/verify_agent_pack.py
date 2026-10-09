@@ -48,6 +48,7 @@ def main() -> None:
     for token in (
         "4e. **Structural Agent 工具往返优化",
         "10e. **Stage B 生产工具往返优化",
+        "plan-contracts <current-drawing.json> --agent-compact",
         "structural-visual-decisions.json> <fresh-mode-b-prefix>",
         "写入后不再做额外检查",
         "任何阶段首次失败、terminal 或命令异常",
@@ -289,6 +290,15 @@ def main() -> None:
     runner_source = (ROOT / "agent" / "nx-mcp-plan-runner" / "runner.py").read_text(
         encoding="utf-8"
     )
+    for marker in (
+        '"--agent-compact", action="store_true"',
+        'result["agent_output_mode"] = "compact_planner_contracts"',
+        'if not agent_compact:',
+        '"contract_ref_index": contract_ref_index if not errors else []',
+        '"compact_wiring_candidates": compact_candidates if not errors else None',
+    ):
+        if marker not in runner_source:
+            fail(f"Stage B compact Planner contract regression: missing {marker}")
     for token in (
         "def materialize_frozen_from_contract_wiring(",
         "contract_wiring_missing_adapter_ops",

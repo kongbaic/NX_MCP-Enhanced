@@ -296,6 +296,65 @@ def test_compact_overall_axis_forms_remain_strict_and_fail_closed():
         })
 
 
+def test_overall_extent_closure_is_global_not_required_per_view():
+    # Two-view orthographic drawing: front carries X and Z, side carries Y.
+    # Side has no repeated vertical Z label, but the global Z is directly
+    # evidenced by the front; absent duplicate must not be an unresolved.
+    plan = build_structural_context_queries(_reader_input())
+    assert plan.rules["overall_dimension_closure_is_global_across_views"] is True
+    assert plan.rules["per_view_absence_of_overall_is_not_a_blocking_unresolved"] is True
+    visual = _compact_answers()
+    assert [
+        fact.axis for fact in visual.decisions[1].overall_dimension_facts
+    ] == ["Y"]
+    assert visual.decisions[1].unresolved == []
+    full = compose_structural_visual_answers(plan, visual)
+    context = assemble_structural_context(plan, full)
+    assert {(fact.axis, fact.value) for fact in context.overall_dimension_facts} == {
+        ("X", 40.0), ("Y", 32.0), ("Z", 66.0)
+    }
+
+
+def test_genuinely_missing_global_overall_still_fails_closed():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    # Remove the ONLY global Z evidence. No local query is forced to invent
+    # a replacement, and the existing global closure must now refuse it.
+    payload["decisions"][0]["overall_dimension_facts"] = [
+        fact for fact in payload["decisions"][0]["overall_dimension_facts"]
+        if fact["axis"] != "Z"
+    ]
+    full = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    with pytest.raises(StructuralContextError, match="missing structural overall fact for axis Z"):
+        assemble_structural_context(plan, full)
+
+
+def test_true_semantic_unresolved_is_not_silently_erased():
+    plan = build_structural_context_queries(_reader_input())
+    payload = _compact_answers().model_dump(mode="json", by_alias=True)
+    payload["decisions"][1]["unresolved"] = ["dimension endpoint ownership ambiguous"]
+    full = compose_structural_visual_answers(
+        plan, StructuralCompactVisualAnswers.model_validate(payload)
+    )
+    with pytest.raises(StructuralContextError, match="remains unresolved"):
+        assemble_structural_context(plan, full)
+
+
+def test_fresh_contract_explains_global_not_per_view_overall_closure():
+    root = Path(__file__).resolve().parents[1]
+    skill = (root / "skills" / "nx-agent" / "SKILL.md").read_text(encoding="utf-8")
+    reference = (
+        root / "skills" / "nx-agent" / "references"
+        / "reader-hybrid-runtime-contract.md"
+    ).read_text(encoding="utf-8")
+    assert "跨视图整体尺寸去重" in skill
+    assert "全局 X/Y/Z 轴若最终缺失" in skill
+    assert "absence of a repeated annotation" in reference
+    assert "missing GLOBAL X/Y/Z axis" in reference
+
+
 def test_machine_composes_minimal_visual_responses_with_provenance():
     plan = build_structural_context_queries(_reader_input())
     answers = compose_structural_visual_answers(plan, _compact_answers())

@@ -47,7 +47,17 @@ boundary. An explicit overall dimension anywhere in that query image may be repo
 when it unambiguously belongs to the boxed region's same orthographic view and spans
 that view's complete visible part/profile extent, even when its dimension line or text
 is outside the box. Never borrow an overall dimension from another view; ambiguous
-ownership stays unresolved. Normal Fresh Hybrid production writes ONLY
+ownership stays unresolved. A view does not need to repeat the same
+whole-part engineering-axis extent already directly evidenced by a DIFFERENT view:
+report each direct overall fact only under the view to which its drawn
+dimension actually belongs. Merely lacking a duplicate horizontal/vertical
+overall annotation in this particular view is NOT itself a structural
+unresolved reason; omit this view's missing fact without adding an
+unresolved entry solely for that omission. This never authorizes copying
+another view's dimension into this view, guessing an axis/value, or
+reclassifying an ambiguous dimension as proven. All confirmed views are
+then merged by the machine, which rejects any missing global X/Y/Z axis
+or conflicting evidence under the existing fail-closed gates. Normal Fresh Hybrid production writes ONLY
 `structural-visual-decisions-v1`, not legacy full answers; Reader supplies all
 evidence labels when composing canonical structural answers. Never put `evidence`
 inside a compact decision. A resolved rotational decision must follow exactly
@@ -106,9 +116,15 @@ An overall fact requires an explicit dimension spanning the complete visible par
 extent on that view axis. Chained/local lengths, hole-center spacing, center-to-edge
 dimensions, radii, diameters, angles, and dimensions that cover only a local profile
 segment remain local even when they are the largest visible numbers. If no explicit
-overall dimension is shown for an allowed axis, omit that fact and keep it unresolved;
-never invent it to satisfy the Adapter, derive it arithmetically, or estimate it from
-pixels. Do not answer feature inventory, cross-view identity, local feature values,
+overall dimension is shown for an allowed axis in THIS VIEW, omit that
+per-view fact; absence of a repeated annotation is not automatically an
+unresolved item. Do not assert that a global axis is missing before machine
+aggregation across confirmed views. A genuinely ambiguous dimension owner
+or unestablished visual semantic must remain unresolved and fail closed.
+After aggregation, a genuinely missing GLOBAL X/Y/Z axis still fails the
+existing closure check (except an independently verified allowed
+rotational relation). Never invent a missing value to satisfy the Adapter,
+derive it from pixels, or estimate it from visual spacing. Do not answer feature inventory, cross-view identity, local feature values,
 dimension endpoint ownership, start side, termination, or pixel-derived coordinates.
 
 Production now prefers compact, evidence-free visual decisions:

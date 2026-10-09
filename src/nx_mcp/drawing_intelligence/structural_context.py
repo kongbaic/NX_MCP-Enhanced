@@ -1927,6 +1927,11 @@ def build_structural_context_queries(
             "deduplicate_identical_query_image_paths": True,
             "scan_workspace": False,
             "report_only_view_kind_and_direct_overall_dimensions": True,
+            # Region observations are sparse: one view need not repeat an
+            # already evidenced engineering-axis extent from another view.
+            # assemble_structural_context validates global X/Y/Z closure.
+            "overall_dimension_closure_is_global_across_views": True,
+            "per_view_absence_of_overall_is_not_a_blocking_unresolved": True,
             "report_only_visual_rotational_symmetry_basis": True,
             "agent_must_not_report_engineering_rotation_axis": True,
             "agent_must_not_report_axial_section_symmetry_direction": True,

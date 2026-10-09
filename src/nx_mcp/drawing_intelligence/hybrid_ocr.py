@@ -165,20 +165,19 @@ def _candidate_matches_item(
 
     item_orientation = _item_orientation(item)
     candidate_orientation = str(candidate["orientation"])
-    if _linear_text_strength(str(item.get("text") or "")) < 2:
-        if item_orientation != candidate_orientation:
-            # A nearly square multi-digit glyph can have ambiguous text
-            # orientation. Restore its historical eligibility for subsequent
-            # ROI/distance/margin checks, but NOT a single-character glyph:
-            # lone OCR digits may be incidental endpoint text or noise.
-            # Structured dimension tokens keep the independently tested rule.
-            ambiguity_candidate = (
-                item_orientation == "ambiguous"
-                and re.fullmatch(r"\d{2,}", _normalize(str(item.get("text") or "")))
-                is not None
-            )
-            if not ambiguity_candidate:
-                return False
+    # Ambiguous two-or-more digit OCR boxes are eligible for the existing
+    # ROI/distance/margin checks, not automatically accepted. Single bare
+    # glyphs and definite cross-orientation conflicts remain excluded.
+    ambiguity_candidate = (
+        item_orientation == "ambiguous"
+        and re.fullmatch(r"\d{2,}", _normalize(str(item.get("text") or ""))) is not None
+    )
+    if (
+        _linear_text_strength(str(item.get("text") or "")) < 2
+        and item_orientation != candidate_orientation
+        and not ambiguity_candidate
+    ):
+        return False
 
     return _inside_box(
         _item_center(item),

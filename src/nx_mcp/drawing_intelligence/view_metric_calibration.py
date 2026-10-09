@@ -14,7 +14,6 @@ ENGINEERING_AUTHORITATIVE = False
 from typing import Any
 
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
-from .raster_stroke_identity import single_ink_stroke_alias
 
 _AXIS_BY_VIEW_ORIENTATION: dict[tuple[str, str], str] = {
     ("front", "horizontal"): "X",
@@ -493,6 +492,8 @@ def derive_view_axis_boundaries(
         resolved_by_axis.setdefault((region_id, axis), []).append(record)
 
     if profile_inventory:
+        from .raster_stroke_identity import single_ink_stroke_alias
+
         resolved_keys = set(resolved_by_axis)
         scoped_overall_axes = region_overall_fact_axes
         for region_id, view_kind in region_views.items():

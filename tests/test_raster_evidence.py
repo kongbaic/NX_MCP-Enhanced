@@ -525,3 +525,71 @@ def test_compact_fragments_does_not_silently_drop_ninth_valid_pattern():
     )
 
     assert len(items) == 10
+
+
+
+def test_short_dimension_rail_requires_two_crossing_witness_lines():
+    import cv2
+    import numpy as np
+
+    from nx_mcp.drawing_intelligence.raster_evidence import (
+        _dimension_geometry,
+        _short_dimension_has_independent_witnesses,
+    )
+
+    assert _short_dimension_has_independent_witnesses(
+        "horizontal", 120.0, 300.0, 341.0,
+        [279.0, 362.0],
+        [
+            ("vertical", 279.0, 90, 230),
+            ("vertical", 362.0, 90, 230),
+        ],
+        minimum_witness_length=20,
+        witness_axis_tolerance=5.0,
+        axis_cross_tolerance=5.0,
+        region_bbox=[220, 90, 250, 300],
+    )
+    assert not _short_dimension_has_independent_witnesses(
+        "horizontal", 120.0, 300.0, 341.0,
+        [279.0, 362.0],
+        [("vertical", 279.0, 90, 230)],
+        minimum_witness_length=20,
+        witness_axis_tolerance=5.0,
+        axis_cross_tolerance=5.0,
+        region_bbox=[220, 90, 250, 300],
+    )
+
+    class FixedHough:
+        Canny = staticmethod(cv2.Canny)
+        HoughLinesP = staticmethod(lambda *args, **kwargs: np.array(
+            [
+                [[300, 120, 341, 120]],
+                [[279, 90, 279, 230]],
+                [[362, 90, 362, 230]],
+            ],
+            dtype=np.int32,
+        ))
+
+    image = np.full((400, 1034), 255, dtype=np.uint8)
+    raw = {"regions": [{"region_id": "R", "bbox_px": [220, 90, 250, 300]}]}
+    candidates = _dimension_geometry(image, raw, FixedHough, np)
+    short = [
+        item for item in candidates
+        if item["region_id"] == "R"
+        and item["orientation"] == "horizontal"
+        and item["line_span_px"] == [300, 341]
+    ]
+    assert len(short) == 1
+    assert short[0]["short_witness_proven"] is True
+    assert short[0]["status"] == "candidate_only_no_semantics"
+    assert len(short[0]["witness_positions_px"]) == 2
+
+    class NoSecondWitness(FixedHough):
+        HoughLinesP = staticmethod(lambda *args, **kwargs: np.array(
+            [
+                [[300, 120, 341, 120]],
+                [[279, 90, 279, 230]],
+            ],
+            dtype=np.int32,
+        ))
+    assert _dimension_geometry(image, raw, NoSecondWitness, np) == []

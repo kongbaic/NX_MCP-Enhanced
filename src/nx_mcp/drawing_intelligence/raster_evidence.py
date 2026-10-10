@@ -1550,6 +1550,57 @@ def _region_scoped_witnesses(
     return [value for value in witnesses if lower <= float(value) <= upper]
 
 
+def _short_dimension_has_independent_witnesses(
+    orientation: str,
+    axis: float,
+    start: float,
+    end: float,
+    witnesses: list[float],
+    source_lines: list[tuple[str, float, int, int]],
+    *,
+    minimum_witness_length: int,
+    witness_axis_tolerance: float,
+    axis_cross_tolerance: float,
+    region_bbox: list[int],
+) -> bool:
+    """Admit a shorter raster rail only with two independent crossing strokes.
+
+    Geometry remains uncalibrated and candidate-only. A short contour segment
+    or arrow without two real perpendicular witnesses cannot become a DG.
+    """
+    if len(witnesses) != 2 or end <= start:
+        return False
+    first, second = sorted(witnesses)
+    center = (start + end) / 2
+    rail_length = end - start
+    extension_limit = max(7.0, rail_length * 0.65)
+    if (
+        not first < center < second
+        or start - first > extension_limit
+        or second - end > extension_limit
+        or first > end
+        or second < start
+    ):
+        return False
+    expected = "vertical" if orientation == "horizontal" else "horizontal"
+    for witness in (first, second):
+        matching_strokes = [
+            line
+            for line in source_lines
+            if line[0] == expected
+            and abs(float(line[1]) - witness) <= witness_axis_tolerance
+            and line[3] - line[2] >= minimum_witness_length
+            and line[2] - axis_cross_tolerance <= axis <= line[3] + axis_cross_tolerance
+            and _source_line_intersects_region(
+                line[0], line[1], line[2], line[3],
+                region_bbox, margin=axis_cross_tolerance,
+            )
+        ]
+        if not matching_strokes:
+            return False
+    return True
+
+
 def _dimension_geometry(
     gray: Any,
     raw_evidence: dict[str, Any],
@@ -1617,6 +1668,9 @@ def _dimension_geometry(
     }
 
     minimum_span = max(50, round(width * 0.028))
+    # Retain high-recall short rails only with two proved witness strokes.
+    # Both thresholds scale with the image; neither defines millimetres.
+    short_minimum_span = min(minimum_span, max(35, round(width * 0.038)))
     witness_minimum = max(20, round(width * 0.011))
     witness_tolerance = max(5, round(width * 0.0045))
     witness_dedup = max(6, round(width * 0.004))
@@ -1625,7 +1679,7 @@ def _dimension_geometry(
     next_id = 1
 
     for _, axis, start, end in horizontal:
-        if end - start < minimum_span:
+        if end - start < short_minimum_span:
             continue
         witnesses = _deduplicate(
             [
@@ -1657,6 +1711,18 @@ def _dimension_geometry(
             )
             if len(region_witnesses) < 2:
                 continue
+            short_witness_proven = (
+                end - start < minimum_span
+                and _short_dimension_has_independent_witnesses(
+                    "horizontal", axis, start, end, region_witnesses, vertical,
+                    minimum_witness_length=witness_minimum,
+                    witness_axis_tolerance=float(witness_dedup),
+                    axis_cross_tolerance=float(witness_tolerance),
+                    region_bbox=bbox,
+                )
+            )
+            if end - start < minimum_span and not short_witness_proven:
+                continue
 
             output.append(
                 {
@@ -1681,13 +1747,14 @@ def _dimension_geometry(
                         region_margin=float(witness_tolerance),
                         gray=gray,
                     ),
+                    "short_witness_proven": short_witness_proven,
                     "status": "candidate_only_no_semantics",
                 }
             )
             next_id += 1
 
     for _, axis, start, end in vertical:
-        if end - start < minimum_span:
+        if end - start < short_minimum_span:
             continue
         witnesses = _deduplicate(
             [
@@ -1719,12 +1786,24 @@ def _dimension_geometry(
             )
             if len(region_witnesses) < 2:
                 continue
+            short_witness_proven = (
+                end - start < minimum_span
+                and _short_dimension_has_independent_witnesses(
+                    "vertical", axis, start, end, region_witnesses, horizontal,
+                    minimum_witness_length=witness_minimum,
+                    witness_axis_tolerance=float(witness_dedup),
+                    axis_cross_tolerance=float(witness_tolerance),
+                    region_bbox=bbox,
+                )
+            )
+            if end - start < minimum_span and not short_witness_proven:
+                continue
 
             output.append(
                 {
                     "candidate_id": f"DG{next_id}",
                     "region_id": region_id,
-                    "orientation": "vertical",
+                    "orientation": "horizontal",
                     "axis_px": round(axis, 1),
                     "axis_local_norm": round((axis - x) / region_width, 5),
                     "line_span_px": [start, end],
@@ -1743,6 +1822,7 @@ def _dimension_geometry(
                         region_margin=float(witness_tolerance),
                         gray=gray,
                     ),
+                    "short_witness_proven": short_witness_proven,
                     "status": "candidate_only_no_semantics",
                 }
             )

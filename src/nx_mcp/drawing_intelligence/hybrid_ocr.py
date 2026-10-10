@@ -155,6 +155,120 @@ def _assignment_margin(candidate: dict[str, Any]) -> float:
     return max(ASSIGNMENT_MARGIN_MIN_PX, cross_size * 0.08)
 
 
+def _exterior_single_digit_witness_proof(
+    candidate: dict[str, Any],
+    item: dict[str, Any],
+) -> bool:
+    """Bind exterior one-glyph text only to one double-witness rail.
+
+    The text must be immediately beyond a drawn rail end, close to its
+    perpendicular axis. Both witness strokes must cross the rail and each
+    must possess a unique, different physical anchor. The value comes from
+    OCR, never from pixel spacing.
+    """
+    if re.fullmatch(r"[1-9]", _normalize(str(item.get("text") or ""))) is None:
+        return False
+    points = item.get("bbox")
+    orientation = candidate.get("orientation")
+    axis = candidate.get("axis_px")
+    span = candidate.get("line_span_px")
+    witnesses = candidate.get("witness_positions_px")
+    records = candidate.get("witness_line_evidence")
+    anchors = candidate.get("witness_anchor_evidence")
+    if (
+        orientation not in {"horizontal", "vertical"}
+        or not isinstance(axis, (float, int))
+        or isinstance(axis, bool)
+        or not isinstance(span, list)
+        or len(span) != 2
+        or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in span)
+        or not isinstance(witnesses, list)
+        or not isinstance(records, list)
+        or not isinstance(anchors, list)
+        or not isinstance(points, list)
+        or len(points) < 4
+    ):
+        return False
+    try:
+        xs = [float(point[0]) for point in points]
+        ys = [float(point[1]) for point in points]
+        axis_low, axis_high = sorted(float(v) for v in span)
+        along_low, along_high = (
+            (min(xs), max(xs)) if orientation == "horizontal"
+            else (min(ys), max(ys))
+        )
+        cross_low, cross_high = (
+            (min(ys), max(ys)) if orientation == "horizontal"
+            else (min(xs), max(xs))
+        )
+    except (TypeError, ValueError, IndexError):
+        return False
+    if axis_high - axis_low < 20:
+        return False
+    text_span = along_high - along_low
+    cross_span = cross_high - cross_low
+    gap = (
+        axis_low - along_high if along_high < axis_low
+        else along_low - axis_high if along_low > axis_high
+        else -1.0
+    )
+    if gap < 0 or gap > max(12.0, text_span * 0.85):
+        return False
+    cross_gap = max(cross_low - float(axis), float(axis) - cross_high, 0.0)
+    if cross_gap > max(7.0, cross_span * 0.20):
+        return False
+
+    within = [
+        (index, float(position))
+        for index, position in enumerate(witnesses)
+        if isinstance(position, (int, float))
+        and not isinstance(position, bool)
+        and axis_low + 2.0 <= float(position) <= axis_high + 2.0
+    ]
+    if len(within) != 2 or abs(within[0][1] - within[1][1]) < 6:
+        return False
+
+    expected_orientation = "vertical" if orientation == "horizontal" else "horizontal"
+    owned_refs: list[str] = []
+    for index, position in within:
+        line_records = [
+            record for record in records
+            if isinstance(record, dict) and record.get("witness_index") == index
+        ]
+        anchor_records = [
+            record for record in anchors
+            if isinstance(record, dict) and record.get("witness_index") == index
+        ]
+        if len(line_records) != 1 or len(anchor_records) != 1:
+            return False
+        crossing = [
+            record
+            for record in line_records[0].get("source_lines", [])
+            if isinstance(record, dict)
+            and record.get("crosses_dimension_axis") is True
+            and record.get("orientation") == expected_orientation
+            and isinstance(record.get("axis_px"), (int, float))
+            and abs(float(record["axis_px"]) - position) <= 2.5
+        ]
+        if not crossing:
+            return False
+        supported = {
+            str(anchor.get("ref"))
+            for anchor in anchor_records[0].get("nearest_anchors", [])
+            if isinstance(anchor, dict)
+            and anchor.get("kind") in {
+                "profile_edge_candidate", "circle_center_axis",
+                "hidden_projection_center_axis",
+            }
+            and isinstance(anchor.get("ref"), str)
+            and anchor.get("ref")
+        }
+        if len(supported) != 1:
+            return False
+        owned_refs.append(next(iter(supported)))
+    return owned_refs[0] != owned_refs[1]
+
+
 def _candidate_matches_item(
     candidate: dict[str, Any],
     item: dict[str, Any],
@@ -162,6 +276,8 @@ def _candidate_matches_item(
     tokens = _linear_tokens(str(item.get("text") or ""))
     if len(tokens) != 1:
         return False
+    if _exterior_single_digit_witness_proof(candidate, item):
+        return True
 
     item_orientation = _item_orientation(item)
     candidate_orientation = str(candidate["orientation"])
@@ -237,6 +353,9 @@ def _assign_global_items(
                 ),
                 "bbox": item.get("bbox"),
                 "confidence": item.get("confidence"),
+                "exterior_single_digit_witness_proven": (
+                    _exterior_single_digit_witness_proof(nearest, item)
+                ),
             }
         )
 
@@ -895,6 +1014,19 @@ def run_hybrid_ocr(
             global_text_strength=global_text_strength,
             local_strong_tokens=local_strong_tokens,
         )
+        # The standard whole/local corroboration remains the default. For
+        # text printed outside the local crop, an independently proved pair
+        # of distinct witness owners can replace that corroboration.
+        if (
+            accepted is None
+            and global_token is not None
+            and not local_tokens
+            and len(assignments) == 1
+            and assignments[0].get("token") == global_token
+            and assignments[0].get("exterior_single_digit_witness_proven") is True
+        ):
+            accepted = global_token
+            decision_reason = "unique_exterior_single_digit_witness_proof"
         results.append(
             {
                 "candidate_id": candidate_id,

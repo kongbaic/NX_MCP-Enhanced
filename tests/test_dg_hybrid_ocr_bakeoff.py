@@ -701,3 +701,64 @@ def test_hybrid_decision_fails_closed_on_disagreement():
         None,
         "no_global_proposal",
     )
+
+
+
+def test_exterior_single_digit_only_binds_unique_physical_witness_pair():
+    module = _load_module()
+
+    candidate = {
+        "candidate_id": "DG_OUTSIDE",
+        "orientation": "horizontal",
+        "axis_px": 160.0,
+        "line_span_px": [737, 795],
+        "witness_positions_px": [703.7, 744.0, 785.8],
+        "witness_line_evidence": [
+            {"witness_index": 0, "source_lines": []},
+            {"witness_index": 1, "source_lines": [
+                {"orientation": "vertical", "axis_px": 744.0,
+                 "crosses_dimension_axis": True},
+            ]},
+            {"witness_index": 2, "source_lines": [
+                {"orientation": "vertical", "axis_px": 785.8,
+                 "crosses_dimension_axis": True},
+            ]},
+        ],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "nearest_anchors": []},
+            {"witness_index": 1, "nearest_anchors": [
+                {"kind": "circle_center_axis", "ref": "R.C1.center_x"},
+            ]},
+            {"witness_index": 2, "nearest_anchors": [
+                {"kind": "profile_edge_candidate", "ref": "R.profile.max"},
+            ]},
+        ],
+        "wide": {"source_roi_bbox_px": [690, 110, 112, 100]},
+    }
+    exterior = {
+        "text": "8",
+        "bbox": [[812, 120], [838, 120], [838, 156], [812, 156]],
+    }
+    assert module._exterior_single_digit_witness_proof(candidate, exterior)
+    assigned = module._assign_global_items([candidate], [exterior])
+    assert [row["token"] for row in assigned["DG_OUTSIDE"]] == ["8"]
+    assert assigned["DG_OUTSIDE"][0]["exterior_single_digit_witness_proven"] is True
+
+    # No-geometry, one-witness, duplicate owner, and distant text must stay
+    # unassigned (no general relaxation of bare OCR glyph policy).
+    broken = {**candidate, "witness_line_evidence": []}
+    assert not module._candidate_matches_item(broken, exterior)
+    broken = {**candidate, "witness_anchor_evidence": []}
+    assert not module._candidate_matches_item(broken, exterior)
+    broken = {**candidate, "witness_anchor_evidence": [
+        candidate["witness_anchor_evidence"][0],
+        candidate["witness_anchor_evidence"][1],
+        {"witness_index": 2, "nearest_anchors": [
+            {"kind": "circle_center_axis", "ref": "R.C1.center_x"},
+        ]},
+    ]}
+    assert not module._candidate_matches_item(broken, exterior)
+    distant = {"text": "8", "bbox": [
+        [845, 120], [870, 120], [870, 156], [845, 156],
+    ]}
+    assert not module._candidate_matches_item(candidate, distant)

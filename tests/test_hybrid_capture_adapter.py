@@ -9736,3 +9736,124 @@ def test_unassigned_profile_offset_recovery_requires_local_text_to_line_ownershi
             "overall_max", "profile_boundary",
         }
         assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected_advisory"),
+    [
+        ("proven", True),
+        ("wrong_value", False),
+        ("self_sourced_overall", False),
+        ("candidate_owned_boundary", False),
+        ("wrong_witness_owner", False),
+        ("ambiguous_witness_owner", False),
+        ("missing_crossing_line", False),
+        ("third_witness", False),
+        ("non_independent_boundary", False),
+    ],
+)
+def test_local_only_overall_duplicate_requires_independent_proven_witnesses(
+    variant, expected_advisory,
+):
+    candidate = {
+        "candidate_id": "DG_LOCAL_OVERALL",
+        "region_id": "R1",
+        "orientation": "vertical",
+        "accepted_token": None,
+        "witness_positions_px": [200.5, 550.2],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {"kind": "profile_edge_candidate", "ref": "TOP"}
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {"kind": "profile_edge_candidate", "ref": "BOTTOM"}
+                ],
+            },
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": 0,
+                "source_lines": [{"crosses_dimension_axis": True}],
+            },
+            {
+                "witness_index": 1,
+                "source_lines": [{"crosses_dimension_axis": True}],
+            },
+        ],
+    }
+    boundary = {
+        "status": "resolved",
+        "region_id": "R1",
+        "axis": "Z",
+        "candidate_id": None,
+        "overall_dimension_value": 66.0,
+        "anchors": [
+            {"ref": "TOP", "role": "overall_max"},
+            {"ref": "BOTTOM", "role": "overall_min"},
+        ],
+        "basis": "independent_overall_dimension_plus_unique_profile_extremes",
+        "overall_fact_scope": "same_region_structural_evidence",
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    fact = hybrid_adapter.PartialOverallDimensionFact(
+        axis="Z", value=66, evidence=["structural:independent-Z"]
+    )
+    item = {"candidate_id": "DG_LOCAL_OVERALL", "token": "66"}
+    if variant == "wrong_value":
+        item["token"] = "65"
+    elif variant == "self_sourced_overall":
+        fact = fact.model_copy(
+            update={"evidence": ["hybrid:DG_LOCAL_OVERALL:wide"]}
+        )
+    elif variant == "candidate_owned_boundary":
+        boundary["candidate_id"] = "DG_LOCAL_OVERALL"
+    elif variant == "wrong_witness_owner":
+        candidate["witness_anchor_evidence"][1]["nearest_anchors"][0]["ref"] = "OTHER"
+    elif variant == "ambiguous_witness_owner":
+        candidate["witness_anchor_evidence"][1]["nearest_anchors"].append(
+            {"kind": "profile_edge_candidate", "ref": "OTHER"}
+        )
+    elif variant == "missing_crossing_line":
+        candidate["witness_line_evidence"][1]["source_lines"][0][
+            "crosses_dimension_axis"
+        ] = False
+    elif variant == "third_witness":
+        candidate["witness_positions_px"].append(610.0)
+    elif variant == "non_independent_boundary":
+        boundary["basis"] = "candidate_only_extremes"
+
+    unresolved = hybrid_adapter._coverage_unresolved(
+        {
+            "coverage": {
+                "observed_silent_drop_count": 0,
+                "conflicting_linear_observations": [],
+                "unassigned_linear_observations": [
+                    {"source_item_index": 9, "token": "6", "bbox": [[4, 1], [9, 1], [9, 8], [4, 8]]}
+                ],
+                "local_only_linear_observations": [item],
+            }
+        },
+        {"DG_LOCAL_OVERALL": candidate},
+        {
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        boundaries=[boundary],
+        overall_dimension_facts=[fact],
+    )
+    local = next(x for x in unresolved if x.field == "local_only_linear_text")
+    raw_six = next(x for x in unresolved if x.field == "unassigned_linear_text")
+    assert (not local.required_for_modeling) is expected_advisory
+    assert raw_six.required_for_modeling is True
+    if expected_advisory:
+        assert "Independent overall-dimension evidence" in local.reason
+        assert "advisory duplicate coverage" in local.reason

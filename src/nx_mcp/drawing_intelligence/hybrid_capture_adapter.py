@@ -533,6 +533,140 @@ def _bbox_reference_only_region_ids(
     return containing_region_ids
 
 
+def _local_only_redundant_with_independent_overall(
+    *,
+    item: dict[str, Any],
+    candidate: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    overall_dimension_facts: list[PartialOverallDimensionFact],
+) -> bool:
+    """Keep a local-only OCR number advisory only for a proven overall span.
+
+    This does not accept the local text as a dimension or suppress any whole
+    OCR item. Structural boundary identity comes from independent engineering
+    evidence; raster witnesses provide identity only, never metric values.
+    """
+
+    candidate_id = str(candidate.get("candidate_id") or "")
+    region_id = str(candidate.get("region_id") or "")
+    region_view = view_lookup.get(region_id)
+    value = _linear_token_number(item.get("token"))
+    if (
+        not candidate_id
+        or region_view is None
+        or value is None
+        or candidate.get("accepted_token") is not None
+    ):
+        return False
+
+    try:
+        axis = _axis_for(
+            region_view.view_kind,
+            str(candidate.get("orientation") or ""),
+        )
+    except HybridCaptureAdapterError:
+        return False
+
+    axis_facts = [
+        fact for fact in overall_dimension_facts
+        if fact.axis == axis
+    ]
+    if len(axis_facts) != 1:
+        return False
+    fact = axis_facts[0]
+    if (
+        not math.isclose(value, fact.value, abs_tol=1e-9)
+        or not fact.evidence
+        or any(candidate_id in source for source in fact.evidence)
+    ):
+        return False
+
+    independent_boundaries = [
+        boundary for boundary in boundaries
+        if isinstance(boundary, dict)
+        and boundary.get("status") == "resolved"
+        and boundary.get("region_id") == region_id
+        and boundary.get("axis") == axis
+        and boundary.get("candidate_id") is None
+        and boundary.get("basis")
+        == "independent_overall_dimension_plus_unique_profile_extremes"
+        and boundary.get("overall_fact_scope")
+        == "same_region_structural_evidence"
+        and boundary.get("engineering_coordinate_inferred_from_pixels") is False
+        and isinstance(boundary.get("overall_dimension_value"), (int, float))
+        and math.isclose(
+            float(boundary["overall_dimension_value"]),
+            fact.value,
+            abs_tol=1e-9,
+        )
+    ]
+    if len(independent_boundaries) != 1:
+        return False
+
+    anchors = independent_boundaries[0].get("anchors", [])
+    if not isinstance(anchors, list) or len(anchors) != 2:
+        return False
+    boundary_refs = {
+        anchor.get("ref"): anchor.get("role")
+        for anchor in anchors
+        if isinstance(anchor, dict)
+        and isinstance(anchor.get("ref"), str)
+        and anchor.get("role") in {"overall_min", "overall_max"}
+    }
+    if (
+        len(boundary_refs) != 2
+        or set(boundary_refs.values()) != {"overall_min", "overall_max"}
+    ):
+        return False
+
+    witness_positions = candidate.get("witness_positions_px")
+    if not isinstance(witness_positions, list) or len(witness_positions) != 2:
+        return False
+
+    witness_anchors = candidate.get("witness_anchor_evidence", [])
+    witness_lines = candidate.get("witness_line_evidence", [])
+    if not isinstance(witness_anchors, list) or not isinstance(witness_lines, list):
+        return False
+
+    resolved_refs: list[str] = []
+    for witness_index in (0, 1):
+        matching_anchors = [
+            entry for entry in witness_anchors
+            if isinstance(entry, dict)
+            and entry.get("witness_index") == witness_index
+        ]
+        matching_lines = [
+            entry for entry in witness_lines
+            if isinstance(entry, dict)
+            and entry.get("witness_index") == witness_index
+        ]
+        if len(matching_anchors) != 1 or len(matching_lines) != 1:
+            return False
+        physical_refs = {
+            anchor.get("ref")
+            for anchor in matching_anchors[0].get("nearest_anchors", [])
+            if isinstance(anchor, dict)
+            and anchor.get("kind") == "profile_edge_candidate"
+            and isinstance(anchor.get("ref"), str)
+        }
+        if len(physical_refs) != 1:
+            return False
+        physical_ref = next(iter(physical_refs))
+        if physical_ref not in boundary_refs:
+            return False
+        source_lines = matching_lines[0].get("source_lines", [])
+        if not isinstance(source_lines, list) or not any(
+            isinstance(line, dict)
+            and line.get("crosses_dimension_axis") is True
+            for line in source_lines
+        ):
+            return False
+        resolved_refs.append(physical_ref)
+
+    return set(resolved_refs) == set(boundary_refs)
+
+
 def _coverage_unresolved(
     report: dict[str, Any],
     candidate_lookup: dict[str, dict[str, Any]],
@@ -725,6 +859,15 @@ def _coverage_unresolved(
             candidate=candidate,
             candidate_lookup=candidate_lookup,
         )
+        independent_overall_duplicate = (
+            _local_only_redundant_with_independent_overall(
+                item=item,
+                candidate=candidate,
+                view_lookup=view_lookup,
+                boundaries=boundaries,
+                overall_dimension_facts=overall_dimension_facts,
+            )
+        )
         rejected_dimension_role = (
             candidate.get("decision_reason")
             == "candidate_line_is_extension_witness_of_accepted_dimension"
@@ -735,6 +878,7 @@ def _coverage_unresolved(
             candidate.get("accepted_token") is None
             and candidate_id not in conflicting_candidate_ids
             and not redundant
+            and not independent_overall_duplicate
             and not rejected_dimension_role
             and not reference_only_region
         )
@@ -755,6 +899,12 @@ def _coverage_unresolved(
                 "same raw witness source-line topology and carries this value; "
                 "the local-only observation is preserved as advisory duplicate "
                 "coverage."
+            )
+        elif independent_overall_duplicate:
+            reason += (
+                " Independent overall-dimension evidence and unique matching "
+                "physical witness owners already close this full span; the "
+                "local-only observation remains advisory duplicate coverage."
             )
         elif rejected_dimension_role:
             reason += (

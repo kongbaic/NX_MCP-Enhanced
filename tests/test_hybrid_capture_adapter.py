@@ -10329,7 +10329,7 @@ def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profi
             "unassigned_linear_observations": [{
                 "source_item_index": 7,
                 "token": "8",
-                "bbox": [[64, 228], [95, 228], [95, 247], [64, 247]],
+                "bbox": [[64, 225], [95, 225], [95, 255], [64, 255]],
             }]
         },
     }

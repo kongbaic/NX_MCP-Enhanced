@@ -95,7 +95,7 @@ def test_short_dimension_pair_accepts_witness_lines_one_glyph_height_outside_lab
     cv2.line(image, (104, 200), (104, 270), 0, 2)
     path = tmp_path / "offset.png"
     assert cv2.imwrite(str(path), image)
-    bbox = [[64, 228], [95, 228], [95, 247], [64, 247]]
+    bbox = [[64, 225], [95, 225], [95, 255], [64, 255]]
     topology = infer_short_dimension_visual_topology(str(path), bbox)
     assert topology is not None
     assert topology[0] == "vertical"

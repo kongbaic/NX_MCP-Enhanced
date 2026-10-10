@@ -10195,3 +10195,112 @@ def test_unassigned_whole_ocr_fragment_is_advisory_only_for_proven_overall(
     if advisory:
         assert "truncated fragment" in result[0].reason
         assert result[0].evidence == ["hybrid:whole:9"]
+
+
+
+def test_hidden_pair_to_recess_circle_unique_orthographic_alignment_is_coordinate_only():
+    """Only a unique independently proved hidden pair can share a Z coordinate."""
+    from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+        _unique_hidden_recess_projection_alignments,
+    )
+
+    report = {
+        "regions": [
+            {
+                "region_id": "FRONT",
+                "bbox_px": [35, 138, 434, 533],
+                "circle_groups": [],
+            },
+            {
+                "region_id": "SIDE",
+                "bbox_px": [617, 109, 250, 561],
+                "circle_groups": [
+                    {"circle_group_id": "C1", "center_px": [745, 234]},
+                ],
+            },
+        ],
+    }
+    views = {
+        "FRONT": hybrid_adapter.HybridRegionView(
+            region_id="FRONT", view_kind="front", evidence=["front"]
+        ),
+        "SIDE": hybrid_adapter.HybridRegionView(
+            region_id="SIDE", view_kind="side", evidence=["side"]
+        ),
+    }
+    hidden = {
+        "FRONT.HIDDEN_PAIR.horizontal.004.005": {
+            "feature_axis": "X",
+            "pattern_orientation": "horizontal",
+            "source_pattern_indices": [3, 4],
+            "position_px": 233.2,
+            "span_overlap_ratio": 0.95,
+            "selection_basis": "unique_best_hidden_projection_pair",
+        },
+    }
+    entity_keys = {*hidden, "SIDE.C1"}
+    values = [
+        hybrid_adapter.ObservationValue(
+            entity_key="SIDE.C1", field=field, value=value,
+            evidence=["real:callout"],
+        )
+        for field, value in (
+            ("recessed_hole", True),
+            ("through", True),
+            ("diameter", 6.6),
+            ("recess_diameter", 11.0),
+        )
+    ]
+    args = {
+        "report": report,
+        "view_lookup": views,
+        "hidden_entity_records": hidden,
+        "callout_values": values,
+        "entity_keys": entity_keys,
+        "existing_alignments": [],
+    }
+    alignments, ledger = _unique_hidden_recess_projection_alignments(**args)
+    assert len(alignments) == 1
+    assert alignments[0].entity_keys == [
+        "FRONT.HIDDEN_PAIR.horizontal.004.005", "SIDE.C1"
+    ]
+    assert alignments[0].feature_axis == "X"
+    assert len(ledger) == 1
+    assert ledger[0]["shared_projection_axis"] == "Z"
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    # A second equally aligned target is ambiguous, not permission to pick.
+    report["regions"][1]["circle_groups"].append({
+        "circle_group_id": "C2", "center_px": [780, 233.5]
+    })
+    args["entity_keys"] = {*entity_keys, "SIDE.C2"}
+    args["callout_values"] = values + [
+        hybrid_adapter.ObservationValue(
+            entity_key="SIDE.C2", field=v.field, value=v.value,
+            evidence=["other:callout"],
+        ) for v in values
+    ]
+    assert _unique_hidden_recess_projection_alignments(**args)[0] == []
+    report["regions"][1]["circle_groups"].pop()
+    args["entity_keys"] = entity_keys
+    args["callout_values"] = values
+
+    # No synthetic hole identity may be created without the actual nested
+    # hidden-pair evidence and explicit machining callout.
+    for field, invalid in (
+        ("source_pattern_indices", [3]),
+        ("span_overlap_ratio", 0.2),
+        ("selection_basis", "ambiguous_hidden_pair"),
+        ("position_px", 190.0),
+    ):
+        invalid_record = {**hidden[next(iter(hidden))], field: invalid}
+        args["hidden_entity_records"] = {next(iter(hidden)): invalid_record}
+        assert _unique_hidden_recess_projection_alignments(**args)[0] == []
+    args["hidden_entity_records"] = hidden
+
+    args["callout_values"] = [v for v in values if v.field != "through"]
+    assert _unique_hidden_recess_projection_alignments(**args)[0] == []
+    args["callout_values"] = values
+
+    args["existing_alignments"] = [alignments[0]]
+    assert _unique_hidden_recess_projection_alignments(**args)[0] == []

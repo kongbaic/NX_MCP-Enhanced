@@ -7680,6 +7680,186 @@ def _unique_thread_recess_centerline_alignments(
     return alignments, ledger
 
 
+def _unique_hidden_recess_projection_alignments(
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    hidden_entity_records: dict[str, dict[str, Any]],
+    callout_values: list[ObservationValue],
+    entity_keys: set[str],
+    existing_alignments: list[ObservationCenterlineAlignment],
+) -> tuple[list[ObservationCenterlineAlignment], list[dict[str, Any]]]:
+    """Corroborate a hidden center with one orthographic recessed-hole circle.
+
+    This supplements the threaded-callout-specific continuity path without
+    altering machining start-side reasoning. Raster Y/X coordinates establish
+    only cross-view identity. All engineering coordinates are propagated from
+    independently solved dimension relations.
+    """
+
+    fields: dict[str, dict[str, Any]] = {}
+    for value in callout_values:
+        fields.setdefault(value.entity_key, {})[value.field] = value.value
+
+    used_entities = {
+        key
+        for alignment in existing_alignments
+        for key in alignment.entity_keys
+    }
+    regions = {
+        str(item.get("region_id") or ""): item
+        for item in report.get("regions", [])
+        if isinstance(item, dict) and item.get("region_id")
+    }
+    possibilities: list[dict[str, Any]] = []
+    for hidden_entity, record in sorted(hidden_entity_records.items()):
+        if hidden_entity not in entity_keys or hidden_entity in used_entities:
+            continue
+        if record.get("selection_basis") != "unique_best_hidden_projection_pair":
+            continue
+        indices = record.get("source_pattern_indices")
+        span_overlap = record.get("span_overlap_ratio")
+        if (
+            not isinstance(indices, list)
+            or len(indices) != 2
+            or not all(isinstance(i, int) and not isinstance(i, bool) for i in indices)
+            or indices[0] == indices[1]
+            or not isinstance(span_overlap, (float, int))
+            or isinstance(span_overlap, bool)
+            or float(span_overlap) < 0.75
+        ):
+            continue
+
+        feature_axis = record.get("feature_axis")
+        source_region = hidden_entity.split(".", 1)[0]
+        source_view = view_lookup.get(source_region)
+        source_orientation = record.get("pattern_orientation")
+        position = record.get("position_px")
+        if (
+            feature_axis not in ("X", "Y", "Z")
+            or source_view is None
+            or source_orientation not in ("horizontal", "vertical")
+            or not isinstance(position, (int, float))
+            or isinstance(position, bool)
+        ):
+            continue
+        shared_axis = _projection_center_axis(
+            source_view.view_kind, source_orientation
+        )
+        if shared_axis == feature_axis:
+            continue
+        source_index = _PIXEL_INDEX_BY_VIEW_AXIS.get(
+            (source_view.view_kind, shared_axis)
+        )
+        if source_index is None:
+            continue
+
+        for target_region, region in sorted(regions.items()):
+            if target_region == source_region:
+                continue
+            target_view = view_lookup.get(target_region)
+            if (
+                target_view is None
+                or _VIEW_NORMAL_BY_KIND.get(target_view.view_kind) != feature_axis
+                or _PIXEL_INDEX_BY_VIEW_AXIS.get(
+                    (target_view.view_kind, shared_axis)
+                ) != source_index
+            ):
+                continue
+            groups = region.get("circle_groups")
+            if not isinstance(groups, list):
+                continue
+            tolerance = max(
+                _projection_alignment_tolerance(report, source_region),
+                _projection_alignment_tolerance(report, target_region),
+            )
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                group_id = group.get("circle_group_id")
+                center = group.get("center_px")
+                target_entity = (
+                    f"{target_region}.{group_id}"
+                    if isinstance(group_id, str) and group_id
+                    else ""
+                )
+                values = fields.get(target_entity, {})
+                if (
+                    target_entity not in entity_keys
+                    or target_entity in used_entities
+                    or values.get("recessed_hole") is not True
+                    or values.get("through") is not True
+                    or not isinstance(values.get("diameter"), (int, float))
+                    or not isinstance(values.get("recess_diameter"), (int, float))
+                    or not isinstance(center, list)
+                    or len(center) < 2
+                    or not isinstance(center[source_index], (int, float))
+                    or isinstance(center[source_index], bool)
+                ):
+                    continue
+                residual = abs(
+                    float(center[source_index]) - float(position)
+                )
+                if residual <= tolerance:
+                    possibilities.append({
+                        "source": hidden_entity,
+                        "target": target_entity,
+                        "axis": feature_axis,
+                        "shared_axis": shared_axis,
+                        "residual_px": residual,
+                        "tolerance_px": tolerance,
+                        "source_indices": list(indices),
+                    })
+
+    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for possibility in possibilities:
+        by_source[possibility["source"]].append(possibility)
+        by_target[possibility["target"]].append(possibility)
+
+    alignments: list[ObservationCenterlineAlignment] = []
+    ledger: list[dict[str, Any]] = []
+    for match in possibilities:
+        if (
+            len(by_source[match["source"]]) != 1
+            or len(by_target[match["target"]]) != 1
+        ):
+            continue
+        source = str(match["source"])
+        target = str(match["target"])
+        axis = match["axis"]
+        if axis not in ("X", "Y", "Z"):
+            continue
+        evidence = [
+            f"hybrid:hidden-pair:{source}",
+            f"hybrid:recessed-circle:{target}",
+            f"hybrid:orthographic-center-residual-px:{match['residual_px']:.3f}",
+        ]
+        alignments.append(
+            ObservationCenterlineAlignment(
+                entity_keys=[source, target],
+                feature_axis=axis,
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        ledger.append({
+            "entity_keys": [source, target],
+            "feature_axis": axis,
+            "shared_projection_axis": match["shared_axis"],
+            "projection_residual_px": round(match["residual_px"], 3),
+            "projection_tolerance_px": round(match["tolerance_px"], 3),
+            "source_pattern_indices": match["source_indices"],
+            "basis": (
+                "unique_verified_hidden_pair_plus_orthographic_"
+                "recessed_through_hole_circle"
+            ),
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        })
+    return alignments, ledger
+
+
 def _resolved_axis_boundary_positions(
     boundaries: list[dict[str, Any]],
     *,
@@ -10876,6 +11056,22 @@ def adapt_hybrid_ocr_report(
             centerline_alignments=centerline_alignments,
         )
     )
+    # Keep geometry-only hidden/circle alignments separate from the
+    # manufacturing entry-side analysis above. They may carry an already
+    # solved shared coordinate but never imply a machining start side.
+    projected_alignments, projected_alignment_ledger = (
+        _unique_hidden_recess_projection_alignments(
+            report=report,
+            view_lookup=view_lookup,
+            hidden_entity_records=hidden_entity_records,
+            callout_values=callout_values,
+            entity_keys={item.key for item in entities},
+            existing_alignments=centerline_alignments,
+        )
+    )
+    centerline_alignments.extend(projected_alignments)
+    centerline_alignment_ledger.extend(projected_alignment_ledger)
+
     confirmed_start_side_values, confirmed_start_side_ledger = (
         _confirmed_start_side_values(
             context,

@@ -764,29 +764,31 @@ def _unassigned_whole_truncation_covered_by_independent_overall(
         ):
             continue
         local_tokens = candidate.get("wide_local_linear_tokens")
-        if (
-            not isinstance(local_tokens, list)
-            or len(local_tokens) != 1
-            or not isinstance(local_tokens[0], str)
-        ):
+        if not isinstance(local_tokens, list):
             continue
-        local = local_tokens[0]
-        if (
-            re.fullmatch(r"[1-9][0-9]*", local) is None
-            or len(token) >= len(local)
-            or not (local.startswith(token) or local.endswith(token))
-        ):
-            continue
-        if not _local_only_redundant_with_independent_overall(
-            report=report,
-            item={"token": local},
-            candidate=candidate,
-            view_lookup=view_lookup,
-            boundaries=boundaries,
-            overall_dimension_facts=overall_dimension_facts,
-        ):
-            continue
-        matched.append(candidate_id)
+        independently_proven: list[str] = []
+        for local in local_tokens:
+            if (
+                not isinstance(local, str)
+                or re.fullmatch(r"[1-9][0-9]*", local) is None
+                or len(token) >= len(local)
+                or not (local.startswith(token) or local.endswith(token))
+            ):
+                continue
+            if _local_only_redundant_with_independent_overall(
+                report=report,
+                item={"token": local},
+                candidate=candidate,
+                view_lookup=view_lookup,
+                boundaries=boundaries,
+                overall_dimension_facts=overall_dimension_facts,
+            ):
+                independently_proven.append(local)
+        # Other local OCR hypotheses must not hide the one independent
+        # overall proof, nor can multiple proven values be silently picked.
+        # All other local OCR tokens retain their own coverage ledger.
+        if len(independently_proven) == 1:
+            matched.append(candidate_id)
     return matched[0] if len(matched) == 1 else None
 
 

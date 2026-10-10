@@ -10111,6 +10111,8 @@ def test_annotation_proof_matches_only_integer_source_indices(monkeypatch):
     ("variant", "advisory"),
     [
         ("proven", True),
+        ("extra_unproven_local", True),
+        ("competing_proven_local", False),
         ("wrong_local", False),
         ("missing_line", False),
         ("far_bbox", False),
@@ -10141,7 +10143,9 @@ def test_unassigned_whole_ocr_fragment_is_advisory_only_for_proven_overall(
     }
     evidence_ok = True
     candidates = {"DG_OVERALL_Z": candidate}
-    if variant == "wrong_local":
+    if variant in {"extra_unproven_local", "competing_proven_local"}:
+        candidate["wide_local_linear_tokens"] = ["66", "8", "666"]
+    elif variant == "wrong_local":
         candidate["wide_local_linear_tokens"] = ["65"]
     elif variant == "missing_line":
         candidate["axis_px"] = 101.0
@@ -10157,7 +10161,10 @@ def test_unassigned_whole_ocr_fragment_is_advisory_only_for_proven_overall(
         item["token"] = "66"
 
     def independent_witness_proof(*, item, candidate, **kwargs):
-        return evidence_ok and item["token"] == "66"
+        return evidence_ok and (
+            item["token"] == "66"
+            or (variant == "competing_proven_local" and item["token"] == "666")
+        )
 
     monkeypatch.setattr(
         hybrid_adapter,

@@ -6948,7 +6948,7 @@ def _recover_unassigned_profile_edge_offsets(
     profile_entity_by_ref: dict[str, str],
     excluded_source_item_indices: set[Any] | None = None,
 ) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
-    """Recover profile offsets only from uniquely owned dimension sub-spans.
+    """Recover profile offsets and proven internal spans from dimension sub-spans.
 
     OCR provides the engineering value. Pixel geometry is used only to bind one
     unassigned text item to one dimension witness pair and its physical profile
@@ -6998,6 +6998,79 @@ def _recover_unassigned_profile_edge_offsets(
             if entity_key is not None:
                 resolved.append(("profile_boundary", entity_key, ref))
         return resolved[0] if len(resolved) == 1 else None
+
+    def proven_internal_span_witnesses(
+        candidate: dict[str, Any],
+        first_index: int,
+        second_index: int,
+        first_position: float,
+        second_position: float,
+        along: float,
+    ) -> bool:
+        """Prove two independent extension lines reach a bounded dimension rail.
+
+        The strokes establish ownership only; the engineering value always
+        comes from OCR. Missing or multiple witness strokes fail closed.
+        """
+        orientation = candidate.get("orientation")
+        axis = candidate.get("axis_px")
+        span = candidate.get("line_span_px")
+        if (
+            orientation not in {"horizontal", "vertical"}
+            or not isinstance(axis, (int, float))
+            or isinstance(axis, bool)
+            or not isinstance(span, list)
+            or len(span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+            or first_position >= second_position
+            or not first_position <= along <= second_position
+        ):
+            return False
+        span_min, span_max = sorted(float(value) for value in span)
+        if first_position < span_min - 2.0 or second_position > span_max + 2.0:
+            return False
+        expected_witness_orientation = (
+            "vertical" if orientation == "horizontal" else "horizontal"
+        )
+        line_records = candidate.get("witness_line_evidence")
+        if not isinstance(line_records, list):
+            return False
+        for index, position in (
+            (first_index, first_position),
+            (second_index, second_position),
+        ):
+            matches = [
+                record
+                for record in line_records
+                if isinstance(record, dict)
+                and record.get("witness_index") == index
+            ]
+            if len(matches) != 1:
+                return False
+            strokes = [
+                line
+                for line in matches[0].get("source_lines", [])
+                if isinstance(line, dict)
+                and line.get("crosses_dimension_axis") is True
+                and line.get("orientation") == expected_witness_orientation
+                and isinstance(line.get("axis_px"), (int, float))
+                and not isinstance(line.get("axis_px"), bool)
+                and abs(float(line["axis_px"]) - position) <= 2.0
+                and isinstance(line.get("span_px"), list)
+                and len(line["span_px"]) == 2
+                and all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in line["span_px"]
+                )
+                and min(line["span_px"]) - 2.0 <= float(axis)
+                <= max(line["span_px"]) + 2.0
+            ]
+            if len(strokes) != 1:
+                return False
+        return True
 
     recovered: list[ObservationDimension] = []
     ledger: list[dict[str, Any]] = []
@@ -7068,12 +7141,29 @@ def _recover_unassigned_profile_edge_offsets(
                         continue
 
                     owners = [first_owner, second_owner]
-                    if (
-                        sum(owner[0] == "profile_boundary" for owner in owners) != 1
-                        or sum(
+                    internal_span = all(
+                        owner[0] == "profile_boundary" for owner in owners
+                    )
+                    profile_offset = (
+                        sum(owner[0] == "profile_boundary" for owner in owners) == 1
+                        and sum(
                             owner[0] in {"overall_min", "overall_max"}
                             for owner in owners
-                        ) != 1
+                        ) == 1
+                    )
+                    if not internal_span and not profile_offset:
+                        continue
+                    if internal_span and (
+                        first_owner[1] == second_owner[1]
+                        or first_owner[2] == second_owner[2]
+                        or not proven_internal_span_witnesses(
+                            candidate,
+                            first_index,
+                            second_index,
+                            first_value,
+                            second_value,
+                            along,
+                        )
                     ):
                         continue
 
@@ -7133,6 +7223,7 @@ def _recover_unassigned_profile_edge_offsets(
                             "along_residual_px": along_residual,
                             "perpendicular_gap_px": perpendicular_gap,
                             "score_px": along_residual + perpendicular_gap,
+                            "internal_span": internal_span,
                         }
                     )
 
@@ -7189,8 +7280,11 @@ def _recover_unassigned_profile_edge_offsets(
                     )
                 )
 
+        dimension_kind = (
+            "PROFILE_SPAN" if best["internal_span"] else "PROFILE_OFFSET"
+        )
         dimension_key = (
-            f"{best['region_id']}.RECOVERED_PROFILE_OFFSET_{source_index}"
+            f"{best['region_id']}.RECOVERED_{dimension_kind}_{source_index}"
         )
         recovered.append(
             ObservationDimension(
@@ -7206,40 +7300,50 @@ def _recover_unassigned_profile_edge_offsets(
                 required_for_modeling=True,
             )
         )
-        profile_owner = next(
-            owner
-            for owner in [best["first_owner"], best["second_owner"]]
-            if owner[0] == "profile_boundary"
-        )
-        overall_owner = next(
-            owner
-            for owner in [best["first_owner"], best["second_owner"]]
-            if owner[0] in {"overall_min", "overall_max"}
-        )
-        ledger.append(
-            {
-                "dimension_key": dimension_key,
-                "source_item_index": source_index,
-                "candidate_id": candidate.get("candidate_id"),
-                "region_id": best["region_id"],
-                "axis": axis,
-                "value": value,
-                "profile_entity_key": profile_owner[1],
-                "profile_ref": profile_owner[2],
-                "overall_role": overall_owner[0],
-                "overall_ref": overall_owner[2],
-                "witness_indices": [
-                    best["first_index"],
-                    best["second_index"],
-                ],
-                "basis": (
+        endpoint_owners = [best["first_owner"], best["second_owner"]]
+        record: dict[str, Any] = {
+            "dimension_key": dimension_key,
+            "source_item_index": source_index,
+            "candidate_id": candidate.get("candidate_id"),
+            "region_id": best["region_id"],
+            "axis": axis,
+            "value": value,
+            "witness_indices": [
+                best["first_index"],
+                best["second_index"],
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+        if best["internal_span"]:
+            record.update(
+                profile_entity_keys=[owner[1] for owner in endpoint_owners],
+                profile_refs=[owner[2] for owner in endpoint_owners],
+                basis=(
+                    "unique_unassigned_text_to_dimension_subspan_with_"
+                    "two_distinct_profile_owners_and_proven_witness_strokes"
+                ),
+            )
+        else:
+            profile_owner = next(
+                owner for owner in endpoint_owners
+                if owner[0] == "profile_boundary"
+            )
+            overall_owner = next(
+                owner for owner in endpoint_owners
+                if owner[0] in {"overall_min", "overall_max"}
+            )
+            record.update(
+                profile_entity_key=profile_owner[1],
+                profile_ref=profile_owner[2],
+                overall_role=overall_owner[0],
+                overall_ref=overall_owner[2],
+                basis=(
                     "unique_unassigned_text_to_dimension_subspan_with_"
                     "profile_and_overall_endpoint_ownership"
                 ),
-                "engineering_coordinate_inferred_from_pixels": False,
-                "pixel_geometry_used_for_identity_only": True,
-            }
-        )
+            )
+        ledger.append(record)
 
     return recovered, ledger
 

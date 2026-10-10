@@ -9857,3 +9857,130 @@ def test_local_only_overall_duplicate_requires_independent_proven_witnesses(
     if expected_advisory:
         assert "Independent overall-dimension evidence" in local.reason
         assert "advisory duplicate coverage" in local.reason
+
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected_recovery"),
+    [
+        ("proven", True),
+        ("missing_witness", False),
+        ("not_crossing", False),
+        ("wrong_axis", False),
+        ("same_profile_owner", False),
+        ("text_outside_pair", False),
+        ("ambiguous_second_stroke", False),
+        ("competing_dimension", False),
+    ],
+)
+def test_unassigned_internal_profile_span_needs_proven_distinct_witnesses(
+    variant, expected_recovery,
+):
+    def candidate(candidate_id):
+        return {
+            "candidate_id": candidate_id,
+            "region_id": "R1",
+            "orientation": "horizontal",
+            "axis_px": 100.0,
+            "line_span_px": [40.0, 60.0],
+            "witness_positions_px": [40.0, 60.0],
+            "accepted_token": None,
+            "witness_anchor_evidence": [
+                {
+                    "witness_index": index,
+                    "nearest_anchors": [
+                        {
+                            "kind": "profile_edge_candidate",
+                            "ref": ref,
+                        }
+                    ],
+                }
+                for index, ref in enumerate(
+                    ("R1.profile.left", "R1.profile.right")
+                )
+            ],
+            "witness_line_evidence": [
+                {
+                    "witness_index": index,
+                    "source_lines": [
+                        {
+                            "orientation": "vertical",
+                            "axis_px": position,
+                            "span_px": [85.0, 115.0],
+                            "crosses_dimension_axis": True,
+                        }
+                    ],
+                }
+                for index, position in enumerate((40.0, 60.0))
+            ],
+        }
+
+    first = candidate("DG_INNER")
+    if variant == "missing_witness":
+        first["witness_line_evidence"].pop()
+    elif variant == "not_crossing":
+        first["witness_line_evidence"][1]["source_lines"][0][
+            "crosses_dimension_axis"
+        ] = False
+    elif variant == "wrong_axis":
+        first["witness_line_evidence"][1]["source_lines"][0][
+            "axis_px"
+        ] = 65.0
+    elif variant == "same_profile_owner":
+        first["witness_anchor_evidence"][1]["nearest_anchors"][0][
+            "ref"
+        ] = "R1.profile.left"
+    elif variant == "ambiguous_second_stroke":
+        first["witness_line_evidence"][1]["source_lines"].append(
+            dict(first["witness_line_evidence"][1]["source_lines"][0])
+        )
+
+    candidates = [first]
+    if variant == "competing_dimension":
+        candidates.append(candidate("DG_COMPETITOR"))
+    text_bbox = (
+        [[65.0, 85.0], [75.0, 85.0], [75.0, 97.0], [65.0, 97.0]]
+        if variant == "text_outside_pair"
+        else [[45.0, 85.0], [55.0, 85.0], [55.0, 97.0], [45.0, 97.0]]
+    )
+    report = {
+        "regions": [{"region_id": "R1", "bbox_px": [0, 0, 200, 200]}],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {"source_item_index": 21, "token": "16", "bbox": text_bbox}
+            ]
+        },
+    }
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=candidates,
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1", view_kind="front", evidence=["test:R1"]
+            )
+        },
+        boundary_roles={},
+        profile_entity_by_ref={
+            "R1.profile.left": "R1.PROFILE.LEFT",
+            "R1.profile.right": "R1.PROFILE.RIGHT",
+        },
+    )
+    assert bool(recovered) is expected_recovery
+    assert bool(ledger) is expected_recovery
+    if expected_recovery:
+        dimension = recovered[0]
+        assert dimension.key == "R1.RECOVERED_PROFILE_SPAN_21"
+        assert dimension.value == 16
+        assert dimension.axis == "X"
+        assert dimension.direction == 1
+        assert [item.role for item in dimension.endpoints] == [
+            "profile_boundary", "profile_boundary",
+        ]
+        assert [item.entity_key for item in dimension.endpoints] == [
+            "R1.PROFILE.LEFT", "R1.PROFILE.RIGHT",
+        ]
+        assert ledger[0]["profile_refs"] == [
+            "R1.profile.left", "R1.profile.right",
+        ]
+        assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+        assert ledger[0]["pixel_geometry_used_for_identity_only"] is True

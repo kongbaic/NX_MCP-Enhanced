@@ -911,11 +911,11 @@ def _overflow_candidates_for_machine_ocr(
         for bucket in visual_aid.get("candidate_buckets", [])
         if isinstance(bucket, dict) and bucket.get("status") == "overflow"
     }
-    for key, declared_count in visible_overflows.items():
-        if len(by_bucket.get(key, [])) != declared_count:
+    for overflow_key, declared_count in visible_overflows.items():
+        if len(by_bucket.get(overflow_key, [])) != declared_count:
             raise ValueError(
-                f"OCR overflow candidate count mismatch: {key} "
-                f"raw={len(by_bucket.get(key, []))} visual_aid={declared_count}"
+                f"OCR overflow candidate count mismatch: {overflow_key} "
+                f"raw={len(by_bucket.get(overflow_key, []))} visual_aid={declared_count}"
             )
 
     overflow_candidates = [

@@ -9984,3 +9984,93 @@ def test_unassigned_internal_profile_span_needs_proven_distinct_witnesses(
         ]
         assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
         assert ledger[0]["pixel_geometry_used_for_identity_only"] is True
+
+
+
+def test_nominal_annotations_require_topology_not_numeric_token(tmp_path):
+    """Synthetic GD&T frame/finish V are advisory; normal dimensions are not."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    from nx_mcp.drawing_intelligence.nominal_annotation import (
+        classify_unassigned_marks,
+    )
+
+    image = np.full((350, 470), 255, dtype=np.uint8)
+    # A complete three-compartment feature-control frame.
+    for y in (198, 238):
+        cv2.line(image, (40, y), (215, y), 0, 2)
+    for x in (40, 100, 168, 215):
+        cv2.line(image, (x, 198), (x, 238), 0, 2)
+    cv2.putText(
+        image, "0.02", (105, 229), cv2.FONT_HERSHEY_SIMPLEX, 0.55, 0, 2
+    )
+    cv2.putText(image, "A", (177, 229), cv2.FONT_HERSHEY_SIMPLEX, 0.6, 0, 2)
+
+    # A true roughness checkmark, with unequal diagonals on a material rail.
+    cv2.line(image, (155, 145), (204, 145), 0, 2)
+    cv2.line(image, (180, 130), (190, 145), 0, 2)
+    cv2.line(image, (190, 145), (218, 99), 0, 2)
+    cv2.putText(
+        image, "1.6", (165, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.6, 0, 2
+    )
+
+    # An ordinary dimension number and its extension/dimension rail.
+    cv2.putText(
+        image, "16", (326, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 0, 2
+    )
+    cv2.line(image, (302, 123), (382, 123), 0, 2)
+    cv2.line(image, (302, 115), (302, 133), 0, 2)
+    cv2.line(image, (382, 115), (382, 133), 0, 2)
+    source = tmp_path / "drawing.png"
+    assert cv2.imwrite(str(source), image)
+
+    def box(x0, y0, x1, y1):
+        return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+    report = {
+        "source_raster": str(source),
+        "coverage": {
+            "unassigned_linear_observations": [
+                {"source_item_index": 0, "token": "0.02",
+                 "bbox": box(100, 199, 163, 239)},
+                {"source_item_index": 1, "token": "1.6",
+                 "bbox": box(165, 83, 206, 116)},
+                {"source_item_index": 2, "token": "16",
+                 "bbox": box(325, 83, 356, 116)},
+            ]
+        },
+    }
+    assert classify_unassigned_marks(report) == {
+        0: "geometric_tolerance_frame",
+        1: "surface_texture_symbol",
+    }
+    report["source_raster"] = str(tmp_path / "missing.png")
+    assert classify_unassigned_marks(report) == {}
+
+
+def test_nominal_annotation_classification_keeps_unproven_ocr_blocking(
+    tmp_path,
+):
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    from nx_mcp.drawing_intelligence.nominal_annotation import (
+        classify_unassigned_marks,
+    )
+
+    raster = np.full((100, 100), 255, dtype=np.uint8)
+    cv2.putText(
+        raster, "6", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 0, 2
+    )
+    path = tmp_path / "plain.png"
+    assert cv2.imwrite(str(path), raster)
+    report = {
+        "source_raster": str(path),
+        "coverage": {
+            "unassigned_linear_observations": [{
+                "source_item_index": 9,
+                "token": "6",
+                "bbox": [[15, 34], [45, 34], [45, 67], [15, 67]],
+            }],
+        },
+    }
+    assert classify_unassigned_marks(report) == {}

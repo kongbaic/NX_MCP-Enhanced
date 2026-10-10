@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .circle_datum_alignment import derive_circle_overall_center_alignments
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .raster_stroke_identity import single_ink_stroke_alias
+from .nominal_annotation import classify_unassigned_marks
 from .engineering_callout_binding import (
     bind_callout_to_circle_entity,
     bind_callout_to_curve_candidate,
@@ -714,6 +715,7 @@ def _coverage_unresolved(
 
     unresolved: list[ObservationUnresolved] = []
     excluded_source_indices = excluded_source_item_indices or set()
+    proven_annotations = classify_unassigned_marks(report)
     conflicting_candidate_ids = {
         str(item.get("candidate_id") or "")
         for item in coverage.get("conflicting_linear_observations", [])
@@ -851,7 +853,14 @@ def _coverage_unresolved(
             "Whole OCR found a standalone linear token with no unique "
             f"DG assignment: token={item.get('token')!r}."
         )
-        if reference_region_ids:
+        annotation_kind = proven_annotations.get(item.get("source_item_index"))
+        if annotation_kind is not None:
+            reason += (
+                f" Raster topology proves {annotation_kind}; preserve OCR text "
+                "as non-dimensional manufacturing annotation evidence, not as "
+                "a nominal CAD linear dimension. OCR value is uncorrected."
+            )
+        elif reference_region_ids:
             reason += (
                 " The observation is contained only by non-geometric reference "
                 f"region(s) {reference_region_ids!r}; preserve it as advisory "
@@ -870,7 +879,9 @@ def _coverage_unresolved(
                 reason=reason,
                 field="unassigned_linear_text",
                 evidence=[f"hybrid:whole:{item.get('source_item_index')}"],
-                required_for_modeling=not reference_region_ids,
+                required_for_modeling=(
+                    not reference_region_ids and annotation_kind is None
+                ),
             )
         )
 

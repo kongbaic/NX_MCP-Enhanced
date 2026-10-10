@@ -152,15 +152,35 @@ def _apply_spacing(relation: RelationEvidence, state: _State) -> bool:
     second_known = second in state.values
 
     if first_known and second_known:
-        actual = abs(state.values[second] - state.values[first])
-        if not isclose(actual, abs(relation.value), abs_tol=_EPS, rel_tol=0.0):
+        actual_signed = state.values[second] - state.values[first]
+        actual = abs(actual_signed)
+        expected = abs(relation.value)
+        expected_signed = (
+            relation.direction * expected if relation.direction is not None else None
+        )
+        # A signed relation has one admissible orientation even when both
+        # coordinates were independently observed. Checking only abs(distance)
+        # would silently accept the opposite engineering direction.
+        distance_mismatch = not isclose(
+            actual, expected, abs_tol=_EPS, rel_tol=0.0
+        )
+        direction_mismatch = (
+            expected_signed is not None
+            and not isclose(
+                actual_signed, expected_signed, abs_tol=_EPS, rel_tol=0.0
+            )
+        )
+        if distance_mismatch or direction_mismatch:
             conflict = {
                 "relation": relation.id,
                 "kind": relation.kind,
-                "expected_distance": abs(relation.value),
+                "expected_distance": expected,
                 "actual_distance": actual,
                 "targets": relation.targets,
             }
+            if expected_signed is not None:
+                conflict["expected_signed_distance"] = expected_signed
+                conflict["actual_signed_distance"] = actual_signed
             if conflict not in state.conflicts:
                 state.conflicts.append(conflict)
         return False

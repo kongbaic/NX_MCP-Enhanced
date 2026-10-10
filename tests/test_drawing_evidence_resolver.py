@@ -640,3 +640,107 @@ def test_centered_span_reports_width_conflict():
         for item in result.conflicts
     )
     assert not result.ok
+
+
+
+def test_signed_distances_reject_opposite_known_endpoint_orientation():
+    """Existing coordinates must not bypass a signed constraint."""
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    a = "feature:F_A.centerline.y"
+    b = "feature:F_B.centerline.y"
+    for kind in ("center_spacing", "center_distance", "coordinate_distance"):
+        for sign, first, second in ((1, 24, 8), (-1, 8, 24)):
+            graph = _graph(
+                facts=[
+                    CoordinateFact(target=a, axis="Y", value=first,
+                                   source_ids=["datum:a"]),
+                    CoordinateFact(target=b, axis="Y", value=second,
+                                   source_ids=["datum:b"]),
+                ],
+                relations=[
+                    RelationEvidence(
+                        id="R_SIGNED",
+                        kind=kind,
+                        axis="Y",
+                        value=16,
+                        direction=sign,
+                        targets=[a, b],
+                        source_ids=["dimension:16"],
+                    )
+                ],
+                required_targets=[a, b],
+            )
+            result = resolve_evidence_graph(graph)
+            assert not result.ok
+            assert len(result.conflicts) == 1
+            conflict = result.conflicts[0]
+            assert conflict["relation"] == "R_SIGNED"
+            assert conflict["expected_distance"] == 16
+            assert conflict["actual_distance"] == 16
+            assert conflict["expected_signed_distance"] == sign * 16
+            assert conflict["actual_signed_distance"] == -sign * 16
+            assert result.values[a] == first
+            assert result.values[b] == second
+
+
+def test_signed_distances_accept_consistent_known_endpoints_without_regression():
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    a = "feature:F_A.centerline.y"
+    b = "feature:F_B.centerline.y"
+    for kind in ("center_spacing", "center_distance", "coordinate_distance"):
+        for sign, first, second in ((1, 8, 24), (-1, 24, 8)):
+            graph = _graph(
+                facts=[
+                    CoordinateFact(target=a, axis="Y", value=first,
+                                   source_ids=["datum:a"]),
+                    CoordinateFact(target=b, axis="Y", value=second,
+                                   source_ids=["datum:b"]),
+                ],
+                relations=[
+                    RelationEvidence(
+                        id="R_SIGNED",
+                        kind=kind,
+                        axis="Y",
+                        value=16,
+                        direction=sign,
+                        targets=[a, b],
+                        source_ids=["dimension:16"],
+                    )
+                ],
+                required_targets=[a, b],
+            )
+            result = resolve_evidence_graph(graph)
+            assert result.ok
+            assert result.conflicts == []
+            assert result.values[a] == first
+            assert result.values[b] == second
+
+
+def test_unsigned_distance_remains_direction_agnostic():
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    a = "feature:F_A.centerline.y"
+    b = "feature:F_B.centerline.y"
+    graph = _graph(
+        facts=[
+            CoordinateFact(target=a, axis="Y", value=24, source_ids=["datum:a"]),
+            CoordinateFact(target=b, axis="Y", value=8, source_ids=["datum:b"]),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_UNSIGNED",
+                kind="coordinate_distance",
+                axis="Y",
+                value=16,
+                direction=None,
+                targets=[a, b],
+                source_ids=["dimension:16"],
+            )
+        ],
+        required_targets=[a, b],
+    )
+    result = resolve_evidence_graph(graph)
+    assert result.ok
+    assert result.conflicts == []

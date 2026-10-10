@@ -306,8 +306,21 @@ def _apply_centered_span(
     second_known = second in state.values
 
     if first_known and second_known:
-        actual_distance = abs(state.values[second] - state.values[first])
-        if not isclose(actual_distance, distance, abs_tol=_EPS, rel_tol=0.0):
+        actual_signed = state.values[second] - state.values[first]
+        actual_distance = abs(actual_signed)
+        expected_signed = (
+            relation.direction * distance if relation.direction is not None else None
+        )
+        span_mismatch = not isclose(
+            actual_distance, distance, abs_tol=_EPS, rel_tol=0.0
+        )
+        direction_mismatch = (
+            expected_signed is not None
+            and not isclose(
+                actual_signed, expected_signed, abs_tol=_EPS, rel_tol=0.0
+            )
+        )
+        if span_mismatch or direction_mismatch:
             conflict = {
                 "relation": relation.id,
                 "kind": "centered_span",
@@ -315,6 +328,9 @@ def _apply_centered_span(
                 "actual_distance": actual_distance,
                 "targets": list(relation.targets),
             }
+            if expected_signed is not None:
+                conflict["expected_signed_distance"] = expected_signed
+                conflict["actual_signed_distance"] = actual_signed
             if conflict not in state.conflicts:
                 state.conflicts.append(conflict)
         expected_midpoint = (

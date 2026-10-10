@@ -744,3 +744,93 @@ def test_unsigned_distance_remains_direction_agnostic():
     result = resolve_evidence_graph(graph)
     assert result.ok
     assert result.conflicts == []
+
+
+
+def test_centered_span_with_known_endpoints_rejects_reversed_direction():
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    left = "feature:F_LEFT.boundary.y"
+    mid = "constraints.span_centers.C_SIGNED.y"
+    right = "feature:F_RIGHT.boundary.y"
+    for direction, first, last in ((1, 24, 8), (-1, 8, 24)):
+        graph = _graph(
+            facts=[
+                CoordinateFact(target=left, axis="Y", value=first),
+                CoordinateFact(target=right, axis="Y", value=last),
+            ],
+            relations=[
+                RelationEvidence(
+                    id="R_SIGNED_CENTERED_SPAN",
+                    kind="centered_span",
+                    axis="Y",
+                    value=16,
+                    direction=direction,
+                    targets=[left, mid, right],
+                    source_ids=["witness:dimension:16"],
+                )
+            ],
+        )
+        result = resolve_evidence_graph(graph)
+        assert not result.ok
+        assert len(result.conflicts) == 1
+        assert result.conflicts[0]["expected_signed_distance"] == direction * 16
+        assert result.conflicts[0]["actual_signed_distance"] == -direction * 16
+        assert result.values[mid] == 16
+
+
+def test_centered_span_signed_orientation_accepts_consistent_and_unsigned():
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    left = "feature:F_LEFT.boundary.y"
+    mid = "constraints.span_centers.C_SIGNED.y"
+    right = "feature:F_RIGHT.boundary.y"
+    for direction, first, last in ((1, 8, 24), (-1, 24, 8), (None, 24, 8)):
+        graph = _graph(
+            facts=[
+                CoordinateFact(target=left, axis="Y", value=first),
+                CoordinateFact(target=right, axis="Y", value=last),
+            ],
+            relations=[
+                RelationEvidence(
+                    id="R_SIGNED_CENTERED_SPAN",
+                    kind="centered_span",
+                    axis="Y",
+                    value=16,
+                    direction=direction,
+                    targets=[left, mid, right],
+                )
+            ],
+        )
+        result = resolve_evidence_graph(graph)
+        assert result.ok
+        assert result.conflicts == []
+        assert result.values[mid] == 16
+
+
+def test_centered_span_reflection_cannot_hide_reversed_signed_orientation():
+    from nx_mcp.drawing_intelligence.evidence import CoordinateFact
+
+    left = "feature:F_LEFT.boundary.y"
+    mid = "constraints.span_centers.C_SIGNED.y"
+    right = "feature:F_RIGHT.boundary.y"
+    graph = _graph(
+        facts=[
+            CoordinateFact(target=left, axis="Y", value=24),
+            CoordinateFact(target=mid, axis="Y", value=16),
+        ],
+        relations=[
+            RelationEvidence(
+                id="R_SIGNED_CENTERED_SPAN",
+                kind="centered_span",
+                axis="Y",
+                value=16,
+                direction=1,
+                targets=[left, mid, right],
+            )
+        ],
+    )
+    result = resolve_evidence_graph(graph)
+    assert not result.ok
+    assert result.conflicts[0]["expected_signed_distance"] == 16
+    assert result.conflicts[0]["actual_signed_distance"] == -16

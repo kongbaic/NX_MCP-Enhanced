@@ -428,14 +428,49 @@ def derive_dimension_endpoint_candidates(
         if low < text_coordinate < high:
             brackets.append((first, second))
 
+    selection_basis = "accepted_ocr_text_center_between_adjacent_witnesses"
     if len(brackets) != 1:
-        return {
-            "candidate_id": candidate_id,
-            "status": "unresolved",
-            "reason": "accepted_text_does_not_select_one_unique_adjacent_witness_pair",
-            "text_axis_coordinate_px": round(text_coordinate, 3),
-            "bracket_count": len(brackets),
-        }
+        exterior_pair = None
+        assignment = accepted_assignments[0]
+        if assignment.get("exterior_single_digit_witness_proven") is True:
+            # Re-evaluate the production OCR proof here rather than trusting
+            # a flag in an unverified handoff. It demands exactly two
+            # crossing witness strokes, unique different physical owners,
+            # and the OCR glyph immediately outside the rail end.
+            from .hybrid_ocr import _exterior_single_digit_witness_proof
+
+            if _exterior_single_digit_witness_proof(candidate, assignment):
+                span = candidate.get("line_span_px")
+                if (
+                    isinstance(span, list)
+                    and len(span) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        for value in span
+                    )
+                ):
+                    low, high = sorted(float(value) for value in span)
+                    inside = [
+                        witness
+                        for witness in indexed_witnesses
+                        if low + 2.0 <= witness[1] <= high + 2.0
+                    ]
+                    if len(inside) == 2:
+                        first_index = indexed_witnesses.index(inside[0])
+                        second_index = indexed_witnesses.index(inside[1])
+                        if second_index == first_index + 1:
+                            exterior_pair = (inside[0], inside[1])
+        if exterior_pair is None:
+            return {
+                "candidate_id": candidate_id,
+                "status": "unresolved",
+                "reason": "accepted_text_does_not_select_one_unique_adjacent_witness_pair",
+                "text_axis_coordinate_px": round(text_coordinate, 3),
+                "bracket_count": len(brackets),
+            }
+        brackets = [exterior_pair]
+        selection_basis = "proven_exterior_label_unique_crossing_witness_pair"
 
     first, second = brackets[0]
     anchor_lookup = _witness_anchor_lookup(candidate)
@@ -584,7 +619,7 @@ def derive_dimension_endpoint_candidates(
     return {
         "candidate_id": candidate_id,
         "status": "bracketed",
-        "selection_basis": "accepted_ocr_text_center_between_adjacent_witnesses",
+        "selection_basis": selection_basis,
         "numeric_value_used_for_geometry": False,
         "text_axis_coordinate_px": round(text_coordinate, 3),
         "selected_witness_indices": [first[0], second[0]],

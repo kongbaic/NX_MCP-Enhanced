@@ -566,3 +566,94 @@ def test_profile_vertex_filters_non_contact_witness_lines_before_accepting_owner
     first = result["endpoints"][0]
     assert first["status"] == "unique_physical_candidate"
     assert first["physical_candidates"] == [vertex]
+
+
+
+def _exterior_one_glyph_candidate() -> dict[str, object]:
+    """A numeric glyph printed just beyond a two-owner dimension rail."""
+    return {
+        "candidate_id": "DG_EXTERNAL",
+        "orientation": "horizontal",
+        "axis_px": 160.0,
+        "line_span_px": [737, 795],
+        "accepted_token": "8",
+        "global_assignments": [{
+            "token": "8",
+            "bbox": [[812, 120], [838, 120], [838, 156], [812, 156]],
+            "exterior_single_digit_witness_proven": True,
+        }],
+        "witness_positions_px": [703.7, 744.0, 785.8],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "nearest_anchors": [
+                {"kind": "profile_edge_candidate", "ref": "outside"},
+            ]},
+            {"witness_index": 1, "nearest_anchors": [
+                {"kind": "circle_center_axis", "ref": "R2.C1.center_x"},
+            ]},
+            {"witness_index": 2, "nearest_anchors": [
+                {"kind": "profile_edge_candidate", "ref": "R2.profile.right"},
+            ]},
+        ],
+        "witness_line_evidence": [
+            {
+                "witness_index": index,
+                "source_lines": [{
+                    "orientation": "vertical",
+                    "axis_px": position,
+                    "span_px": [110, 200],
+                    "crosses_dimension_axis": True,
+                }],
+            }
+            for index, position in enumerate([703.7, 744.0, 785.8])
+        ],
+    }
+
+
+def test_proven_exterior_one_glyph_selects_unique_witness_pair_without_metric_inference():
+    result = derive_dimension_endpoint_candidates(_exterior_one_glyph_candidate())
+    assert result["status"] == "bracketed"
+    assert result["selection_basis"] == (
+        "proven_exterior_label_unique_crossing_witness_pair"
+    )
+    assert result["selected_witness_indices"] == [1, 2]
+    assert result["selected_witness_positions_px"] == [744.0, 785.8]
+    assert result["all_endpoint_candidates_unique"] is True
+    assert [e["physical_candidates"][0]["ref"] for e in result["endpoints"]] == [
+        "R2.C1.center_x", "R2.profile.right"
+    ]
+    assert result["numeric_value_used_for_geometry"] is False
+
+
+def test_exterior_witness_pair_fails_closed_without_complete_independent_proof():
+    variants = (
+        "missing_attestation", "different_text", "missing_crossing",
+        "duplicate_owner", "three_rail_witnesses", "moved_text",
+    )
+    for variant in variants:
+        candidate = _exterior_one_glyph_candidate()
+        if variant == "missing_attestation":
+            candidate["global_assignments"][0].pop(
+                "exterior_single_digit_witness_proven"
+            )
+        elif variant == "different_text":
+            candidate["global_assignments"][0]["token"] = "18"
+            candidate["accepted_token"] = "18"
+        elif variant == "missing_crossing":
+            candidate["witness_line_evidence"][2]["source_lines"][0][
+                "crosses_dimension_axis"
+            ] = False
+        elif variant == "duplicate_owner":
+            candidate["witness_anchor_evidence"][2]["nearest_anchors"][0][
+                "ref"
+            ] = "R2.C1.center_x"
+        elif variant == "three_rail_witnesses":
+            candidate["line_span_px"] = [700, 795]
+        elif variant == "moved_text":
+            candidate["global_assignments"][0]["bbox"] = [
+                [870, 120], [899, 120], [899, 156], [870, 156]
+            ]
+        result = derive_dimension_endpoint_candidates(candidate)
+        assert result["status"] == "unresolved", variant
+        assert result["reason"] == (
+            "accepted_text_does_not_select_one_unique_adjacent_witness_pair"
+        )

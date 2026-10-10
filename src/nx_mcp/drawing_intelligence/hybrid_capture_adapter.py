@@ -644,11 +644,12 @@ def _local_only_redundant_with_independent_overall(
         if len(matching_anchors) != 1 or len(matching_lines) != 1:
             return False
         physical_refs = {
-            anchor.get("ref")
+            ref
             for anchor in matching_anchors[0].get("nearest_anchors", [])
             if isinstance(anchor, dict)
             and anchor.get("kind") == "profile_edge_candidate"
-            and isinstance(anchor.get("ref"), str)
+            for ref in [anchor.get("ref")]
+            if isinstance(ref, str) and ref
         }
         if len(physical_refs) != 1:
             return False

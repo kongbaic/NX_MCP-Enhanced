@@ -7479,6 +7479,297 @@ def _recover_unassigned_profile_edge_offsets(
     return recovered, ledger
 
 
+def _recover_unassigned_short_overall_offsets(
+    *,
+    report: dict[str, Any],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]],
+    profile_entity_by_ref: dict[str, str],
+    excluded_source_item_indices: set[Any],
+) -> tuple[list[ObservationDimension], list[dict[str, Any]]]:
+    """Recover OCR-labeled short offsets only from one real dimension rail.
+
+    Full-drawing OCR alone is not enough: the two perpendicular witness
+    strokes must select independent physical profiles, exactly one of which
+    is an established overall boundary. Ink determines identity only.
+    The nominal length is supplied solely by OCR, never by pixel spacing.
+    """
+
+    source = report.get("source_raster")
+    coverage = report.get("coverage")
+    if not isinstance(source, str) or not isinstance(coverage, dict):
+        return [], []
+    try:
+        import cv2
+        image = cv2.imread(source, cv2.IMREAD_GRAYSCALE)
+    except (ImportError, OSError, TypeError, ValueError):
+        return [], []
+    if image is None:
+        return [], []
+
+    region_rects: dict[str, tuple[float, float, float, float]] = {}
+    for region in report.get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        raw = region.get("bbox_px")
+        region_id = region.get("region_id")
+        if (
+            isinstance(region_id, str)
+            and isinstance(raw, list)
+            and len(raw) == 4
+            and all(
+                isinstance(item, (int, float)) and not isinstance(item, bool)
+                for item in raw
+            )
+        ):
+            x, y, width, height = (float(item) for item in raw)
+            if width > 0 and height > 0:
+                region_rects[region_id] = (x, y, width, height)
+
+    resolved_boundaries: dict[tuple[str, Axis], dict[str, Any]] = {}
+    for boundary in boundaries:
+        if (
+            isinstance(boundary, dict)
+            and boundary.get("status") == "resolved"
+            and boundary.get("axis") in {"X", "Y", "Z"}
+            and isinstance(boundary.get("region_id"), str)
+        ):
+            key = (boundary["region_id"], boundary["axis"])
+            if key in resolved_boundaries:
+                # A second overall boundary for one axis invalidates uniqueness.
+                resolved_boundaries[key] = {}
+            else:
+                resolved_boundaries[key] = boundary
+
+    recovered: list[ObservationDimension] = []
+    ledger: list[dict[str, Any]] = []
+    for item in coverage.get("unassigned_linear_observations", []):
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_item_index")
+        if (
+            not isinstance(source_index, int)
+            or isinstance(source_index, bool)
+            or source_index in excluded_source_item_indices
+        ):
+            continue
+        value = _token_numeric_value(item.get("token"))
+        bounds = _bbox_bounds(item.get("bbox"))
+        if value is None or value <= 0 or bounds is None:
+            continue
+        x0, y0, x1, y1 = bounds
+        bbox_midpoint = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+        topology = infer_short_dimension_visual_topology(source, item.get("bbox"))
+        if topology is None:
+            continue
+        orientation, candidate_pairs = topology
+        if orientation not in ("horizontal", "vertical"):
+            continue
+
+        proof_matches: list[dict[str, Any]] = []
+        for region_id, rect in region_rects.items():
+            region_view = view_lookup.get(region_id)
+            rx, ry, rw, rh = rect
+            if (
+                region_view is None
+                or not rx <= bbox_midpoint[0] <= rx + rw
+                or not ry <= bbox_midpoint[1] <= ry + rh
+            ):
+                continue
+            axis = _axis_for(region_view.view_kind, orientation)
+            boundary = resolved_boundaries.get((region_id, axis))
+            if not boundary:
+                continue
+            overall_value = boundary.get("overall_dimension_value")
+            if (
+                not isinstance(overall_value, (int, float))
+                or isinstance(overall_value, bool)
+                or float(overall_value) < value
+            ):
+                continue
+            anchor_roles = {
+                anchor.get("ref"): anchor.get("role")
+                for anchor in boundary.get("anchors", [])
+                if (
+                    isinstance(anchor, dict)
+                    and isinstance(anchor.get("ref"), str)
+                    and anchor.get("role") in ("overall_min", "overall_max")
+                )
+            }
+            if set(anchor_roles.values()) != {"overall_min", "overall_max"}:
+                continue
+
+            cross_min, cross_max = (
+                (x0, x1) if orientation == "vertical" else (y0, y1)
+            )
+            text_along = (
+                bbox_midpoint[1] if orientation == "vertical"
+                else bbox_midpoint[0]
+            )
+            raster_span = image.shape[1] if orientation == "vertical" else image.shape[0]
+            search_width = max(10, min(24, round((cross_max - cross_min) * 0.65)))
+            rail_positions: list[int] = []
+            for outside_low, outside_high in (
+                (cross_min - search_width, cross_min - 1),
+                (cross_max + 1, cross_max + search_width),
+            ):
+                for rail in range(
+                    max(0, int(math.ceil(outside_low))),
+                    min(raster_span - 1, int(math.floor(outside_high))) + 1,
+                ):
+                    # A true short dimension rail spans both witness heights,
+                    # with raster ink across most of the intervening distance.
+                    for first, second in candidate_pairs:
+                        lo, hi = sorted((float(first), float(second)))
+                        if not lo < text_along < hi or hi - lo < 18:
+                            continue
+                        start = max(0, int(round(lo + 3)))
+                        stop = min(
+                            image.shape[0] if orientation == "vertical" else image.shape[1],
+                            int(round(hi - 2)),
+                        )
+                        if stop - start < 12:
+                            continue
+                        strip = (
+                            image[start:stop, rail]
+                            if orientation == "vertical"
+                            else image[rail, start:stop]
+                        )
+                        ink = [int(pixel) < 145 for pixel in strip]
+                        fraction = sum(ink) / len(ink)
+                        if fraction >= 0.82:
+                            rail_positions.append(rail)
+                            break
+            rail_positions = sorted(set(rail_positions))
+            if not rail_positions:
+                continue
+            rail_clusters: list[list[int]] = []
+            for rail in rail_positions:
+                if rail_clusters and rail - rail_clusters[-1][-1] <= 2:
+                    rail_clusters[-1].append(rail)
+                else:
+                    rail_clusters.append([rail])
+            # Multiple distinct dark rails or an unconnected rail fail closed.
+            if len(rail_clusters) != 1:
+                continue
+            rail = sum(rail_clusters[0]) / len(rail_clusters[0])
+
+            expected_profile_orientation = (
+                "horizontal" if orientation == "vertical" else "vertical"
+            )
+            for first, second in candidate_pairs:
+                lo, hi = sorted((float(first), float(second)))
+                if not lo < text_along < hi:
+                    continue
+                owners: list[tuple[str, str | None, str]] = []
+                proven = True
+                for witness in (lo, hi):
+                    profiles = [
+                        profile
+                        for profile in profile_inventory
+                        if (
+                            isinstance(profile, dict)
+                            and profile.get("kind") == "profile_edge_candidate"
+                            and profile.get("region_id") == region_id
+                            and profile.get("source_orientation")
+                            == expected_profile_orientation
+                            and isinstance(profile.get("position_px"), (int, float))
+                            and not isinstance(profile.get("position_px"), bool)
+                            and abs(float(profile["position_px"]) - witness)
+                            <= max(2.0, float(profile.get("axis_tolerance_px") or 2.0))
+                            and isinstance(profile.get("span_px"), list)
+                            and len(profile["span_px"]) == 2
+                            and all(isinstance(v, (int, float)) for v in profile["span_px"])
+                            and min(profile["span_px"]) - 3 <= rail
+                            <= max(profile["span_px"]) + 3
+                            and isinstance(
+                                profile.get("independent_geometry_source_count"), int
+                            )
+                            and int(profile["independent_geometry_source_count"]) >= 1
+                        )
+                    ]
+                    if len(profiles) == 2:
+                        alias = single_ink_stroke_alias(profiles, source)
+                        profiles = [alias] if alias is not None else profiles
+                    if len(profiles) != 1:
+                        proven = False
+                        break
+                    profile = profiles[0]
+                    ref = str(profile.get("ref") or "")
+                    role = anchor_roles.get(ref)
+                    if role is not None:
+                        owners.append((role, None, ref))
+                    elif ref in profile_entity_by_ref:
+                        owners.append(("profile_boundary", profile_entity_by_ref[ref], ref))
+                    else:
+                        proven = False
+                        break
+                if not proven or len(owners) != 2 or owners[0][2] == owners[1][2]:
+                    continue
+                if (
+                    sum(role == "profile_boundary" for role, _, _ in owners) != 1
+                    or sum(role in ("overall_min", "overall_max") for role, _, _ in owners) != 1
+                ):
+                    continue
+                proof_matches.append({
+                    "region_id": region_id,
+                    "orientation": orientation,
+                    "axis": axis,
+                    "owners": owners,
+                    "rail_px": round(rail, 2),
+                    "witness_positions_px": [round(lo, 2), round(hi, 2)],
+                })
+
+        # Never pick the nearest of multiple valid dimension rails.
+        if len(proof_matches) != 1:
+            continue
+        match = proof_matches[0]
+        evidence = [
+            f"hybrid:whole:{source_index}",
+            "hybrid:short-dimension-rail:unique-two-profile-witnesses",
+        ]
+        endpoints = [
+            ObservationDimensionEndpoint(
+                role=role,
+                entity_key=entity,
+                basis="profile_edge" if role == "profile_boundary" else None,
+                evidence=evidence,
+            )
+            for role, entity, ref in match["owners"]
+        ]
+        dimension_key = f"{match['region_id']}.RECOVERED_SHORT_OFFSET_{source_index}"
+        recovered.append(
+            ObservationDimension(
+                key=dimension_key,
+                value=value,
+                axis=match["axis"],
+                endpoints=endpoints,
+                direction=_dimension_direction_from_image_order(
+                    view_lookup[match["region_id"]].view_kind,
+                    match["orientation"],
+                ),
+                evidence=evidence,
+                required_for_modeling=True,
+            )
+        )
+        ledger.append({
+            "dimension_key": dimension_key,
+            "source_item_index": source_index,
+            "region_id": match["region_id"],
+            "axis": match["axis"],
+            "value": value,
+            "rail_position_px": match["rail_px"],
+            "witness_positions_px": match["witness_positions_px"],
+            "profile_refs": [entry[2] for entry in match["owners"]],
+            "basis": "unique_connected_short_dimension_rail_plus_independent_profile_extremes",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        })
+
+    return recovered, ledger
+
+
 def _projection_alignment_tolerance(
     report: dict[str, Any],
     region_id: str,
@@ -11503,6 +11794,25 @@ def adapt_hybrid_ocr_report(
     )
     dimensions.extend(recovered_profile_dimensions)
 
+    # The standard DG-based consumer above remains first and authoritative.
+    # Only genuinely unassigned whole-drawing numerals can use a separately
+    # proven short rail with an existing overall and unique physical profile.
+    short_offset_dimensions, short_offset_ledger = (
+        _recover_unassigned_short_overall_offsets(
+            report=report,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            profile_inventory=profile_inventory,
+            profile_entity_by_ref=profile_entity_by_ref,
+            excluded_source_item_indices={
+                item.get("source_item_index")
+                for item in profile_offset_ledger
+                if isinstance(item, dict)
+            } | slot_claimed_source_indices,
+        )
+    )
+    dimensions.extend(short_offset_dimensions)
+
     (
         reference_table_dimensions,
         reference_table_dimension_ledger,
@@ -11534,6 +11844,11 @@ def adapt_hybrid_ocr_report(
             )
         )
     for record in profile_offset_ledger:
+        if isinstance(record, dict):
+            claimed_unassigned_source_indices.add(
+                record.get("source_item_index")
+            )
+    for record in short_offset_ledger:
         if isinstance(record, dict):
             claimed_unassigned_source_indices.add(
                 record.get("source_item_index")

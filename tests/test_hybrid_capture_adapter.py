@@ -10304,3 +10304,109 @@ def test_hidden_pair_to_recess_circle_unique_orthographic_alignment_is_coordinat
 
     args["existing_alignments"] = [alignments[0]]
     assert _unique_hidden_recess_projection_alignments(**args)[0] == []
+
+
+
+def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profile_owners(tmp_path):
+    import cv2
+    import numpy as np
+    from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+        _recover_unassigned_short_overall_offsets,
+    )
+
+    image = np.full((420, 500), 255, np.uint8)
+    cv2.line(image, (85, 200), (440, 200), 0, 2)
+    cv2.line(image, (85, 270), (440, 270), 0, 2)
+    cv2.line(image, (104, 200), (104, 270), 0, 2)
+    path = tmp_path / "short-base.png"
+    assert cv2.imwrite(str(path), image)
+    report = {
+        "source_raster": str(path),
+        "regions": [
+            {"region_id": "R", "bbox_px": [50, 120, 400, 240]}
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [{
+                "source_item_index": 7,
+                "token": "8",
+                "bbox": [[64, 228], [95, 228], [95, 247], [64, 247]],
+            }]
+        },
+    }
+    profiles = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R",
+            "ref": ref,
+            "source_orientation": "horizontal",
+            "position_px": y,
+            "span_px": [85, 440],
+            "axis_tolerance_px": 3.0,
+            "independent_geometry_source_count": 2,
+        }
+        for ref, y in (("R.TOP", 200), ("R.BOTTOM", 270))
+    ]
+    boundaries = [{
+        "status": "resolved",
+        "region_id": "R",
+        "axis": "Z",
+        "overall_dimension_value": 66.0,
+        "anchors": [
+            {"ref": "R.BOTTOM", "role": "overall_min"},
+            {"ref": "R.GLOBAL_TOP", "role": "overall_max"},
+        ],
+    }]
+    views = {
+        "R": hybrid_adapter.HybridRegionView(
+            region_id="R", view_kind="front", evidence=["test:R"]
+        )
+    }
+
+    def replay():
+        return _recover_unassigned_short_overall_offsets(
+            report=report,
+            view_lookup=views,
+            boundaries=boundaries,
+            profile_inventory=profiles,
+            profile_entity_by_ref={"R.TOP": "R.PROFILE.TOP"},
+            excluded_source_item_indices=set(),
+        )
+
+    dims, ledger = replay()
+    assert len(dims) == 1
+    assert dims[0].value == 8.0
+    assert dims[0].axis == "Z"
+    assert dims[0].direction == -1
+    assert [endpoint.role for endpoint in dims[0].endpoints] == [
+        "profile_boundary", "overall_min"
+    ]
+    assert len(ledger) == 1
+    assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    assert _recover_unassigned_short_overall_offsets(
+        report=report,
+        view_lookup=views,
+        boundaries=boundaries,
+        profile_inventory=profiles,
+        profile_entity_by_ref={"R.TOP": "R.PROFILE.TOP"},
+        excluded_source_item_indices={7},
+    ) == ([], [])
+
+    # Disconnected/ambiguous/unsupported geometry cannot consume the OCR value.
+    for variant in ("missing_rail", "missing_profile", "no_overall"):
+        if variant == "missing_rail":
+            empty = np.full((420, 500), 255, np.uint8)
+            cv2.line(empty, (85, 200), (440, 200), 0, 2)
+            cv2.line(empty, (85, 270), (440, 270), 0, 2)
+            assert cv2.imwrite(str(path), empty)
+        elif variant == "missing_profile":
+            profiles[0]["independent_geometry_source_count"] = 0
+        else:
+            boundaries[0]["overall_dimension_value"] = 6.0
+        assert replay() == ([], []), variant
+        if variant == "missing_rail":
+            assert cv2.imwrite(str(path), image)
+        elif variant == "missing_profile":
+            profiles[0]["independent_geometry_source_count"] = 2
+        else:
+            boundaries[0]["overall_dimension_value"] = 66.0

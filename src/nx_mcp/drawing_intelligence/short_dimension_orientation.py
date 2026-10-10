@@ -93,7 +93,11 @@ def _parallel_pair_candidates(
 ) -> list[tuple[float, float, float]]:
     output: list[tuple[float, float, float]] = []
     bbox_axis_span = max(0.0, bbox_axis_high - bbox_axis_low)
-    axis_margin = max(8.0, min(32.0, bbox_axis_span * 0.50))
+    # A short-dimension label often occupies the middle third between
+    # witness lines. The line endpoints can lie one full glyph height
+    # outside its OCR box. The separate pair-score and direction-ambiguity
+    # gates still require two uniquely supported physical witness lines.
+    axis_margin = max(8.0, min(40.0, bbox_axis_span * 1.0))
     max_pair_separation = max(90.0, min(160.0, bbox_axis_span))
     for first_index in range(len(lines)):
         first = lines[first_index]

@@ -579,6 +579,7 @@ def _exterior_one_glyph_candidate() -> dict[str, object]:
         "accepted_token": "8",
         "global_assignments": [{
             "token": "8",
+            "text": "8",
             "bbox": [[812, 120], [838, 120], [838, 156], [812, 156]],
             "exterior_single_digit_witness_proven": True,
         }],

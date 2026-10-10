@@ -437,9 +437,16 @@ def derive_dimension_endpoint_candidates(
             # a flag in an unverified handoff. It demands exactly two
             # crossing witness strokes, unique different physical owners,
             # and the OCR glyph immediately outside the rail end.
-            from .hybrid_ocr import _exterior_single_digit_witness_proof
+            from .hybrid_ocr import (
+                _exterior_single_digit_witness_proof,
+                _linear_tokens,
+            )
 
-            if _exterior_single_digit_witness_proof(candidate, assignment):
+            if (
+                _linear_tokens(str(assignment.get("text") or ""))
+                == {accepted_token}
+                and _exterior_single_digit_witness_proof(candidate, assignment)
+            ):
                 span = candidate.get("line_span_px")
                 if (
                     isinstance(span, list)

@@ -1803,7 +1803,7 @@ def _dimension_geometry(
                 {
                     "candidate_id": f"DG{next_id}",
                     "region_id": region_id,
-                    "orientation": "horizontal",
+                    "orientation": "vertical",
                     "axis_px": round(axis, 1),
                     "axis_local_norm": round((axis - x) / region_width, 5),
                     "line_span_px": [start, end],

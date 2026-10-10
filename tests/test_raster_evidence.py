@@ -593,3 +593,55 @@ def test_short_dimension_rail_requires_two_crossing_witness_lines():
             dtype=np.int32,
         ))
     assert _dimension_geometry(image, raw, NoSecondWitness, np) == []
+
+
+
+def test_dimension_geometry_classifies_both_rail_orientations():
+    """A vertical extracted rail must never be serialized as horizontal."""
+    import cv2
+    import numpy as np
+
+    from nx_mcp.drawing_intelligence.raster_evidence import _dimension_geometry
+
+    class MixedOrthogonalHough:
+        Canny = staticmethod(cv2.Canny)
+        HoughLinesP = staticmethod(
+            lambda *args, **kwargs: np.array(
+                [
+                    [[300, 120, 341, 120]],
+                    [[279, 90, 279, 230]],
+                    [[362, 90, 362, 230]],
+                    [[420, 140, 420, 181]],
+                    [[400, 120, 490, 120]],
+                    [[400, 200, 490, 200]],
+                ],
+                dtype=np.int32,
+            )
+        )
+
+    gray = np.full((400, 1034), 255, dtype=np.uint8)
+    raw = {
+        "regions": [
+            {"region_id": "R", "bbox_px": [220, 90, 250, 300]}
+        ]
+    }
+    candidates = _dimension_geometry(gray, raw, MixedOrthogonalHough, np)
+    horizontal = [
+        candidate
+        for candidate in candidates
+        if candidate["line_span_px"] == [300, 341]
+    ]
+    vertical = [
+        candidate
+        for candidate in candidates
+        if candidate["line_span_px"] == [140, 181]
+        and abs(candidate["axis_px"] - 420) <= 2
+    ]
+    assert len(horizontal) == 1
+    assert horizontal[0]["orientation"] == "horizontal"
+    assert len(vertical) == 1
+    assert vertical[0]["orientation"] == "vertical"
+    assert vertical[0]["short_witness_proven"] is True
+    assert set(item["orientation"] for item in candidates) == {
+        "horizontal", "vertical"
+    }

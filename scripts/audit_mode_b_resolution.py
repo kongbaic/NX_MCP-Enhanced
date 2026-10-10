@@ -194,12 +194,129 @@ def analyze_bundle(path: Path) -> dict[str, Any]:
             "comparisons": changes, "production_artifacts_modified": False}
 
 
+
+def analyze_current_replay(payload: dict[str, Any]) -> dict[str, Any]:
+    """Audit current Resolver evidence, never stale Mode B state.
+
+    Categories are diagnostic queues, not engineering facts or permission to
+    weaken a modeling blocker. An unresolved signed relation stays unresolved.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("pipeline"), dict):
+        raise ValueError("current replay is missing its pipeline")
+    if payload["pipeline"].get("resolved") is not True:
+        raise ValueError("current replay has not completed Resolver")
+    resolution = payload.get("resolution")
+    compiled = payload.get("compiled")
+    capture = payload.get("capture")
+    if not all(isinstance(part, dict) for part in (resolution, compiled, capture)):
+        raise ValueError("current replay is missing resolution, compiled, or capture")
+    unresolved = resolution.get("unresolved")
+    if not isinstance(unresolved, list):
+        raise ValueError("current replay is missing Resolver unresolved records")
+
+    relations = {
+        item["id"]: item
+        for item in compiled.get("relations", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    dimensions = {
+        item["id"]: item
+        for item in capture.get("dimensions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    review_tracks = {
+        "constraint_missing_prerequisite": ["A", "B", "C"],
+        "dimension_endpoint_ownership": ["B", "C"],
+        "ocr_assignment": ["B", "C", "D"],
+        "feature_semantics": ["B", "C"],
+        "feature_geometry_binding": ["B", "C"],
+        "other_preserved_blocker": ["A", "B", "C", "D"],
+    }
+    blockers: list[dict[str, Any]] = []
+    for item in unresolved:
+        if not isinstance(item, dict):
+            raise ValueError("current Resolver has a non-object unresolved record")
+        if item.get("required_for_modeling", True) is False:
+            continue
+        identifier = str(item.get("id") or "")
+        relation = (
+            relations.get(identifier.removeprefix("relation:"))
+            if identifier.startswith("relation:")
+            else None
+        )
+        dimension = (
+            dimensions.get(identifier.removeprefix("U_DIM_"))
+            if identifier.startswith("U_DIM_")
+            else None
+        )
+        source_ids = list(dict.fromkeys(
+            source_id
+            for source_id in [
+                *(item.get("source_ids") or []),
+                *((relation or {}).get("source_ids") or []),
+            ]
+            if isinstance(source_id, str) and source_id
+        ))
+        category = (
+            "feature_geometry_binding"
+            if item.get("field") == "engineering_callout_geometry_binding"
+            else _category(item)
+        )
+        blockers.append({
+            "id": identifier,
+            "kind": item.get("kind"),
+            "field": item.get("field"),
+            "reason": item.get("reason"),
+            "targets": item.get("targets") or [],
+            "source_ids": source_ids,
+            "category": category,
+            "candidate_review_tracks": review_tracks[category],
+            "review_status": "needs_evidence_classification",
+            "relation": relation,
+            "capture_dimension": dimension,
+        })
+
+    draft = payload.get("draft")
+    draft_unresolved = (
+        draft.get("unresolved", []) if isinstance(draft, dict) else []
+    )
+    expanded = [
+        item for item in draft_unresolved
+        if isinstance(item, dict) and item.get("required_for_modeling", True)
+    ]
+    return {
+        "schema": "mode-b-current-replay-audit-v1",
+        "resolver_blocking_count": len(blockers),
+        "draft_expanded_blocker_records": len(expanded),
+        "resolver_conflict_count": len(resolution.get("conflicts") or []),
+        "gate_a_pass": payload.get("gate_a_pass") is True,
+        "gate_a_errors": payload.get("gate_a_errors") or [],
+        "diagnostic_categories": dict(sorted(Counter(
+            item["category"] for item in blockers
+        ).items())),
+        "blockers": blockers,
+        "ocr_reexecuted": payload.get("ocr_reexecuted"),
+        "production_artifacts_modified": False,
+        "warning": (
+            "A/B/C/D are possible review tracks, not automatic decisions. "
+            "No missing dimension, machining direction, or annotation type "
+            "has been inferred; original Gate A blockers remain unchanged."
+        ),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bundle", required=True, type=Path)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--bundle", type=Path)
+    group.add_argument("--replay", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = analyze_bundle(args.bundle)
+    result = (
+        analyze_bundle(args.bundle)
+        if args.bundle is not None
+        else analyze_current_replay(_decode(args.replay.read_bytes()))
+    )
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         args.output.write_text(rendered + "\n", encoding="utf-8")

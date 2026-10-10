@@ -105,3 +105,66 @@ def test_audit_rejects_duplicate_or_missing_evidence(tmp_path):
         assert "duplicate bundle entry" in str(exc)
     else:
         raise AssertionError("duplicate evidence must be rejected")
+
+
+
+def test_current_replay_audit_uses_resolver_not_expanded_draft():
+    m = _load()
+    payload = {
+        "pipeline": {"resolved": True},
+        "resolution": {
+            "unresolved": [
+                {"id": "relation:D123", "targets": ["edge_a", "edge_b"],
+                 "reason": "no unique solution", "required_for_modeling": True},
+                {"id": "U_DIM_D124", "reason": "unknown endpoint",
+                 "required_for_modeling": True},
+                {"id": "U_ADVISORY", "required_for_modeling": False},
+            ],
+            "conflicts": [],
+        },
+        "compiled": {
+            "relations": [{
+                "id": "D123", "kind": "coordinate_distance", "axis": "Y",
+                "value": 17, "direction": None, "source_ids": ["source:a"],
+            }],
+        },
+        "capture": {
+            "dimensions": [{"id": "D124", "value": 17, "endpoints": []}],
+        },
+        "draft": {
+            "unresolved": [
+                {"id": "relation:D123:0", "required_for_modeling": True},
+                {"id": "relation:D123:1", "required_for_modeling": True},
+                {"id": "U_DIM_D124", "required_for_modeling": True},
+            ],
+        },
+        "gate_a_pass": False,
+        "gate_a_errors": ["missing dimension"],
+        "ocr_reexecuted": False,
+    }
+    result = m.analyze_current_replay(payload)
+    assert result["resolver_blocking_count"] == 2
+    assert result["draft_expanded_blocker_records"] == 3
+    assert result["diagnostic_categories"] == {
+        "constraint_missing_prerequisite": 1,
+        "dimension_endpoint_ownership": 1,
+    }
+    assert result["blockers"][0]["source_ids"] == ["source:a"]
+    assert result["blockers"][0]["relation"]["direction"] is None
+    assert result["blockers"][1]["capture_dimension"]["id"] == "D124"
+    assert result["gate_a_pass"] is False
+    assert result["production_artifacts_modified"] is False
+
+
+def test_current_replay_audit_rejects_incomplete_resolution():
+    m = _load()
+    for payload in (
+        {"pipeline": {"resolved": False}},
+        {"pipeline": {"resolved": True}, "resolution": {}},
+    ):
+        try:
+            m.analyze_current_replay(payload)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("incomplete replay must fail closed")

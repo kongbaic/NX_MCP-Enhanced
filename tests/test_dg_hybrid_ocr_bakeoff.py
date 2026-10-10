@@ -786,11 +786,13 @@ def test_overflow_is_hidden_from_reader_but_preserved_for_machine_ocr():
                 "candidate_id": f"DG{i}",
                 "region_id": "R",
                 "orientation": "horizontal",
-                "axis_px": 80.0 + i * 12,
-                "axis_local_norm": (80.0 + i * 12 - 50.0) / 300.0,
+                "axis_px": 80.0 + i * 8,
+                "axis_local_norm": (80.0 + i * 8 - 50.0) / 300.0,
                 "line_span_px": [140, 330],
-                "witness_positions_px": [140 + i, 330 - i],
-                "witness_positions_local_norm": [(40 + i) / 400, (230 - i) / 400],
+                "witness_positions_px": [140 + 12 * i, 330 - 12 * i],
+                "witness_positions_local_norm": [
+                    (40 + 12 * i) / 400, (230 - 12 * i) / 400
+                ],
                 "witness_line_evidence": [],
             }
             for i in range(5)

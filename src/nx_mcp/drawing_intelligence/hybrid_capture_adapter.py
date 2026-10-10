@@ -6922,10 +6922,19 @@ def _recover_unassigned_profile_edge_offsets(
                                     float(bbox[3]),
                                 )
                             break
+                    # Keep text-to-dimension-line ownership local to the
+                    # text and view.  Growing this tolerance with the span
+                    # permits a distant OCR token to claim an unrelated long
+                    # witness pair even if both endpoints are real profiles.
+                    label_cross_span = (
+                        bottom - top
+                        if orientation == "horizontal"
+                        else right - left
+                    )
                     perpendicular_limit = max(
-                        32.0,
-                        region_minor_span * 0.22,
-                        pair_span * 0.75,
+                        12.0,
+                        label_cross_span * 1.5,
+                        region_minor_span * 0.08,
                     )
                     if perpendicular_gap > perpendicular_limit:
                         continue

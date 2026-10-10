@@ -9651,3 +9651,88 @@ def test_profile_vertex_entities_are_view_local_filtered_and_deduplicated():
         "hybrid:profile-vertex:VERTEX_A",
         "hybrid:profile-edge:EDGE_A",
     ]
+
+
+
+@pytest.mark.parametrize(
+    ("text_bbox", "expected_recovery"),
+    [
+        # An OCR number well outside a long dimension line must not claim the
+        # line merely because its witness span is long.
+        ([[7, 357], [47, 357], [47, 402], [7, 402]], False),
+        # A number adjacent to that same line may be recovered with its
+        # independently owned overall/profile endpoints.
+        ([[135, 357], [175, 357], [175, 402], [135, 402]], True),
+    ],
+)
+def test_unassigned_profile_offset_recovery_requires_local_text_to_line_ownership(
+    text_bbox, expected_recovery,
+):
+    candidate = {
+        "candidate_id": "DG_LONG_DIMENSION",
+        "region_id": "R1",
+        "orientation": "vertical",
+        "axis_px": 142.7,
+        "line_span_px": [200, 667],
+        "witness_positions_px": [200.5, 484.0],
+        "accepted_token": None,
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.profile.top",
+                    }
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R1.profile.transition",
+                    }
+                ],
+            },
+        ],
+    }
+    report = {
+        "regions": [
+            {"region_id": "R1", "bbox_px": [35, 138, 434, 533]}
+        ],
+        "coverage": {
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 9,
+                    "token": "6",
+                    "bbox": text_bbox,
+                }
+            ]
+        },
+    }
+    recovered, ledger = hybrid_adapter._recover_unassigned_profile_edge_offsets(
+        report=report,
+        candidates=[candidate],
+        view_lookup={
+            "R1": hybrid_adapter.HybridRegionView(
+                region_id="R1",
+                view_kind="front",
+                evidence=["test:R1"],
+            )
+        },
+        boundary_roles={"R1.profile.top": "overall_max"},
+        profile_entity_by_ref={
+            "R1.profile.transition": "R1.PROFILE.TRANSITION"
+        },
+    )
+
+    assert bool(recovered) is expected_recovery
+    assert bool(ledger) is expected_recovery
+    if expected_recovery:
+        assert recovered[0].value == 6
+        assert recovered[0].axis == "Z"
+        assert {item.role for item in recovered[0].endpoints} == {
+            "overall_max", "profile_boundary",
+        }
+        assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False

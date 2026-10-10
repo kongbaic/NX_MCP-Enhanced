@@ -195,6 +195,10 @@ def test_local_only_overall_reuses_raster_proven_duplicate_contour(
     )
 
     strong, weak = _pair()
+    # Match production's region-scoped raster profile inventory: candidates
+    # with no region_id must not acquire engineering endpoint ownership.
+    strong = {**strong, "region_id": "R_TEST"}
+    weak = {**weak, "region_id": "R_TEST"}
     upper = {
         **strong,
         "ref": "upper_independent",

@@ -726,8 +726,6 @@ def _unassigned_whole_truncation_covered_by_independent_overall(
     x0, y0, x1, y1 = bbox
     matched: list[str] = []
     for candidate in candidate_lookup.values():
-        if not isinstance(candidate, dict):
-            continue
         candidate_id = str(candidate.get("candidate_id") or "")
         region_id = str(candidate.get("region_id") or "")
         region_view = view_lookup.get(region_id)

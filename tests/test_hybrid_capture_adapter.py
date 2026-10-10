@@ -10104,3 +10104,87 @@ def test_annotation_proof_matches_only_integer_source_indices(monkeypatch):
         False,
         True,
     ]
+
+
+
+@pytest.mark.parametrize(
+    ("variant", "advisory"),
+    [
+        ("proven", True),
+        ("wrong_local", False),
+        ("missing_line", False),
+        ("far_bbox", False),
+        ("wrong_local_evidence", False),
+        ("second_candidate", False),
+        ("full_token_not_truncated", False),
+    ],
+)
+def test_unassigned_whole_ocr_fragment_is_advisory_only_for_proven_overall(
+    monkeypatch, variant, advisory,
+):
+    """A truncated whole glyph cannot become a fabricated engineering value."""
+    candidate = {
+        "candidate_id": "DG_OVERALL_Z",
+        "region_id": "R1",
+        "orientation": "vertical",
+        "axis_px": 46.0,
+        "line_span_px": [220.0, 530.0],
+        "accepted_token": None,
+        "global_proposal_token": None,
+        "global_assignments": [],
+        "wide_local_linear_tokens": ["66"],
+    }
+    item = {
+        "source_item_index": 9,
+        "token": "6",
+        "bbox": [[7, 357], [47, 357], [47, 402], [7, 402]],
+    }
+    evidence_ok = True
+    candidates = {"DG_OVERALL_Z": candidate}
+    if variant == "wrong_local":
+        candidate["wide_local_linear_tokens"] = ["65"]
+    elif variant == "missing_line":
+        candidate["axis_px"] = 101.0
+    elif variant == "far_bbox":
+        item["bbox"] = [[7, 100], [47, 100], [47, 130], [7, 130]]
+    elif variant == "wrong_local_evidence":
+        evidence_ok = False
+    elif variant == "second_candidate":
+        candidates["DG_DUPLICATE"] = {
+            **candidate, "candidate_id": "DG_DUPLICATE"
+        }
+    elif variant == "full_token_not_truncated":
+        item["token"] = "66"
+
+    def independent_witness_proof(*, item, candidate, **kwargs):
+        return evidence_ok and item["token"] == "66"
+
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "_local_only_redundant_with_independent_overall",
+        independent_witness_proof,
+    )
+    report = {
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "unassigned_linear_observations": [item],
+        }
+    }
+    view_lookup = {
+        "R1": hybrid_adapter.HybridRegionView(
+            region_id="R1", view_kind="front", evidence=["test:R1"]
+        )
+    }
+    result = hybrid_adapter._coverage_unresolved(
+        report,
+        candidate_lookup=candidates,
+        view_lookup=view_lookup,
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+    assert len(result) == 1
+    assert result[0].field == "unassigned_linear_text"
+    assert result[0].required_for_modeling is not advisory
+    if advisory:
+        assert "truncated fragment" in result[0].reason
+        assert result[0].evidence == ["hybrid:whole:9"]

@@ -698,6 +698,100 @@ def _local_only_redundant_with_independent_overall(
     return set(resolved_refs) == set(boundary_refs)
 
 
+
+
+def _unassigned_whole_truncation_covered_by_independent_overall(
+    *,
+    report: dict[str, Any],
+    item: dict[str, Any],
+    candidate_lookup: dict[str, dict[str, Any]],
+    view_lookup: dict[str, HybridRegionView],
+    boundaries: list[dict[str, Any]],
+    overall_dimension_facts: list[PartialOverallDimensionFact],
+) -> str | None:
+    """Advisory only when an OCR fragment duplicates an independently closed span.
+
+    The numeric value is NOT corrected or made authoritative. The existing
+    independent-overall witness proof must succeed on exactly one local OCR
+    candidate; the whole OCR box must touch that same candidate dimension rail.
+    """
+    token = item.get("token")
+    bbox = _bbox_bounds(item.get("bbox"))
+    if (
+        not isinstance(token, str)
+        or re.fullmatch(r"[1-9][0-9]*", token) is None
+        or bbox is None
+    ):
+        return None
+    x0, y0, x1, y1 = bbox
+    matched: list[str] = []
+    for candidate in candidate_lookup.values():
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = str(candidate.get("candidate_id") or "")
+        region_id = str(candidate.get("region_id") or "")
+        region_view = view_lookup.get(region_id)
+        if (
+            not candidate_id
+            or region_view is None
+            or candidate.get("accepted_token") is not None
+            or candidate.get("global_proposal_token") is not None
+            or candidate.get("global_assignments")
+        ):
+            continue
+        orientation = candidate.get("orientation")
+        axis = candidate.get("axis_px")
+        span = candidate.get("line_span_px")
+        if (
+            orientation not in {"horizontal", "vertical"}
+            or not isinstance(axis, (int, float))
+            or isinstance(axis, bool)
+            or not isinstance(span, list)
+            or len(span) != 2
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in span
+            )
+        ):
+            continue
+
+        along_min, along_max = (x0, x1) if orientation == "horizontal" else (y0, y1)
+        cross_min, cross_max = (y0, y1) if orientation == "horizontal" else (x0, x1)
+        lower_span, upper_span = sorted(float(value) for value in span)
+        # The original OCR box must directly touch this dimension rail and
+        # overlap its drawn span, not merely be in the same drawing region.
+        if (
+            not cross_min - 2.0 <= float(axis) <= cross_max + 2.0
+            or max(along_min, lower_span) > min(along_max, upper_span)
+        ):
+            continue
+        local_tokens = candidate.get("wide_local_linear_tokens")
+        if (
+            not isinstance(local_tokens, list)
+            or len(local_tokens) != 1
+            or not isinstance(local_tokens[0], str)
+        ):
+            continue
+        local = local_tokens[0]
+        if (
+            re.fullmatch(r"[1-9][0-9]*", local) is None
+            or len(token) >= len(local)
+            or not (local.startswith(token) or local.endswith(token))
+        ):
+            continue
+        if not _local_only_redundant_with_independent_overall(
+            report=report,
+            item={"token": local},
+            candidate=candidate,
+            view_lookup=view_lookup,
+            boundaries=boundaries,
+            overall_dimension_facts=overall_dimension_facts,
+        ):
+            continue
+        matched.append(candidate_id)
+    return matched[0] if len(matched) == 1 else None
+
+
 def _coverage_unresolved(
     report: dict[str, Any],
     candidate_lookup: dict[str, dict[str, Any]],
@@ -859,11 +953,30 @@ def _coverage_unresolved(
             if isinstance(source_index, int) and not isinstance(source_index, bool)
             else None
         )
+        duplicate_of = (
+            _unassigned_whole_truncation_covered_by_independent_overall(
+                report=report,
+                item=item,
+                candidate_lookup=candidate_lookup,
+                view_lookup=view_lookup,
+                boundaries=boundaries,
+                overall_dimension_facts=overall_dimension_facts,
+            )
+            if annotation_kind is None and not reference_region_ids
+            else None
+        )
         if annotation_kind is not None:
             reason += (
                 f" Raster topology proves {annotation_kind}; preserve OCR text "
                 "as non-dimensional manufacturing annotation evidence, not as "
                 "a nominal CAD linear dimension. OCR value is uncorrected."
+            )
+        elif duplicate_of is not None:
+            reason += (
+                " One local OCR observation and an independently proven overall "
+                f"dimension match the same physical witness span ({duplicate_of}); "
+                "whole OCR is a truncated fragment, preserved as advisory without "
+                "replacing its text or inferring a new dimension."
             )
         elif reference_region_ids:
             reason += (
@@ -885,7 +998,9 @@ def _coverage_unresolved(
                 field="unassigned_linear_text",
                 evidence=[f"hybrid:whole:{item.get('source_item_index')}"],
                 required_for_modeling=(
-                    not reference_region_ids and annotation_kind is None
+                    not reference_region_ids
+                    and annotation_kind is None
+                    and duplicate_of is None
                 ),
             )
         )

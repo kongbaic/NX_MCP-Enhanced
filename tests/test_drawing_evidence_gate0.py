@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _capture(**overrides):
     base = {
         "schema_version": "1.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": {
             "length_x": 40,
             "width_y": 32,
@@ -143,7 +143,6 @@ def test_gate0_quarantines_missing_or_wrong_endpoint_count(record):
         "intermediate_surface",
         "step_surface",
         "feature_boundary",
-        "profile_boundary",
         "profile_edge",
         "hidden_surface_top",
         "internal_surface",
@@ -517,6 +516,10 @@ def test_gate0_quarantines_direct_targets_not_consumable_by_frozen_draft(target)
         "feature:F_MAIN.diameter",
         "overall_dimensions.length_x",
         "profile.width",
+        (
+            "constraints.profile_arc_radii."
+            "PHYSICAL_TAPER_TERMINAL_FILLET_TEST.radius"
+        ),
     ],
 )
 def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
@@ -542,6 +545,11 @@ def test_gate0_allows_direct_targets_supported_by_frozen_draft(target):
         "feature:",
         "overall_dimensions.",
         "profile.",
+        "constraints.profile_arc_radii.",
+        "constraints.profile_arc_radii.ARC_ONLY",
+        "constraints.profile_arc_radii.ARC_ONLY.center",
+        "constraints.profile_arc_radii.ARC_ONLY.radius.extra",
+        "constraints.other.ARC_ONLY.radius",
     ],
 )
 def test_gate0_quarantines_incomplete_downstream_target_paths(target):
@@ -642,7 +650,7 @@ def test_gate0_quarantines_reader_direct_that_conflicts_with_resolved_child_targ
     compiled = compile_evidence_graph(strict)
     resolution = resolve_evidence_graph(compiled)
     draft = build_semantic_draft(compiled, resolution)
-    assert draft["features"][0]["position"]["x"] == -10.0
+    assert draft["features"][0]["position"]["x"] == 10.0
 
 
 def test_gate0_allows_sibling_paths_without_quarantine():

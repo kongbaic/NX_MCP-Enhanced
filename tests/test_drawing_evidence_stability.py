@@ -233,7 +233,7 @@ def test_stability_cli_exit_codes_and_report(tmp_path: Path):
 def _gate0_graph_with_bad_dimension(record: dict):
     capture = {
         "schema_version": "1.0",
-        "coordinate_system": "part_center_xy_bottom_z0",
+        "coordinate_system": "overall_min_xyz",
         "overall_dimensions": {
             "length_x": 40,
             "width_y": 32,

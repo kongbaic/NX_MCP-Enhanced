@@ -10,6 +10,9 @@ RelationKind = Literal[
     "alignment",
     "center_spacing",
     "center_distance",
+    "coordinate_distance",
+    "midpoint",
+    "centered_span",
     "upper_tangent",
     "lower_tangent",
 ]
@@ -26,11 +29,12 @@ EndpointRole = Literal[
     "overall_min",
     "overall_max",
     "feature_center",
+    "profile_boundary",
 ]
 
 
 class OverallDimensions(BaseModel):
-    """Global extents in the fixed part_center_xy_bottom_z0 frame."""
+    """Global extents in the fixed overall_min_xyz frame."""
 
     length_x: float = Field(gt=0)
     width_y: float = Field(gt=0)
@@ -117,8 +121,8 @@ class DimensionEndpoint(BaseModel):
 
     @model_validator(mode="after")
     def _validate_endpoint(self) -> "DimensionEndpoint":
-        if self.role == "feature_center" and not self.target:
-            raise ValueError("feature_center endpoint requires target")
+        if self.role in {"feature_center", "profile_boundary"} and not self.target:
+            raise ValueError(f"{self.role} endpoint requires target")
         if self.role in {"overall_min", "overall_max"} and self.target is not None:
             raise ValueError(f"{self.role} endpoint must not carry target")
         return self
@@ -173,12 +177,26 @@ class RelationEvidence(BaseModel):
         if self.kind == "edge_offset":
             if self.value is None or self.from_side is None:
                 raise ValueError("edge_offset requires value and from_side")
-        elif self.kind in {"center_spacing", "center_distance"}:
+        elif self.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
             if self.value is None or len(self.targets) != 2:
                 raise ValueError(f"{self.kind} requires value and exactly two targets")
         elif self.kind == "alignment":
             if len(self.targets) < 2:
                 raise ValueError("alignment requires at least two targets")
+        elif self.kind == "midpoint":
+            if len(self.targets) != 3:
+                raise ValueError(
+                    "midpoint requires [endpoint_a, midpoint, endpoint_b]"
+                )
+            if self.value is not None:
+                raise ValueError("midpoint must not carry a numeric value")
+        elif self.kind == "centered_span":
+            if len(self.targets) != 3:
+                raise ValueError(
+                    "centered_span requires [endpoint_a, midpoint, endpoint_b]"
+                )
+            if self.value is None or self.value <= 0:
+                raise ValueError("centered_span requires a positive span value")
         elif self.kind in {"upper_tangent", "lower_tangent"}:
             if len(self.targets) != 2 or not self.diameter_target:
                 raise ValueError(
@@ -192,7 +210,7 @@ class EvidenceGraph(BaseModel):
     """Machine-readable output of the visual evidence extraction stage."""
 
     schema_version: Literal["1.0"] = "1.0"
-    coordinate_system: Literal["part_center_xy_bottom_z0"] = "part_center_xy_bottom_z0"
+    coordinate_system: Literal["overall_min_xyz"] = "overall_min_xyz"
     overall_dimensions: OverallDimensions
     views: list[ViewEvidence] = Field(default_factory=list)
     projections: list[ProjectionEvidence] = Field(default_factory=list)

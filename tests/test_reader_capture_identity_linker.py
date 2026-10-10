@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import nx_mcp.drawing_intelligence.identity_linker as identity_linker
+
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import nx_mcp.drawing_intelligence.identity_linker as identity_linker_module
 from pydantic import ValidationError
 
 from nx_mcp.drawing_intelligence import (
     AssociationClaim,
+    CaptureCenterlineAlignment,
     CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
@@ -78,7 +82,7 @@ def _capture(prefix: str, *, reverse_association: bool = False) -> ReaderCapture
             AssociationClaim(
                 id=f"{prefix}_ASSOC",
                 entity_ids=association_entities,
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=[f"{prefix}_SRC_ASSOC"],
             )
         ],
@@ -187,6 +191,52 @@ def test_production_capture_rejects_same_view_multi_entity_association():
         )
 
 
+def test_identity_linker_accepts_shared_raster_profile_identity_across_region_views():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(id="V_R1", kind="front"),
+            CaptureView(id="V_R2", kind="front"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_R1",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="associated",
+            ),
+            CaptureEntity(
+                id="E_R2",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="associated",
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_SHARED_RASTER",
+                entity_ids=["E_R1", "E_R2"],
+                basis=["shared_raster_profile_identity"],
+                source_ids=["SRC_SHARED_RASTER"],
+                required_for_modeling=False,
+            )
+        ],
+        required_targets=[
+            CaptureRequiredTarget(entity_id="E_R1", field="boundary.x"),
+            CaptureRequiredTarget(entity_id="E_R2", field="boundary.x"),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    assert result.entity_to_feature["E_R1"] == result.entity_to_feature["E_R2"]
+    assert result.report["rejected_associations"] == 0
+
+
 def test_identity_linker_quarantines_legacy_same_view_multi_entity_association():
     capture = ReaderCapture.model_construct(
         overall_dimensions=OverallDimensions(
@@ -214,7 +264,7 @@ def test_identity_linker_quarantines_legacy_same_view_multi_entity_association()
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)
@@ -271,7 +321,7 @@ def test_identity_linker_output_passes_strict_evidence_schema():
     validated = type(result.evidence).model_validate(raw)
 
     assert validated.schema_version == "1.0"
-    assert validated.coordinate_system == "part_center_xy_bottom_z0"
+    assert validated.coordinate_system == "overall_min_xyz"
 
 
 def test_link_capture_cli_produces_strict_downstream_consumable_evidence(tmp_path: Path):
@@ -392,7 +442,7 @@ def test_reader_capture_normalizes_string_observations():
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -492,11 +542,53 @@ def test_identity_collision_placeholders_keep_disconnected_components_distinct()
     assert spacing.targets[0] != spacing.targets[1]
 
 
+
+def test_identity_collision_is_advisory_when_all_colliding_projections_are_noncritical():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="circle",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="circle",
+                required_for_modeling=False,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    left = result.entity_to_feature["E_LEFT"]
+    right = result.entity_to_feature["E_RIGHT"]
+    collision = next(
+        item
+        for item in result.evidence.unresolved_evidence
+        if item["id"].startswith("U_IDENTITY_COLLISION_")
+    )
+
+    assert left != right
+    assert left.endswith("_AMB_01")
+    assert right.endswith("_AMB_02")
+    assert collision["required_for_modeling"] is False
+    assert result.report["identity_collisions"] == 1
+    assert result.report["blocking_unresolved"] == 0
+
 def test_run02_shape_string_observations_collision_and_spacing_is_linkable(tmp_path: Path):
     capture = ReaderCapture.model_validate(
         {
             "schema_version": "2.0",
-            "coordinate_system": "part_center_xy_bottom_z0",
+            "coordinate_system": "overall_min_xyz",
             "overall_dimensions": {
                 "length_x": 40,
                 "width_y": 32,
@@ -726,7 +818,7 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EFC", "ESA"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -747,7 +839,7 @@ def test_identity_linker_canonicalizes_edge_on_hole_profile_shape():
             AssociationClaim(
                 id="A2",
                 entity_ids=["EFC2", "ESB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -860,7 +952,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -883,7 +975,7 @@ def test_reader_capture_rejects_unknown_top_level_and_nested_fields():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": 50,
@@ -908,7 +1000,7 @@ def test_reader_capture_rejects_non_numeric_overall_scalar():
         ReaderCapture.model_validate(
             {
                 "schema_version": "2.0",
-                "coordinate_system": "part_center_xy_bottom_z0",
+                "coordinate_system": "overall_min_xyz",
                 "overall_dimensions": {
                     "length_x": 100,
                     "width_y": "50",
@@ -957,6 +1049,174 @@ def test_current_capture_contract_rejects_legacy_value_alias_and_freeform_blocke
 
     assert any("non-canonical field" in item for item in errors)
     assert any("structured kind" in item for item in errors)
+
+
+def test_open_slot_tangent_relation_closes_only_bottom_z():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[
+            CaptureEntity(id="E1", view_id="V1", shape="circle"),
+            CaptureEntity(id="E2", view_id="V1", shape="slot_edges"),
+        ],
+        values=[
+            CaptureValue(id="D1", entity_id="E1", field="diameter", value=20),
+            CaptureValue(id="K1", entity_id="E2", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E2", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E2", field="width_axis", value="X"),
+            CaptureValue(id="Z1", entity_id="E2", field="top_z", value=66),
+        ],
+        unresolved_evidence=[
+            CaptureUnresolvedEvidence(
+                id="U1",
+                kind="feature_value",
+                reason="through unknown",
+                entity_ids=["E2"],
+                field="through_axis",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+            CaptureUnresolvedEvidence(
+                id="U2",
+                kind="feature_value",
+                reason="bottom from tangent",
+                entity_ids=["E2"],
+                field="bottom_z",
+                source_ids=["test"],
+                required_for_modeling=True,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_open_slot_ledger",
+                "items": [
+                    {
+                        "slot_entity_id": "E2",
+                        "circle_entity_id": "E1",
+                        "region_id": "R1",
+                        "source_item_index": 2,
+                        "top_boundary_ref": "R1.TOP",
+                        "circle_entity": "R1.C1",
+                        "basis": (
+                            "unique_overall_top_gap_plus_two_descending_walls_plus_"
+                            "circle_center_alignment_and_upper_circle_termination"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+            }
+        ],
+    )
+
+    relations, resolved = identity_linker._open_slot_tangent_relations(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+    )
+
+    assert len(relations) == 2
+    tangent = next(item for item in relations if item.kind == "upper_tangent")
+    alignment = next(item for item in relations if item.kind == "alignment")
+    assert tangent.targets == [
+        "feature:F_CIRCLE.centerline.z",
+        "feature:F_SLOT.bottom_z",
+    ]
+    assert tangent.diameter_target == "feature:F_CIRCLE.diameter"
+    assert alignment.axis == "X"
+    assert alignment.targets == [
+        "feature:F_CIRCLE.centerline.x",
+        "feature:F_SLOT.centerline.x",
+    ]
+    assert resolved == {("F_SLOT", "bottom_z")}
+
+    unresolved = identity_linker._linked_reader_unresolved(
+        capture,
+        {"E1": "F_CIRCLE", "E2": "F_SLOT"},
+        relation_resolved_fields=resolved,
+    )
+    assert [item["field"] for item in unresolved] == ["through_axis"]
+
+
+def test_current_capture_contract_accepts_canonical_slot_value_fields():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="slot_edges")],
+        values=[
+            CaptureValue(id="K1", entity_id="E1", field="type", value="slot"),
+            CaptureValue(id="W1", entity_id="E1", field="width", value=2),
+            CaptureValue(id="A1", entity_id="E1", field="width_axis", value="X"),
+            CaptureValue(id="A2", entity_id="E1", field="through_axis", value="Y"),
+            CaptureValue(id="Z1", entity_id="E1", field="top_z", value=20),
+            CaptureValue(id="Z2", entity_id="E1", field="bottom_z", value=10),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
+def test_current_capture_contract_accepts_canonical_start_side_value():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="hidden_parallel")],
+        values=[
+            CaptureValue(
+                id="S1",
+                entity_id="E1",
+                field="start_side",
+                value="max",
+            )
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
+
+
+def test_current_capture_contract_accepts_split_thread_entry_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        entities=[CaptureEntity(id="E1", view_id="V1", shape="hidden_parallel")],
+        values=[
+            CaptureValue(
+                id="M1",
+                entity_id="E1",
+                field="material_side",
+                value="min",
+            ),
+            CaptureValue(
+                id="E2",
+                entity_id="E1",
+                field="entry_endpoint",
+                value="max",
+            ),
+        ],
+    )
+
+    errors = validate_reader_capture_contract(capture)
+
+    assert not any("non-canonical field" in item for item in errors)
 
 
 def _unresolved_capture(prefix: str, kind: str) -> ReaderCapture:
@@ -1121,17 +1381,21 @@ def test_production_capture_rejects_alignment_only_association_basis():
         ],
     )
 
-    with pytest.raises(ValidationError, match="identity-sufficient visual basis"):
-        ReaderCapture(
-            **common,
-            associations=[
-                AssociationClaim(
-                    id="A_ALIGN_ONLY",
-                    entity_ids=["EF", "ES"],
-                    basis=["projection_alignment", "shared_centerline"],
-                )
-            ],
-        )
+    for insufficient_basis in (
+        ["projection_alignment", "shared_centerline"],
+        ["projection_alignment", "matching_specification"],
+    ):
+        with pytest.raises(ValidationError, match="identity-sufficient visual basis"):
+            ReaderCapture(
+                **common,
+                associations=[
+                    AssociationClaim(
+                        id="A_INSUFFICIENT",
+                        entity_ids=["EF", "ES"],
+                        basis=insufficient_basis,
+                    )
+                ],
+            )
 
     strong = ReaderCapture(
         **common,
@@ -1139,7 +1403,7 @@ def test_production_capture_rejects_alignment_only_association_basis():
             AssociationClaim(
                 id="A_STRONG",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
     )
@@ -1179,6 +1443,145 @@ def test_current_capture_contract_requires_entity_center_visual_basis():
     assert validate_reader_capture_contract(capture) == []
 
 
+def test_identity_linker_preserves_labeled_dimension_relation_ledger_without_geometry():
+    ledger = {
+        "kind": "hybrid_labeled_dimension_relation_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "target_id": "LD_0004",
+                "source_item_index": 4,
+                "source_text": "S- 4.5 mm",
+                "region_id": "R1",
+                "value": 4.5,
+                "axis": "X",
+                "relation": "between_profile_boundaries",
+                "profile_transition_geometry": "orthogonal",
+                "symmetry_scope": "single",
+                "evidence": ["hybrid:whole:4", "structural:R1"],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+        "engineering_value_source": "hybrid_ocr",
+        "relation_source": "bounded_structural_context",
+    }
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        observations=[ledger],
+    )
+
+    result = link_reader_capture(capture)
+
+    preserved = [
+        item
+        for item in result.evidence.observations
+        if item.get("kind") == "hybrid_labeled_dimension_relation_ledger"
+    ]
+    assert preserved == [ledger]
+    assert result.evidence.relations == []
+    assert result.evidence.required_targets == []
+
+
+def test_identity_linker_preserves_labeled_dimension_relation_ledger_with_optional_null_metadata():
+    ledger = {
+        "kind": "hybrid_labeled_dimension_relation_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "target_id": "LD_0004",
+                "source_item_index": 4,
+                "source_text": "S - 4.5 mm",
+                "region_id": "R3",
+                "value": 4.5,
+                "axis": "X",
+                "relation": "between_profile_boundaries",
+                "profile_transition_geometry": None,
+                "symmetry_scope": None,
+                "evidence": ["hybrid:whole:4", "structural:R3"],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+        "engineering_value_source": "hybrid_ocr",
+        "relation_source": "bounded_structural_context",
+    }
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        observations=[ledger],
+    )
+
+    result = link_reader_capture(capture)
+
+    preserved = [
+        item
+        for item in result.evidence.observations
+        if item.get("kind") == "hybrid_labeled_dimension_relation_ledger"
+    ]
+    assert preserved == [ledger]
+
+
+def test_identity_linker_rejects_labeled_dimension_ledger_with_invalid_provenance_flags():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=20,
+        ),
+        views=[CaptureView(id="V1", kind="front")],
+        observations=[
+            {
+                "kind": "hybrid_labeled_dimension_relation_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "target_id": "LD_0004",
+                        "source_item_index": 4,
+                        "source_text": "S- 4.5 mm",
+                        "region_id": "R1",
+                        "value": 4.5,
+                        "axis": "X",
+                        "relation": "between_profile_boundaries",
+                        "profile_transition_geometry": "orthogonal",
+                        "symmetry_scope": "single",
+                        "evidence": ["hybrid:whole:4", "structural:R1"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": True,
+                "pixel_geometry_used_for_topology_only": True,
+                "engineering_value_source": "hybrid_ocr",
+                "relation_source": "bounded_structural_context",
+            }
+        ],
+    )
+
+    result = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in result.evidence.observations
+        if item.get("kind") == "hybrid_labeled_dimension_relation_ledger"
+    ]
+    assert result.evidence.relations == []
+    assert result.evidence.required_targets == []
+
+
 def test_identity_linker_collapses_equivalent_cross_view_direct_writers():
     capture = ReaderCapture(
         overall_dimensions=OverallDimensions(
@@ -1198,7 +1601,7 @@ def test_identity_linker_collapses_equivalent_cross_view_direct_writers():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1261,7 +1664,7 @@ def test_identity_linker_does_not_collapse_conflicting_direct_values():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1326,7 +1729,7 @@ def test_identity_linker_does_not_collapse_explicit_semantic_disagreement():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -1388,7 +1791,7 @@ def test_stability_detects_different_direct_conflict_candidates():
                 AssociationClaim(
                     id="A1",
                     entity_ids=["EF", "ES"],
-                    basis=["projection_alignment", "matching_specification"],
+                    basis=["projection_alignment", "unique_orthographic_counterpart"],
                 )
             ],
             values=[
@@ -1492,7 +1895,7 @@ def test_contract_accepts_consistent_cross_view_dispositions():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_A1"],
             )
         ],
@@ -1540,7 +1943,7 @@ def test_contract_rejects_inconsistent_cross_view_disposition():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EA", "EB"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
     )
@@ -1669,7 +2072,7 @@ def test_identity_linker_quarantines_dimension_whose_endpoints_collapse():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_A1"],
             )
         ],
@@ -1726,12 +2129,12 @@ def test_production_capture_rejects_overlapping_association_claims():
         AssociationClaim(
             id="A_LEFT",
             entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
         AssociationClaim(
             id="A_RIGHT",
             entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
     ]
     with pytest.raises(ValidationError, match="appears in multiple associations"):
@@ -1794,12 +2197,12 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
         AssociationClaim(
             id="A_LEFT",
             entity_ids=["E_FRONT_LEFT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
         AssociationClaim(
             id="A_RIGHT",
             entity_ids=["E_FRONT_RIGHT", "E_SIDE_GROUP"],
-            basis=["projection_alignment", "matching_specification"],
+            basis=["projection_alignment", "unique_orthographic_counterpart"],
         ),
     ]
     capture = ReaderCapture.model_construct(
@@ -1821,7 +2224,7 @@ def test_identity_linker_quarantines_legacy_transitive_same_view_collision():
         observations=[],
         unresolved_evidence=[],
         schema_version="2.0",
-        coordinate_system="part_center_xy_bottom_z0",
+        coordinate_system="overall_min_xyz",
     )
 
     result = link_reader_capture(capture)
@@ -2222,7 +2625,7 @@ def test_production_multiview_contract_requires_traceable_sources():
             AssociationClaim(
                 id="A1",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
             )
         ],
         values=[
@@ -2292,7 +2695,7 @@ def test_cross_view_identity_unique_sufficient_pair_must_be_association():
                 kind="cross_view_identity",
                 reason="only one candidate pair remains",
                 entity_ids=["EF", "ES"],
-                basis=["projection_alignment", "matching_specification"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
                 source_ids=["OBS_PAIR"],
                 required_for_modeling=True,
             )
@@ -2551,3 +2954,3857 @@ def test_intermediate_surface_endpoint_cannot_carry_feature_candidates():
         "intermediate_surface endpoint 0 must not carry candidate_entity_ids" in item
         for item in errors
     )
+
+
+def test_identity_linker_required_targets_exclude_non_numeric_direct_values():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(length_x=40, width_y=32, height_z=66),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E1",
+                view_id="VF",
+                shape="other",
+                required_for_modeling=False,
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="THREAD_SPEC",
+                entity_id="E1",
+                field="thread_spec",
+                value="M6",
+            ),
+            CaptureValue(
+                id="THREAD_DEPTH",
+                entity_id="E1",
+                field="thread_depth",
+                value=12,
+            ),
+            CaptureValue(
+                id="FIT",
+                entity_id="E1",
+                field="fit",
+                value="H7",
+            ),
+            CaptureValue(
+                id="THROUGH",
+                entity_id="E1",
+                field="through",
+                value=True,
+            ),
+        ],
+    )
+
+    result = link_reader_capture(capture)
+    feature_id = result.entity_to_feature["E1"]
+
+    assert {
+        item.target: item.value
+        for item in result.evidence.direct_values
+    } == {
+        f"feature:{feature_id}.fit": "H7",
+        f"feature:{feature_id}.thread_depth": 12,
+        f"feature:{feature_id}.thread_spec": "M6",
+        f"feature:{feature_id}.through": True,
+    }
+    assert result.evidence.required_targets == [
+        f"feature:{feature_id}.thread_depth"
+    ]
+
+    compiled = compile_evidence_graph(result.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values == {
+        f"feature:{feature_id}.thread_depth": 12.0
+    }
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("id")
+        in {
+            f"target:feature:{feature_id}.thread_spec",
+            f"target:feature:{feature_id}.fit",
+            f"target:feature:{feature_id}.through",
+        }
+    ]
+
+
+def test_capture_accepts_circle_center_as_entity_center_basis():
+    endpoint = CaptureDimensionEndpoint(
+        role="entity_center",
+        entity_id="E1",
+        basis="circle_center",
+        source_ids=["OBS_CIRCLE_CENTER"],
+    )
+
+    assert endpoint.role == "entity_center"
+    assert endpoint.entity_id == "E1"
+    assert endpoint.basis == "circle_center"
+
+
+def _symmetric_profile_span_capture(*, include_symmetry_observation):
+    observations = []
+    if include_symmetry_observation:
+        observations.append(
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "candidate_id": "DG_SPAN",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "dimension_value": 40.0,
+                        "overall_dimension_value": 100.0,
+                        "source_ids": ["SRC_PROFILE_SPAN_SYMMETRY"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+            }
+        )
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=80,
+            height_z=20,
+        ),
+        views=[CaptureView(id="VF", kind="front", source_ids=["SRC_FRONT"])],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["SRC_LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["SRC_RIGHT"],
+                required_for_modeling=False,
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=40,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_LEFT",
+                        basis="profile_edge",
+                        source_ids=["SRC_LEFT_ENDPOINT"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_RIGHT",
+                        basis="profile_edge",
+                        source_ids=["SRC_RIGHT_ENDPOINT"],
+                    ),
+                ],
+                source_ids=["hybrid:DG_SPAN:whole", "hybrid:DG_SPAN:wide"],
+            )
+        ],
+        observations=observations,
+    )
+
+
+def test_identity_linker_emits_generic_profile_span_midpoint_without_symmetry():
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    linked = link_reader_capture(capture)
+
+    relation = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "midpoint"
+    )
+
+    assert relation.id.startswith("R_PROFILE_SPAN_MIDPOINT_")
+    assert relation.required_for_modeling is False
+    assert relation.targets[1].startswith("constraints.span_centers.C_")
+    assert relation.targets[1].endswith(".x")
+    assert relation.metadata["basis"] == (
+        "resolved_profile_boundary_span_midpoint"
+    )
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+
+def test_profile_span_midpoint_identity_is_stable_when_endpoint_order_reverses():
+    first_capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_capture.dimensions[0].endpoints.reverse()
+
+    first = next(
+        item
+        for item in link_reader_capture(first_capture).evidence.relations
+        if item.kind == "midpoint"
+    )
+    second = next(
+        item
+        for item in link_reader_capture(second_capture).evidence.relations
+        if item.kind == "midpoint"
+    )
+
+    assert first.id == second.id
+    assert first.targets[1] == second.targets[1]
+
+
+def _span_center_bridge_capture(
+    *,
+    endpoint_kind="intermediate_surface",
+    two_unresolved=False,
+):
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=False
+    )
+    second_endpoint = (
+        CaptureDimensionEndpoint(
+            role="unresolved",
+            unresolved_kind="intermediate_surface",
+            source_ids=["SRC_DISTANCE_RIGHT"],
+        )
+        if two_unresolved
+        else CaptureDimensionEndpoint(
+            role="overall_max",
+            source_ids=["SRC_DISTANCE_RIGHT"],
+        )
+    )
+    capture.dimensions.append(
+        CaptureDimension(
+            id="D_DISTANCE",
+            value=30,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    source_ids=["SRC_DISTANCE_LEFT"],
+                ),
+                second_endpoint,
+            ],
+            unresolved_reason="endpoint ownership unresolved",
+            source_ids=["SRC_DISTANCE"],
+        )
+    )
+    capture.observations.extend(
+        [
+            {
+                "kind": "hybrid_profile_span_center_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_SPAN",
+                        "axis": "X",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [30.0, 70.0],
+                        "span_midpoint_px": 50.0,
+                        "basis": "resolved_profile_boundary_span_midpoint",
+                        "source_ids": ["SRC_SPAN_CENTER"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_dimension_span_center_identity_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_DISTANCE",
+                        "endpoint_index": 0,
+                        "axis": "X",
+                        "span_dimension_id": "D_SPAN",
+                        "basis": (
+                            "unique_witness_to_resolved_profile_span_midpoint"
+                        ),
+                        "source_ids": ["SRC_WITNESS_TO_SPAN_CENTER"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+        ]
+    )
+    return capture
+
+
+def test_identity_linker_resolves_intermediate_surface_to_profile_span_center():
+    capture = _span_center_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    bridge = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert bridge.kind == "edge_offset"
+    assert bridge.from_side == "max"
+    assert bridge.value == 30
+    assert bridge.targets[0].startswith("constraints.span_centers.C_")
+    assert bridge.metadata["basis"] == (
+        "dimension_endpoint_resolved_by_profile_span_center_identity"
+    )
+
+    midpoint = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "midpoint"
+    )
+    centered = next(
+        item
+        for item in linked.evidence.relations
+        if item.kind == "centered_span"
+    )
+    assert centered.value == 40
+    assert centered.direction == 1
+    assert centered.targets == midpoint.targets
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    center_target = bridge.targets[0]
+    assert resolution.values[center_target] == 70.0
+    assert resolution.values[centered.targets[0]] == 50.0
+    assert resolution.values[centered.targets[2]] == 90.0
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    ]
+
+
+def test_span_center_bridge_requires_every_unresolved_endpoint_to_be_covered():
+    capture = _span_center_bridge_capture(two_unresolved=True)
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    unresolved = [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0]["endpoint_unresolved_kinds"] == ["intermediate_surface"]
+
+
+def test_span_center_bridge_never_overrides_ambiguous_owner():
+    capture = _span_center_bridge_capture(endpoint_kind="ambiguous_owner")
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    unresolved = [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+    assert len(unresolved) == 1
+    assert unresolved[0]["endpoint_unresolved_kinds"] == ["ambiguous_owner"]
+
+
+def _symmetric_center_distance_bridge_capture(
+    *,
+    endpoint_kind="intermediate_surface",
+    include_symmetric_pair=True,
+    duplicate_pair=False,
+):
+    capture = _span_center_bridge_capture(
+        endpoint_kind=endpoint_kind,
+        two_unresolved=True,
+    )
+    distance = next(item for item in capture.dimensions if item.id == "D_DISTANCE")
+    distance.value = 60
+    distance.source_ids = [
+        "SRC_DISTANCE",
+        "hybrid:DG_DISTANCE:whole",
+    ]
+
+    if include_symmetric_pair:
+        record = {
+            "dimension_id": "D_DISTANCE",
+            "candidate_id": "DG_DISTANCE",
+            "axis": "X",
+            "datum": "overall_center",
+            "dimension_value": 60,
+            "overall_dimension_value": 100,
+            "selected_witness_positions_px": [20.0, 80.0],
+            "overall_candidate_id": "DG_OVERALL",
+            "overall_region_id": "R1",
+            "overall_witness_positions_px": [0.0, 100.0],
+            "midpoint_residual_px": 0.0,
+            "midpoint_tolerance_px": 2.0,
+            "basis": (
+                "rotational_symmetry_plus_structurally_shared_raster_view"
+                "_plus_overall_witness_midpoint"
+            ),
+            "source_ids": ["SRC_SYMMETRIC_DISTANCE"],
+        }
+        items = [record, dict(record)] if duplicate_pair else [record]
+        capture.observations.append(
+            {
+                "kind": "hybrid_symmetric_dimension_pair_ledger",
+                "schema": "1.0",
+                "items": items,
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+    return capture
+
+
+def test_symmetric_center_distance_bridge_anchors_span_center_and_mirror():
+    capture = _symmetric_center_distance_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert distance.kind == "center_distance"
+    assert distance.value == 60
+    assert distance.direction == 1
+    assert distance.targets[0].startswith("constraints.span_centers.C_")
+    assert distance.targets[1].startswith("constraints.symmetric_centers.C_")
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_center_distance"
+    )
+    assert distance.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+    anchors = [
+        item
+        for item in linked.evidence.relations
+        if item.id.startswith("R_SYMMETRIC_CENTER_PAIR_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert resolution.ok
+
+
+def test_symmetric_intermediate_surface_bridge_preserves_virtual_span():
+    capture = _symmetric_center_distance_bridge_capture()
+    capture.dimensions = [
+        item for item in capture.dimensions if item.id == "D_DISTANCE"
+    ]
+    capture.observations = [
+        observation
+        for observation in capture.observations
+        if observation.get("kind")
+        not in {
+            "hybrid_profile_span_center_ledger",
+            "hybrid_dimension_span_center_identity_ledger",
+            "hybrid_projected_profile_level_ledger",
+        }
+    ]
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_DISTANCE"
+    ]
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.value == 60
+    assert distance.direction == 1
+    assert all(
+        target.startswith("constraints.symmetric_profile_levels.C_")
+        for target in distance.targets
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_intermediate_surface_span"
+    )
+    assert distance.metadata["physical_endpoint_ownership_unresolved"] is True
+    assert distance.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert distance.metadata["pixel_geometry_used_for_identity_only"] is True
+
+    anchors = [
+        item
+        for item in linked.evidence.relations
+        if item.id.startswith("R_SYMMETRIC_INTERMEDIATE_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert not [
+        item
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    ]
+
+    draft = build_semantic_draft(compiled, resolution)
+    min_id = distance.targets[0].split(".")[2]
+    max_id = distance.targets[1].split(".")[2]
+    levels = draft["constraints"]["symmetric_profile_levels"]
+    assert levels[min_id]["x"] == -30.0
+    assert levels[max_id]["x"] == 30.0
+
+
+def test_symmetric_intermediate_surface_bridge_rejects_span_center_identity_matches():
+    capture = _symmetric_center_distance_bridge_capture()
+    identity_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_dimension_span_center_identity_ledger"
+    )
+    identity_ledger["items"].append(dict(identity_ledger["items"][0]))
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_case",
+    ["non_center_datum", "midpoint_mismatch", "distance_equals_overall", "no_direction"],
+)
+def test_symmetric_intermediate_surface_bridge_rejects_invalid_pair_evidence(
+    invalid_case,
+):
+    capture = _symmetric_center_distance_bridge_capture()
+    pair_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_symmetric_dimension_pair_ledger"
+    )
+    pair = pair_ledger["items"][0]
+    distance = next(item for item in capture.dimensions if item.id == "D_DISTANCE")
+
+    if invalid_case == "non_center_datum":
+        pair["datum"] = "feature_center"
+    elif invalid_case == "midpoint_mismatch":
+        pair["selected_witness_positions_px"] = [20.0, 70.0]
+    elif invalid_case == "distance_equals_overall":
+        distance.value = 100
+        pair["dimension_value"] = 100
+    else:
+        distance.direction = None
+
+    linked = link_reader_capture(capture)
+
+    assert not [item for item in linked.evidence.relations if item.id == "D_DISTANCE"]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_symmetric_intermediate_surface_bridge_does_not_override_projected_owner():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    distance = next(
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_projected_profile_level"
+    )
+    assert any(
+        target.endswith(".boundary.x")
+        for target in distance.targets
+    )
+
+
+def test_symmetric_center_distance_bridge_requires_structured_pair_topology():
+    capture = _symmetric_center_distance_bridge_capture(
+        include_symmetric_pair=False
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_symmetric_center_distance_bridge_rejects_duplicate_pair_topology():
+    capture = _symmetric_center_distance_bridge_capture(
+        duplicate_pair=True
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_symmetric_center_distance_bridge_never_overrides_ambiguous_owner():
+    capture = _symmetric_center_distance_bridge_capture(
+        endpoint_kind="ambiguous_owner"
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.relations
+        if item.id == "D_DISTANCE"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_DISTANCE"
+        and "ambiguous_owner" in item.get("endpoint_unresolved_kinds", [])
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def _labeled_span_midpoint_anchor_capture(
+    *,
+    ambiguous_anchor: bool = False,
+) -> ReaderCapture:
+    capture = _symmetric_profile_span_capture(
+        include_symmetry_observation=True
+    )
+    symmetric_ledger = next(
+        observation
+        for observation in capture.observations
+        if observation.get("kind") == "hybrid_symmetric_profile_span_ledger"
+    )
+    symmetric_ledger["engineering_coordinate_inferred_from_pixels"] = False
+    symmetric_ledger["pixel_geometry_used_for_identity_only"] = True
+    symmetric_record = symmetric_ledger["items"][0]
+    symmetric_record.update(
+        {
+            "region_id": "R1",
+            "selected_witness_positions_px": [20.0, 80.0],
+        }
+    )
+
+    capture.entities.extend(
+        [
+            CaptureEntity(
+                id="E_LOCAL_LEFT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL.LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_LOCAL_RIGHT",
+                view_id="VF",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL.RIGHT"],
+                required_for_modeling=False,
+            ),
+        ]
+    )
+    capture.dimensions.append(
+        CaptureDimension(
+            id="D_LOCAL",
+            value=10,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="profile_boundary",
+                    entity_id="E_LOCAL_LEFT",
+                    basis="profile_edge",
+                    source_ids=[
+                        "hybrid:labeled-profile-span:LD_LOCAL",
+                        "hybrid:profile-edge:R1.LOCAL.LEFT",
+                        "hybrid:profile-edge:R1.LOCAL.RIGHT",
+                    ],
+                ),
+                CaptureDimensionEndpoint(
+                    role="profile_boundary",
+                    entity_id="E_LOCAL_RIGHT",
+                    basis="profile_edge",
+                    source_ids=[
+                        "hybrid:labeled-profile-span:LD_LOCAL",
+                        "hybrid:profile-edge:R1.LOCAL.LEFT",
+                        "hybrid:profile-edge:R1.LOCAL.RIGHT",
+                    ],
+                ),
+            ],
+            source_ids=[
+                "hybrid:whole:7",
+                "hybrid:labeled-profile-span:LD_LOCAL",
+            ],
+        )
+    )
+    capture.observations.append(
+        {
+            "kind": "hybrid_labeled_profile_span_identity_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "dimension_key": "R1.LABELED_PROFILE_SPAN_LD_LOCAL",
+                    "target_id": "LD_LOCAL",
+                    "source_item_index": 7,
+                    "source_text": "L - 10 mm",
+                    "region_id": "R1",
+                    "selected_region_id": "R1",
+                    "axis": "X",
+                    "value": 10.0,
+                    "source_relation": "between_profile_boundaries",
+                    "profile_refs": [
+                        "R1.LOCAL.LEFT",
+                        "R1.LOCAL.RIGHT",
+                    ],
+                    "selected_witness_positions_px": [15.0, 25.0],
+                    "basis": (
+                        "unique_short_dimension_witness_pair_to_two_"
+                        "structural_profile_boundaries"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    )
+
+    if ambiguous_anchor:
+        symmetric_record_alt = {
+            **symmetric_record,
+            "source_ids": list(symmetric_record.get("source_ids", [])),
+            "profile_entity_ids": list(
+                symmetric_record.get("profile_entity_ids", [])
+            ),
+            "selected_witness_positions_px": list(
+                symmetric_record.get("selected_witness_positions_px", [])
+            ),
+        }
+        symmetric_record_alt["candidate_id"] = "DG_SPAN_ALT"
+        symmetric_record_alt["profile_entity_ids"] = [
+            "E_RIGHT",
+            "E_LEFT",
+        ]
+        symmetric_record_alt["selected_witness_positions_px"] = [
+            20.5,
+            80.0,
+        ]
+        symmetric_record_alt["source_ids"] = [
+            "SRC_PROFILE_SPAN_SYMMETRY_ALT"
+        ]
+        symmetric_ledger["items"].append(symmetric_record_alt)
+
+    return capture
+
+
+def test_labeled_profile_span_midpoint_anchors_to_unique_resolved_symmetric_boundary():
+    capture = _labeled_span_midpoint_anchor_capture()
+
+    linked = link_reader_capture(capture)
+
+    anchor = next(
+        relation
+        for relation in linked.evidence.relations
+        if relation.id == "R_LABELED_PROFILE_SPAN_CENTER_ANCHOR_D_LOCAL"
+    )
+    assert anchor.kind == "alignment"
+    assert anchor.metadata["basis"] == (
+        "labeled_profile_span_midpoint_to_resolved_"
+        "symmetric_profile_boundary"
+    )
+    assert anchor.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert anchor.metadata["pixel_geometry_used_for_identity_only"] is True
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    local_left = linked.entity_to_feature["E_LOCAL_LEFT"]
+    local_right = linked.entity_to_feature["E_LOCAL_RIGHT"]
+    assert resolution.values[f"feature:{local_left}.boundary.x"] == 25.0
+    assert resolution.values[f"feature:{local_right}.boundary.x"] == 35.0
+    assert resolution.ok
+
+
+def test_labeled_profile_span_midpoint_rejects_ambiguous_symmetric_boundary_anchor():
+    capture = _labeled_span_midpoint_anchor_capture(
+        ambiguous_anchor=True
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not any(
+        relation.id == "R_LABELED_PROFILE_SPAN_CENTER_ANCHOR_D_LOCAL"
+        for relation in linked.evidence.relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert any(
+        item.get("id") in {
+            "relation:D_LOCAL",
+            "target:feature:"
+            + linked.entity_to_feature["E_LOCAL_LEFT"]
+            + ".boundary.x",
+            "target:feature:"
+            + linked.entity_to_feature["E_LOCAL_RIGHT"]
+            + ".boundary.x",
+        }
+        for item in resolution.unresolved
+        if item.get("required_for_modeling") is True
+    )
+
+
+def test_identity_linker_anchors_structured_symmetric_profile_span():
+    capture = _symmetric_profile_span_capture(include_symmetry_observation=True)
+    linked = link_reader_capture(capture)
+
+    left_feature = linked.entity_to_feature["E_LEFT"]
+    right_feature = linked.entity_to_feature["E_RIGHT"]
+    left_target = f"feature:{left_feature}.boundary.x"
+    right_target = f"feature:{right_feature}.boundary.x"
+
+    anchor = next(
+        relation
+        for relation in linked.evidence.relations
+        if relation.id == "R_SYMMETRIC_PROFILE_ANCHOR_D_SPAN"
+    )
+    assert anchor.kind == "edge_offset"
+    assert anchor.value == 30.0
+    assert anchor.targets == [left_target]
+    assert anchor.metadata["basis"] == (
+        "structured_overall_center_symmetric_profile_span"
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+
+    assert resolution.values[left_target] == 30.0
+    assert resolution.values[right_target] == 70.0
+    assert resolution.ok
+
+
+def test_identity_linker_does_not_anchor_profile_span_without_structured_symmetry():
+    capture = _symmetric_profile_span_capture(include_symmetry_observation=False)
+    linked = link_reader_capture(capture)
+
+    assert not any(
+        relation.id == "R_SYMMETRIC_PROFILE_ANCHOR_D_SPAN"
+        for relation in linked.evidence.relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert not resolution.ok
+
+
+def test_identity_linker_expands_structured_symmetric_count_two_without_hybrid_marker():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["SRC_FRONT"]),
+            CaptureView(id="VS", kind="side", source_ids=["SRC_SIDE"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_FRONT_PAIR",
+                view_id="VF",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+                source_ids=["SRC_FRONT_PAIR"],
+            ),
+            CaptureEntity(
+                id="E_SIDE_PAIR",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="associated",
+                source_ids=["SRC_SIDE_PAIR"],
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_PAIR",
+                entity_ids=["E_FRONT_PAIR", "E_SIDE_PAIR"],
+                basis=["projection_alignment", "unique_orthographic_counterpart"],
+                source_ids=["SRC_PAIR_SPEC"],
+            )
+        ],
+        values=[
+            CaptureValue(
+                id="V_COUNT",
+                entity_id="E_SIDE_PAIR",
+                field="count",
+                value=2,
+            ),
+            CaptureValue(
+                id="V_DIA",
+                entity_id="E_SIDE_PAIR",
+                field="diameter",
+                value=6.6,
+            ),
+            CaptureValue(
+                id="V_THROUGH",
+                entity_id="E_SIDE_PAIR",
+                field="through",
+                value=True,
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_X24",
+                value=24,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_FRONT_PAIR",
+                        basis="centerline",
+                        source_ids=["SRC_LEFT_MEMBER"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_FRONT_PAIR",
+                        basis="centerline",
+                        source_ids=["SRC_RIGHT_MEMBER"],
+                    ),
+                ],
+                source_ids=["SRC_SPACING_24"],
+            ),
+            CaptureDimension(
+                id="D_Y24",
+                value=24,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_SIDE_PAIR",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+        observations=[
+            {
+                "id": "PS001",
+                "kind": "symmetric_count_two_overall_center",
+                "entity_id": "E_FRONT_PAIR",
+                "axis": "X",
+                "datum": "overall_center",
+                "source_ids": ["SRC_PAIR_SYMMETRY"],
+                "required_for_modeling": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    feature_id = linked.entity_to_feature["E_FRONT_PAIR"]
+    assert linked.entity_to_feature["E_SIDE_PAIR"] == feature_id
+
+    axis = next(
+        item
+        for item in linked.evidence.direct_values
+        if item.target == f"feature:{feature_id}.axis"
+    )
+    assert axis.value == "Z"
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    draft = build_semantic_draft(compiled, resolution)
+
+    reader_x0 = f"feature:{feature_id}.explicit_centers.0.0"
+    reader_x1 = f"feature:{feature_id}.explicit_centers.1.0"
+    reader_y0 = f"feature:{feature_id}.explicit_centers.0.1"
+    reader_y1 = f"feature:{feature_id}.explicit_centers.1.1"
+
+    assert resolution.values[reader_x0] == 8.0
+    assert resolution.values[reader_x1] == 32.0
+    assert resolution.values[reader_y0] == 8.0
+    assert resolution.values[reader_y1] == 8.0
+    assert resolution.ok
+
+    feature = next(item for item in draft["features"] if item["id"] == feature_id)
+    assert feature["axis"] == "Z"
+    assert feature["explicit_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
+
+
+def test_identity_linker_rejects_marker_only_symmetric_count_two_without_structured_observation():
+    marker = "hybrid:symmetric-count2-overall-center"
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=10,
+        ),
+        views=[CaptureView(id="VS", kind="side")],
+        entities=[
+            CaptureEntity(
+                id="E_PAIR",
+                view_id="VS",
+                shape="hidden_parallel",
+                cross_view_disposition="single_view",
+            )
+        ],
+        values=[
+            CaptureValue(id="V_AXIS", entity_id="E_PAIR", field="axis", value="Z"),
+            CaptureValue(id="V_COUNT", entity_id="E_PAIR", field="count", value=2),
+            CaptureValue(id="V_DIA", entity_id="E_PAIR", field="diameter", value=6.6),
+            CaptureValue(id="V_THROUGH", entity_id="E_PAIR", field="through", value=True),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="D_X24",
+                value=24,
+                axis="X",
+                direction=1,
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                        source_ids=[marker],
+                    ),
+                ],
+                source_ids=[marker],
+            ),
+            CaptureDimension(
+                id="D_Y24",
+                value=24,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="E_PAIR",
+                        basis="centerline",
+                    ),
+                    CaptureDimensionEndpoint(role="overall_max"),
+                ],
+            ),
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert any(
+        item.get("id") == "U_DIM_COLLAPSE_D_X24"
+        and item.get("required_for_modeling") is True
+        for item in linked.evidence.unresolved_evidence
+    )
+    assert not any(
+        target.startswith("feature:") and ".explicit_centers." in target
+        for target in linked.evidence.required_targets
+    )
+
+def test_centerline_alignment_propagates_transverse_coordinates_without_merging_features():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=40,
+            width_y=32,
+            height_z=66,
+        ),
+        views=[
+            CaptureView(id="VF", kind="front", source_ids=["front"]),
+            CaptureView(id="VS", kind="side", source_ids=["side"]),
+        ],
+        entities=[
+            CaptureEntity(
+                id="THREAD",
+                view_id="VF",
+                shape="hidden_parallel",
+                source_ids=["thread"],
+            ),
+            CaptureEntity(
+                id="RECESS",
+                view_id="VS",
+                shape="concentric_circles",
+                source_ids=["recess"],
+            ),
+        ],
+        values=[
+            CaptureValue(
+                id="V1",
+                entity_id="THREAD",
+                field="axis",
+                value="X",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V2",
+                entity_id="THREAD",
+                field="thread_spec",
+                value="M6",
+                source_ids=["thread"],
+            ),
+            CaptureValue(
+                id="V3",
+                entity_id="RECESS",
+                field="recessed_hole",
+                value=True,
+                source_ids=["recess"],
+            ),
+        ],
+        dimensions=[
+            CaptureDimension(
+                id="DZ",
+                value=18,
+                axis="Z",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="THREAD",
+                        basis="centerline",
+                        source_ids=["dz-thread"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_min",
+                        source_ids=["dz-base"],
+                    ),
+                ],
+                source_ids=["dz"],
+            ),
+            CaptureDimension(
+                id="DY",
+                value=8,
+                axis="Y",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="entity_center",
+                        entity_id="RECESS",
+                        basis="circle_center",
+                        source_ids=["dy-recess"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="overall_max",
+                        source_ids=["dy-edge"],
+                    ),
+                ],
+                source_ids=["dy"],
+            ),
+        ],
+        centerline_alignments=[
+            CaptureCenterlineAlignment(
+                id="CA001",
+                entity_ids=["THREAD", "RECESS"],
+                feature_axis="X",
+                source_ids=["coaxial"],
+            )
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+    assert linked.entity_to_feature["THREAD"] != linked.entity_to_feature["RECESS"]
+
+    compiled = compile_evidence_graph(linked.evidence)
+    relation_ids = {item.id for item in compiled.relations}
+    assert {"CA001_Y", "CA001_Z"} <= relation_ids
+
+    resolution = resolve_evidence_graph(compiled)
+    thread_feature = linked.entity_to_feature["THREAD"]
+    recess_feature = linked.entity_to_feature["RECESS"]
+    assert resolution.values[f"feature:{recess_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.y"] == 24
+    assert resolution.values[f"feature:{thread_feature}.centerline.z"] == 18
+    assert resolution.values[f"feature:{recess_feature}.centerline.z"] == 18
+
+
+
+
+def _projected_profile_bridge_capture(
+    *,
+    symmetric=False,
+    one_sided=False,
+    ambiguous_profile_target=False,
+    endpoint_kind="intermediate_surface",
+) -> ReaderCapture:
+    entities = [
+        CaptureEntity(
+            id="E_BOTTOM",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.BOTTOM"],
+            required_for_modeling=False,
+        ),
+        CaptureEntity(
+            id="E_LEFT",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.LEFT"],
+            required_for_modeling=False,
+        ),
+        CaptureEntity(
+            id="E_RIGHT",
+            view_id="VF",
+            shape="profile",
+            source_ids=["hybrid:profile-edge:R1.RIGHT"],
+            required_for_modeling=False,
+        ),
+    ]
+    if ambiguous_profile_target:
+        entities.append(
+            CaptureEntity(
+                id="E_LEFT_ALT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.LEFT_ALT"],
+                required_for_modeling=False,
+            )
+        )
+
+    if symmetric:
+        dimension = CaptureDimension(
+            id="D_PROJECTED",
+            value=60,
+            axis="X",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    candidate_entity_ids=(
+                        ["E_LEFT", "E_LEFT_ALT"]
+                        if endpoint_kind == "ambiguous_owner"
+                        else []
+                    ),
+                    source_ids=["SRC_LEFT_WITNESS"],
+                ),
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    source_ids=["SRC_RIGHT_WITNESS"],
+                ),
+            ],
+            unresolved_reason="projected profile ownership unresolved",
+            source_ids=["hybrid:DG_PROJECTED:whole"],
+        )
+        projected_items = [
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 0,
+                "axis": "X",
+                "profile_refs": (
+                    ["R1.LEFT", "R1.LEFT_ALT"]
+                    if ambiguous_profile_target
+                    else ["R1.LEFT"]
+                ),
+                "profile_entity_ids": (
+                    ["E_LEFT", "E_LEFT_ALT"]
+                    if ambiguous_profile_target
+                    else ["E_LEFT"]
+                ),
+                "overall_role": None,
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_LEFT_PROJECTED"],
+            },
+        ]
+        if not one_sided:
+            projected_items.append(
+                {
+                    "dimension_id": "D_PROJECTED",
+                    "candidate_id": "DG_PROJECTED",
+                    "endpoint_index": 1,
+                    "axis": "X",
+                    "profile_refs": ["R1.RIGHT"],
+                    "profile_entity_ids": ["E_RIGHT"],
+                    "overall_role": None,
+                    "basis": "extension_line_projection_to_structural_profile_level",
+                    "source_ids": ["SRC_RIGHT_PROJECTED"],
+                }
+            )
+    else:
+        dimension = CaptureDimension(
+            id="D_PROJECTED",
+            value=28,
+            axis="Z",
+            direction=1,
+            endpoints=[
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind=endpoint_kind,
+                    candidate_entity_ids=(
+                        ["E_BOTTOM"]
+                        if endpoint_kind == "ambiguous_owner"
+                        else []
+                    ),
+                    source_ids=["SRC_BOTTOM_WITNESS"],
+                ),
+                CaptureDimensionEndpoint(
+                    role="unresolved",
+                    unresolved_kind="intermediate_surface",
+                    source_ids=["SRC_STEP_WITNESS"],
+                ),
+            ],
+            unresolved_reason="projected profile ownership unresolved",
+            source_ids=["hybrid:DG_PROJECTED:whole"],
+        )
+        projected_items = [
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 0,
+                "axis": "Z",
+                "profile_refs": ["R1.BOTTOM"],
+                "profile_entity_ids": ["E_BOTTOM"],
+                "overall_role": "overall_min",
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_BOTTOM_PROJECTED"],
+            },
+            {
+                "dimension_id": "D_PROJECTED",
+                "candidate_id": "DG_PROJECTED",
+                "endpoint_index": 1,
+                "axis": "Z",
+                "profile_refs": ["R1.LEFT"],
+                "profile_entity_ids": ["E_LEFT"],
+                "overall_role": None,
+                "basis": "extension_line_projection_to_structural_profile_level",
+                "source_ids": ["SRC_STEP_PROJECTED"],
+            },
+        ]
+
+    observations = [
+        {
+            "kind": "hybrid_projected_profile_level_ledger",
+            "schema": "1.0",
+            "items": projected_items,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+    if symmetric:
+        observations.append(
+            {
+                "kind": "hybrid_symmetric_dimension_pair_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "dimension_id": "D_PROJECTED",
+                        "candidate_id": "DG_PROJECTED",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "dimension_value": 60,
+                        "overall_dimension_value": 100,
+                        "selected_witness_positions_px": [20.0, 80.0],
+                        "overall_candidate_id": "DG_OVERALL",
+                        "overall_region_id": "R1",
+                        "overall_witness_positions_px": [0.0, 100.0],
+                        "midpoint_residual_px": 0.0,
+                        "midpoint_tolerance_px": 2.0,
+                        "basis": (
+                            "rotational_symmetry_plus_structurally_shared_raster_view"
+                            "_plus_overall_witness_midpoint"
+                        ),
+                        "source_ids": ["SRC_SYMMETRIC_PROJECTED"],
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+        )
+
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=entities,
+        dimensions=[dimension],
+        observations=observations,
+    )
+
+
+def _view_axis_boundary_capture(*, overall_value=80.0, inferred=False):
+    return ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(
+                id="VF",
+                kind="front",
+                source_ids=["structural:R1:context"],
+            )
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_TOP",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.TOP"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_BOTTOM",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.BOTTOM"],
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_view_axis_boundary_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "status": "resolved",
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "axis": "Z",
+                        "candidate_id": None,
+                        "overall_dimension_value": overall_value,
+                        "anchors": [
+                            {
+                                "ref": "R1.TOP",
+                                "pixel_extreme_side": "min",
+                                "role": "overall_max",
+                                "position_px": 20.0,
+                            },
+                            {
+                                "ref": "R1.BOTTOM",
+                                "pixel_extreme_side": "max",
+                                "role": "overall_min",
+                                "position_px": 100.0,
+                            },
+                        ],
+                        "basis": (
+                            "independent_overall_dimension_plus_"
+                            "unique_profile_extremes"
+                        ),
+                        "overall_fact_scope": "same_region_structural_evidence",
+                        "engineering_coordinate_inferred_from_pixels": inferred,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": inferred,
+            }
+        ],
+    )
+
+
+def test_view_axis_boundary_prefers_edge_entity_over_vertices_sharing_edge_source():
+    capture = _view_axis_boundary_capture()
+    capture.entities.extend(
+        [
+            CaptureEntity(
+                id="E_BOTTOM_VERTEX_MIN",
+                view_id="VF",
+                shape="profile",
+                source_ids=[
+                    "hybrid:profile-vertex:R1.BOTTOM.vertex.min",
+                    "hybrid:profile-edge:R1.BOTTOM",
+                ],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_BOTTOM_VERTEX_MAX",
+                view_id="VF",
+                shape="profile",
+                source_ids=[
+                    "hybrid:profile-vertex:R1.BOTTOM.vertex.max",
+                    "hybrid:profile-edge:R1.BOTTOM",
+                ],
+                required_for_modeling=False,
+            ),
+        ]
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_BOTTOM" in linked.entity_to_feature
+    assert "E_BOTTOM_VERTEX_MIN" not in linked.entity_to_feature
+    assert "E_BOTTOM_VERTEX_MAX" not in linked.entity_to_feature
+    bottom_feature = linked.entity_to_feature["E_BOTTOM"]
+    bottom_target = f"feature:{bottom_feature}.boundary.z"
+    boundary_relations = [
+        item
+        for item in linked.evidence.relations
+        if item.metadata.get("basis")
+        == "independent_overall_dimension_plus_unique_profile_extremes"
+    ]
+    assert any(
+        item.from_side == "min"
+        and item.targets == [bottom_target]
+        for item in boundary_relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[bottom_target] == 0.0
+
+
+def test_view_axis_boundary_ledger_materializes_profile_extremes_and_resolves_coordinates():
+    capture = _view_axis_boundary_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert linked.report["ignored_orphan_profiles"] == 0
+    top_feature = linked.entity_to_feature["E_TOP"]
+    bottom_feature = linked.entity_to_feature["E_BOTTOM"]
+    top_target = f"feature:{top_feature}.boundary.z"
+    bottom_target = f"feature:{bottom_feature}.boundary.z"
+
+    boundary_relations = [
+        item
+        for item in linked.evidence.relations
+        if item.metadata.get("basis")
+        == "independent_overall_dimension_plus_unique_profile_extremes"
+    ]
+    assert len(boundary_relations) == 2
+    assert {
+        (item.from_side, item.value, item.targets[0])
+        for item in boundary_relations
+    } == {
+        ("max", 0.0, top_target),
+        ("min", 0.0, bottom_target),
+    }
+    assert all(
+        item.metadata["engineering_coordinate_inferred_from_pixels"] is False
+        for item in boundary_relations
+    )
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[top_target] == 80.0
+    assert resolution.values[bottom_target] == 0.0
+
+
+def test_view_axis_boundary_ledger_fails_closed_on_metric_or_provenance_mismatch():
+    for capture in (
+        _view_axis_boundary_capture(overall_value=79.0),
+        _view_axis_boundary_capture(inferred=True),
+    ):
+        linked = link_reader_capture(capture)
+
+        assert linked.entity_to_feature == {}
+        assert linked.report["ignored_orphan_profiles"] == 2
+        assert not [
+            item
+            for item in linked.evidence.relations
+            if item.metadata.get("basis")
+            == "independent_overall_dimension_plus_unique_profile_extremes"
+        ]
+
+
+
+def test_rotational_topology_merges_crop_items_after_physical_identity_link():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[
+            CaptureView(id="V_R1", kind="front"),
+            CaptureView(id="V_R2", kind="front"),
+        ],
+        entities=[
+            CaptureEntity(
+                id="E_R1_SHARED",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="associated",
+                source_ids=["hybrid:profile-edge:R1.SHARED"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R2_SHARED",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="associated",
+                source_ids=["hybrid:profile-edge:R2.SHARED"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R1_LOCAL",
+                view_id="V_R1",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R1.LOCAL"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_R2_LOCAL",
+                view_id="V_R2",
+                shape="profile",
+                cross_view_disposition="single_view",
+                source_ids=["hybrid:profile-edge:R2.LOCAL"],
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[
+            AssociationClaim(
+                id="A_SHARED",
+                entity_ids=["E_R1_SHARED", "E_R2_SHARED"],
+                basis=["shared_raster_profile_identity"],
+                source_ids=["SRC_SHARED"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.SHARED",
+                                "profile_entity_id": "E_R1_SHARED",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            },
+                            {
+                                "ref": "R1.LOCAL",
+                                "profile_entity_id": "E_R1_LOCAL",
+                                "source_orientation": "horizontal",
+                                "constant_axis": "Z",
+                            },
+                        ],
+                        "junctions": [["R1.SHARED", "R1.LOCAL"]],
+                        "source_ids": ["SRC_R1"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                    {
+                        "region_id": "R2",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R2.SHARED",
+                                "profile_entity_id": "E_R2_SHARED",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            },
+                            {
+                                "ref": "R2.LOCAL",
+                                "profile_entity_id": "E_R2_LOCAL",
+                                "source_orientation": "horizontal",
+                                "constant_axis": "Z",
+                            },
+                        ],
+                        "junctions": [["R2.SHARED", "R2.LOCAL"]],
+                        "source_ids": ["SRC_R2"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    assert len(ledger["items"]) == 1
+    item = ledger["items"][0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["region_id"].startswith("PHYSICAL_")
+    assert item["basis"] == "identity_linked_physical_rotational_profile_topology"
+
+    shared_feature = linked.entity_to_feature["E_R1_SHARED"]
+    assert shared_feature == linked.entity_to_feature["E_R2_SHARED"]
+    physical_edges = {
+        (edge["physical_feature_id"], edge["constant_axis"])
+        for edge in item["edges"]
+    }
+    assert len(physical_edges) == 3
+    assert (shared_feature, "X") in physical_edges
+    assert len(item["junctions"]) == 2
+
+
+def test_physical_oblique_profile_items_merge_crop_duplicates_by_identity():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_R1"],
+                    "supporting_profile_constant_axes": ["X"],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:oblique-line:46",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_R2"],
+                    "supporting_profile_constant_axes": ["X"],
+                    "source_ids": [
+                        "structural:R2",
+                        "hybrid:oblique-line:46",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_R1": "F_SHARED",
+            "E_R2": "F_SHARED",
+        },
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["supporting_physical_feature_ids"] == ["F_SHARED"]
+    assert item["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F_SHARED",
+            "constant_axis": "X",
+            "boundary_target": "feature:F_SHARED.boundary.x",
+        }
+    ]
+    assert item["connection_kind"] == (
+        "one_sided_non_orthogonal_boundary_continuation"
+    )
+    assert item["basis"] == (
+        "identity_linked_physical_oblique_profile_topology"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_topology_only"] is True
+    assert "endpoints_px" not in repr(item)
+    assert "angle_deg" not in repr(item)
+
+
+def test_symmetric_oblique_counterpart_support_recovers_only_mirrored_pair():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=80,
+            height_z=75,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:RIGHT"],
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "candidate_id": "DG_SPAN",
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [100.0, 300.0],
+                        "midpoint_tolerance_px": 5.0,
+                        "source_ids": ["SRC_SYMMETRIC_SPAN"],
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[98.0, 20.0], [80.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:left"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[302.0, 21.0], [320.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:right"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+    items = [
+        {
+            "id": "PHYSICAL_LEFT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_feature_ids": ["F_LEFT"],
+            "supporting_physical_edges": [
+                {
+                    "physical_feature_id": "F_LEFT",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_LEFT.boundary.x",
+                }
+            ],
+            "connection_kind": (
+                "one_sided_non_orthogonal_boundary_continuation"
+            ),
+            "source_ids": ["hybrid:oblique-line:left"],
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "primitive_kind": "unresolved",
+            "primitive_kind_basis": (
+                "fragment_without_verified_full_straight_support"
+            ),
+        },
+        {
+            "id": "PHYSICAL_RIGHT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_feature_ids": [],
+            "supporting_physical_edges": [],
+            "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+            "source_ids": ["hybrid:oblique-line:right"],
+            "material_side_index": 1,
+            "background_side_index": 0,
+            "primitive_kind": "unresolved",
+            "primitive_kind_basis": (
+                "fragment_without_verified_full_straight_support"
+            ),
+        },
+    ]
+
+    bridged = identity_linker_module._bridge_symmetric_oblique_counterpart_supports(
+        capture,
+        items,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_RIGHT": "F_RIGHT",
+        },
+    )
+
+    right = next(item for item in bridged if item["id"] == "PHYSICAL_RIGHT")
+    assert right["supporting_physical_feature_ids"] == ["F_RIGHT"]
+    assert right["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F_RIGHT",
+            "constant_axis": "X",
+            "boundary_target": "feature:F_RIGHT.boundary.x",
+        }
+    ]
+    assert right["connection_kind"] == (
+        "one_sided_non_orthogonal_boundary_continuation"
+    )
+    assert right["support_identity_basis"] == (
+        "bilateral_oblique_mirror_plus_structured_symmetric_profile_span"
+    )
+    assert right["support_counterpart_fragment_id"] == "PHYSICAL_LEFT"
+    assert right["primitive_kind"] == "unresolved"
+    assert "endpoints_px" not in repr(right)
+
+
+def test_symmetric_oblique_counterpart_support_fails_closed_without_mirror():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=80,
+            height_z=75,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="VF",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_RIGHT",
+                view_id="VF",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+        ],
+        observations=[
+            {
+                "kind": "hybrid_symmetric_profile_span_ledger",
+                "items": [
+                    {
+                        "axis": "X",
+                        "datum": "overall_center",
+                        "profile_entity_ids": ["E_LEFT", "E_RIGHT"],
+                        "selected_witness_positions_px": [100.0, 300.0],
+                        "midpoint_tolerance_px": 3.0,
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "items": [
+                    {
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[100.0, 20.0], [80.0, 80.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:left"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                    {
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "endpoints_px": [[300.0, 35.0], [320.0, 95.0]],
+                        "line_edge_support_fraction": 1.0,
+                        "source_ids": ["hybrid:oblique-line:right"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                        "material_side_index": 1,
+                        "background_side_index": 0,
+                    },
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+    items = [
+        {
+            "id": "PHYSICAL_LEFT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_edges": [
+                {
+                    "physical_feature_id": "F_LEFT",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_LEFT.boundary.x",
+                }
+            ],
+            "connection_kind": (
+                "one_sided_non_orthogonal_boundary_continuation"
+            ),
+            "source_ids": ["hybrid:oblique-line:left"],
+        },
+        {
+            "id": "PHYSICAL_RIGHT",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "supporting_physical_edges": [],
+            "connection_kind": "exterior_non_orthogonal_boundary_fragment",
+            "source_ids": ["hybrid:oblique-line:right"],
+        },
+    ]
+
+    bridged = identity_linker_module._bridge_symmetric_oblique_counterpart_supports(
+        capture,
+        items,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_RIGHT": "F_RIGHT",
+        },
+    )
+
+    right = next(item for item in bridged if item["id"] == "PHYSICAL_RIGHT")
+    assert right["supporting_physical_edges"] == []
+    assert right["connection_kind"] == (
+        "exterior_non_orthogonal_boundary_fragment"
+    )
+    assert "support_identity_basis" not in right
+
+
+def test_physical_oblique_profile_preserves_verified_line_primitive():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_LINE",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X", "E_Z"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:oblique-line:7",
+                    ],
+                    "one_sided_boundary_candidate": True,
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "verified_continuous_straight_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "line_edge_support_fraction": 0.96,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X": "F_X",
+            "E_Z": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["connection_kind"] == "non_orthogonal_profile_connection"
+    assert items[0]["primitive_kind"] == "line"
+    assert items[0]["primitive_kind_basis"] == (
+        "verified_continuous_straight_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert "line_edge_support_fraction" not in repr(items[0])
+
+
+def test_physical_oblique_profile_preserves_verified_arc_primitive_without_pixel_metrics():
+    observations = [
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "PHYSICAL_TEST",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "PX",
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                            "material_axis_direction": "negative",
+                            "background_axis_direction": "positive",
+                        },
+                        {
+                            "ref": "PZ",
+                            "physical_feature_id": "F2",
+                            "constant_axis": "Z",
+                            "boundary_target": "feature:F2.boundary.z",
+                            "material_axis_direction": "positive",
+                            "background_axis_direction": "negative",
+                        },
+                    ],
+                    "junctions": [["PX", "PZ"]],
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E1", "E2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "support_status": "verified",
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "curve_fit_residual_fraction": 0.01,
+                    "sweep_deg_px": 75.0,
+                }
+            ],
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E1": "F1",
+            "E2": "F2",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "arc"
+    assert items[0]["primitive_kind_basis"] == (
+        "verified_continuous_curved_raster_segment_"
+        "between_structural_contacts"
+    )
+    assert items[0]["supporting_physical_edges"] == [
+        {
+            "physical_feature_id": "F1",
+            "constant_axis": "X",
+            "boundary_target": "feature:F1.boundary.x",
+            "material_axis_direction": "negative",
+            "background_axis_direction": "positive",
+        },
+        {
+            "physical_feature_id": "F2",
+            "constant_axis": "Z",
+            "boundary_target": "feature:F2.boundary.z",
+            "material_axis_direction": "positive",
+            "background_axis_direction": "negative",
+        },
+    ]
+    assert "curve_fit_residual_fraction" not in repr(items[0])
+    assert "sweep_deg_px" not in repr(items[0])
+
+
+def test_physical_oblique_arc_marks_conflicting_edge_direction_ambiguous():
+    observations = [
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": region_id,
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": f"PX_{region_id}",
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                            "material_axis_direction": direction,
+                            "background_axis_direction": (
+                                "positive"
+                                if direction == "negative"
+                                else "negative"
+                            ),
+                        }
+                    ],
+                    "junctions": [],
+                }
+                for region_id, direction in (
+                    ("R1", "negative"),
+                    ("R2", "positive"),
+                )
+            ],
+        },
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E1", "E2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "support_status": "verified",
+                    "source_ids": ["hybrid:curve-boundary:3"],
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                }
+            ],
+        },
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {"E1": "F1", "E2": "F2"},
+    )
+
+    assert len(items) == 1
+    x_edge = next(
+        edge
+        for edge in items[0]["supporting_physical_edges"]
+        if edge["constant_axis"] == "X"
+    )
+    assert x_edge["material_axis_direction_ambiguous"] is True
+    assert "material_axis_direction" not in x_edge
+    assert "background_axis_direction" not in x_edge
+
+
+def test_physical_arc_radius_links_to_one_verified_physical_arc_identity():
+    observations = [
+        {
+            "kind": "hybrid_engineering_callout_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "source_item_index": 7,
+                    "facts": {"radius": 5.0},
+                    "profile_arc_radius_binding": {
+                        "status": "profile_arc_candidate_backed",
+                        "curve_source_id": "hybrid:curve-boundary:3",
+                        "engineering_radius": 5.0,
+                        "engineering_value_source": "hybrid_ocr",
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "PHYSICAL_OBLIQUE_ARC",
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "connection_kind": "non_orthogonal_profile_connection",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_physical_feature_ids": ["F1", "F2"],
+                    "supporting_physical_edges": [
+                        {
+                            "physical_feature_id": "F1",
+                            "constant_axis": "X",
+                            "boundary_target": "feature:F1.boundary.x",
+                        },
+                        {
+                            "physical_feature_id": "F2",
+                            "constant_axis": "Z",
+                            "boundary_target": "feature:F2.boundary.z",
+                        },
+                    ],
+                    "source_ids": [
+                        "structural:R1",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(linked) == 1
+    item = linked[0]["items"][0]
+    assert item["physical_arc_id"] == "PHYSICAL_OBLIQUE_ARC"
+    assert item["curve_source_id"] == "hybrid:curve-boundary:3"
+    assert item["engineering_radius"] == 5.0
+    assert item["engineering_value_source"] == "hybrid_ocr"
+    assert item["supporting_physical_feature_ids"] == ["F1", "F2"]
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_identity_only"] is True
+    assert "curve_trace_px" not in repr(item)
+    assert "radius_px" not in repr(item)
+    assert "center_px" not in repr(item)
+
+
+def _corroborated_reference_radius_observation(
+    *,
+    label: str = "R7",
+    radius: float = 6.0,
+):
+    return {
+        "kind": "hybrid_corroborated_reference_table_ledger",
+        "schema": "1.0",
+        "items": [
+            {
+                "reference_region_id": "R_TABLE",
+                "paired": {
+                    "A": {
+                        "label": "A",
+                        "value": 40.0,
+                        "header_source_item_index": 1,
+                        "value_source_item_index": 11,
+                    },
+                    "B": {
+                        "label": "B",
+                        "value": 24.0,
+                        "header_source_item_index": 2,
+                        "value_source_item_index": 12,
+                    },
+                    "C": {
+                        "label": "C",
+                        "value": 12.0,
+                        "header_source_item_index": 3,
+                        "value_source_item_index": 13,
+                    },
+                    label: {
+                        "label": label,
+                        "value": radius,
+                        "header_source_item_index": 4,
+                        "value_source_item_index": 14,
+                    },
+                },
+                "corroborating_labels": ["A", "B", "C"],
+            }
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+        "engineering_value_source": "corroborated_reference_table_row",
+    }
+
+
+def _verified_physical_arc(
+    arc_id: str,
+    curve_source: str,
+):
+    return {
+        "id": arc_id,
+        "primitive_kind": "arc",
+        "primitive_kind_basis": (
+            "verified_continuous_curved_raster_segment_"
+            "between_structural_contacts"
+        ),
+        "connection_kind": "non_orthogonal_profile_connection",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": [
+            f"{arc_id}_X",
+            f"{arc_id}_Z",
+        ],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": f"{arc_id}_X",
+                "constant_axis": "X",
+                "boundary_target": f"feature:{arc_id}_X.boundary.x",
+                "material_axis_direction": "negative",
+                "background_axis_direction": "positive",
+            },
+            {
+                "physical_feature_id": f"{arc_id}_Z",
+                "constant_axis": "Z",
+                "boundary_target": f"feature:{arc_id}_Z.boundary.z",
+                "material_axis_direction": "positive",
+                "background_axis_direction": "negative",
+            },
+        ],
+        "source_ids": [
+            "structural:R_MAIN",
+            curve_source,
+        ],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+
+def test_corroborated_reference_table_radius_links_to_unique_verified_profile_arc():
+    observations = [
+        _corroborated_reference_radius_observation(),
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_TABLE_ARC",
+                    "hybrid:curve-boundary:8",
+                )
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(linked) == 1
+    item = linked[0]["items"][0]
+    assert item["physical_arc_id"] == "PHYSICAL_OBLIQUE_TABLE_ARC"
+    assert item["curve_source_id"] == "hybrid:curve-boundary:8"
+    assert item["engineering_radius"] == 6.0
+    assert item["engineering_value_source"] == (
+        "corroborated_reference_table_row"
+    )
+    assert item["radius_label"] == "R7"
+    assert item["basis"] == (
+        "corroborated_reference_table_radius_plus_"
+        "unique_physical_arc_identity"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_identity_only"] is True
+
+    values, value_unresolved = (
+        identity_linker_module._physical_profile_arc_radius_direct_values(
+            linked
+        )
+    )
+    assert value_unresolved == []
+    assert len(values) == 1
+    assert values[0].target == (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_OBLIQUE_TABLE_ARC.radius"
+    )
+    assert values[0].value == 6.0
+    assert values[0].semantic == "radius"
+
+
+def test_corroborated_reference_table_radius_defers_ambiguous_profile_arcs_to_gate_a():
+    observations = [
+        _corroborated_reference_radius_observation(),
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_ARC_A",
+                    "hybrid:curve-boundary:8",
+                ),
+                _verified_physical_arc(
+                    "PHYSICAL_OBLIQUE_ARC_B",
+                    "hybrid:curve-boundary:9",
+                ),
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert linked == []
+    assert unresolved == []
+
+
+def test_physical_arc_radius_becomes_standard_resolver_direct_value():
+    observations = [
+        {
+            "kind": "hybrid_physical_profile_arc_radius_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "PHYSICAL_ARC_RADIUS_A",
+                    "physical_arc_id": "PHYSICAL_OBLIQUE_ARC",
+                    "curve_source_id": "hybrid:curve-boundary:3",
+                    "engineering_radius": 5.0,
+                    "engineering_value_source": "hybrid_ocr",
+                    "source_ids": [
+                        "hybrid:whole:7",
+                        "hybrid:curve-boundary:3",
+                    ],
+                    "basis": (
+                        "explicit_engineering_radius_callout_plus_"
+                        "unique_physical_arc_identity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        }
+    ]
+
+    values, unresolved = (
+        identity_linker_module._physical_profile_arc_radius_direct_values(
+            observations
+        )
+    )
+
+    assert unresolved == []
+    assert len(values) == 1
+    assert values[0].target == (
+        "constraints.profile_arc_radii."
+        "PHYSICAL_OBLIQUE_ARC.radius"
+    )
+    assert values[0].value == 5.0
+    assert values[0].semantic == "radius"
+    assert "hybrid:curve-boundary:3" in values[0].source_ids
+    assert "PHYSICAL_ARC_RADIUS_A" in values[0].source_ids
+
+
+def test_physical_arc_radius_direct_values_merge_equal_and_block_conflict():
+    def value(radius: float, suffix: str):
+        return identity_linker.DirectValueEvidence(
+            id=f"RADIUS_{suffix}",
+            target=(
+                "constraints.profile_arc_radii."
+                "PHYSICAL_OBLIQUE_ARC.radius"
+            ),
+            value=radius,
+            semantic="radius",
+            source_ids=[f"callout:{suffix}"],
+        )
+
+    merged, merged_unresolved = identity_linker_module._normalize_direct_values(
+        [value(5.0, "A"), value(5.0, "B")]
+    )
+    assert merged_unresolved == []
+    assert len(merged) == 1
+    assert merged[0].value == 5.0
+    assert set(merged[0].source_ids) >= {
+        "RADIUS_A",
+        "RADIUS_B",
+        "callout:A",
+        "callout:B",
+    }
+
+    conflicted, conflict_unresolved = (
+        identity_linker_module._normalize_direct_values(
+            [value(5.0, "A"), value(6.0, "B")]
+        )
+    )
+    assert conflicted == []
+    assert len(conflict_unresolved) == 1
+    assert conflict_unresolved[0]["kind"] == "direct_value_conflict"
+    assert conflict_unresolved[0]["required_for_modeling"] is True
+
+
+def test_physical_arc_radius_fails_closed_when_curve_identity_is_not_unique():
+    observations = [
+        {
+            "kind": "hybrid_engineering_callout_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "source_item_index": 7,
+                    "facts": {"radius": 5.0},
+                    "profile_arc_radius_binding": {
+                        "status": "profile_arc_candidate_backed",
+                        "curve_source_id": "hybrid:curve-boundary:3",
+                        "engineering_radius": 5.0,
+                        "engineering_value_source": "hybrid_ocr",
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    },
+                }
+            ],
+        },
+        {
+            "kind": "hybrid_physical_rotational_oblique_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": physical_arc_id,
+                    "primitive_kind": "arc",
+                    "primitive_kind_basis": (
+                        "verified_continuous_curved_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                    "connection_kind": "non_orthogonal_profile_connection",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_physical_feature_ids": ["F1", "F2"],
+                    "supporting_physical_edges": [],
+                    "source_ids": ["hybrid:curve-boundary:3"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+                for physical_arc_id in (
+                    "PHYSICAL_OBLIQUE_A",
+                    "PHYSICAL_OBLIQUE_B",
+                )
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+    ]
+
+    linked, unresolved = (
+        identity_linker_module._linked_physical_profile_arc_radius_observations(
+            observations
+        )
+    )
+
+    assert linked == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["field"] == "profile_arc_radius_identity"
+    assert unresolved[0]["required_for_modeling"] is True
+    assert unresolved[0]["candidate_physical_arc_ids"] == [
+        "PHYSICAL_OBLIQUE_A",
+        "PHYSICAL_OBLIQUE_B",
+    ]
+
+
+def test_physical_oblique_profile_conflicting_crop_classification_fails_closed():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X_R1", "E_Z_R1"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:7"],
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "verified_continuous_straight_raster_segment_"
+                        "between_structural_contacts"
+                    ),
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X_R2", "E_Z_R2"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:7"],
+                    "primitive_kind": "unresolved",
+                    "primitive_kind_basis": (
+                        "two_structural_contacts_without_continuous_"
+                        "straight_raster_support"
+                    ),
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X_R1": "F_X",
+            "E_Z_R1": "F_Z",
+            "E_X_R2": "F_X",
+            "E_Z_R2": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "unresolved"
+    assert items[0]["primitive_kind_basis"] == (
+        "conflicting_crop_local_primitive_classification"
+    )
+
+
+def test_physical_oblique_profile_missing_classification_fails_closed():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_UNCLASSIFIED",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_X", "E_Z"],
+                    "supporting_profile_constant_axes": ["X", "Z"],
+                    "source_ids": ["hybrid:oblique-line:8"],
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations,
+        {
+            "E_X": "F_X",
+            "E_Z": "F_Z",
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0]["primitive_kind"] == "unresolved"
+    assert items[0]["primitive_kind_basis"] == (
+        "missing_deterministic_primitive_classification"
+    )
+
+
+def test_physical_oblique_profile_items_fail_closed_without_physical_identity():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": ["E_UNKNOWN"],
+                    "supporting_profile_constant_axes": ["X"],
+                    "source_ids": ["hybrid:oblique-line:9"],
+                    "one_sided_boundary_candidate": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    assert (
+        identity_linker_module._physical_rotational_oblique_profile_items(
+            observations,
+            {},
+        )
+        == []
+    )
+
+
+def test_oblique_dimension_projection_aligns_extension_to_exterior_support():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_LEFT",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:LEFT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_EXTENSION",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:EXT"],
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_OBLIQUE_SUPPORT",
+                view_id="V_FRONT",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:OBLIQUE_SUPPORT"],
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[],
+        values=[],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=168.3,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_LEFT",
+                        basis="profile_edge",
+                        source_ids=["hybrid:DG3:whole"],
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                        source_ids=["hybrid:DG3:whole"],
+                    ),
+                ],
+                direction=1,
+                source_ids=["hybrid:DG3:whole", "hybrid:DG3:wide"],
+            )
+        ],
+        required_targets=[],
+        observations=[
+            {
+                "kind": "hybrid_dimension_anchor_ledger",
+                "items": [
+                    {
+                        "candidate_id": "DG3",
+                        "region_id": "R1",
+                        "endpoint_candidate_evidence": {
+                            "endpoints": [
+                                {
+                                    "endpoint_index": 0,
+                                    "position_px": 40.0,
+                                    "status": "unique_physical_candidate",
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "LEFT",
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": None,
+                                    "ignored_nonownership_anchors": [],
+                                },
+                                {
+                                    "endpoint_index": 1,
+                                    "position_px": 100.0,
+                                    "status": "unique_physical_candidate",
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "EXT",
+                                            "position_px": 100.0,
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": (
+                                        "exact_crossing_witness_profile_line_identity"
+                                    ),
+                                    "ignored_nonownership_anchors": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "OBLIQUE_SUPPORT",
+                                            "position_px": 100.4,
+                                            "axis_tolerance_px": 2.0,
+                                            "ownership_rejection_reason": (
+                                                "profile_not_connected_to_"
+                                                "witness_terminal"
+                                            ),
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "id": "OBLIQUE_R1",
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "supporting_profile_refs": ["OBLIQUE_SUPPORT"],
+                        "supporting_profile_entity_ids": ["E_OBLIQUE_SUPPORT"],
+                        "supporting_profile_constant_axes": ["X"],
+                        "source_ids": [
+                            "structural:R1",
+                            "hybrid:oblique-line:0",
+                        ],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+
+    relations = identity_linker_module._oblique_dimension_projection_relations(
+        capture,
+        {
+            "E_LEFT": "F_LEFT",
+            "E_EXTENSION": "F_EXTENSION",
+            "E_OBLIQUE_SUPPORT": "F_OBLIQUE",
+        },
+    )
+
+    assert len(relations) == 1
+    relation = relations[0]
+    assert relation.kind == "alignment"
+    assert relation.axis == "X"
+    assert relation.targets == [
+        "feature:F_EXTENSION.boundary.x",
+        "feature:F_OBLIQUE.boundary.x",
+    ]
+    assert relation.value is None
+    assert relation.required_for_modeling is False
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+    assert relation.metadata["pixel_geometry_used_for_identity_only"] is True
+    assert relation.metadata["basis"] == (
+        "accepted_dimension_extension_projection_to_exterior_oblique_profile"
+    )
+
+
+def test_oblique_dimension_projection_fails_closed_without_near_projection():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=300,
+            width_y=300,
+            height_z=75,
+        ),
+        views=[CaptureView(id="V_FRONT", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_EXTENSION",
+                view_id="V_FRONT",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+            CaptureEntity(
+                id="E_OBLIQUE_SUPPORT",
+                view_id="V_FRONT",
+                shape="profile",
+                required_for_modeling=False,
+            ),
+        ],
+        associations=[],
+        values=[],
+        dimensions=[
+            CaptureDimension(
+                id="D_SPAN",
+                value=168.3,
+                axis="X",
+                endpoints=[
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                    ),
+                    CaptureDimensionEndpoint(
+                        role="profile_boundary",
+                        entity_id="E_EXTENSION",
+                        basis="profile_edge",
+                    ),
+                ],
+                direction=1,
+                source_ids=["hybrid:DG3:whole", "hybrid:DG3:wide"],
+            )
+        ],
+        required_targets=[],
+        observations=[
+            {
+                "kind": "hybrid_dimension_anchor_ledger",
+                "items": [
+                    {
+                        "candidate_id": "DG3",
+                        "region_id": "R1",
+                        "endpoint_candidate_evidence": {
+                            "endpoints": [
+                                {
+                                    "endpoint_index": 0,
+                                    "position_px": 40.0,
+                                    "physical_candidates": [],
+                                    "ignored_nonownership_anchors": [],
+                                },
+                                {
+                                    "endpoint_index": 1,
+                                    "position_px": 100.0,
+                                    "physical_candidates": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "EXT",
+                                        }
+                                    ],
+                                    "ownership_narrowing_basis": (
+                                        "exact_crossing_witness_profile_line_identity"
+                                    ),
+                                    "ignored_nonownership_anchors": [
+                                        {
+                                            "kind": "profile_edge_candidate",
+                                            "ref": "OBLIQUE_SUPPORT",
+                                            "position_px": 112.0,
+                                            "axis_tolerance_px": 2.0,
+                                            "ownership_rejection_reason": (
+                                                "profile_not_connected_to_"
+                                                "witness_terminal"
+                                            ),
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "supporting_profile_refs": ["OBLIQUE_SUPPORT"],
+                        "supporting_profile_entity_ids": ["E_OBLIQUE_SUPPORT"],
+                        "supporting_profile_constant_axes": ["X"],
+                        "source_ids": ["hybrid:oblique-line:0"],
+                        "one_sided_boundary_candidate": True,
+                        "exterior_boundary_candidate": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            },
+        ],
+    )
+
+    assert (
+        identity_linker_module._oblique_dimension_projection_relations(
+            capture,
+            {
+                "E_EXTENSION": "F_EXTENSION",
+                "E_OBLIQUE_SUPPORT": "F_OBLIQUE",
+            },
+        )
+        == []
+    )
+
+
+def test_physical_oblique_profile_items_merge_supportless_exterior_crop_duplicates():
+    observations = [
+        {
+            "kind": "hybrid_rotational_oblique_profile_candidate_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": "OBLIQUE_R1",
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": [],
+                    "supporting_profile_constant_axes": [],
+                    "support_status": "unresolved",
+                    "source_ids": ["structural:R1", "hybrid:oblique-line:0"],
+                    "one_sided_boundary_candidate": True,
+                    "exterior_boundary_candidate": True,
+                },
+                {
+                    "id": "OBLIQUE_R2",
+                    "region_id": "R2",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "supporting_profile_entity_ids": [],
+                    "supporting_profile_constant_axes": [],
+                    "support_status": "unresolved",
+                    "source_ids": ["structural:R2", "hybrid:oblique-line:0"],
+                    "one_sided_boundary_candidate": True,
+                    "exterior_boundary_candidate": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    ]
+
+    items = identity_linker_module._physical_rotational_oblique_profile_items(
+        observations, {}
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["region_ids"] == ["R1", "R2"]
+    assert item["supporting_physical_feature_ids"] == []
+    assert item["supporting_physical_edges"] == []
+    assert item["connection_kind"] == (
+        "exterior_non_orthogonal_boundary_fragment"
+    )
+    assert item["engineering_coordinate_inferred_from_pixels"] is False
+    assert item["pixel_geometry_used_for_topology_only"] is True
+
+
+def test_physical_oblique_fragment_attaches_to_one_matching_rotational_topology():
+    topology = [
+        {
+            "region_id": "PHYSICAL_MAIN",
+            "region_ids": ["R1", "R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [],
+            "junctions": [],
+        }
+    ]
+    fragment = {
+        "id": "PHYSICAL_OBLIQUE_TEST",
+        "region_ids": ["R1", "R2"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+        "supporting_physical_feature_ids": ["F_SUPPORT"],
+        "supporting_physical_edges": [
+            {
+                "physical_feature_id": "F_SUPPORT",
+                "constant_axis": "X",
+                "boundary_target": "feature:F_SUPPORT.boundary.x",
+            }
+        ],
+        "connection_kind": (
+            "one_sided_non_orthogonal_boundary_continuation"
+        ),
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_topology_only": True,
+    }
+
+    attached = identity_linker_module._attach_physical_oblique_fragments(
+        topology,
+        [fragment],
+    )
+
+    assert attached[0]["non_orthogonal_fragments"] == [fragment]
+    assert "endpoints_px" not in repr(attached[0]["non_orthogonal_fragments"])
+    assert "angle_deg" not in repr(attached[0]["non_orthogonal_fragments"])
+
+
+def test_physical_oblique_fragment_fails_closed_on_ambiguous_topology_owner():
+    topology = [
+        {
+            "region_id": "PHYSICAL_A",
+            "region_ids": ["R1", "R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+        },
+        {
+            "region_id": "PHYSICAL_B",
+            "region_ids": ["R2"],
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+        },
+    ]
+    fragment = {
+        "id": "PHYSICAL_OBLIQUE_TEST",
+        "region_ids": ["R2"],
+        "view_kind": "front",
+        "plane": "XZ",
+        "rotation_axis": "Z",
+    }
+
+    attached = identity_linker_module._attach_physical_oblique_fragments(
+        topology,
+        [fragment],
+    )
+
+    assert all("non_orthogonal_fragments" not in item for item in attached)
+
+
+def test_rotational_topology_keeps_disjoint_physical_items_separate():
+    items = [
+        {
+            "region_id": "R1",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [
+                {
+                    "ref": "R1.A",
+                    "physical_feature_id": "F_A",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_A.boundary.x",
+                }
+            ],
+            "junctions": [],
+        },
+        {
+            "region_id": "R2",
+            "view_kind": "front",
+            "plane": "XZ",
+            "rotation_axis": "Z",
+            "component_index": 0,
+            "edges": [
+                {
+                    "ref": "R2.B",
+                    "physical_feature_id": "F_B",
+                    "constant_axis": "X",
+                    "boundary_target": "feature:F_B.boundary.x",
+                }
+            ],
+            "junctions": [],
+        },
+    ]
+
+    merged = identity_linker_module._merge_physical_rotational_topology_items(items)
+
+    assert [item["region_id"] for item in merged] == ["R1", "R2"]
+
+
+def test_rotational_profile_topology_materializes_otherwise_orphan_profile_edge():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_ROT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.ROT"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.ROT",
+                                "profile_entity_id": "E_ROT",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            }
+                        ],
+                        "junctions": [],
+                        "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": True,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_ROT" in linked.entity_to_feature
+    assert linked.report["ignored_orphan_profiles"] == 0
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    edge = ledger["items"][0]["edges"][0]
+    feature_id = linked.entity_to_feature["E_ROT"]
+    assert edge["physical_feature_id"] == feature_id
+    assert edge["boundary_target"] == f"feature:{feature_id}.boundary.x"
+
+
+def test_rotational_profile_topology_does_not_materialize_edge_without_strict_contract():
+    capture = ReaderCapture(
+        overall_dimensions=OverallDimensions(
+            length_x=100,
+            width_y=50,
+            height_z=80,
+        ),
+        views=[CaptureView(id="VF", kind="front")],
+        entities=[
+            CaptureEntity(
+                id="E_ROT",
+                view_id="VF",
+                shape="profile",
+                source_ids=["hybrid:profile-edge:R1.ROT"],
+                required_for_modeling=False,
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_rotational_profile_topology_ledger",
+                "schema": "1.0",
+                "items": [
+                    {
+                        "region_id": "R1",
+                        "view_kind": "front",
+                        "plane": "XZ",
+                        "rotation_axis": "Z",
+                        "component_index": 0,
+                        "edges": [
+                            {
+                                "ref": "R1.ROT",
+                                "profile_entity_id": "E_ROT",
+                                "source_orientation": "vertical",
+                                "constant_axis": "X",
+                            }
+                        ],
+                        "junctions": [],
+                        "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                        "basis": (
+                            "established_rotational_symmetry_plus_"
+                            "structural_profile_connectivity"
+                        ),
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_topology_only": True,
+                    }
+                ],
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_topology_only": False,
+            }
+        ],
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert "E_ROT" not in linked.entity_to_feature
+    assert linked.report["ignored_orphan_profiles"] == 1
+
+
+def test_rotational_profile_topology_maps_capture_edges_to_physical_boundary_targets():
+    capture = _projected_profile_bridge_capture()
+    capture.observations.append(
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "R1.LEFT",
+                            "profile_entity_id": "E_LEFT",
+                            "source_orientation": "vertical",
+                            "constant_axis": "X",
+                        }
+                    ],
+                    "junctions": [],
+                    "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                    "basis": (
+                        "established_rotational_symmetry_plus_"
+                        "structural_profile_connectivity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    )
+
+    linked = link_reader_capture(capture)
+
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    edge = ledger["items"][0]["edges"][0]
+    feature_id = linked.entity_to_feature["E_LEFT"]
+    assert edge["physical_feature_id"] == feature_id
+    assert edge["boundary_target"] == f"feature:{feature_id}.boundary.x"
+    assert edge["profile_entity_id"] == "E_LEFT"
+    assert edge["constant_axis"] == "X"
+
+
+def test_rotational_profile_topology_does_not_invent_target_without_physical_identity():
+    capture = _projected_profile_bridge_capture()
+    capture.observations.append(
+        {
+            "kind": "hybrid_rotational_profile_topology_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "region_id": "R1",
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "component_index": 0,
+                    "edges": [
+                        {
+                            "ref": "R1.UNKNOWN",
+                            "profile_entity_id": "E_NOT_LINKED",
+                            "source_orientation": "vertical",
+                            "constant_axis": "X",
+                        }
+                    ],
+                    "junctions": [],
+                    "source_ids": ["SRC_ROTATIONAL_PROFILE"],
+                    "basis": (
+                        "established_rotational_symmetry_plus_"
+                        "structural_profile_connectivity"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        }
+    )
+
+    linked = link_reader_capture(capture)
+
+    ledger = next(
+        item
+        for item in linked.evidence.observations
+        if item.get("kind") == "hybrid_rotational_profile_topology_ledger"
+    )
+    edge = ledger["items"][0]["edges"][0]
+    assert "physical_feature_id" not in edge
+    assert "boundary_target" not in edge
+
+
+def test_projected_profile_bridge_resolves_overall_to_profile_level():
+    capture = _projected_profile_bridge_capture()
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    relation = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert relation.kind == "edge_offset"
+    assert relation.from_side == "min"
+    assert relation.value == 28
+    assert relation.targets[0].endswith(".boundary.z")
+    assert relation.metadata["basis"] == (
+        "dimension_endpoint_resolved_by_projected_profile_level"
+    )
+    assert relation.metadata["engineering_coordinate_inferred_from_pixels"] is False
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[relation.targets[0]] == 28.0
+    draft = build_semantic_draft(compiled, resolution)
+    reference = next(
+        item for item in draft["features"]
+        if item.get("boundary", {}).get("z") == 28.0
+    )
+    assert reference["type"] == "reference_boundary"
+
+
+def test_projected_profile_bridge_resolves_symmetric_profile_pair():
+    capture = _projected_profile_bridge_capture(symmetric=True)
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    distance = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.direction == 1
+    assert distance.value == 60
+    assert all(target.endswith(".boundary.x") for target in distance.targets)
+
+    anchors = [
+        item for item in linked.evidence.relations
+        if item.id.startswith("R_PROJECTED_PROFILE_SYMMETRY_")
+    ]
+    assert {item.from_side for item in anchors} == {"min", "max"}
+    assert {item.value for item in anchors} == {20.0}
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    assert resolution.ok
+
+
+def test_projected_profile_bridge_mirrors_one_proven_profile_level_from_symmetry():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item
+        for item in linked.evidence.unresolved_evidence
+        if item.get("capture_dimension_id") == "D_PROJECTED"
+    ]
+    distance = next(
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    )
+    assert distance.kind == "coordinate_distance"
+    assert distance.direction == 1
+    assert distance.value == 60
+    assert distance.targets[0].endswith(".boundary.x")
+    assert distance.targets[1].startswith(
+        "constraints.symmetric_profile_levels."
+    )
+    assert distance.metadata["basis"] == (
+        "overall_center_symmetric_projected_profile_level"
+    )
+    assert distance.metadata["matched_projected_profile_endpoint_index"] == 0
+
+    compiled = compile_evidence_graph(linked.evidence)
+    resolution = resolve_evidence_graph(compiled)
+    assert resolution.values[distance.targets[0]] == 20.0
+    assert resolution.values[distance.targets[1]] == 80.0
+    draft = build_semantic_draft(compiled, resolution)
+    mirror_id = distance.targets[1].split(".")[2]
+    assert (
+        draft["constraints"]["symmetric_profile_levels"][mirror_id]["x"]
+        == 30.0
+    )
+    assert resolution.ok
+
+
+def test_projected_profile_bridge_keeps_one_sided_level_unresolved_without_symmetry():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        one_sided=True,
+    )
+    capture.observations = [
+        observation
+        for observation in capture.observations
+        if observation.get("kind") != "hybrid_symmetric_dimension_pair_ledger"
+    ]
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_projected_profile_bridge_rejects_multiple_physical_boundary_targets():
+    capture = _projected_profile_bridge_capture(
+        symmetric=True,
+        ambiguous_profile_target=True,
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+def test_projected_profile_bridge_never_overrides_ambiguous_owner():
+    capture = _projected_profile_bridge_capture(
+        endpoint_kind="ambiguous_owner",
+    )
+
+    linked = link_reader_capture(capture)
+
+    assert not [
+        item for item in linked.evidence.relations
+        if item.id == "D_PROJECTED"
+    ]
+    assert any(
+        item.get("capture_dimension_id") == "D_PROJECTED"
+        and "ambiguous_owner" in item.get("endpoint_unresolved_kinds", [])
+        for item in linked.evidence.unresolved_evidence
+    )
+
+
+
+def _taper_terminal_identity_observations():
+    silhouette_id = "BILATERAL_STRAIGHT_SILHOUETTE_TEST"
+    return [
+        {
+            "kind": "hybrid_bilateral_rotational_straight_silhouette_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "id": silhouette_id,
+                    "view_kind": "front",
+                    "plane": "XZ",
+                    "rotation_axis": "Z",
+                    "radial_axis": "X",
+                    "negative_side_source_ids": [
+                        "hybrid:oblique-line:left",
+                    ],
+                    "positive_side_source_ids": [
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "source_ids": [
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "primitive_kind": "line",
+                    "primitive_kind_basis": (
+                        "bilateral_mirrored_continuous_straight_"
+                        "exterior_silhouette"
+                    ),
+                    "basis": (
+                        "full_support_exterior_fragments_plus_"
+                        "independent_symmetric_span_midpoint"
+                    ),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_topology_only": True,
+                }
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_topology_only": True,
+        },
+        {
+            "kind": "hybrid_labeled_profile_transition_boundary_ledger",
+            "schema": "1.0",
+            "items": [
+                {
+                    "target_id": "LD_TAPER_DIRECT",
+                    "region_id": "R_MAIN",
+                    "view_kind": "front",
+                    "axis": "Z",
+                    "overall_role": "overall_max",
+                    "profile_refs": [],
+                    "oblique_source_ids": [
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "identity_kind": (
+                        "bilateral_oblique_transition_endpoint_level"
+                    ),
+                    "source_ids": [
+                        silhouette_id,
+                        "hybrid:oblique-line:left",
+                        "hybrid:oblique-line:right-a",
+                        "hybrid:oblique-line:right-b",
+                    ],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+                {
+                    "target_id": "LD_ROOT_LEVEL",
+                    "region_id": "R_DIM",
+                    "view_kind": "front",
+                    "axis": "Z",
+                    "overall_role": "overall_min",
+                    "profile_refs": ["R_DIM.profile.root"],
+                    "identity_kind": "physical_profile_boundary",
+                    "source_ids": ["hybrid:profile-edge:R_DIM.profile.root"],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+    ]
+
+
+def test_unique_bilateral_taper_unowned_terminal_produces_arc_identity():
+    observations = _taper_terminal_identity_observations()
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is not None
+    assert identity["profile_arc_identity_kind"] == (
+        "unique_bilateral_taper_unowned_terminal"
+    )
+    assert identity["direct_transition_target_id"] == "LD_TAPER_DIRECT"
+    assert identity["direct_transition_overall_role"] == "overall_max"
+    assert identity["opposite_transition_target_ids"] == ["LD_ROOT_LEVEL"]
+    assert identity["engineering_coordinate_inferred_from_pixels"] is False
+    assert identity["pixel_geometry_used_for_identity_only"] is True
+
+
+def test_taper_terminal_arc_identity_fails_closed_with_two_direct_terminals():
+    observations = _taper_terminal_identity_observations()
+    ledger = next(
+        observation
+        for observation in observations
+        if observation.get("kind")
+        == "hybrid_labeled_profile_transition_boundary_ledger"
+    )
+    duplicate = dict(ledger["items"][0])
+    duplicate["target_id"] = "LD_TAPER_OTHER_END"
+    duplicate["overall_role"] = "overall_min"
+    ledger["items"].append(duplicate)
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is None
+
+
+def test_taper_terminal_arc_identity_fails_closed_with_multiple_silhouettes():
+    observations = _taper_terminal_identity_observations()
+    silhouette_ledger = next(
+        observation
+        for observation in observations
+        if observation.get("kind")
+        == "hybrid_bilateral_rotational_straight_silhouette_ledger"
+    )
+    duplicate = dict(silhouette_ledger["items"][0])
+    duplicate["id"] = "BILATERAL_STRAIGHT_SILHOUETTE_OTHER"
+    duplicate["negative_side_source_ids"] = ["hybrid:oblique-line:other-left"]
+    duplicate["positive_side_source_ids"] = ["hybrid:oblique-line:other-right"]
+    duplicate["source_ids"] = [
+        "hybrid:oblique-line:other-left",
+        "hybrid:oblique-line:other-right",
+    ]
+    silhouette_ledger["items"].append(duplicate)
+
+    identity = (
+        identity_linker._unique_bilateral_taper_terminal_arc_identity(
+            observations
+        )
+    )
+
+    assert identity is not None
+    assert identity["silhouette_id"] == "BILATERAL_STRAIGHT_SILHOUETTE_TEST"

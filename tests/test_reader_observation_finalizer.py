@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import pytest
+
+from nx_mcp.drawing_intelligence.capture import validate_reader_capture_contract
+from nx_mcp.drawing_intelligence.reader_observation_finalizer import (
+    ReaderObservationFinalizationError,
+    finalize_partial_reader_observations,
+)
+from nx_mcp.drawing_intelligence.reader_observations import (
+    ObservationDimension,
+    ObservationDimensionEndpoint,
+    ObservationEntity,
+    ObservationPatternSymmetry,
+    ObservationUnresolved,
+    ObservationView,
+    assemble_reader_capture,
+)
+from nx_mcp.drawing_intelligence.reader_semantic_answers import (
+    PartialOverallDimensionFact,
+    PartialReaderObservations,
+    PartialRotationalSymmetryFact,
+)
+
+
+def _partial() -> PartialReaderObservations:
+    return PartialReaderObservations(
+        overall_dimension_facts=[
+            PartialOverallDimensionFact(
+                axis="X",
+                value=40,
+                evidence=["structural:X"],
+            ),
+            PartialOverallDimensionFact(
+                axis="Y",
+                value=32,
+                evidence=["structural:Y"],
+            ),
+            PartialOverallDimensionFact(
+                axis="Z",
+                value=66,
+                evidence=["structural:Z"],
+            ),
+        ],
+        views=[
+            ObservationView(
+                key="view.R1",
+                kind="front",
+                evidence=["structural:R1"],
+            ),
+            ObservationView(
+                key="view.R2",
+                kind="side",
+                evidence=["structural:R2"],
+            ),
+        ],
+        dimensions=[
+            ObservationDimension(
+                key="R1.DG12",
+                value=24,
+                axis="X",
+                endpoints=[
+                    ObservationDimensionEndpoint(
+                        role="unresolved",
+                        unresolved_kind="intermediate_surface",
+                        evidence=["hybrid:DG12:whole", "hybrid:DG12:wide"],
+                    ),
+                    ObservationDimensionEndpoint(
+                        role="unresolved",
+                        unresolved_kind="intermediate_surface",
+                        evidence=["hybrid:DG12:whole", "hybrid:DG12:wide"],
+                    ),
+                ],
+                unresolved_reason="endpoint ownership remains unresolved",
+                evidence=["hybrid:DG12:whole", "hybrid:DG12:wide"],
+            )
+        ],
+        observations=[
+            {
+                "kind": "hybrid_ocr_coverage_ledger",
+                "coverage": {
+                    "observed_silent_drop_count": 0,
+                },
+            }
+        ],
+        unresolved=[
+            ObservationUnresolved(
+                kind="unsupported_representation",
+                reason="whole/local OCR disagreement",
+                field="dimension_value_candidate",
+                axis="Z",
+                evidence=["hybrid:DG17:whole", "hybrid:DG17:wide"],
+                required_for_modeling=True,
+            )
+        ],
+    )
+
+
+def test_finalizer_builds_complete_reader_observations_without_inference():
+    full = finalize_partial_reader_observations(_partial())
+
+    assert full.overall_dimensions.length_x == 40
+    assert full.overall_dimensions.width_y == 32
+    assert full.overall_dimensions.height_z == 66
+    assert [view.kind for view in full.views] == ["front", "side"]
+    assert full.dimensions[0].endpoints[0].role == "unresolved"
+    assert full.observations[-1]["kind"] == "overall_dimension_fact_ledger"
+
+
+def test_finalized_observations_assemble_to_contract_valid_capture():
+    full = finalize_partial_reader_observations(_partial())
+    capture = assemble_reader_capture(full)
+
+    assert capture.overall_dimensions.length_x == 40
+    assert len(capture.dimensions) == 1
+    assert capture.dimensions[0].endpoints[0].role == "unresolved"
+    assert capture.unresolved_evidence[0].kind == "unsupported_representation"
+    assert validate_reader_capture_contract(capture) == []
+
+
+def test_finalizer_preserves_structured_pattern_symmetry_into_capture():
+    partial = _partial()
+    partial.entities.append(
+        ObservationEntity(
+            key="R1.PAIR",
+            view_key="view.R1",
+            shape="hidden_parallel",
+            cross_view_disposition="single_view",
+            evidence=["hybrid:pair"],
+        )
+    )
+    partial.pattern_symmetries.append(
+        ObservationPatternSymmetry(
+            entity_key="R1.PAIR",
+            axis="X",
+            evidence=["hybrid:pair:symmetry"],
+        )
+    )
+
+    full = finalize_partial_reader_observations(partial)
+    capture = assemble_reader_capture(full)
+
+    assert len(full.pattern_symmetries) == 1
+    assert any(
+        item.get("kind") == "symmetric_count_two_overall_center"
+        and item.get("axis") == "X"
+        for item in capture.observations
+    )
+
+
+def test_finalizer_accepts_duplicate_same_axis_fact_when_values_agree():
+    partial = _partial()
+    partial.overall_dimension_facts.append(
+        PartialOverallDimensionFact(
+            axis="X",
+            value=40.0,
+            evidence=["structural:X:second-source"],
+        )
+    )
+
+    full = finalize_partial_reader_observations(partial)
+
+    assert full.overall_dimensions.length_x == 40
+
+
+def test_finalizer_derives_one_missing_transverse_extent_from_rotational_symmetry():
+    partial = _partial()
+    partial.overall_dimension_facts = [
+        item for item in partial.overall_dimension_facts if item.axis != "Y"
+    ]
+    partial.rotational_symmetry_facts = [
+        PartialRotationalSymmetryFact(
+            axis="Z",
+            evidence=["structural:rotation-z"],
+        )
+    ]
+
+    full = finalize_partial_reader_observations(partial)
+
+    assert full.overall_dimensions.length_x == 40
+    assert full.overall_dimensions.width_y == 40
+    assert full.overall_dimensions.height_z == 66
+    derivation = next(
+        item
+        for item in full.observations
+        if item.get("kind") == "overall_dimension_derivation_ledger"
+    )
+    assert derivation["facts"] == [
+        {
+            "axis": "Y",
+            "value": 40.0,
+            "basis": "rotational_symmetry_equal_transverse_extents",
+            "source_axis": "X",
+            "rotation_axis": "Z",
+            "evidence": ["structural:X", "structural:rotation-z"],
+        }
+    ]
+
+
+def test_finalizer_rejects_missing_overall_axis():
+    partial = _partial()
+    partial.overall_dimension_facts = [
+        item for item in partial.overall_dimension_facts if item.axis != "Y"
+    ]
+
+    with pytest.raises(
+        ReaderObservationFinalizationError,
+        match="missing overall dimension fact for axis Y",
+    ):
+        finalize_partial_reader_observations(partial)
+
+
+def test_finalizer_rejects_conflicting_overall_axis_facts():
+    partial = _partial()
+    partial.overall_dimension_facts.append(
+        PartialOverallDimensionFact(
+            axis="X",
+            value=41,
+            evidence=["structural:X:conflict"],
+        )
+    )
+
+    with pytest.raises(
+        ReaderObservationFinalizationError,
+        match="conflicting overall dimension facts for axis X",
+    ):
+        finalize_partial_reader_observations(partial)
+
+
+def test_finalizer_rejects_missing_explicit_view():
+    partial = _partial()
+    partial.views = []
+
+    with pytest.raises(
+        ReaderObservationFinalizationError,
+        match="at least one explicit view",
+    ):
+        finalize_partial_reader_observations(partial)
+
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "hybrid_view_metric_calibration_ledger",
+        "hybrid_metric_profile_edge_ledger",
+        "hybrid_metric_profile_segment_ledger",
+        "hybrid_metric_circle_primitive_ledger",
+    ],
+)
+def test_finalizer_rejects_pixel_derived_metric_observations(kind: str):
+    partial = _partial()
+    partial.observations.append(
+        {
+            "kind": kind,
+            "engineering_authoritative": False,
+            "items": [],
+        }
+    )
+
+    with pytest.raises(
+        ReaderObservationFinalizationError,
+        match="pixel-derived metric observations are diagnostic-only",
+    ):
+        finalize_partial_reader_observations(partial)

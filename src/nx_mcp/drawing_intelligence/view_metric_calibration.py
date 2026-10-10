@@ -546,22 +546,50 @@ def derive_view_axis_boundaries(
                 if str(min_edge.get("ref") or "") == str(max_edge.get("ref") or ""):
                     continue
 
-                # A fallback overall boundary must be backed by independently
-                # observed structural profile support when that support metric
-                # is available.  A zero count means the extreme exists only
-                # through dimension-crossing evidence and must not be promoted
-                # to a physical overall boundary.  Historical fixtures that
-                # predate this metric remain compatible when the field is absent.
+                # Crossing a dimension rail does not itself invalidate an
+                # independently observed physical profile. Otherwise real
+                # outline extrema can all have zero non-crossing support.
+                # Require several independent source lines PLUS corroborated
+                # junctions and a continuous raster stroke to use this
+                # secondary route. Never infer millimetres from these pixels.
                 unsupported_extreme = False
                 for edge in (min_edge, max_edge):
                     support = edge.get("non_dimension_crossing_source_count")
                     if support is None:
                         continue
                     if (
-                        not isinstance(support, int)
-                        or isinstance(support, bool)
-                        or support <= 0
+                        isinstance(support, int)
+                        and not isinstance(support, bool)
+                        and support > 0
                     ):
+                        continue
+                    independent = edge.get("independent_geometry_source_count")
+                    junctions = edge.get("junction_count")
+                    terminals = edge.get("endpoint_junction_count")
+                    length = edge.get("span_local_norm")
+                    ink_run = edge.get("axis_ink_run_fraction")
+                    merged = edge.get("merged_source_line_count")
+                    independent_outline = (
+                        isinstance(independent, int)
+                        and not isinstance(independent, bool)
+                        and independent >= 2
+                        and isinstance(merged, int)
+                        and not isinstance(merged, bool)
+                        and merged >= 2
+                        and isinstance(junctions, int)
+                        and not isinstance(junctions, bool)
+                        and junctions >= 2
+                        and isinstance(terminals, int)
+                        and not isinstance(terminals, bool)
+                        and terminals >= 1
+                        and isinstance(length, (int, float))
+                        and not isinstance(length, bool)
+                        and float(length) >= 0.30
+                        and isinstance(ink_run, (int, float))
+                        and not isinstance(ink_run, bool)
+                        and float(ink_run) >= 0.65
+                    )
+                    if not independent_outline:
                         unsupported_extreme = True
                         break
                 if unsupported_extreme:

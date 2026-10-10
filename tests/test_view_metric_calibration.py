@@ -931,3 +931,86 @@ def test_metricize_profile_inventory_does_not_fall_back_to_witness_subset_when_p
     )
 
     assert [item["ref"] for item in edges] == ["R1.structural.vertical.002"]
+
+
+
+def test_overall_boundary_accepts_independent_outline_even_when_all_lines_cross_dimensions():
+    """Raster dimension crossings do not erase physically supported extrema."""
+    profiles = [
+        {
+            "region_id": "SIDE",
+            "kind": "profile_edge_candidate",
+            "ref": "SIDE.OUTLINE.MIN",
+            "position_px": 120.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "min",
+            "non_dimension_crossing_source_count": 0,
+            "independent_geometry_source_count": 3,
+            "merged_source_line_count": 4,
+            "junction_count": 2,
+            "endpoint_junction_count": 2,
+            "span_local_norm": 0.34,
+            "axis_ink_run_fraction": 0.98,
+        },
+        {
+            "region_id": "SIDE",
+            "kind": "profile_edge_candidate",
+            "ref": "SIDE.OUTLINE.MAX",
+            "position_px": 270.0,
+            "source_orientation": "vertical",
+            "relative_extreme_side": "max",
+            "non_dimension_crossing_source_count": 0,
+            "independent_geometry_source_count": 3,
+            "merged_source_line_count": 4,
+            "junction_count": 5,
+            "endpoint_junction_count": 1,
+            "span_local_norm": 0.99,
+            "axis_ink_run_fraction": 0.80,
+        },
+    ]
+    resolved = derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"SIDE": "side"},
+        overall_dimensions={"width_y": 32.0},
+        profile_inventory=profiles,
+        region_overall_fact_axes={("SIDE", "Y")},
+    )
+    assert len(resolved) == 1
+    assert resolved[0]["axis"] == "Y"
+    assert resolved[0]["overall_dimension_value"] == 32.0
+    assert resolved[0]["engineering_coordinate_inferred_from_pixels"] is False
+    assert {
+        anchor["ref"]: anchor["role"]
+        for anchor in resolved[0]["anchors"]
+    } == {
+        "SIDE.OUTLINE.MIN": "overall_min",
+        "SIDE.OUTLINE.MAX": "overall_max",
+    }
+
+    # Every independent observation is required: a bare dimension witness
+    # or a weak/disconnected stroke cannot become an overall solid outline.
+    for field, broken_value in (
+        ("independent_geometry_source_count", 1),
+        ("merged_source_line_count", 1),
+        ("junction_count", 1),
+        ("endpoint_junction_count", 0),
+        ("span_local_norm", 0.12),
+        ("axis_ink_run_fraction", 0.2),
+    ):
+        broken = [{**item} for item in profiles]
+        broken[0][field] = broken_value
+        assert derive_view_axis_boundaries(
+            candidates=[],
+            region_views={"SIDE": "side"},
+            overall_dimensions={"width_y": 32.0},
+            profile_inventory=broken,
+            region_overall_fact_axes={("SIDE", "Y")},
+        ) == [], field
+
+    assert derive_view_axis_boundaries(
+        candidates=[],
+        region_views={"SIDE": "side"},
+        overall_dimensions={"width_y": 32.0},
+        profile_inventory=profiles,
+        region_overall_fact_axes=set(),
+    ) == []

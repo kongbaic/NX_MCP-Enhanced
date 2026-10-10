@@ -6,6 +6,7 @@ CAD dimension blocking; raw text and source identity must still be preserved.
 """
 from __future__ import annotations
 
+import importlib
 import math
 from pathlib import Path
 from typing import Any
@@ -220,8 +221,9 @@ def classify_unassigned_marks(report: dict[str, Any]) -> dict[int, str]:
     if not isinstance(raster, str) or not Path(raster).is_file():
         return {}
     try:
-        import cv2
-
+        # Lazy import avoids making NumPy stubs part of the Python 3.10
+        # mypy analysis: OpenCV and NumPy are optional drawing dependencies.
+        cv2 = importlib.import_module("cv2")
         image = cv2.imread(raster, cv2.IMREAD_GRAYSCALE)
     except (ImportError, OSError):
         return {}

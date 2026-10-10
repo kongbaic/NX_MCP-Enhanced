@@ -762,3 +762,106 @@ def test_exterior_single_digit_only_binds_unique_physical_witness_pair():
         [845, 120], [870, 120], [870, 156], [845, 156],
     ]}
     assert not module._candidate_matches_item(candidate, distant)
+
+
+
+def test_overflow_is_hidden_from_reader_but_preserved_for_machine_ocr():
+    """Reader 4-item display caps must never silently drop OCR candidates."""
+    module = _load_module()
+    from nx_mcp.drawing_intelligence.reader_visual_aid import build_reader_visual_aid
+
+    raw = {
+        "schema": "raw-evidence-v1",
+        "image": {"width": 1000, "height": 600},
+        "regions": [
+            {
+                "region_id": "R",
+                "bbox_px": [100, 50, 400, 300],
+                "circle_groups": [],
+                "linear_pattern_candidates": [],
+            },
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": f"DG{i}",
+                "region_id": "R",
+                "orientation": "horizontal",
+                "axis_px": 80.0 + i * 12,
+                "axis_local_norm": (80.0 + i * 12 - 50.0) / 300.0,
+                "line_span_px": [140, 330],
+                "witness_positions_px": [140 + i, 330 - i],
+                "witness_positions_local_norm": [(40 + i) / 400, (230 - i) / 400],
+                "witness_line_evidence": [],
+            }
+            for i in range(5)
+        ],
+        "annotation_line_candidates": [],
+    }
+    aid = build_reader_visual_aid(raw)
+    assert aid["summary"]["overflow_bucket_count"] == 1
+    overflow_bucket = next(
+        b for b in aid["candidate_buckets"] if b["status"] == "overflow"
+    )
+    assert overflow_bucket["candidates"] == []
+    assert overflow_bucket["candidate_count"] == 5
+
+    recovered = module._collect_candidates(aid, raw)
+    assert len(recovered) == 5
+    assert {c["candidate_id"] for c in recovered} == {
+        f"DG{i}" for i in range(5)
+    }
+    assert all("witness_anchor_evidence" in c for c in recovered)
+    # Candidate content sent to Reader remains bounded/unchanged.
+    assert overflow_bucket["candidates"] == []
+
+    corrupted = {**aid, "candidate_buckets": [
+        {**b, "candidate_count": 6} if b["status"] == "overflow" else b
+        for b in aid["candidate_buckets"]
+    ]}
+    import pytest
+    with pytest.raises(ValueError, match="count mismatch"):
+        module._collect_candidates(corrupted, raw)
+
+
+def test_overflow_recovery_keeps_existing_bounded_candidate_geometry():
+    module = _load_module()
+    raw = {
+        "schema": "raw-evidence-v1",
+        "regions": [
+            {
+                "region_id": "R", "bbox_px": [0, 0, 300, 300],
+                "circle_groups": [], "linear_pattern_candidates": [],
+            }
+        ],
+        "dimension_geometry_candidates": [
+            {
+                "candidate_id": "DG_OV",
+                "region_id": "R", "orientation": "horizontal",
+                "axis_local_norm": 0.10, "axis_px": 30,
+                "line_span_px": [30, 200],
+                "witness_positions_px": [50, 180],
+                "witness_positions_local_norm": [0.167, 0.6],
+                "witness_line_evidence": [],
+            },
+        ],
+    }
+    aid = {
+        "candidate_buckets": [
+            {
+                "region_id": "R", "orientation": "horizontal",
+                "band": "top", "status": "bounded",
+                "candidate_count": 1,
+                "candidates": [{
+                    "candidate_id": "DG_KEEP",
+                    "region_id": "R", "orientation": "horizontal",
+                    "axis_px": 90.0,
+                    "line_span_px": [20, 200],
+                    "witness_positions_px": [20, 200],
+                    "witness_anchor_evidence": [],
+                }],
+            },
+        ]
+    }
+    # No overflow -> original visible/accepted OCR candidates are untouched.
+    actual = module._collect_candidates(aid, raw)
+    assert [item["candidate_id"] for item in actual] == ["DG_KEEP"]

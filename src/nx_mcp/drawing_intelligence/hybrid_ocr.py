@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .dimension_candidate_reducer import _dedupe_key, classify_candidate_band
+from .dimension_witness_anchors import enrich_reduced_dimension_candidates
 from .ocr_runtime import (
     assign_items_to_cells,
     build_sheet,
@@ -840,8 +842,97 @@ def _apply_dimension_role_conflict_gate(
         }
 
 
+def _overflow_candidates_for_machine_ocr(
+    visual_aid: dict[str, Any],
+    raw_evidence: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Restore bounded-out candidates for OCR without expanding Reader/Agent UI.
+
+    The reader visual aid intentionally hides ambiguous >4-candidate buckets.
+    Machine OCR must not interpret that human-facing display limit as missing
+    source geometry. It takes the exact reduced, deduplicated geometry from
+    the saved raw evidence and enriches only the otherwise hidden buckets.
+    """
+    if raw_evidence.get("schema") != "raw-evidence-v1":
+        raise ValueError("OCR overflow recovery requires raw-evidence-v1")
+    overflow_keys = {
+        (
+            bucket.get("region_id"),
+            bucket.get("orientation"),
+            bucket.get("band"),
+        )
+        for bucket in visual_aid.get("candidate_buckets", [])
+        if isinstance(bucket, dict) and bucket.get("status") == "overflow"
+    }
+    if not overflow_keys:
+        return []
+
+    by_bucket: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    seen: set[tuple[Any, ...]] = set()
+    for raw_candidate in raw_evidence.get("dimension_geometry_candidates", []):
+        if not isinstance(raw_candidate, dict):
+            continue
+        region_id = raw_candidate.get("region_id")
+        orientation = raw_candidate.get("orientation")
+        if not isinstance(region_id, str) or orientation not in {"horizontal", "vertical"}:
+            continue
+        band = classify_candidate_band(raw_candidate)
+        key = (region_id, orientation, band)
+        if key not in overflow_keys:
+            continue
+        identity = _dedupe_key(raw_candidate)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        by_bucket.setdefault(key, []).append(
+            {
+                "candidate_id": raw_candidate.get("candidate_id"),
+                "region_id": region_id,
+                "orientation": orientation,
+                "band": band,
+                "axis_px": raw_candidate.get("axis_px"),
+                "axis_local_norm": raw_candidate.get("axis_local_norm"),
+                "line_span_px": raw_candidate.get("line_span_px"),
+                "witness_positions_px": raw_candidate.get("witness_positions_px", []),
+                "witness_positions_local_norm": raw_candidate.get(
+                    "witness_positions_local_norm", []
+                ),
+                "witness_line_evidence": raw_candidate.get("witness_line_evidence", []),
+            }
+        )
+
+    # Fail closed on an inconsistent view: never silently drop candidates.
+    visible_overflows = {
+        (
+            str(bucket.get("region_id")),
+            str(bucket.get("orientation")),
+            str(bucket.get("band")),
+        ): int(bucket.get("candidate_count", -1))
+        for bucket in visual_aid.get("candidate_buckets", [])
+        if isinstance(bucket, dict) and bucket.get("status") == "overflow"
+    }
+    for key, declared_count in visible_overflows.items():
+        if len(by_bucket.get(key, [])) != declared_count:
+            raise ValueError(
+                f"OCR overflow candidate count mismatch: {key} "
+                f"raw={len(by_bucket.get(key, []))} visual_aid={declared_count}"
+            )
+
+    overflow_candidates = [
+        item
+        for key in sorted(by_bucket)
+        for item in by_bucket[key]
+    ]
+    enriched = enrich_reduced_dimension_candidates(
+        raw_evidence,
+        {"dimensions": [{"candidates": overflow_candidates}]},
+    )
+    return enriched["dimensions"][0]["candidates"]
+
+
 def _collect_candidates(
     visual_aid: dict[str, Any],
+    raw_evidence: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     by_id: dict[str, dict[str, Any]] = {}
     for bucket in visual_aid.get("candidate_buckets", []):
@@ -854,6 +945,24 @@ def _collect_candidates(
             if not candidate_id or candidate_id in by_id:
                 continue
             by_id[candidate_id] = candidate
+
+    if raw_evidence is not None:
+        for candidate in _overflow_candidates_for_machine_ocr(
+            visual_aid, raw_evidence
+        ):
+            candidate_id = str(candidate.get("candidate_id") or "")
+            if not candidate_id or candidate_id in by_id:
+                raise ValueError(
+                    "OCR overflow recovery produced a duplicate/invalid candidate ID"
+                )
+            by_id[candidate_id] = candidate
+    elif any(
+        isinstance(bucket, dict) and bucket.get("status") == "overflow"
+        for bucket in visual_aid.get("candidate_buckets", [])
+    ):
+        # Legacy tests may use the bounded-only helper directly. Production
+        # explicitly supplies raw evidence whenever there are overflow buckets.
+        pass
 
     candidates: list[dict[str, Any]] = []
     canonical_by_geometry: dict[tuple[Any, ...], dict[str, Any]] = {}
@@ -930,7 +1039,21 @@ def run_hybrid_ocr(
         and isinstance(region.get("bbox_px"), list)
     }
 
-    candidates = _collect_candidates(visual_aid)
+    raw_path_value = reader_input_payload.get("raw_evidence_path")
+    raw_evidence = (
+        load_json(Path(raw_path_value).resolve())
+        if isinstance(raw_path_value, str) and raw_path_value
+        else None
+    )
+    if (
+        any(
+            isinstance(bucket, dict) and bucket.get("status") == "overflow"
+            for bucket in visual_aid.get("candidate_buckets", [])
+        )
+        and raw_evidence is None
+    ):
+        raise ValueError("Hybrid OCR cannot ignore overflow without raw evidence")
+    candidates = _collect_candidates(visual_aid, raw_evidence)
     wide_sheet_path = artifact_root / "dg-hybrid-wide.png"
     wide_sheet, wide_cells = build_sheet(
         image,

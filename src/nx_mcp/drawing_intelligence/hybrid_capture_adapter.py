@@ -853,7 +853,12 @@ def _coverage_unresolved(
             "Whole OCR found a standalone linear token with no unique "
             f"DG assignment: token={item.get('token')!r}."
         )
-        annotation_kind = proven_annotations.get(item.get("source_item_index"))
+        source_index = item.get("source_item_index")
+        annotation_kind = (
+            proven_annotations.get(source_index)
+            if isinstance(source_index, int) and not isinstance(source_index, bool)
+            else None
+        )
         if annotation_kind is not None:
             reason += (
                 f" Raster topology proves {annotation_kind}; preserve OCR text "

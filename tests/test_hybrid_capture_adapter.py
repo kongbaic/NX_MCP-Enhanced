@@ -10074,3 +10074,33 @@ def test_nominal_annotation_classification_keeps_unproven_ocr_blocking(
         },
     }
     assert classify_unassigned_marks(report) == {}
+
+
+
+def test_annotation_proof_matches_only_integer_source_indices(monkeypatch):
+    """Never suppress raw OCR when its source identifier is not typed."""
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "classify_unassigned_marks",
+        lambda report: {7: "surface_texture_symbol"},
+    )
+    coverage = {
+        "observed_silent_drop_count": 0,
+        "unassigned_linear_observations": [
+            {"source_item_index": "7", "token": "1.6"},
+            {"source_item_index": 7, "token": "1.6"},
+            {"source_item_index": True, "token": "1.6"},
+        ],
+    }
+    unresolved = hybrid_adapter._coverage_unresolved(
+        {"coverage": coverage},
+        candidate_lookup={},
+        view_lookup={},
+        boundaries=[],
+        overall_dimension_facts=[],
+    )
+    assert [item.required_for_modeling for item in unresolved] == [
+        True,
+        False,
+        True,
+    ]

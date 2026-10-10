@@ -535,6 +535,7 @@ def _bbox_reference_only_region_ids(
 
 def _local_only_redundant_with_independent_overall(
     *,
+    report: dict[str, Any],
     item: dict[str, Any],
     candidate: dict[str, Any],
     view_lookup: dict[str, HybridRegionView],
@@ -651,9 +652,37 @@ def _local_only_redundant_with_independent_overall(
             for ref in [anchor.get("ref")]
             if isinstance(ref, str) and ref
         }
-        if len(physical_refs) != 1:
+        if len(physical_refs) == 1:
+            physical_ref = next(iter(physical_refs))
+        elif len(physical_refs) == 2:
+            # The independent overall-boundary finder already uses this
+            # conservative raster proof to merge duplicate detections of ONE
+            # physical contour. Reuse it here; never just pick the ref that
+            # happens to appear in the overall boundary ledger.
+            raster_path = report.get("source_raster")
+            inventory = report.get("structural_profile_inventory")
+            if not isinstance(raster_path, str) or not isinstance(inventory, list):
+                return False
+            physical_profiles = [
+                profile
+                for profile in inventory
+                if isinstance(profile, dict)
+                and profile.get("kind") == "profile_edge_candidate"
+                and profile.get("region_id") == region_id
+                and profile.get("ref") in physical_refs
+            ]
+            if (
+                len(physical_profiles) != 2
+                or {profile.get("ref") for profile in physical_profiles}
+                != physical_refs
+            ):
+                return False
+            alias = single_ink_stroke_alias(physical_profiles, raster_path)
+            if alias is None:
+                return False
+            physical_ref = str(alias.get("ref") or "")
+        else:
             return False
-        physical_ref = next(iter(physical_refs))
         if physical_ref not in boundary_refs:
             return False
         source_lines = matching_lines[0].get("source_lines", [])
@@ -862,6 +891,7 @@ def _coverage_unresolved(
         )
         independent_overall_duplicate = (
             _local_only_redundant_with_independent_overall(
+                report=report,
                 item=item,
                 candidate=candidate,
                 view_lookup=view_lookup,

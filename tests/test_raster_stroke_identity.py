@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import pytest
 
 from nx_mcp.drawing_intelligence.raster_stroke_identity import (
     single_ink_stroke_alias,
@@ -171,3 +172,108 @@ def test_overall_extreme_does_not_promote_parallel_lines_or_wrong_scope(tmp_path
         region_overall_fact_axes={("OTHER", "Z")},
         source_raster_path=_raster(tmp_path),
     ) == []
+
+
+
+@pytest.mark.parametrize(
+    ("two_lines", "missing_raster", "expected_advisory"),
+    [
+        (False, False, True),
+        (True, False, False),
+        (False, True, False),
+    ],
+)
+def test_local_only_overall_reuses_raster_proven_duplicate_contour(
+    tmp_path, two_lines, missing_raster, expected_advisory,
+):
+    """Shared ink is one physical owner; distinct strokes stay blocking."""
+    from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+        HybridRegionView, _coverage_unresolved,
+    )
+    from nx_mcp.drawing_intelligence.reader_semantic_answers import (
+        PartialOverallDimensionFact,
+    )
+
+    strong, weak = _pair()
+    upper = {
+        **strong,
+        "ref": "upper_independent",
+        "position_px": 200.0,
+        "relative_extreme_side": "min",
+    }
+    raster = _raster(tmp_path, two_lines=two_lines)
+    if missing_raster:
+        raster = str(tmp_path / "missing.png")
+
+    candidate = {
+        "candidate_id": "DG_LOCAL_OVERALL",
+        "region_id": "R_TEST",
+        "orientation": "vertical",
+        "accepted_token": None,
+        "witness_positions_px": [200.0, 550.2],
+        "witness_anchor_evidence": [
+            {"witness_index": 0, "nearest_anchors": [upper]},
+            {"witness_index": 1, "nearest_anchors": [strong, weak]},
+        ],
+        "witness_line_evidence": [
+            {"witness_index": 0, "source_lines": [{
+                "crosses_dimension_axis": True
+            }]},
+            {"witness_index": 1, "source_lines": [{
+                "crosses_dimension_axis": True
+            }]},
+        ],
+    }
+    boundary = {
+        "status": "resolved",
+        "region_id": "R_TEST",
+        "axis": "Z",
+        "candidate_id": None,
+        "overall_dimension_value": 66.0,
+        "anchors": [
+            {"ref": "upper_independent", "role": "overall_max"},
+            {"ref": "edge_strong", "role": "overall_min"},
+        ],
+        "basis": "independent_overall_dimension_plus_unique_profile_extremes",
+        "overall_fact_scope": "same_region_structural_evidence",
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    report = {
+        "source_raster": raster,
+        "structural_profile_inventory": [upper, strong, weak],
+        "coverage": {
+            "observed_silent_drop_count": 0,
+            "conflicting_linear_observations": [],
+            "unassigned_linear_observations": [
+                {
+                    "source_item_index": 9,
+                    "token": "6",
+                    "bbox": [[7, 357], [47, 357], [47, 402], [7, 402]],
+                }
+            ],
+            "local_only_linear_observations": [
+                {"candidate_id": "DG_LOCAL_OVERALL", "token": "66"}
+            ],
+        },
+    }
+    unresolved = _coverage_unresolved(
+        report,
+        {"DG_LOCAL_OVERALL": candidate},
+        {"R_TEST": HybridRegionView(
+            region_id="R_TEST", view_kind="front", evidence=["test:R_TEST"]
+        )},
+        boundaries=[boundary],
+        overall_dimension_facts=[
+            PartialOverallDimensionFact(
+                axis="Z",
+                value=66.0,
+                evidence=["structural:R_TEST:context"],
+            )
+        ],
+    )
+    local = next(item for item in unresolved if item.field == "local_only_linear_text")
+    whole = next(item for item in unresolved if item.field == "unassigned_linear_text")
+    assert (not local.required_for_modeling) is expected_advisory
+    assert whole.required_for_modeling is True
+    if expected_advisory:
+        assert "advisory duplicate coverage" in local.reason

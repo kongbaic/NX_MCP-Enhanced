@@ -7562,12 +7562,19 @@ def _recover_unassigned_short_overall_offsets(
         bbox_midpoint = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
         topology = infer_short_dimension_visual_topology(source, item.get("bbox"))
         if topology is None:
+            ledger.append({
+                "source_item_index": source_index,
+                "status": "unresolved",
+                "reason": "short_dimension_topology_not_proven",
+                "engineering_coordinate_inferred_from_pixels": False,
+            })
             continue
         orientation, candidate_pairs = topology
         if orientation not in ("horizontal", "vertical"):
             continue
 
         proof_matches: list[dict[str, Any]] = []
+        failure_stages: list[dict[str, Any]] = []
         for region_id, rect in region_rects.items():
             region_view = view_lookup.get(region_id)
             rx, ry, rw, rh = rect
@@ -7643,6 +7650,11 @@ def _recover_unassigned_short_overall_offsets(
                             break
             rail_positions = sorted(set(rail_positions))
             if not rail_positions:
+                failure_stages.append({
+                    "region_id": region_id,
+                    "axis": axis,
+                    "reason": "no_continuous_unique_dimension_rail",
+                })
                 continue
             rail_clusters: list[list[int]] = []
             for rail in rail_positions:
@@ -7652,6 +7664,12 @@ def _recover_unassigned_short_overall_offsets(
                     rail_clusters.append([rail])
             # Multiple distinct dark rails or an unconnected rail fail closed.
             if len(rail_clusters) != 1:
+                failure_stages.append({
+                    "region_id": region_id,
+                    "axis": axis,
+                    "reason": "multiple_dimension_rail_clusters",
+                    "cluster_count": len(rail_clusters),
+                })
                 continue
             rail = sum(rail_clusters[0]) / len(rail_clusters[0])
 
@@ -7693,6 +7711,13 @@ def _recover_unassigned_short_overall_offsets(
                         alias = single_ink_stroke_alias(profiles, source)
                         profiles = [alias] if alias is not None else profiles
                     if len(profiles) != 1:
+                        failure_stages.append({
+                            "region_id": region_id,
+                            "axis": axis,
+                            "reason": "witness_profile_not_unique",
+                            "witness_px": round(witness, 2),
+                            "profile_count": len(profiles),
+                        })
                         proven = False
                         break
                     profile = profiles[0]
@@ -7711,6 +7736,11 @@ def _recover_unassigned_short_overall_offsets(
                     sum(role == "profile_boundary" for role, _, _ in owners) != 1
                     or sum(role in ("overall_min", "overall_max") for role, _, _ in owners) != 1
                 ):
+                    failure_stages.append({
+                        "region_id": region_id,
+                        "axis": axis,
+                        "reason": "witness_owner_roles_not_profile_plus_overall",
+                    })
                     continue
                 proof_matches.append({
                     "region_id": region_id,
@@ -7723,6 +7753,18 @@ def _recover_unassigned_short_overall_offsets(
 
         # Never pick the nearest of multiple valid dimension rails.
         if len(proof_matches) != 1:
+            ledger.append({
+                "source_item_index": source_index,
+                "status": "unresolved",
+                "reason": (
+                    "ambiguous_multiple_short_dimension_proofs"
+                    if proof_matches else "no_unique_short_dimension_proof"
+                ),
+                "topology_orientation": orientation,
+                "witness_pair_count": len(candidate_pairs),
+                "gate_failures": failure_stages[:16],
+                "engineering_coordinate_inferred_from_pixels": False,
+            })
             continue
         match = proof_matches[0]
         evidence = [
@@ -7754,6 +7796,7 @@ def _recover_unassigned_short_overall_offsets(
             )
         )
         ledger.append({
+            "status": "recovered",
             "dimension_key": dimension_key,
             "source_item_index": source_index,
             "region_id": match["region_id"],
@@ -11849,7 +11892,8 @@ def adapt_hybrid_ocr_report(
                 record.get("source_item_index")
             )
     for record in short_offset_ledger:
-        if isinstance(record, dict):
+        # Rejected short-dimension probes remain modeling-blocking.
+        if isinstance(record, dict) and isinstance(record.get("dimension_key"), str):
             claimed_unassigned_source_indices.add(
                 record.get("source_item_index")
             )
@@ -12050,6 +12094,13 @@ def adapt_hybrid_ocr_report(
             "kind": "hybrid_profile_offset_recovery_ledger",
             "schema": "1.0",
             "items": profile_offset_ledger,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        },
+        {
+            "kind": "hybrid_short_offset_recovery_ledger",
+            "schema": "1.0",
+            "items": short_offset_ledger,
             "engineering_coordinate_inferred_from_pixels": False,
             "pixel_geometry_used_for_identity_only": True,
         },

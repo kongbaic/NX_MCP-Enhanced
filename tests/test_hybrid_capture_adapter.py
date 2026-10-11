@@ -10381,6 +10381,7 @@ def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profi
         "profile_boundary", "overall_min"
     ]
     assert len(ledger) == 1
+    assert ledger[0]["status"] == "recovered"
     assert ledger[0]["engineering_coordinate_inferred_from_pixels"] is False
 
     assert _recover_unassigned_short_overall_offsets(
@@ -10403,7 +10404,14 @@ def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profi
             profiles[0]["independent_geometry_source_count"] = 0
         else:
             boundaries[0]["overall_dimension_value"] = 6.0
-        assert replay() == ([], []), variant
+        rejected_dims, rejection_ledger = replay()
+        assert rejected_dims == [], variant
+        assert any(
+            item.get("status") == "unresolved"
+            and item.get("source_item_index") == 7
+            and not item.get("dimension_key")
+            for item in rejection_ledger
+        ), variant
         if variant == "missing_rail":
             assert cv2.imwrite(str(path), image)
         elif variant == "missing_profile":

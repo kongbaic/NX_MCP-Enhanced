@@ -1765,7 +1765,7 @@ def test_raster_hidden_bore_pair_centered_span_solved_from_dimensions_only():
     # 24 and 40 supply all metric values; pixels select symmetry only.
     assert solution.values["constraints.symmetric_centers.D002.x"] == 20.0
     draft = build_semantic_draft(good, solution)
-    gate_errors = R._drawing_gate_a_checks(draft)
+    gate_errors = R.check_drawing_json(draft)
     assert not any("writer conflict" in error for error in gate_errors)
 
 

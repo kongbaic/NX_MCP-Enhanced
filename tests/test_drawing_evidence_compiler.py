@@ -1659,3 +1659,118 @@ def test_draft_infers_only_semantically_implied_feature_types():
     assert features["F_HOLE"]["type"] == "hole"
     assert features["F_THREAD"]["type"] == "threaded_hole"
     assert features["F_RECESS"]["type"] == "recessed_hole"
+
+
+
+def test_raster_hidden_bore_pair_centered_span_solved_from_dimensions_only():
+    def make_graph(*, other_center=371.0, extra=False, reverse=False,
+                   missing_proof=False):
+        centers = [176.1, other_center]
+        keys = ["R.HIDDEN_BORE_CENTER.DG_PAIR.01", "R.HIDDEN_BORE_CENTER.DG_PAIR.02"]
+        items = [
+            {
+                "candidate_id": "DG_PAIR",
+                "witness_index": index,
+                "entity_key": keys[index],
+                "position_px": centers[index],
+                "source_pattern_indices": [index + 1],
+                "hidden_wall_positions_px": [centers[index] - 15, centers[index] + 15],
+                "hidden_wall_ink_similarity": 0.97,
+                "structural_face_positions_px": [200.0, 270.0],
+                "selection_basis": "unique_raster_centerline_and_symmetric_hidden_walls",
+                "engineering_coordinate_inferred_from_pixels": False,
+                "pixel_geometry_used_for_identity_only": True,
+            }
+            for index in range(2)
+        ]
+        if extra:
+            items.append({**items[0], "source_pattern_indices": [4]})
+        evidence = [
+            "hybrid:DG_PAIR:whole",
+            *[
+                f"hybrid:proven-hidden-walls:{key}"
+                for key in keys
+            ],
+        ]
+        if missing_proof:
+            evidence.pop()
+        return EvidenceGraph(
+            overall_dimensions=_overall_dimensions(),
+            views=[ViewEvidence(id="V1", kind="front")],
+            projections=[
+                ProjectionEvidence(
+                    id=f"P{index}",
+                    feature_id=f"B{index}",
+                    view_id="V1",
+                    shape="hidden_parallel",
+                )
+                for index in range(2)
+            ],
+            dimensions=[
+                DimensionObservation(
+                    id="D002",
+                    value=24.0,
+                    axis="X",
+                    direction=-1 if reverse else 1,
+                    source_ids=evidence,
+                    endpoints=[
+                        DimensionEndpoint(
+                            role="feature_center",
+                            target=f"feature:B{index}.centerline.x",
+                        )
+                        for index in range(2)
+                    ],
+                )
+            ],
+            observations=[
+                {
+                    "kind": "hybrid_raster_hidden_bore_center_ledger",
+                    "schema": "1.0",
+                    "items": items,
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+                {
+                    "kind": "hybrid_view_axis_boundary_ledger",
+                    "items": [
+                        {
+                            "status": "resolved",
+                            "region_id": "R",
+                            "axis": "X",
+                            "overall_dimension_value": 40.0,
+                            "anchors": [
+                                {"role": "overall_min", "position_px": 142.4},
+                                {"role": "overall_max", "position_px": 406.25},
+                            ],
+                            "engineering_coordinate_inferred_from_pixels": False,
+                        }
+                    ],
+                    "engineering_coordinate_inferred_from_pixels": False,
+                },
+            ],
+        )
+
+    good = compile_evidence_graph(make_graph())
+    relations = [item for item in good.relations if item.kind == "centered_span"]
+    assert len(relations) == 1
+    assert relations[0].value == 24
+    assert relations[0].metadata["engineering_coordinate_inferred_from_pixels"] is False
+    solution = resolve_evidence_graph(good)
+    assert solution.conflicts == []
+    assert solution.values["feature:B0.centerline.x"] == 8.0
+    assert solution.values["feature:B1.centerline.x"] == 32.0
+    # 24 and 40 supply all metric values; pixels select symmetry only.
+    assert solution.values["constraints.symmetric_centers.D002.x"] == 20.0
+
+    # Non-centered, duplicate, reversed or uncorroborated pairs stay unsolved.
+    for variant in (
+        {"other_center": 395.0},
+        {"extra": True},
+        {"reverse": True},
+        {"missing_proof": True},
+    ):
+        compiled = compile_evidence_graph(make_graph(**variant))
+        assert not any(item.kind == "centered_span" for item in compiled.relations), variant
+        unresolved = resolve_evidence_graph(compiled)
+        assert "feature:B0.centerline.x" not in unresolved.values
+        assert "feature:B1.centerline.x" not in unresolved.values

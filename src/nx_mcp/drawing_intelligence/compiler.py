@@ -791,6 +791,216 @@ def _compile_dimensions(
         )
 
 
+
+def _compile_raster_hidden_bore_centered_spans(
+    graph: EvidenceGraph,
+    direct: list[DirectValueEvidence],
+    relations: list[RelationEvidence],
+    unresolved: list[dict[str, Any]],
+) -> None:
+    """Connect uniquely centered paired bore axes to engineering constraints.
+
+    Raster center locations prove midpoint identity only. The signed span
+    comes from an accepted dimension and the midpoint value comes from an
+    independently proven overall extent. Neither is pixel-calibrated.
+    """
+    center_ledgers = [
+        record for record in graph.observations
+        if isinstance(record, dict)
+        and record.get("kind") == "hybrid_raster_hidden_bore_center_ledger"
+        and record.get("schema") == "1.0"
+        and record.get("engineering_coordinate_inferred_from_pixels") is False
+        and record.get("pixel_geometry_used_for_identity_only") is True
+    ]
+    boundary_ledgers = [
+        record for record in graph.observations
+        if isinstance(record, dict)
+        and record.get("kind") == "hybrid_view_axis_boundary_ledger"
+        and record.get("engineering_coordinate_inferred_from_pixels") is False
+    ]
+    if len(center_ledgers) != 1 or len(boundary_ledgers) != 1:
+        return
+    records = center_ledgers[0].get("items")
+    boundaries = boundary_ledgers[0].get("items")
+    if not isinstance(records, list) or not isinstance(boundaries, list):
+        return
+
+    for dimension in graph.dimensions:
+        if (
+            dimension.direction not in (-1, 1)
+            or len(dimension.endpoints) != 2
+            or not all(endpoint.role == "feature_center" and endpoint.target
+                       for endpoint in dimension.endpoints)
+        ):
+            continue
+        first_target, second_target = (
+            dimension.endpoints[0].target,
+            dimension.endpoints[1].target,
+        )
+        if first_target == second_target:
+            continue
+        first_id = _feature_id(first_target)
+        second_id = _feature_id(second_target)
+        if not first_id or not second_id or first_id == second_id:
+            continue
+        projected = {
+            projection.feature_id for projection in graph.projections
+            if projection.shape == "hidden_parallel"
+        }
+        if first_id not in projected or second_id not in projected:
+            continue
+
+        def supports(record: dict[str, Any]) -> bool:
+            key = record.get("entity_key")
+            if not isinstance(key, str) or not key:
+                return False
+            return (
+                record.get("selection_basis")
+                == "unique_raster_centerline_and_symmetric_hidden_walls"
+                and record.get("engineering_coordinate_inferred_from_pixels") is False
+                and record.get("pixel_geometry_used_for_identity_only") is True
+                and f"hybrid:proven-hidden-walls:{key}" in dimension.source_ids
+            )
+
+        pairs = [
+            record for record in records
+            if isinstance(record, dict) and supports(record)
+        ]
+        if len(pairs) != 2:
+            continue
+        pairs.sort(key=lambda item: item.get("witness_index", -1))
+        if [item.get("witness_index") for item in pairs] != [0, 1]:
+            continue
+        candidate_id = pairs[0].get("candidate_id")
+        if (
+            not isinstance(candidate_id, str)
+            or not candidate_id
+            or any(item.get("candidate_id") != candidate_id for item in pairs)
+            or f"hybrid:{candidate_id}:whole" not in dimension.source_ids
+        ):
+            continue
+        regions = {
+            str(item["entity_key"]).split(".", 1)[0]
+            for item in pairs
+        }
+        if len(regions) != 1:
+            continue
+        region_id = next(iter(regions))
+        positions: list[float] = []
+        valid = True
+        for record in pairs:
+            value = record.get("position_px")
+            if type(value) not in (int, float):
+                valid = False
+                break
+            positions.append(float(value))
+            walls = record.get("hidden_wall_positions_px")
+            faces = record.get("structural_face_positions_px")
+            similarity = record.get("hidden_wall_ink_similarity")
+            if (
+                not isinstance(walls, list) or len(walls) != 2
+                or any(type(value) not in (int, float) for value in walls)
+                or not float(walls[0]) < float(value) < float(walls[1])
+                or not isinstance(faces, list) or len(faces) != 2
+                or any(type(value) not in (int, float) for value in faces)
+                or type(similarity) not in (int, float) or similarity < 0.85
+            ):
+                valid = False
+                break
+        if not valid or positions[0] == positions[1]:
+            continue
+        if (positions[1] - positions[0]) * dimension.direction <= 0:
+            continue
+        if pairs[0]["structural_face_positions_px"] != pairs[1]["structural_face_positions_px"]:
+            continue
+        if pairs[0].get("source_pattern_indices") == pairs[1].get("source_pattern_indices"):
+            continue
+
+        options = [
+            item for item in boundaries
+            if isinstance(item, dict)
+            and item.get("status") == "resolved"
+            and item.get("region_id") == region_id
+            and item.get("axis") == dimension.axis
+            and item.get("engineering_coordinate_inferred_from_pixels") is False
+        ]
+        if len(options) != 1:
+            continue
+        boundary = options[0]
+        overall = boundary.get("overall_dimension_value")
+        if (
+            type(overall) not in (int, float)
+            or not 0 < dimension.value < float(overall)
+            or abs(float(overall) - _overall_value(graph, dimension.axis)) > 1e-9
+        ):
+            continue
+        roles: dict[str, float] = {}
+        anchors = boundary.get("anchors")
+        if not isinstance(anchors, list):
+            continue
+        for item in anchors:
+            if not isinstance(item, dict):
+                continue
+            role, pos = item.get("role"), item.get("position_px")
+            if role in {"overall_min", "overall_max"} and type(pos) in (int, float):
+                if role in roles:
+                    valid = False
+                    break
+                roles[role] = float(pos)
+        if not valid or set(roles) != {"overall_min", "overall_max"}:
+            continue
+        start, end = sorted(roles.values())
+        if end <= start or any(not start < value < end for value in positions):
+            continue
+        residual = abs(sum(positions) / 2.0 - (start + end) / 2.0)
+        tolerance = max(2.0, (end - start) * 0.015)
+        if residual > tolerance:
+            continue
+
+        # The compiler supplies a numeric datum from the overall extent;
+        # Resolver alone obtains the two hole coordinates from centered_span.
+        center_target = (
+            f"constraints.symmetric_centers.{dimension.id}."
+            f"{dimension.axis.lower()}"
+        )
+        provenance = list(dict.fromkeys([
+            *dimension.source_ids,
+            f"hybrid:overall:{region_id}:{dimension.axis}",
+            "hybrid:unique-bilateral-hidden-bore-centerline-symmetry",
+        ]))
+        _append_direct(
+            direct,
+            unresolved,
+            DirectValueEvidence(
+                id=f"HB_MID_{dimension.id}",
+                target=center_target,
+                value=float(overall) / 2.0,
+                semantic="position_dimension",
+                source_ids=provenance,
+            ),
+        )
+        _append_relation(
+            relations,
+            RelationEvidence(
+                id=f"HB_SYM_{dimension.id}",
+                kind="centered_span",
+                axis=dimension.axis,
+                targets=[first_target, center_target, second_target],
+                value=dimension.value,
+                direction=dimension.direction,
+                source_ids=provenance,
+                required_for_modeling=dimension.required_for_modeling,
+                metadata={
+                    "basis": "uniquely_proven_dual_hidden_bore_centers_plus_overall_midpoint",
+                    "visual_midpoint_residual_px": round(residual, 4),
+                    "visual_midpoint_tolerance_px": round(tolerance, 4),
+                    "engineering_coordinate_inferred_from_pixels": False,
+                    "pixel_geometry_used_for_identity_only": True,
+                },
+            ),
+        )
+
+
 def _audit_labeled_dimension_consumption(
     graph: EvidenceGraph,
     direct: list[DirectValueEvidence],
@@ -1219,6 +1429,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
+    _compile_raster_hidden_bore_centered_spans(graph, direct, relations, unresolved)
     _compile_resolved_symmetric_local_section_features(
         graph,
         direct,

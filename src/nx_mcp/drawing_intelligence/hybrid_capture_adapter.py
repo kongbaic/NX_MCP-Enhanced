@@ -7662,94 +7662,89 @@ def _recover_unassigned_short_overall_offsets(
                     rail_clusters[-1].append(rail)
                 else:
                     rail_clusters.append([rail])
-            # Multiple distinct dark rails or an unconnected rail fail closed.
-            if len(rail_clusters) != 1:
-                failure_stages.append({
-                    "region_id": region_id,
-                    "axis": axis,
-                    "reason": "multiple_dimension_rail_clusters",
-                    "cluster_count": len(rail_clusters),
-                })
-                continue
-            rail = sum(rail_clusters[0]) / len(rail_clusters[0])
-
+            # Do not reject multiple *ink* rails before endpoint checks.
+            # A neighboring overall/datum line may be continuous but does not
+            # connect to both selected physical profiles. Only individually
+            # proven rails count toward the final fail-closed uniqueness gate.
             expected_profile_orientation = (
                 "horizontal" if orientation == "vertical" else "vertical"
             )
-            for first, second in candidate_pairs:
-                lo, hi = sorted((float(first), float(second)))
-                if not lo < text_along < hi:
-                    continue
-                owners: list[tuple[str, str | None, str]] = []
-                proven = True
-                for witness in (lo, hi):
-                    profiles = [
-                        profile
-                        for profile in profile_inventory
-                        if (
-                            isinstance(profile, dict)
-                            and profile.get("kind") == "profile_edge_candidate"
-                            and profile.get("region_id") == region_id
-                            and profile.get("source_orientation")
-                            == expected_profile_orientation
-                            and isinstance(profile.get("position_px"), (int, float))
-                            and not isinstance(profile.get("position_px"), bool)
-                            and abs(float(profile["position_px"]) - witness)
-                            <= max(2.0, float(profile.get("axis_tolerance_px") or 2.0))
-                            and isinstance(profile.get("span_px"), list)
-                            and len(profile["span_px"]) == 2
-                            and all(isinstance(v, (int, float)) for v in profile["span_px"])
-                            and min(profile["span_px"]) - 3 <= rail
-                            <= max(profile["span_px"]) + 3
-                            and isinstance(
-                                profile.get("independent_geometry_source_count"), int
+            for cluster in rail_clusters:
+                rail = sum(cluster) / len(cluster)
+                for first, second in candidate_pairs:
+                    lo, hi = sorted((float(first), float(second)))
+                    if not lo < text_along < hi:
+                        continue
+                    owners: list[tuple[str, str | None, str]] = []
+                    proven = True
+                    for witness in (lo, hi):
+                        profiles = [
+                            profile
+                            for profile in profile_inventory
+                            if (
+                                isinstance(profile, dict)
+                                and profile.get("kind") == "profile_edge_candidate"
+                                and profile.get("region_id") == region_id
+                                and profile.get("source_orientation")
+                                == expected_profile_orientation
+                                and isinstance(profile.get("position_px"), (int, float))
+                                and not isinstance(profile.get("position_px"), bool)
+                                and abs(float(profile["position_px"]) - witness)
+                                <= max(2.0, float(profile.get("axis_tolerance_px") or 2.0))
+                                and isinstance(profile.get("span_px"), list)
+                                and len(profile["span_px"]) == 2
+                                and all(isinstance(v, (int, float)) for v in profile["span_px"])
+                                and min(profile["span_px"]) - 3 <= rail
+                                <= max(profile["span_px"]) + 3
+                                and isinstance(
+                                    profile.get("independent_geometry_source_count"), int
+                                )
+                                and int(profile["independent_geometry_source_count"]) >= 1
                             )
-                            and int(profile["independent_geometry_source_count"]) >= 1
-                        )
-                    ]
-                    if len(profiles) == 2:
-                        alias = single_ink_stroke_alias(profiles, source)
-                        profiles = [alias] if alias is not None else profiles
-                    if len(profiles) != 1:
+                        ]
+                        if len(profiles) == 2:
+                            alias = single_ink_stroke_alias(profiles, source)
+                            profiles = [alias] if alias is not None else profiles
+                        if len(profiles) != 1:
+                            failure_stages.append({
+                                "region_id": region_id,
+                                "axis": axis,
+                                "reason": "witness_profile_not_unique",
+                                "witness_px": round(witness, 2),
+                                "profile_count": len(profiles),
+                            })
+                            proven = False
+                            break
+                        profile = profiles[0]
+                        ref = str(profile.get("ref") or "")
+                        role = anchor_roles.get(ref)
+                        if role is not None:
+                            owners.append((role, None, ref))
+                        elif ref in profile_entity_by_ref:
+                            owners.append(("profile_boundary", profile_entity_by_ref[ref], ref))
+                        else:
+                            proven = False
+                            break
+                    if not proven or len(owners) != 2 or owners[0][2] == owners[1][2]:
+                        continue
+                    if (
+                        sum(role == "profile_boundary" for role, _, _ in owners) != 1
+                        or sum(role in ("overall_min", "overall_max") for role, _, _ in owners) != 1
+                    ):
                         failure_stages.append({
                             "region_id": region_id,
                             "axis": axis,
-                            "reason": "witness_profile_not_unique",
-                            "witness_px": round(witness, 2),
-                            "profile_count": len(profiles),
+                            "reason": "witness_owner_roles_not_profile_plus_overall",
                         })
-                        proven = False
-                        break
-                    profile = profiles[0]
-                    ref = str(profile.get("ref") or "")
-                    role = anchor_roles.get(ref)
-                    if role is not None:
-                        owners.append((role, None, ref))
-                    elif ref in profile_entity_by_ref:
-                        owners.append(("profile_boundary", profile_entity_by_ref[ref], ref))
-                    else:
-                        proven = False
-                        break
-                if not proven or len(owners) != 2 or owners[0][2] == owners[1][2]:
-                    continue
-                if (
-                    sum(role == "profile_boundary" for role, _, _ in owners) != 1
-                    or sum(role in ("overall_min", "overall_max") for role, _, _ in owners) != 1
-                ):
-                    failure_stages.append({
+                        continue
+                    proof_matches.append({
                         "region_id": region_id,
+                        "orientation": orientation,
                         "axis": axis,
-                        "reason": "witness_owner_roles_not_profile_plus_overall",
+                        "owners": owners,
+                        "rail_px": round(rail, 2),
+                        "witness_positions_px": [round(lo, 2), round(hi, 2)],
                     })
-                    continue
-                proof_matches.append({
-                    "region_id": region_id,
-                    "orientation": orientation,
-                    "axis": axis,
-                    "owners": owners,
-                    "rail_px": round(rail, 2),
-                    "witness_positions_px": [round(lo, 2), round(hi, 2)],
-                })
 
         # Never pick the nearest of multiple valid dimension rails.
         if len(proof_matches) != 1:
@@ -7762,6 +7757,7 @@ def _recover_unassigned_short_overall_offsets(
                 ),
                 "topology_orientation": orientation,
                 "witness_pair_count": len(candidate_pairs),
+                "valid_rail_proof_count": len(proof_matches),
                 "gate_failures": failure_stages[:16],
                 "engineering_coordinate_inferred_from_pixels": False,
             })

@@ -10418,3 +10418,31 @@ def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profi
             profiles[0]["independent_geometry_source_count"] = 2
         else:
             boundaries[0]["overall_dimension_value"] = 66.0
+
+    # A nearby parallel ink rail whose span never reaches either physical
+    # witness owner must not mask the unique supported dimension rail.
+    with_non_owner_rail = image.copy()
+    cv2.line(with_non_owner_rail, (55, 200), (55, 270), 0, 2)
+    assert cv2.imwrite(str(path), with_non_owner_rail)
+    dims, ledger = replay()
+    assert len(dims) == 1
+    assert [endpoint.role for endpoint in dims[0].endpoints] == [
+        "profile_boundary", "overall_min"
+    ]
+    assert ledger[0]["status"] == "recovered"
+
+    # Conversely, two separate rails BOTH connecting the two profile
+    # witnesses are ambiguous. The OCR 8 must remain unresolved.
+    with_two_supported_rails = image.copy()
+    cv2.line(with_two_supported_rails, (114, 200), (114, 270), 0, 2)
+    assert cv2.imwrite(str(path), with_two_supported_rails)
+    rejected, ledger = replay()
+    assert rejected == []
+    assert any(
+        item.get("status") == "unresolved"
+        and item.get("reason") == "ambiguous_multiple_short_dimension_proofs"
+        and item.get("valid_rail_proof_count", 0) >= 2
+        for item in ledger
+    )
+    assert cv2.imwrite(str(path), image)
+

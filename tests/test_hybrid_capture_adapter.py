@@ -10446,3 +10446,80 @@ def test_unassigned_short_dimension_recovery_requires_real_rail_and_unique_profi
     )
     assert cv2.imwrite(str(path), image)
 
+
+
+def test_collinear_unowned_hidden_axis_does_not_become_material_boundary(monkeypatch):
+    """A dashed bore axis cannot be promoted to a solid profile face."""
+    original_endpoint = {
+        "status": "unique_physical_candidate",
+        "physical_candidates": [
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R.PROFILE.MERGED",
+                "position_px": 371.068,
+                "axis_tolerance_px": 3.0,
+                "axis_ink_run_fraction": 0.39623,
+                "endpoint_junction_count": 0,
+                "relative_extreme_side": None,
+            }
+        ],
+        "ignored_nonownership_anchors": [
+            {
+                "kind": "linear_pattern_axis",
+                "ref": "R.linear_pattern.001",
+                "source_kind": "dashed_or_centerline_candidate",
+                "position_px": 371.0,
+                "dash_score": 0.663,
+            }
+        ],
+    }
+    second_endpoint = {
+        "status": "unique_physical_candidate",
+        "physical_candidates": [
+            {
+                "kind": "profile_edge_candidate",
+                "ref": "R.SOLID",
+            }
+        ],
+        "ignored_nonownership_anchors": [],
+    }
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda candidate: {"endpoints": [original_endpoint, second_endpoint]},
+    )
+
+    def run(roles=None):
+        return hybrid_adapter._dimension_endpoints_from_candidates(
+            {"candidate_id": "DG_SPACING"},
+            entity_keys={"R.PROFILE.MERGED", "R.PROFILE.SOLID"},
+            boundary_roles=roles or {},
+            profile_entity_by_ref={
+                "R.PROFILE.MERGED": "R.PROFILE.MERGED",
+                "R.SOLID": "R.PROFILE.SOLID",
+            },
+            evidence=["test:dg-spacing"],
+        )
+
+    guarded, why = run()
+    assert why is not None
+    assert guarded[0].role == "unresolved"
+    assert "hybrid:coincident-hidden-axis-boundary-unproven" in guarded[0].evidence
+    assert guarded[1].role == "profile_boundary"
+
+    # Explicit global boundaries keep their independent structural authority.
+    overall, _ = run({"R.PROFILE.MERGED": "overall_max"})
+    assert overall[0].role == "overall_max"
+
+    # A continuous, junction-supported outline remains a valid local profile.
+    original_endpoint["physical_candidates"][0]["axis_ink_run_fraction"] = 0.95
+    solid, _ = run()
+    assert solid[0].role == "profile_boundary"
+
+    # A different nearby dashed axis is not evidence against this profile.
+    original_endpoint["physical_candidates"][0]["axis_ink_run_fraction"] = 0.39623
+    original_endpoint["ignored_nonownership_anchors"][0]["position_px"] = 381.0
+    unrelated, _ = run()
+    assert unrelated[0].role == "profile_boundary"
+
+

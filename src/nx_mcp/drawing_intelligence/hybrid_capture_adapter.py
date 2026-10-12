@@ -5451,6 +5451,57 @@ def _resolve_raster_proven_endpoint_aliases(
     return {**endpoint_candidates, "endpoints": selected}
 
 
+def _has_unproven_hidden_axis_as_profile_boundary(
+    endpoint: dict[str, Any],
+    profile: dict[str, Any],
+) -> bool:
+    """Refuse a material-boundary claim for an unowned coincident dashed axis.
+
+    A merged structural-line candidate can include a true hidden/center line.
+    Its independent *line* evidence does not prove it is a material face.
+    This guard never grants hole identity or an engineering coordinate.
+    """
+    if (
+        profile.get("kind") != "profile_edge_candidate"
+        or profile.get("relative_extreme_side") in {"min", "max"}
+        or profile.get("endpoint_junction_count") != 0
+    ):
+        return False
+
+    position = profile.get("position_px")
+    tolerance = profile.get("axis_tolerance_px")
+    run_fraction = profile.get("axis_ink_run_fraction")
+    if (
+        not isinstance(position, (int, float))
+        or isinstance(position, bool)
+        or not isinstance(tolerance, (int, float))
+        or isinstance(tolerance, bool)
+        or not isinstance(run_fraction, (int, float))
+        or isinstance(run_fraction, bool)
+        or float(run_fraction) >= 0.70
+    ):
+        return False
+
+    for anchor in endpoint.get("ignored_nonownership_anchors", []):
+        if not isinstance(anchor, dict):
+            continue
+        axis_position = anchor.get("position_px")
+        dash_score = anchor.get("dash_score")
+        if (
+            anchor.get("kind") != "linear_pattern_axis"
+            or anchor.get("source_kind") != "dashed_or_centerline_candidate"
+            or not isinstance(axis_position, (int, float))
+            or isinstance(axis_position, bool)
+            or not isinstance(dash_score, (int, float))
+            or isinstance(dash_score, bool)
+            or float(dash_score) < 0.60
+        ):
+            continue
+        if abs(float(axis_position) - float(position)) <= min(3.0, max(1.0, float(tolerance))):
+            return True
+    return False
+
+
 def _dimension_endpoints_from_candidates(
     candidate: dict[str, Any],
     *,
@@ -5554,6 +5605,23 @@ def _dimension_endpoints_from_candidates(
             physical = physical_candidates[0]
             if physical.get("kind") == "profile_edge_candidate":
                 ref = str(physical.get("ref") or "")
+                if (
+                    ref not in boundary_roles
+                    and _has_unproven_hidden_axis_as_profile_boundary(
+                        raw_endpoint, physical
+                    )
+                ):
+                    output.append(
+                        ObservationDimensionEndpoint(
+                            role="unresolved",
+                            unresolved_kind="intermediate_surface",
+                            evidence=[
+                                *evidence,
+                                "hybrid:coincident-hidden-axis-boundary-unproven",
+                            ],
+                        )
+                    )
+                    continue
                 boundary_role = boundary_roles.get(ref)
                 if boundary_role is not None:
                     output.append(

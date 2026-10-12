@@ -10523,3 +10523,91 @@ def test_collinear_unowned_hidden_axis_does_not_become_material_boundary(monkeyp
     assert unrelated[0].role == "profile_boundary"
 
 
+
+
+
+def test_raster_hidden_bore_centers_require_two_unique_mirrored_wall_pairs(tmp_path):
+    import cv2
+    import numpy as np
+    from nx_mcp.drawing_intelligence.hidden_projection_centers import (
+        derive_raster_hidden_bore_center_candidates,
+    )
+
+    image = np.full((460, 520), 255, dtype=np.uint8)
+    cv2.line(image, (65, 200), (455, 200), 0, 2)
+    cv2.line(image, (65, 270), (455, 270), 0, 2)
+    for center in (175, 370):
+        for axis in (center - 15, center, center + 15):
+            for first, last in ((205, 216), (225, 239), (249, 265)):
+                cv2.line(image, (axis, first), (axis, last), 0, 2)
+    path = tmp_path / "dual-hidden-bores.png"
+    region = {
+        "region_id": "R",
+        "bbox_px": [50, 120, 430, 320],
+        "linear_pattern_candidates": [
+            {
+                "orientation": "vertical",
+                "axis_px": float(center),
+                "span_px": [195, 320],
+                "segment_count": 3,
+                "dash_score": 0.8,
+            }
+            for center in (175, 370)
+        ],
+    }
+    candidate = {
+        "candidate_id": "DG_TEST",
+        "region_id": "R",
+        "accepted_token": "24",
+        "orientation": "horizontal",
+        "axis_px": 320.0,
+        "witness_positions_px": [175.0, 370.0],
+    }
+    faces = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "R",
+            "source_orientation": "horizontal",
+            "position_px": float(level),
+            "span_px": [65, 455],
+            "independent_geometry_source_count": 2,
+        }
+        for level in (200, 270)
+    ]
+
+    def probe(modified=image, c=candidate, inventory=faces):
+        assert cv2.imwrite(str(path), modified)
+        return derive_raster_hidden_bore_center_candidates(
+            c,
+            region=region,
+            view_kind="front",
+            profile_inventory=inventory,
+            source_raster_path=str(path),
+        )
+
+    proven = probe()
+    assert len(proven) == 2
+    assert [record["witness_index"] for record in proven] == [0, 1]
+    assert all(record["feature_axis"] == "Z" for record in proven)
+    assert all(record["engineering_coordinate_inferred_from_pixels"] is False
+               for record in proven)
+
+    missing_wall = image.copy()
+    missing_wall[203:268, 352:358] = 255
+    assert probe(missing_wall) == []
+
+    missing_centerline = image.copy()
+    missing_centerline[203:268, 367:374] = 255
+    assert probe(missing_centerline) == []
+
+    shifted = {**candidate, "witness_positions_px": [175.0, 320.0]}
+    assert probe(image, shifted) == []
+
+    unbacked = [*faces[:1], {**faces[1], "independent_geometry_source_count": 0}]
+    assert probe(image, candidate, unbacked) == []
+
+    extra_pair = image.copy()
+    for axis in (370 - 24, 370 + 24):
+        for first, last in ((205, 216), (225, 239), (249, 265)):
+            cv2.line(extra_pair, (axis, first), (axis, last), 0, 2)
+    assert probe(extra_pair) == []

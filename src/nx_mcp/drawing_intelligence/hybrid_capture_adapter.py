@@ -19,7 +19,10 @@ from .engineering_callout_binding import (
 from .engineering_callouts import parse_engineering_callout
 from .engineering_dimension_binding import bind_callout_to_dimension_candidate
 from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
-from .hidden_projection_centers import derive_hidden_projection_center_candidates
+from .hidden_projection_centers import (
+    derive_hidden_projection_center_candidates,
+    derive_raster_hidden_bore_center_candidates,
+)
 from .evidence import Axis, ViewKind
 from .reader_observations import (
     ObservationAssociation,
@@ -1164,6 +1167,19 @@ def _enrich_candidate_with_hidden_projection_centers(
         view_kind=region_view.view_kind,
         profile_inventory=profile_inventory,
     )
+    raster_proofs = derive_raster_hidden_bore_center_candidates(
+        candidate,
+        region=region,
+        view_kind=region_view.view_kind,
+        profile_inventory=profile_inventory,
+        source_raster_path=(
+            report.get("source_raster")
+            if isinstance(report.get("source_raster"), str) else None
+        ),
+    )
+    # Do not overwrite a competing existing independently inferred center.
+    if len(raster_proofs) == 2 and not center_candidates:
+        center_candidates = raster_proofs
     if not center_candidates:
         return candidate, []
 
@@ -11616,6 +11632,46 @@ def adapt_hybrid_ocr_report(
                     **symmetric_pair,
                 }
             )
+        elif (
+            len([
+                record for record in hidden_center_records
+                if record.get("candidate_id") == candidate_id
+                and record.get("selection_basis")
+                == "unique_raster_centerline_and_symmetric_hidden_walls"
+            ]) == 2
+        ):
+            # Both centerlines have independently proven mirrored hidden walls,
+            # supported by the same two material faces and a labeled rail.
+            raster_centers = sorted(
+                (
+                    record for record in hidden_center_records
+                    if record.get("candidate_id") == candidate_id
+                    and record.get("selection_basis")
+                    == "unique_raster_centerline_and_symmetric_hidden_walls"
+                ),
+                key=lambda record: record["witness_index"],
+            )
+            if (
+                [record.get("witness_index") for record in raster_centers] != [0, 1]
+                or any(record["entity_key"] not in {entity.key for entity in entities}
+                       for record in raster_centers)
+            ):
+                raise HybridCaptureAdapterError(
+                    "raster hidden-bore center records lack unique entity witnesses"
+                )
+            dimension_endpoints = [
+                ObservationDimensionEndpoint(
+                    role="entity_center",
+                    entity_key=record["entity_key"],
+                    basis="centerline",
+                    evidence=[
+                        *dimension_evidence,
+                        f"hybrid:proven-hidden-walls:{record['entity_key']}",
+                    ],
+                )
+                for record in raster_centers
+            ]
+            unresolved_reason = None
         else:
             dimension_endpoints, unresolved_reason = _dimension_endpoints_from_candidates(
                 raw_candidate,
@@ -12063,6 +12119,17 @@ def adapt_hybrid_ocr_report(
             "schema": "1.0",
             "items": boundaries,
             "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
+            "kind": "hybrid_raster_hidden_bore_center_ledger",
+            "schema": "1.0",
+            "items": [
+                record for record in hidden_center_records
+                if record.get("selection_basis")
+                == "unique_raster_centerline_and_symmetric_hidden_walls"
+            ],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
         },
         {
             "kind": "hybrid_centerline_alignment_ledger",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from typing import Any
 
 
@@ -223,3 +225,212 @@ def derive_hidden_projection_center_candidates(
         )
 
     return output
+
+
+def derive_raster_hidden_bore_center_candidates(
+    candidate: dict[str, Any],
+    *,
+    region: dict[str, Any],
+    view_kind: str,
+    profile_inventory: list[dict[str, Any]],
+    source_raster_path: str | None,
+) -> list[dict[str, Any]]:
+    """Prove *both* projected bore axes from centerlines and matched hidden walls.
+
+    A label and two dimension witnesses are necessary but insufficient.
+    The independently supported pair of material faces must bound a common
+    raster band. Each centerline must have one unique mirrored pair of
+    dashed wall strokes within that band. Pixels prove physical identity,
+    never nominal hole diameters, spacing or engineering coordinates.
+    """
+    if (
+        candidate.get("accepted_token") is None
+        or candidate.get("orientation") != "horizontal"
+        or not source_raster_path
+    ):
+        return []
+    region_id = str(candidate.get("region_id") or "")
+    if region_id != str(region.get("region_id") or "") or not region_id:
+        return []
+    witnesses = candidate.get("witness_positions_px")
+    if (
+        not isinstance(witnesses, list)
+        or len(witnesses) != 2
+        or not all(type(value) in (int, float) for value in witnesses)
+        or abs(float(witnesses[0]) - float(witnesses[1])) < 12
+    ):
+        return []
+    region_bbox = region.get("bbox_px")
+    if not isinstance(region_bbox, list) or len(region_bbox) != 4:
+        return []
+    region_width = region_bbox[2]
+    if not isinstance(region_width, (int, float)) or region_width <= 0:
+        return []
+    feature_axis = _AXIS_BY_VIEW_ORIENTATION.get((view_kind, "vertical"))
+    rail = candidate.get("axis_px")
+    if feature_axis is None or type(rail) not in (int, float):
+        return []
+
+    try:
+        import cv2
+        image = cv2.imread(source_raster_path, cv2.IMREAD_GRAYSCALE)
+    except (ImportError, OSError, ValueError, TypeError):
+        return []
+    if image is None or image.ndim != 2:
+        return []
+
+    # Candidate faces come from independent structural geometry, not OCR.
+    faces = [
+        item for item in profile_inventory
+        if isinstance(item, dict)
+        and item.get("kind") == "profile_edge_candidate"
+        and item.get("region_id") == region_id
+        and item.get("source_orientation") == "horizontal"
+        and type(item.get("independent_geometry_source_count")) is int
+        and item["independent_geometry_source_count"] >= 1
+        and type(item.get("position_px")) in (int, float)
+        and isinstance(item.get("span_px"), list)
+        and len(item["span_px"]) == 2
+        and all(type(v) in (int, float) for v in item["span_px"])
+        and all(min(item["span_px"]) + 1 <= float(w) <= max(item["span_px"]) - 1 for w in witnesses)
+    ]
+    faces.sort(key=lambda item: float(item["position_px"]), reverse=True)
+    face_groups: list[list[dict[str, Any]]] = []
+    for face in faces:
+        if (
+            not face_groups
+            or abs(float(face["position_px"]) - float(face_groups[-1][0]["position_px"])) > 2.5
+        ):
+            face_groups.append([face])
+        else:
+            face_groups[-1].append(face)
+    # Only the two nearest distinct backed faces before the dimension rail.
+    levels = [
+        group for group in face_groups
+        if float(group[0]["position_px"]) < float(rail) - 10
+    ]
+    if len(levels) < 2:
+        return []
+    low_face, high_face = levels[:2]
+    lower = sum(float(x["position_px"]) for x in low_face) / len(low_face)
+    upper = sum(float(x["position_px"]) for x in high_face) / len(high_face)
+    if not 25 <= lower - upper <= 180:
+        return []
+    y0, y1 = math.ceil(upper + 4), math.floor(lower - 4)
+    if y0 < 0 or y1 >= image.shape[0] or y1 - y0 < 24:
+        return []
+
+    patterns = region.get("linear_pattern_candidates")
+    if not isinstance(patterns, list):
+        return []
+    tolerance = max(2.5, float(region_width) * 0.006)
+    max_offset = min(35.0, (lower - upper) * 0.46, float(region_width) * 0.12)
+    min_offset = max(6.0, (lower - upper) * 0.08)
+    if min_offset >= max_offset:
+        return []
+
+    proven: list[dict[str, Any]] = []
+    for witness_index, witness in enumerate(witnesses):
+        center_patterns = [
+            (index, item)
+            for index, item in enumerate(patterns)
+            if isinstance(item, dict)
+            and item.get("orientation") == "vertical"
+            and type(item.get("axis_px")) in (int, float)
+            and abs(float(item["axis_px"]) - float(witness)) <= tolerance
+            and type(item.get("segment_count")) is int
+            and item["segment_count"] >= 3
+            and type(item.get("dash_score")) in (int, float)
+            and item["dash_score"] >= 0.60
+            and isinstance(item.get("span_px"), list)
+            and len(item["span_px"]) == 2
+            and min(item["span_px"]) <= upper
+            and max(item["span_px"]) >= lower
+        ]
+        if len(center_patterns) != 1:
+            return []
+        center_index, center = center_patterns[0]
+        center_axis = float(center["axis_px"])
+        center_x = round(center_axis)
+        if not 0 <= center_x < image.shape[1]:
+            return []
+        center_ink = image[y0:y1, center_x] < 145
+        if float(center_ink.mean()) < 0.25:
+            return []
+
+        strokes: list[tuple[int, Any]] = []
+        for x in range(
+            max(0, math.floor(center_axis - max_offset)),
+            min(image.shape[1], math.ceil(center_axis + max_offset) + 1),
+        ):
+            distance = abs(x - center_axis)
+            if not min_offset <= distance <= max_offset:
+                continue
+            ink = image[y0:y1, x] < 145
+            fraction = float(ink.mean())
+            if not 0.25 <= fraction <= 0.85:
+                continue
+            run_count = 0
+            begin: int | None = None
+            for i, dark in enumerate([*ink, False]):
+                if dark and begin is None:
+                    begin = i
+                elif not dark and begin is not None:
+                    if i - begin >= 3:
+                        run_count += 1
+                    begin = None
+            if run_count >= 3:
+                strokes.append((x, ink))
+        groups: list[list[tuple[int, Any]]] = []
+        for stroke in strokes:
+            if groups and stroke[0] - groups[-1][-1][0] <= 2:
+                groups[-1].append(stroke)
+            else:
+                groups.append([stroke])
+        left = [group for group in groups if group[-1][0] < center_axis - min_offset]
+        right = [group for group in groups if group[0][0] > center_axis + min_offset]
+        possible: list[tuple[int, int, float]] = []
+        for left_group in left:
+            for right_group in right:
+                left_stroke = left_group[len(left_group) // 2]
+                right_stroke = right_group[len(right_group) // 2]
+                left_x, left_mask = left_stroke
+                right_x, right_mask = right_stroke
+                if (
+                    abs((left_x + right_x) / 2 - center_axis) > tolerance
+                    or abs((center_axis - left_x) - (right_x - center_axis)) > 2 * tolerance
+                ):
+                    continue
+                similarity = float(
+                    (left_mask & right_mask).sum()
+                    / max(1, (left_mask | right_mask).sum())
+                )
+                if similarity >= 0.85:
+                    possible.append((left_x, right_x, similarity))
+        if len(possible) != 1:
+            return []
+        left_x, right_x, similarity = possible[0]
+        candidate_id = str(candidate.get("candidate_id") or "")
+        if not candidate_id:
+            return []
+        entity_key = (
+            f"{region_id}.HIDDEN_BORE_CENTER.{candidate_id}.{witness_index + 1:02d}"
+        )
+        proven.append({
+            "candidate_id": candidate_id,
+            "witness_index": witness_index,
+            "kind": "hidden_projection_center_axis",
+            "entity_key": entity_key,
+            "ref": f"{entity_key}.center",
+            "position_px": center_axis,
+            "feature_axis": feature_axis,
+            "pattern_orientation": "vertical",
+            "source_pattern_indices": [center_index],
+            "hidden_wall_positions_px": [left_x, right_x],
+            "hidden_wall_ink_similarity": round(similarity, 4),
+            "structural_face_positions_px": [round(upper, 3), round(lower, 3)],
+            "selection_basis": "unique_raster_centerline_and_symmetric_hidden_walls",
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        })
+    return proven if len(proven) == 2 else []

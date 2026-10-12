@@ -10729,3 +10729,168 @@ def test_mirrored_hidden_wall_axis_cannot_claim_material_face(tmp_path, monkeypa
         {}, **kwargs
     )
     assert non_proven[0].role == "profile_boundary"
+
+
+
+def test_proven_single_hidden_bore_offset_center_requires_unique_overall_ownership(monkeypatch):
+    from nx_mcp.drawing_intelligence.hybrid_capture_adapter import (
+        HybridRegionView, _proven_hidden_bore_offset_center,
+    )
+
+    candidate = {
+        "candidate_id": "DG_OFFSET",
+        "region_id": "R",
+        "accepted_token": "24",
+        "orientation": "horizontal",
+        "witness_positions_px": [200.0, 385.0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R.structural.vertical.002",
+                    },
+                    {
+                        "kind": "linear_pattern_axis",
+                        "ref": "R.linear_pattern.001",
+                        "source_kind": "dashed_or_centerline_candidate",
+                        "position_px": 200.0,
+                        "dash_score": 0.65,
+                    },
+                ],
+            },
+            {
+                "witness_index": 1,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R.structural.vertical.004",
+                        "relative_extreme_side": "max",
+                    }
+                ],
+            },
+        ],
+    }
+    region = {
+        "region_id": "R",
+        "linear_pattern_candidates": [
+            {
+                "orientation": "vertical",
+                "axis_px": 200.0,
+                "dash_score": 0.65,
+                "segment_count": 3,
+            }
+        ],
+    }
+    view = HybridRegionView(
+        region_id="R",
+        view_kind="side",
+        evidence=["test:side-view"],
+    )
+    def probe(item=candidate, source=region):
+        return _proven_hidden_bore_offset_center(
+            item, region=source, region_view=view, witness_index=0
+        )
+
+    proven = probe()
+    assert proven is not None
+    assert proven["feature_axis"] == "Z"
+    assert proven["witness_index"] == 0
+    assert proven["engineering_coordinate_inferred_from_pixels"] is False
+
+    no_boundary = {
+        **candidate,
+        "witness_anchor_evidence": [
+            candidate["witness_anchor_evidence"][0],
+            {**candidate["witness_anchor_evidence"][1], "nearest_anchors": []},
+        ],
+    }
+    assert probe(no_boundary) is None
+    no_pattern = {
+        **region, "linear_pattern_candidates": [],
+    }
+    assert probe(candidate, no_pattern) is None
+    duplicate_pattern = {
+        **region,
+        "linear_pattern_candidates": region["linear_pattern_candidates"] * 2,
+    }
+    assert probe(candidate, duplicate_pattern) is None
+    weak_dashed = {
+        **candidate,
+        "witness_anchor_evidence": [
+            {
+                **candidate["witness_anchor_evidence"][0],
+                "nearest_anchors": [
+                    candidate["witness_anchor_evidence"][0]["nearest_anchors"][0],
+                    {
+                        **candidate["witness_anchor_evidence"][0]["nearest_anchors"][1],
+                        "dash_score": 0.35,
+                    },
+                ],
+            },
+            candidate["witness_anchor_evidence"][1],
+        ],
+    }
+    assert probe(weak_dashed) is None
+
+    endpoint = {
+        "status": "unique_physical_candidate",
+        "physical_candidates": [
+            {"kind": "profile_edge_candidate", "ref": "R.structural.vertical.002"}
+        ],
+        "ignored_nonownership_anchors": [],
+    }
+    second = {
+        "status": "unique_physical_candidate",
+        "physical_candidates": [
+            {"kind": "profile_edge_candidate", "ref": "R.structural.vertical.004"}
+        ],
+        "ignored_nonownership_anchors": [],
+    }
+    monkeypatch.setattr(
+        hybrid_adapter,
+        "derive_dimension_endpoint_candidates",
+        lambda _: {"endpoints": [endpoint, second]},
+    )
+    with_proof = {
+        "raster_hidden_axis_rejected_profile_witnesses": [0],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [proven],
+            }
+        ],
+    }
+    kwargs = {
+        "entity_keys": {proven["entity_key"], "R.SOLID"},
+        "boundary_roles": {"R.structural.vertical.004": "overall_max"},
+        "profile_entity_by_ref": {
+            "R.structural.vertical.002": "R.BAD_PROFILE",
+        },
+        "evidence": ["test:dimension"],
+    }
+    good, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        with_proof, **kwargs
+    )
+    assert reason is None
+    assert [part.role for part in good] == ["entity_center", "overall_max"]
+    assert good[0].entity_key == proven["entity_key"]
+
+    without_proof, reason = hybrid_adapter._dimension_endpoints_from_candidates(
+        {"raster_hidden_axis_rejected_profile_witnesses": [0]}, **kwargs
+    )
+    assert without_proof[0].role == "unresolved"
+    assert reason is not None
+
+    competing_overall, _ = hybrid_adapter._dimension_endpoints_from_candidates(
+        with_proof,
+        **{
+            **kwargs,
+            "boundary_roles": {
+                "R.structural.vertical.002": "overall_min",
+                "R.structural.vertical.004": "overall_max",
+            },
+        },
+    )
+    assert competing_overall[0].role != "entity_center"

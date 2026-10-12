@@ -1135,6 +1135,121 @@ def _dimension_direction_from_image_order(
     return None
 
 
+
+def _proven_hidden_bore_offset_center(
+    candidate: dict[str, Any],
+    *,
+    region: dict[str, Any],
+    region_view: HybridRegionView,
+    witness_index: int,
+) -> dict[str, Any] | None:
+    """Represent a raster-proven offset bore axis without claiming its hole type.
+
+    The raster wall proof has already passed separately. This second gate
+    requires unique centerline pattern ownership, a distinct overall-edge
+    witness, and no alternative patterned center on the target witness.
+    Engineering coordinates still come exclusively from dimension relations.
+    """
+    if (
+        candidate.get("accepted_token") is None
+        or candidate.get("orientation") != "horizontal"
+        or region_view.view_kind not in {"front", "side", "top"}
+    ):
+        return None
+    positions = candidate.get("witness_positions_px")
+    evidence = candidate.get("witness_anchor_evidence")
+    patterns = region.get("linear_pattern_candidates")
+    if (
+        not isinstance(positions, list) or len(positions) != 2
+        or witness_index not in (0, 1)
+        or not all(type(value) in (int, float) for value in positions)
+        or not isinstance(evidence, list)
+        or not isinstance(patterns, list)
+    ):
+        return None
+
+    def anchors_for(index: int) -> list[dict[str, Any]] | None:
+        matching = [
+            record.get("nearest_anchors")
+            for record in evidence
+            if isinstance(record, dict)
+            and record.get("witness_index") == index
+        ]
+        if len(matching) != 1 or not isinstance(matching[0], list):
+            return None
+        return [value for value in matching[0] if isinstance(value, dict)]
+
+    current_anchors = anchors_for(witness_index)
+    other_anchors = anchors_for(1 - witness_index)
+    if current_anchors is None or other_anchors is None:
+        return None
+    overall_owners = [
+        item for item in other_anchors
+        if item.get("kind") == "profile_edge_candidate"
+        and item.get("relative_extreme_side") in {"min", "max"}
+    ]
+    if len(overall_owners) != 1:
+        return None
+    bore_axes = [
+        item for item in current_anchors
+        if item.get("kind") == "linear_pattern_axis"
+        and item.get("source_kind") == "dashed_or_centerline_candidate"
+        and type(item.get("position_px")) in (int, float)
+        and type(item.get("dash_score")) in (int, float)
+        and float(item["dash_score"]) >= 0.60
+        and abs(float(item["position_px"]) - float(positions[witness_index])) <= 2.5
+    ]
+    if len(bore_axes) != 1:
+        return None
+    pattern_matches = [
+        (index, item)
+        for index, item in enumerate(patterns)
+        if isinstance(item, dict)
+        and item.get("orientation") == "vertical"
+        and type(item.get("axis_px")) in (int, float)
+        and type(item.get("segment_count")) is int
+        and item["segment_count"] >= 3
+        and type(item.get("dash_score")) in (int, float)
+        and item["dash_score"] >= 0.60
+        and abs(float(item["axis_px"]) - float(bore_axes[0]["position_px"])) <= 2.5
+    ]
+    if len(pattern_matches) != 1:
+        return None
+    pattern_index, pattern = pattern_matches[0]
+    if (
+        bore_axes[0].get("ref")
+        != f"{region.get('region_id')}.linear_pattern.{pattern_index + 1:03d}"
+    ):
+        return None
+    feature_axis = {
+        "front": "X",
+        "side": "Z",
+        "top": "Y",
+    }[region_view.view_kind]
+    region_id = str(region.get("region_id") or "")
+    candidate_id = str(candidate.get("candidate_id") or "")
+    if not region_id or not candidate_id:
+        return None
+    key = (
+        f"{region_id}.HIDDEN_BORE_OFFSET_CENTER."
+        f"{candidate_id}.{witness_index + 1:02d}"
+    )
+    return {
+        "kind": "hidden_projection_center_axis",
+        "entity_key": key,
+        "ref": f"{key}.center",
+        "witness_index": witness_index,
+        "candidate_id": candidate_id,
+        "position_px": float(pattern["axis_px"]),
+        "feature_axis": feature_axis,
+        "pattern_orientation": "vertical",
+        "source_pattern_indices": [pattern_index],
+        "selection_basis": "unique_raster_mirrored_hidden_wall_offset_center",
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+
+
 def _enrich_candidate_with_hidden_projection_centers(
     candidate: dict[str, Any],
     *,
@@ -1203,6 +1318,18 @@ def _enrich_candidate_with_hidden_projection_centers(
         **candidate,
         "raster_hidden_axis_rejected_profile_witnesses": reject_profile_witnesses,
     }
+    # A uniquely proven center-to-overall boundary offset can legitimately
+    # have ONE center witness, unlike the two-center spacing case.
+    # Never override a competing center hypothesis.
+    if not center_candidates and len(reject_profile_witnesses) == 1:
+        recovered = _proven_hidden_bore_offset_center(
+            candidate,
+            region=region,
+            region_view=region_view,
+            witness_index=reject_profile_witnesses[0],
+        )
+        if recovered is not None:
+            center_candidates = [recovered]
     if not center_candidates:
         return candidate, []
 
@@ -5592,6 +5719,47 @@ def _dimension_endpoints_from_candidates(
         physical_candidates = raw_endpoint.get("physical_candidates", [])
         if not isinstance(physical_candidates, list):
             physical_candidates = []
+
+        # The prior conservative guard correctly rejected a dashed bore axis
+        # as a material boundary. Restore its center *only* when a separate
+        # proven hidden-wall center record is an actual Reader entity.
+        hidden_offset_records = [
+            anchor
+            for record in candidate.get("witness_anchor_evidence", [])
+            if isinstance(record, dict)
+            and record.get("witness_index") == witness_index
+            for anchor in record.get("nearest_anchors", [])
+            if isinstance(anchor, dict)
+            and anchor.get("kind") == "hidden_projection_center_axis"
+            and anchor.get("selection_basis")
+            == "unique_raster_mirrored_hidden_wall_offset_center"
+            and anchor.get("engineering_coordinate_inferred_from_pixels") is False
+            and anchor.get("pixel_geometry_used_for_identity_only") is True
+            and anchor.get("entity_key") in entity_keys
+        ]
+        if (
+            witness_index in candidate.get(
+                "raster_hidden_axis_rejected_profile_witnesses", []
+            )
+            and len(hidden_offset_records) == 1
+            and raw_endpoint.get("status") == "unique_physical_candidate"
+            and len(physical_candidates) == 1
+            and physical_candidates[0].get("kind") == "profile_edge_candidate"
+            and physical_candidates[0].get("ref") not in boundary_roles
+        ):
+            output.append(
+                ObservationDimensionEndpoint(
+                    role="entity_center",
+                    entity_key=hidden_offset_records[0]["entity_key"],
+                    basis="centerline",
+                    evidence=[
+                        *evidence,
+                        "hybrid:raster-proven-hidden-bore-offset-center:"
+                        + str(hidden_offset_records[0]["entity_key"]),
+                    ],
+                )
+            )
+            continue
 
         exact_profile_identity = (
             raw_endpoint.get("ownership_narrowing_basis")

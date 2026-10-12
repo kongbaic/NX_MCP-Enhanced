@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 
 from .evidence import (
     Axis,
+    CoordinateFact,
     DatumAlignmentEvidence,
     DimensionObservation,
     DirectValueEvidence,
@@ -794,9 +795,8 @@ def _compile_dimensions(
 
 def _compile_raster_hidden_bore_centered_spans(
     graph: EvidenceGraph,
-    direct: list[DirectValueEvidence],
+    datum_facts: list[CoordinateFact],
     relations: list[RelationEvidence],
-    unresolved: list[dict[str, Any]],
 ) -> None:
     """Connect uniquely centered paired bore axes to engineering constraints.
 
@@ -968,16 +968,24 @@ def _compile_raster_hidden_bore_centered_spans(
             f"hybrid:overall:{region_id}:{dimension.axis}",
             "hybrid:unique-bilateral-hidden-bore-centerline-symmetry",
         ]))
-        _append_direct(
-            direct,
-            unresolved,
-            DirectValueEvidence(
-                id=f"HB_MID_{dimension.id}",
+        # Overall-midpoint is an internal deterministic solver seed, not
+        # an independent drawing-source writer. centered_span is the *sole*
+        # Gate A relation writer for this synthetic midpoint target.
+        # Preserve both OCR and boundary evidence on the coordinate fact.
+        midpoint = float(overall) / 2.0
+        if any(item.target == center_target for item in datum_facts):
+            # Preexisting numeric datum requires reconciliation; no
+            # silent selection or double-write of a geometry target.
+            continue
+        if any(item.target == center_target for item in graph.direct_values):
+            continue
+        datum_facts.append(
+            CoordinateFact(
                 target=center_target,
-                value=float(overall) / 2.0,
-                semantic="position_dimension",
+                axis=dimension.axis,
+                value=midpoint,
                 source_ids=provenance,
-            ),
+            )
         )
         _append_relation(
             relations,
@@ -1420,6 +1428,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     """
 
     direct = [item.model_copy(deep=True) for item in graph.direct_values]
+    datum_facts = [item.model_copy(deep=True) for item in graph.direct_facts]
     relations = [item.model_copy(deep=True) for item in graph.relations]
     unresolved = copy.deepcopy(graph.unresolved_evidence)
 
@@ -1429,7 +1438,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
     _compile_axis_evidence(graph, direct, unresolved)
     _compile_datum_alignments(graph, direct, unresolved)
     _compile_dimensions(graph, direct, relations, unresolved)
-    _compile_raster_hidden_bore_centered_spans(graph, direct, relations, unresolved)
+    _compile_raster_hidden_bore_centered_spans(graph, datum_facts, relations)
     _compile_resolved_symmetric_local_section_features(
         graph,
         direct,
@@ -1455,6 +1464,7 @@ def compile_evidence_graph(graph: EvidenceGraph) -> EvidenceGraph:
         deep=True,
         update={
             "direct_values": direct,
+            "direct_facts": datum_facts,
             "relations": relations,
             "unresolved_evidence": unresolved,
         },

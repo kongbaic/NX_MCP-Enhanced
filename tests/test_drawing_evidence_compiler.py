@@ -1755,12 +1755,19 @@ def test_raster_hidden_bore_pair_centered_span_solved_from_dimensions_only():
     assert len(relations) == 1
     assert relations[0].value == 24
     assert relations[0].metadata["engineering_coordinate_inferred_from_pixels"] is False
+    midpoint = "constraints.symmetric_centers.D002.x"
+    assert not any(item.target == midpoint for item in good.direct_values)
+    assert [item.value for item in good.direct_facts if item.target == midpoint] == [20.0]
     solution = resolve_evidence_graph(good)
     assert solution.conflicts == []
     assert solution.values["feature:B0.centerline.x"] == 8.0
     assert solution.values["feature:B1.centerline.x"] == 32.0
     # 24 and 40 supply all metric values; pixels select symmetry only.
     assert solution.values["constraints.symmetric_centers.D002.x"] == 20.0
+    draft = build_semantic_draft(good, solution)
+    gate_errors = R._drawing_gate_a_checks(draft)
+    assert not any("writer conflict" in error for error in gate_errors)
+
 
     # Non-centered, duplicate, reversed or uncorroborated pairs stay unsolved.
     for variant in (

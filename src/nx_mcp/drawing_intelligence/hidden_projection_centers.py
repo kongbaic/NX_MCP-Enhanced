@@ -434,3 +434,152 @@ def derive_raster_hidden_bore_center_candidates(
             "pixel_geometry_used_for_identity_only": True,
         })
     return proven if len(proven) == 2 else []
+
+
+def prove_hidden_bore_axis_overlapping_profile(
+    candidate: dict[str, Any],
+    *,
+    witness_index: int,
+    region_id: str,
+    profile_inventory: list[dict[str, Any]],
+    source_raster_path: str | None,
+) -> bool:
+    """Identify an unowned dashed bore axis which masquerades as a profile.
+
+    Reject boundary ownership only; a bore feature, hole type, or dimension
+    coordinate may not be asserted by this test. Two independent material
+    faces plus exactly one mirrored dashed-wall pair must support the same
+    internal centerline. Missing/ambiguous evidence returns False.
+    """
+    if (
+        not source_raster_path
+        or candidate.get("orientation") != "horizontal"
+        or candidate.get("accepted_token") is None
+    ):
+        return False
+    witnesses = candidate.get("witness_anchor_evidence")
+    if not isinstance(witnesses, list):
+        return False
+    matches = [
+        item for item in witnesses
+        if isinstance(item, dict) and item.get("witness_index") == witness_index
+    ]
+    if len(matches) != 1:
+        return False
+    anchors = matches[0].get("nearest_anchors")
+    if not isinstance(anchors, list):
+        return False
+    profiles = [
+        item for item in anchors
+        if isinstance(item, dict)
+        and item.get("kind") == "profile_edge_candidate"
+        and item.get("source_orientation") == "vertical"
+        and item.get("relative_extreme_side") not in {"min", "max"}
+        and item.get("endpoint_junction_count") == 0
+        and isinstance(item.get("position_px"), (int, float))
+        and not isinstance(item.get("position_px"), bool)
+        and isinstance(item.get("span_px"), list)
+        and len(item["span_px"]) == 2
+        and all(type(v) in (int, float) for v in item["span_px"])
+    ]
+    if len(profiles) != 1:
+        return False
+    profile = profiles[0]
+    pos = float(profile["position_px"])
+    dashed = [
+        item for item in anchors
+        if isinstance(item, dict)
+        and item.get("kind") == "linear_pattern_axis"
+        and item.get("source_kind") == "dashed_or_centerline_candidate"
+        and type(item.get("position_px")) in (int, float)
+        and type(item.get("dash_score")) in (int, float)
+        and float(item["dash_score"]) >= 0.60
+        and abs(float(item["position_px"]) - pos) <= 2.5
+    ]
+    if len(dashed) != 1:
+        return False
+
+    face_items = [
+        item for item in profile_inventory
+        if isinstance(item, dict)
+        and item.get("region_id") == region_id
+        and item.get("source_orientation") == "horizontal"
+        and type(item.get("position_px")) in (int, float)
+        and isinstance(item.get("span_px"), list)
+        and len(item["span_px"]) == 2
+        and all(type(v) in (int, float) for v in item["span_px"])
+        and min(profile["span_px"]) < float(item["position_px"]) < max(profile["span_px"])
+        and min(item["span_px"]) + 3 < pos < max(item["span_px"]) - 3
+        and type(item.get("junction_count")) is int
+        and item["junction_count"] >= 2
+    ]
+    face_levels = sorted(float(item["position_px"]) for item in face_items)
+    distinct_levels: list[float] = []
+    for level in face_levels:
+        if not distinct_levels or level - distinct_levels[-1] > 2.5:
+            distinct_levels.append(level)
+    if len(distinct_levels) != 2:
+        return False
+    top, bottom = distinct_levels
+    if not 24 <= bottom - top <= 180:
+        return False
+
+    try:
+        import cv2
+        image = cv2.imread(source_raster_path, cv2.IMREAD_GRAYSCALE)
+    except (ImportError, OSError, ValueError, TypeError):
+        return False
+    if image is None:
+        return False
+    y0 = round(top + 4)
+    y1 = round(bottom - 4)
+    cx = round(pos)
+    if y0 < 0 or y1 >= image.shape[0] or y1 - y0 < 20:
+        return False
+    if cx < 34 or cx >= image.shape[1] - 34:
+        return False
+
+    def stroke(x: int) -> Any:
+        ink = image[y0:y1, x] < 145
+        fraction = float(ink.mean())
+        if fraction < 0.25 or fraction >= 0.90:
+            return None
+        run_count = 0
+        start: int | None = None
+        for row, dark in enumerate([*ink, False]):
+            if dark and start is None:
+                start = row
+            elif not dark and start is not None:
+                if row - start >= 3:
+                    run_count += 1
+                start = None
+        return ink if run_count >= 3 else None
+
+    center = stroke(cx)
+    if center is None:
+        return False
+    pairs: list[tuple[int, int]] = []
+    for left_x in range(cx - 34, cx - 5):
+        left = stroke(left_x)
+        if left is None:
+            continue
+        for right_x in range(cx + 6, cx + 35):
+            right = stroke(right_x)
+            if right is None or abs((left_x + right_x) / 2.0 - pos) > 2.5:
+                continue
+            agreement = float(
+                (left & right).sum() / max(1, (left | right).sum())
+            )
+            if agreement >= 0.85:
+                pairs.append((left_x, right_x))
+
+    # Several raster columns can be the same thick ink stroke. Only one
+    # distinct mirrored pair of walls is allowed; two distances stay ambiguous.
+    if not pairs:
+        return False
+    widths = sorted((right - left) / 2.0 for left, right in pairs)
+    clusters: list[float] = []
+    for width in widths:
+        if not clusters or width - clusters[-1] > 3.0:
+            clusters.append(width)
+    return len(clusters) == 1

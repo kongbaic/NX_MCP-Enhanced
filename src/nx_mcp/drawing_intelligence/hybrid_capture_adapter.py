@@ -22,6 +22,7 @@ from .engineering_linear_pattern_binding import bind_callout_to_linear_pattern
 from .hidden_projection_centers import (
     derive_hidden_projection_center_candidates,
     derive_raster_hidden_bore_center_candidates,
+    prove_hidden_bore_axis_overlapping_profile,
 )
 from .evidence import Axis, ViewKind
 from .reader_observations import (
@@ -1180,6 +1181,28 @@ def _enrich_candidate_with_hidden_projection_centers(
     # Do not overwrite a competing existing independently inferred center.
     if len(raster_proofs) == 2 and not center_candidates:
         center_candidates = raster_proofs
+    # A projected hidden-hole center can be mistaken for a structural face
+    # even when its span is visually dark. Prove the dashed wall topology
+    # independently and disqualify *only* unsupported material ownership.
+    reject_profile_witnesses = [
+        witness_index
+        for witness_index in range(len(candidate.get("witness_positions_px", [])))
+        if prove_hidden_bore_axis_overlapping_profile(
+            candidate,
+            witness_index=witness_index,
+            region_id=region_id,
+            profile_inventory=profile_inventory,
+            source_raster_path=(
+                report.get("source_raster")
+                if isinstance(report.get("source_raster"), str)
+                else None
+            ),
+        )
+    ]
+    candidate = {
+        **candidate,
+        "raster_hidden_axis_rejected_profile_witnesses": reject_profile_witnesses,
+    }
     if not center_candidates:
         return candidate, []
 
@@ -5555,7 +5578,7 @@ def _dimension_endpoints_from_candidates(
         )
 
     output: list[ObservationDimensionEndpoint] = []
-    for raw_endpoint in raw_endpoints:
+    for witness_index, raw_endpoint in enumerate(raw_endpoints):
         if not isinstance(raw_endpoint, dict):
             output.append(
                 ObservationDimensionEndpoint(
@@ -5621,6 +5644,23 @@ def _dimension_endpoints_from_candidates(
             physical = physical_candidates[0]
             if physical.get("kind") == "profile_edge_candidate":
                 ref = str(physical.get("ref") or "")
+                if (
+                    ref not in boundary_roles
+                    and witness_index in candidate.get(
+                        "raster_hidden_axis_rejected_profile_witnesses", []
+                    )
+                ):
+                    output.append(
+                        ObservationDimensionEndpoint(
+                            role="unresolved",
+                            unresolved_kind="intermediate_surface",
+                            evidence=[
+                                *evidence,
+                                "hybrid:mirrored-hidden-wall-axis-is-not-material-face",
+                            ],
+                        )
+                    )
+                    continue
                 if (
                     ref not in boundary_roles
                     and _has_unproven_hidden_axis_as_profile_boundary(

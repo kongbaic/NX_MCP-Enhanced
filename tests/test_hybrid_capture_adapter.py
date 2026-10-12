@@ -10611,3 +10611,121 @@ def test_raster_hidden_bore_centers_require_two_unique_mirrored_wall_pairs(tmp_p
         for first, last in ((205, 216), (225, 239), (249, 265)):
             cv2.line(extra_pair, (axis, first), (axis, last), 0, 2)
     assert probe(extra_pair) == []
+
+
+
+def test_mirrored_hidden_wall_axis_cannot_claim_material_face(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+    from nx_mcp.drawing_intelligence.hidden_projection_centers import (
+        prove_hidden_bore_axis_overlapping_profile,
+    )
+
+    pixels = np.full((350, 480), 255, dtype=np.uint8)
+    for y in (180, 250):
+        cv2.line(pixels, (85, y), (395, y), 0, 2)
+    for x in (185, 200, 215):
+        for y0, y1 in ((185, 198), (208, 222), (233, 247)):
+            cv2.line(pixels, (x, y0), (x, y1), 0, 2)
+    path = tmp_path / "bore-axis.png"
+    cand = {
+        "accepted_token": "24",
+        "orientation": "horizontal",
+        "witness_positions_px": [200, 370],
+        "witness_anchor_evidence": [
+            {
+                "witness_index": 0,
+                "nearest_anchors": [
+                    {
+                        "kind": "profile_edge_candidate",
+                        "ref": "R.vertical.002",
+                        "source_orientation": "vertical",
+                        "position_px": 200,
+                        "span_px": [160, 290],
+                        "endpoint_junction_count": 0,
+                        "relative_extreme_side": None,
+                    },
+                    {
+                        "kind": "linear_pattern_axis",
+                        "source_kind": "dashed_or_centerline_candidate",
+                        "position_px": 200,
+                        "dash_score": 0.66,
+                    },
+                ],
+            }
+        ],
+    }
+    faces = [
+        {
+            "region_id": "R",
+            "source_orientation": "horizontal",
+            "position_px": y,
+            "span_px": [85, 395],
+            "junction_count": 3,
+        }
+        for y in (180, 250)
+    ]
+
+    def check(im=pixels, candidate=cand, profile_faces=faces):
+        assert cv2.imwrite(str(path), im)
+        return prove_hidden_bore_axis_overlapping_profile(
+            candidate, witness_index=0, region_id="R",
+            profile_inventory=profile_faces, source_raster_path=str(path)
+        )
+
+    assert check()
+    removed_wall = pixels.copy()
+    removed_wall[183:249, 212:219] = 255
+    assert not check(removed_wall)
+    removed_center = pixels.copy()
+    removed_center[183:249, 197:204] = 255
+    assert not check(removed_center)
+    assert not check(pixels, cand, faces[:1])
+    assert not check(
+        pixels,
+        {**cand, "witness_anchor_evidence": [{
+            **cand["witness_anchor_evidence"][0],
+            "nearest_anchors": [
+                cand["witness_anchor_evidence"][0]["nearest_anchors"][0]
+            ],
+        }]},
+    )
+
+    endpoint = {
+        "status": "unique_physical_candidate",
+        "physical_candidates": [
+            {"kind": "profile_edge_candidate", "ref": "R.vertical.002"}
+        ],
+        "ignored_nonownership_anchors": [],
+    }
+    monkeypatch.setattr(
+        hybrid_adapter, "derive_dimension_endpoint_candidates",
+        lambda item: {"endpoints": [endpoint, {
+            "status": "unique_physical_candidate",
+            "physical_candidates": [
+                {"kind": "profile_edge_candidate", "ref": "R.outer"}
+            ],
+        }]},
+    )
+    candidate_with_proof = {
+        "raster_hidden_axis_rejected_profile_witnesses": [0],
+    }
+    kwargs = {
+        "entity_keys": {"R.CENTER", "R.OUTER"},
+        "boundary_roles": {},
+        "profile_entity_by_ref": {
+            "R.vertical.002": "R.CENTER",
+            "R.outer": "R.OUTER",
+        },
+        "evidence": ["test"],
+    }
+    proven, why = hybrid_adapter._dimension_endpoints_from_candidates(
+        candidate_with_proof, **kwargs
+    )
+    assert proven[0].role == "unresolved"
+    assert proven[1].role == "profile_boundary"
+    assert "hybrid:mirrored-hidden-wall-axis-is-not-material-face" in proven[0].evidence
+    non_proven, why = hybrid_adapter._dimension_endpoints_from_candidates(
+        {}, **kwargs
+    )
+    assert non_proven[0].role == "profile_boundary"

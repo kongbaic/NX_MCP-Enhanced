@@ -6415,6 +6415,92 @@ def _dimension_backed_through_projection_support(
     }
 
 
+def _linear_pattern_inside_verified_projection(
+    binding: dict[str, Any],
+    *,
+    region_id: str,
+    view_kind: str,
+    boundaries: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]],
+) -> bool:
+    """Reject a projected hole axis only when *verified* silhouette rules it out.
+
+    This checks pixel topology/ownership, never engineering dimensions. Missing,
+    disputed, or incomplete boundaries leave the binding unchanged. It cannot
+    promote any candidate or supply a missing machining-entry direction.
+    """
+    projected_axis = {
+        ("front", "horizontal"): "Z",
+        ("front", "vertical"): "X",
+        ("side", "horizontal"): "Z",
+        ("side", "vertical"): "Y",
+        ("top", "horizontal"): "Y",
+        ("top", "vertical"): "X",
+    }.get((view_kind, binding.get("orientation")))
+    raw_pattern_axis = binding.get("pattern_axis_px")
+    if (
+        projected_axis is None
+        or isinstance(raw_pattern_axis, bool)
+        or not isinstance(raw_pattern_axis, (int, float))
+        or not math.isfinite(float(raw_pattern_axis))
+    ):
+        return True
+
+    verified = [
+        record
+        for record in boundaries
+        if (
+            isinstance(record, dict)
+            and record.get("status") == "resolved"
+            and record.get("region_id") == region_id
+            and record.get("axis") == projected_axis
+            and record.get("engineering_coordinate_inferred_from_pixels") is False
+        )
+    ]
+    if len(verified) != 1:
+        return True
+
+    anchors = verified[0].get("anchors")
+    if not isinstance(anchors, list):
+        return True
+    extrema = {
+        role: [
+            item
+            for item in anchors
+            if isinstance(item, dict) and item.get("role") == role
+        ]
+        for role in ("overall_min", "overall_max")
+    }
+    if any(len(extrema[role]) != 1 for role in extrema):
+        return True
+    positions = [extrema[role][0].get("position_px") for role in extrema]
+    if any(
+        isinstance(pos, bool)
+        or not isinstance(pos, (int, float))
+        or not math.isfinite(float(pos))
+        for pos in positions
+    ):
+        return True
+
+    refs = {str(extrema[role][0].get("ref") or "") for role in extrema}
+    tolerances = [
+        float(item["axis_tolerance_px"])
+        for item in profile_inventory
+        if (
+            isinstance(item, dict)
+            and item.get("region_id") == region_id
+            and item.get("ref") in refs
+            and isinstance(item.get("axis_tolerance_px"), (int, float))
+            and not isinstance(item.get("axis_tolerance_px"), bool)
+            and math.isfinite(float(item["axis_tolerance_px"]))
+            and float(item["axis_tolerance_px"]) >= 0
+        )
+    ]
+    tolerance = max(tolerances, default=0.0)
+    lo, hi = sorted(float(pos) for pos in positions)
+    return lo - tolerance <= float(raw_pattern_axis) <= hi + tolerance
+
+
 def _engineering_callout_routing(
     report: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -6423,6 +6509,7 @@ def _engineering_callout_routing(
     hidden_pattern_owner_by_index: dict[tuple[str, int], str],
     existing_entity_keys: set[str],
     profile_inventory: list[dict[str, Any]] | None = None,
+    boundaries: list[dict[str, Any]] | None = None,
     verified_profile_arc_sources: set[str] | None = None,
     excluded_source_item_indices: set[Any] | None = None,
 ) -> tuple[
@@ -6578,6 +6665,7 @@ def _engineering_callout_routing(
                 else sorted(view_lookup)
             )
             pattern_matches: list[dict[str, Any]] = []
+            rejected_outside_profile: list[dict[str, Any]] = []
             for region_id in search_region_ids:
                 region = next(
                     (
@@ -6608,6 +6696,15 @@ def _engineering_callout_routing(
                 )
                 if candidate_pattern_binding.get("status") != "bound":
                     continue
+                if not _linear_pattern_inside_verified_projection(
+                    candidate_pattern_binding,
+                    region_id=region_id,
+                    view_kind=region_view.view_kind,
+                    boundaries=boundaries or [],
+                    profile_inventory=profile_inventory,
+                ):
+                    rejected_outside_profile.append(candidate_pattern_binding)
+                    continue
 
                 pattern_index = candidate_pattern_binding.get("pattern_index")
                 hidden_owner = (
@@ -6637,6 +6734,12 @@ def _engineering_callout_routing(
                         "multiple_callout_linear_pattern_regions_without_unique_target"
                     ),
                     "candidate_bindings": pattern_matches,
+                }
+            elif rejected_outside_profile:
+                linear_pattern_ambiguity = {
+                    "status": "unresolved",
+                    "reason": "callout_linear_pattern_outside_verified_profile",
+                    "candidate_bindings": rejected_outside_profile,
                 }
 
         dimension_binding: dict[str, Any] | None = None
@@ -11635,6 +11738,7 @@ def adapt_hybrid_ocr_report(
         hidden_pattern_owner_by_index=hidden_pattern_owner_by_index,
         existing_entity_keys={item.key for item in entities},
         profile_inventory=profile_inventory,
+        boundaries=boundaries,
         verified_profile_arc_sources={
             source
             for hint in rotational_oblique_profile_hints

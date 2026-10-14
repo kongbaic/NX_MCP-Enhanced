@@ -10996,3 +10996,85 @@ def test_repeated_bore_cross_view_one_to_many_requires_aligned_physical_faces():
         endpoints=dims[1].endpoints,
     )
     assert get(dimensions=[*dims, duplicate]) == []
+
+
+
+def test_repeated_bore_leader_callout_requires_unique_material_face_intersection():
+    from nx_mcp.drawing_intelligence.repeated_bore_projection import (
+        derive_repeated_bore_callout_leader_proofs,
+    )
+
+    group = {
+        "basis": "two_front_hidden_bore_centers_co_project_to_one_side_hidden_axis",
+        "front_entity_keys": ["FRONT.BORE.01", "FRONT.BORE.02"],
+        "side_projection_entity_key": "SIDE.PROJECTION.01",
+        "front_dimension_key": "FRONT.DG",
+        "side_dimension_key": "SIDE.DG",
+        "front_hole_count": 2,
+        "side_projected_axis_count": 1,
+        "modeling_authoritative": False,
+        "engineering_coordinate_inferred_from_pixels": False,
+    }
+    callout = {
+        "source_item_index": 11,
+        "binding_bbox": [[481.0, 371.0], [651.0, 371.0],
+                         [651.0, 415.0], [481.0, 415.0]],
+        "binding": {"status": "unresolved"},
+        "facts": {"count": 2, "through": True},
+        "ambiguities": ["leading_zero_diameter_like_token_not_promoted"],
+    }
+    bore = {
+        "entity_key": "SIDE.PROJECTION.01",
+        "selection_basis": "unique_raster_mirrored_hidden_wall_offset_center",
+        "position_px": 654.0,
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }
+    lines = [
+        {"endpoints_px": [[616, 418], [641, 466]], "angle_deg": 62.5},
+        {"endpoints_px": [[90, 90], [120, 125]], "angle_deg": 49},
+    ]
+    faces = [
+        {
+            "ref": f"SIDE.structural.horizontal.{index:03d}",
+            "region_id": "SIDE",
+            "kind": "profile_edge_candidate",
+            "source_orientation": "horizontal",
+            "position_px": float(height),
+            "span_px": [621, 700],
+            "junction_count": 3,
+            "non_dimension_crossing_source_count": 4,
+        }
+        for index, height in enumerate([481.606, 551.486], start=1)
+    ]
+
+    def probe(*, callouts=None, groups=None, centers=None,
+              geometry=None, surfaces=None):
+        return derive_repeated_bore_callout_leader_proofs(
+            callout_ledger=[callout] if callouts is None else callouts,
+            correlations=[group] if groups is None else groups,
+            hidden_center_records=[bore] if centers is None else centers,
+            annotation_lines=lines if geometry is None else geometry,
+            profile_inventory=faces if surfaces is None else surfaces,
+        )
+
+    evidence = probe()
+    assert len(evidence) == 1
+    assert evidence[0]["front_entity_keys"] == ["FRONT.BORE.01", "FRONT.BORE.02"]
+    assert evidence[0]["side_projection_entity_key"] == "SIDE.PROJECTION.01"
+    assert evidence[0]["leader_segment_index"] == 0
+    assert evidence[0]["ocr_count"] == 2
+    assert evidence[0]["ocr_through"] is True
+    assert evidence[0]["diameter_authoritative"] is False
+    assert evidence[0]["geometry_binding_authoritative"] is False
+    assert evidence[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    assert probe(callouts=[{**callout, "facts": {"count": 3, "through": True}}]) == []
+    assert probe(callouts=[{**callout, "facts": {"count": 2}}]) == []
+    assert probe(centers=[{**bore, "position_px": 675.0}]) == []
+    assert probe(centers=[]) == []
+    assert probe(surfaces=faces[1:]) == []
+    assert probe(groups=[group, group]) == []
+    assert probe(geometry=[lines[1]]) == []
+    assert probe(geometry=[lines[0], lines[0]]) == []
+    assert probe(callouts=[{**callout, "binding": {"status": "bound"}}]) == []

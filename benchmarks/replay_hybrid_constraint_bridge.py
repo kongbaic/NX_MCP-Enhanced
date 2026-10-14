@@ -189,6 +189,7 @@ def replay_hybrid_constraint_bridge(
                 "hybrid_short_offset_recovery_ledger",
                 "hybrid_raster_hidden_bore_center_ledger",
                 "hybrid_repeated_bore_cross_view_projection_ledger",
+                "hybrid_repeated_bore_callout_leader_ledger",
                 "hybrid_circle_datum_alignment_ledger",
                 "hybrid_engineering_callout_ledger",
                 "hybrid_symmetric_dimension_recovery_ledger",

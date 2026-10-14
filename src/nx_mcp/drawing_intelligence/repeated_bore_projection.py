@@ -163,3 +163,215 @@ def derive_repeated_bore_projection_correlations(
             })
     # Competing viable pattern matches are deliberately not chosen.
     return candidates if len(candidates) == 1 else []
+
+
+
+def derive_repeated_bore_callout_leader_proofs(
+    *,
+    callout_ledger: list[dict[str, Any]],
+    correlations: list[dict[str, Any]],
+    hidden_center_records: list[dict[str, Any]],
+    annotation_lines: list[dict[str, Any]],
+    profile_inventory: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Identify a leader terminating at a unique co-projected bore group.
+
+    An OCR callout outside both view bounding boxes may still point into one
+    view. One oblique leader must meet an independently proven material face
+    at the *projected center*, using only a bounded forward shaft extension.
+    This proof is advisory: it transports count/through semantics without
+    accepting an ambiguous diameter glyph or merging the physical holes.
+    """
+    import math
+
+    if not all(
+        isinstance(value, list)
+        for value in (callout_ledger, correlations, hidden_center_records,
+                      annotation_lines, profile_inventory)
+    ):
+        return []
+
+    def bounds_of(value: Any) -> tuple[float, float, float, float] | None:
+        if not (
+            isinstance(value, list)
+            and len(value) == 4
+            and all(
+                isinstance(point, list)
+                and len(point) >= 2
+                and all(type(v) in (int, float) for v in point[:2])
+                for point in value
+            )
+        ):
+            return None
+        return (
+            min(float(p[0]) for p in value),
+            min(float(p[1]) for p in value),
+            max(float(p[0]) for p in value),
+            max(float(p[1]) for p in value),
+        )
+
+    results: list[dict[str, Any]] = []
+    for callout in callout_ledger:
+        if not isinstance(callout, dict):
+            continue
+        fact = callout.get("facts")
+        bind = callout.get("binding")
+        callout_index = callout.get("source_item_index")
+        box = bounds_of(callout.get("binding_bbox"))
+        if (
+            type(callout_index) is not int
+            or box is None
+            or not isinstance(fact, dict)
+            or fact.get("count") != 2
+            or fact.get("through") is not True
+            or not isinstance(bind, dict)
+            or bind.get("status") not in {"unresolved", "callout_backed"}
+        ):
+            continue
+        x0, y0, x1, y1 = box
+        text_height = y1 - y0
+        touch_limit = max(6.0, text_height * 0.25)
+        plausible: list[dict[str, Any]] = []
+
+        for relation in correlations:
+            if not isinstance(relation, dict):
+                continue
+            if (
+                relation.get("basis")
+                != "two_front_hidden_bore_centers_co_project_to_one_side_hidden_axis"
+                or relation.get("modeling_authoritative") is not False
+                or relation.get("engineering_coordinate_inferred_from_pixels") is not False
+                or relation.get("front_hole_count") != 2
+                or relation.get("side_projected_axis_count") != 1
+            ):
+                continue
+            keys = relation.get("front_entity_keys")
+            side_key = relation.get("side_projection_entity_key")
+            if (
+                not isinstance(keys, list) or len(keys) != 2
+                or any(not isinstance(k, str) for k in keys)
+                or len(set(keys)) != 2
+                or not isinstance(side_key, str)
+            ):
+                continue
+            centers = [
+                record for record in hidden_center_records
+                if isinstance(record, dict)
+                and record.get("entity_key") == side_key
+                and record.get("selection_basis")
+                == "unique_raster_mirrored_hidden_wall_offset_center"
+                and record.get("engineering_coordinate_inferred_from_pixels") is False
+                and record.get("pixel_geometry_used_for_identity_only") is True
+            ]
+            if len(centers) != 1 or type(centers[0].get("position_px")) not in (int, float):
+                continue
+            axis_position = float(centers[0]["position_px"])
+            region_id = side_key.split(".", 1)[0]
+            faces = [
+                profile for profile in profile_inventory
+                if isinstance(profile, dict)
+                and profile.get("region_id") == region_id
+                and profile.get("kind") == "profile_edge_candidate"
+                and profile.get("source_orientation") == "horizontal"
+                and type(profile.get("position_px")) in (float, int)
+                and type(profile.get("junction_count")) is int
+                and profile["junction_count"] >= 2
+                and isinstance(profile.get("span_px"), list)
+                and len(profile["span_px"]) == 2
+                and all(type(v) in (float, int) for v in profile["span_px"])
+                and min(profile["span_px"]) + 2 < axis_position
+                < max(profile["span_px"]) - 2
+                and (
+                    profile.get("independent_geometry_source_count", 0) >= 1
+                    or profile.get("non_dimension_crossing_source_count", 0) >= 2
+                )
+            ]
+            for line_index, raw_line in enumerate(annotation_lines):
+                if not isinstance(raw_line, dict):
+                    continue
+                ends = raw_line.get("endpoints_px")
+                if not (
+                    isinstance(ends, list) and len(ends) == 2
+                    and all(
+                        isinstance(pt, list) and len(pt) >= 2
+                        and all(type(v) in (int, float) for v in pt[:2])
+                        for pt in ends
+                    )
+                ):
+                    continue
+                first, second = [
+                    (float(pt[0]), float(pt[1])) for pt in ends
+                ]
+
+                def distance_to_label(point: tuple[float, float]) -> float:
+                    return math.hypot(
+                        max(x0 - point[0], 0.0, point[0] - x1),
+                        max(y0 - point[1], 0.0, point[1] - y1),
+                    )
+
+                if distance_to_label(first) > distance_to_label(second):
+                    first, second = second, first
+                touch = distance_to_label(first)
+                dx = second[0] - first[0]
+                dy = second[1] - first[1]
+                shaft = math.hypot(dx, dy)
+                if (
+                    touch > touch_limit
+                    or distance_to_label(second) <= touch + 8.0
+                    or shaft < 20.0
+                    or abs(dx) < 3.0 or abs(dy) < 3.0
+                ):
+                    continue
+                angle = math.degrees(math.atan2(abs(dy), abs(dx)))
+                if not 25 <= angle <= 80:
+                    continue
+                for face in faces:
+                    face_position = float(face["position_px"])
+                    scalar = (face_position - first[1]) / dy
+                    if scalar <= 1.0:
+                        continue
+                    arrow_extension = (scalar - 1.0) * shaft
+                    if arrow_extension > min(35.0, shaft * 0.60):
+                        continue
+                    intersection = first[0] + dx * scalar
+                    span = face["span_px"]
+                    if not (
+                        min(span) + 2.0 < intersection < max(span) - 2.0
+                    ):
+                        continue
+                    residual = abs(intersection - axis_position)
+                    tolerance = max(4.0, min(6.0, text_height * 0.14))
+                    if residual > tolerance:
+                        continue
+                    plausible.append({
+                        "callout_source_item_index": callout_index,
+                        "front_entity_keys": keys,
+                        "side_projection_entity_key": side_key,
+                        "front_dimension_key": relation.get("front_dimension_key"),
+                        "side_dimension_key": relation.get("side_dimension_key"),
+                        "leader_segment_index": line_index,
+                        "material_face_ref": face.get("ref"),
+                        "leader_face_intersection_px": [
+                            round(intersection, 3), round(face_position, 3)
+                        ],
+                        "center_axis_residual_px": round(residual, 3),
+                        "leader_forward_extension_px": round(arrow_extension, 3),
+                        "basis": "unique_oblique_leader_tip_on_face_of_proven_repeated_bore_projection",
+                        "ocr_count": 2,
+                        "ocr_through": True,
+                        "diameter_authoritative": False,
+                        "geometry_binding_authoritative": False,
+                        "engineering_coordinate_inferred_from_pixels": False,
+                        "pixel_geometry_used_for_identity_only": True,
+                    })
+
+        # A single uniquely grounded projected-center target is required.
+        # Ambiguous or competing leader shafts/nearby faces remain blocking.
+        unique = {
+            (proof["side_projection_entity_key"], proof["leader_segment_index"],
+             proof["material_face_ref"]): proof
+            for proof in plausible
+        }
+        if len(unique) == 1:
+            results.extend(unique.values())
+    return results

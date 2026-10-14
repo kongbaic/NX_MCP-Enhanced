@@ -10894,3 +10894,105 @@ def test_proven_single_hidden_bore_offset_center_requires_unique_overall_ownersh
         },
     )
     assert competing_overall[0].role != "entity_center"
+
+
+
+def test_repeated_bore_cross_view_one_to_many_requires_aligned_physical_faces():
+    from types import SimpleNamespace as N
+    from nx_mcp.drawing_intelligence.repeated_bore_projection import (
+        derive_repeated_bore_projection_correlations,
+    )
+
+    keys = ["FRONT.BORE.CENTER.01", "FRONT.BORE.CENTER.02"]
+    side_key = "SIDE.BORE.CENTER.01"
+    def ep(role, key=None, marker=""):
+        return N(role=role, entity_key=key, evidence=[marker] if marker else [])
+    dims = [
+        N(
+            key="FRONT.DIM",
+            axis="X",
+            unresolved_reason=None,
+            endpoints=[
+                ep("entity_center", key, f"hybrid:proven-hidden-walls:{key}")
+                for key in keys
+            ],
+        ),
+        N(
+            key="SIDE.DIM",
+            axis="Y",
+            unresolved_reason=None,
+            endpoints=[
+                ep("entity_center", side_key,
+                   f"hybrid:raster-proven-hidden-bore-offset-center:{side_key}"),
+                ep("overall_max"),
+            ],
+        ),
+    ]
+    records = [
+        {
+            "entity_key": key,
+            "witness_index": index,
+            "candidate_id": "DIM",
+            "selection_basis": "unique_raster_centerline_and_symmetric_hidden_walls",
+            "feature_axis": "Z",
+            "structural_face_positions_px": [480.0, 550.0],
+            "source_pattern_indices": [index],
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+        } for index, key in enumerate(keys)
+    ] + [{
+        "entity_key": side_key,
+        "selection_basis": "unique_raster_mirrored_hidden_wall_offset_center",
+        "feature_axis": "Z",
+        "position_px": 650.0,
+        "source_pattern_indices": [5],
+        "engineering_coordinate_inferred_from_pixels": False,
+        "pixel_geometry_used_for_identity_only": True,
+    }]
+    regions = [
+        {"region_id": "FRONT", "bbox_px": [30, 100, 430, 530]},
+        {"region_id": "SIDE", "bbox_px": [610, 100, 250, 530]},
+    ]
+    inventory = [
+        {
+            "kind": "profile_edge_candidate",
+            "region_id": "SIDE",
+            "source_orientation": "horizontal",
+            "position_px": height,
+            "span_px": [620, 800],
+            "junction_count": 3,
+            "non_dimension_crossing_source_count": 2,
+        } for height in (480.5, 549.3)
+    ]
+    def get(dimensions=dims, centers=records, faces=inventory, boxes=regions):
+        return derive_repeated_bore_projection_correlations(
+            dimensions=dimensions,
+            hidden_center_records=centers,
+            profile_inventory=faces,
+            regions=boxes,
+            view_kinds={"FRONT": "front", "SIDE": "side"},
+        )
+
+    proven = get()
+    assert len(proven) == 1
+    assert proven[0]["front_entity_keys"] == keys
+    assert proven[0]["side_projection_entity_key"] == side_key
+    assert proven[0]["front_hole_count"] == 2
+    assert proven[0]["modeling_authoritative"] is False
+    assert proven[0]["engineering_coordinate_inferred_from_pixels"] is False
+
+    # No one-to-one merge; missing/duplicate geometric witnesses fail closed.
+    assert get(centers=records[:-1]) == []
+    assert get(faces=inventory[:1]) == []
+    assert get(faces=[inventory[0], {**inventory[1], "position_px": 540.0}]) == []
+    assert get(centers=[*records, {**records[0]}]) == []
+    assert get(dimensions=dims[:1]) == []
+    assert get(boxes=[regions[0], {**regions[1], "bbox_px": [450, 90, 250, 520]}]) == []
+    # A second plausible projection cannot be silently selected.
+    duplicate = N(
+        key="SIDE.DUPLICATE",
+        axis="Y",
+        unresolved_reason=None,
+        endpoints=dims[1].endpoints,
+    )
+    assert get(dimensions=[*dims, duplicate]) == []

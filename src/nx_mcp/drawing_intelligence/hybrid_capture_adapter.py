@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .circle_datum_alignment import derive_circle_overall_center_alignments
 from .dimension_endpoint_candidates import derive_dimension_endpoint_candidates
 from .raster_stroke_identity import single_ink_stroke_alias
+from .repeated_bore_projection import derive_repeated_bore_projection_correlations
 from .nominal_annotation import classify_unassigned_marks
 from .engineering_callout_binding import (
     bind_callout_to_circle_entity,
@@ -12255,6 +12256,14 @@ def adapt_hybrid_ocr_report(
         )
     )
 
+    repeated_bore_correlations = derive_repeated_bore_projection_correlations(
+        dimensions=dimensions,
+        hidden_center_records=hidden_center_records,
+        regions=report.get("regions", []),
+        profile_inventory=profile_inventory,
+        view_kinds={region: view.view_kind for region, view in view_lookup.items()},
+    )
+
     associations, association_unresolved = _unique_orthographic_associations(
         report=report,
         view_lookup=view_lookup,
@@ -12327,6 +12336,14 @@ def adapt_hybrid_ocr_report(
             "schema": "1.0",
             "items": boundaries,
             "engineering_coordinate_inferred_from_pixels": False,
+        },
+        {
+            "kind": "hybrid_repeated_bore_cross_view_projection_ledger",
+            "schema": "1.0",
+            "items": repeated_bore_correlations,
+            "engineering_coordinate_inferred_from_pixels": False,
+            "pixel_geometry_used_for_identity_only": True,
+            "modeling_authoritative": False,
         },
         {
             "kind": "hybrid_raster_hidden_bore_center_ledger",

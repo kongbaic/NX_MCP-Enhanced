@@ -248,6 +248,17 @@ def derive_repeated_bore_callout_leader_proofs(
             keys = relation.get("front_entity_keys")
             side_key = relation.get("side_projection_entity_key")
             if (
+                isinstance(side_key, str)
+                and sum(
+                    1 for candidate in correlations
+                    if isinstance(candidate, dict)
+                    and candidate.get("side_projection_entity_key") == side_key
+                ) != 1
+            ):
+                # Never resolve duplicated / competing projected-center owners
+                # merely because they yield the same leader intersection.
+                continue
+            if (
                 not isinstance(keys, list) or len(keys) != 2
                 or any(not isinstance(k, str) for k in keys)
                 or len(set(keys)) != 2

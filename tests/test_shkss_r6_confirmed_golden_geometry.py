@@ -43,7 +43,7 @@ def _r6_profile() -> dict:
         "topology": "L",
         "segments": [
             {"type": "line", "y1": y1, "z1": z1, "y2": y2, "z2": z2}
-            for (y1, z1), (y2, z2) in zip(points, points[1:] + points[:1])
+            for (y1, z1), (y2, z2) in zip(points, points[1:] + points[:1], strict=True)
         ],
     }
 
@@ -158,3 +158,35 @@ def test_confirmed_r6_golden_refuses_unproven_thread_entry():
     geometries, errors = R.resolve_thread_drawing_geometries(drawing, axes={"X"})
     assert geometries == []
     assert any("canonical material is not interrupted" in e for e in errors)
+
+
+def test_confirmed_r6_whole_part_cross_feature_geometry_is_stable():
+    """Check simultaneous R6 feature composition, not only isolated adapters.
+
+    The historical canonical input is supplied explicitly and MUST NOT act
+    as inferred evidence for any raw-raster Fresh production replay.
+    """
+    drawing = _r6_drawing("slot", "main", "thread", "counterbore", "bottom")
+
+    y_holes, y_errors = R.resolve_hole_drawing_geometries(drawing, axes={"Y"})
+    z_holes, z_errors = R.resolve_hole_drawing_geometries(drawing, axes={"Z"})
+    threads, thread_errors = R.resolve_thread_drawing_geometries(drawing, axes={"X"})
+    recesses, recess_errors = R.resolve_transverse_recess_drawing_geometries(
+        drawing, axes={"X"}
+    )
+    assert not (y_errors or z_errors or thread_errors or recess_errors)
+    assert len(y_holes) == len(z_holes) == len(threads) == len(recesses) == 1
+
+    assert y_holes[0]["feature_id"] == MAIN_BORE
+    assert y_holes[0]["axial_range"] == [0.0, 16.0]
+    assert z_holes[0]["feature_id"] == BOTTOM_PAIR
+    assert z_holes[0]["transverse_centers"] == [[-12.0, -8.0], [12.0, -8.0]]
+    assert z_holes[0]["axial_range"] == [0.0, 8.0]
+    assert threads[0]["feature_id"] == THREAD
+    assert threads[0]["axial_range"] == [-1.0, -13.0]
+    assert (threads[0]["material_side"], threads[0]["entry_endpoint"]) == (
+        "min", "max"
+    )
+    assert recesses[0]["feature_id"] == COUNTERBORE
+    assert recesses[0]["through_axial_range"] == [20.0, 1.0]
+    assert recesses[0]["counterbore_axial_range"] == [20.0, 13.5]

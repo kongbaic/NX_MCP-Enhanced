@@ -134,10 +134,15 @@ def test_outside_profile_pattern_does_not_receive_m6_callout(monkeypatch):
     assert all(
         value.entity_key != "R1.LINEAR_PATTERN.002" for value in values
     )
-    assert not any(
-        entity.key == "R1.LINEAR_PATTERN.002" for entity in entities
+    # Rejected owner cannot re-enter the model as an advisory callout carrier.
+    assert entities == []
+    assert values == []
+    assert any(
+        item.required_for_modeling
+        and item.field == "engineering_callout_geometry_binding"
+        and "outside" in item.reason
+        for item in unresolved
     )
-    assert any(item.required_for_modeling for item in unresolved)
 
 
 def test_inside_profile_pattern_keeps_existing_binding_behavior(monkeypatch):

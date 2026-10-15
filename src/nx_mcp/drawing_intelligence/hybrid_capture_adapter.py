@@ -6958,6 +6958,24 @@ def _engineering_callout_routing(
             continue
 
         if binding.get("status") not in {"bound", "dimension_backed", "pattern_backed"}:
+            if binding.get("reason") == "callout_linear_pattern_outside_verified_profile":
+                # The raster leader explicitly points outside proven material.
+                # Keep the text in the ledger and raise a modeling blocker,
+                # but never manufacture a physical feature from the rejected owner.
+                unresolved.append(
+                    ObservationUnresolved(
+                        kind="feature_inventory",
+                        reason=(
+                            "Engineering callout leader points outside the "
+                            "independently verified view silhouette; exact "
+                            "hole ownership remains unproven."
+                        ),
+                        field="engineering_callout_geometry_binding",
+                        evidence=evidence,
+                        required_for_modeling=True,
+                    )
+                )
+                continue
             if len(region_candidates) == 1 and safe_facts:
                 region_id = region_candidates[0]
                 entity_key = f"{region_id}.CALLOUT.{source_item_index}"

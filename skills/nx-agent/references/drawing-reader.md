@@ -328,8 +328,12 @@ counterbore_depth
 
 重复特征固定规则：
 
-- 一个数量标注、成员没有独立中心定位 → 一个 entity + count=N；
-- 成员中心分别有明确、逐成员可追踪的尺寸/标识 → 分成独立 entities；
+- 一个数量标注、成员没有独立语义/独立绝对中心定位 → 一个 grouped entity + count=N；
+- 仅有 member-center ↔ member-center 的组内 spacing 尺寸，不视为独立成员绝对定位；
+  对 count=2 grouped entity，该 spacing 的两个 entity_center endpoint 可以指向同一
+  grouped entity，但两个 endpoint 必须分别有真实 witness/center evidence，且必须
+  记录 direction；
+- 只有成员分别具有独立、逐成员可追踪的语义或绝对中心定位时才拆成独立 entities；
 - 同一 view 禁止同时输出 grouped entity 和同组 member entities；
 - 如果一个 view 是 grouped entity、另一个 view 是 individual members，
   禁止把 grouped entity 分别 association 到多个 members；
@@ -420,6 +424,10 @@ Reader 写出前还要检查：
   datum_alignments；可接受证据包括明确的对称/等距尺寸、明确总体中心基准或其它
   可追踪的中心绑定标注。仅视觉居中、共享中心线、与槽/轮廓对齐、或因为 overall
   width 看起来被二等分，都不得写 overall_center datum；
+- 对 count=2 grouped pattern，若可追踪的 centerline/witness 几何明确支持“两成员
+  pattern 关于 overall center 对称”，可写 pattern_symmetries；该记录只声明对称
+  拓扑，不包含成员坐标，不得把像素位置换算成工程坐标。成员坐标只能由 deterministic
+  linker 使用 overall extent + spacing dimension 求解；
 - 每个 view-local entity 是否只属于一个 view；
 - 每个 modeling-critical entity 是否有 cross_view_disposition；
 - associated / unresolved / single_view 是否和 association / unresolved evidence 自洽；

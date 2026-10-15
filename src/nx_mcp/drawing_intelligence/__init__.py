@@ -1,5 +1,6 @@
 from .capture import (
     AssociationClaim,
+    CaptureCenterlineAlignment,
     CaptureDatumAlignment,
     CaptureDimension,
     CaptureDimensionEndpoint,
@@ -9,7 +10,20 @@ from .capture import (
     CaptureView,
     ReaderCapture,
 )
+from .hybrid_capture_adapter import (
+    HybridAdapterContext,
+    HybridCaptureAdapterError,
+    HybridRegionView,
+    adapt_hybrid_ocr_report,
+)
 from .identity_linker import IdentityLinkError, IdentityLinkResult, link_reader_capture
+from .metric_profile_solver import (
+    MetricProfileSolution,
+    MetricProfileSolveError,
+    MetricProfileSpec,
+    solve_metric_profile,
+)
+
 """Deterministic drawing-evidence compilation and resolution.
 
 This package is intentionally independent from the NX execution backend.
@@ -41,6 +55,10 @@ from .stability import (
 )
 
 __all__ = [
+    "adapt_hybrid_ocr_report",
+    "HybridRegionView",
+    "HybridCaptureAdapterError",
+    "HybridAdapterContext",
     "link_reader_capture",
     "IdentityLinkResult",
     "IdentityLinkError",
@@ -51,6 +69,7 @@ __all__ = [
     "CaptureEntity",
     "CaptureDimensionEndpoint",
     "CaptureDimension",
+    "CaptureCenterlineAlignment",
     "CaptureDatumAlignment",
     "AssociationClaim",
     "CoordinateFact",
@@ -64,6 +83,9 @@ __all__ = [
     "Gate0Error",
     "Gate0Result",
     "OverallDimensions",
+    "MetricProfileSpec",
+    "MetricProfileSolution",
+    "MetricProfileSolveError",
     "ProjectionEvidence",
     "RelationEvidence",
     "ResolutionResult",
@@ -74,6 +96,7 @@ __all__ = [
     "compile_evidence_graph",
     "logical_snapshot",
     "resolve_evidence_graph",
+    "solve_metric_profile",
     "snapshot_fingerprint",
     "write_strict_evidence",
 ]

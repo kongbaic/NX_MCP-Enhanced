@@ -34,6 +34,8 @@ import re
 import sys
 import tempfile
 import time
+from collections.abc import Callable
+from pathlib import PureWindowsPath
 from typing import Any
 
 # --------------------------------------------------------------------------
@@ -92,6 +94,261 @@ LIST_PARAMS = {"edge_indices", "tool_body_ids"}
 RAW_PIPE_TOOLS = {"nx_edge_blend", "nx_chamfer"}
 
 RUNTIME_CONFIG_FILENAME = "runtime-config.json"
+CAPABILITY_REGISTRY_FILENAME = "modeling_capabilities.json"
+
+# Static handler binding surface for capability declarations. These identifiers
+# are deliberately separate from task/run state: the capability file may only
+# reference adapter/validator handlers that this Runner knows how to dispatch.
+REGISTERED_PLANNER_ADAPTER_HANDLERS = frozenset(
+    {
+        "rotational_profile_revolve",
+        "native_z_hole",
+        "principal_axis_circular_subtract",
+        "native_z_counterbore",
+        "principal_axis_counterbore",
+        "metric_thread_surrogate",
+    }
+)
+REGISTERED_GATE_B_VALIDATOR_HANDLERS = frozenset(
+    {
+        "rotational_profile_revolve_geometry",
+        "native_hole_geometry",
+        "circular_subtract_geometry",
+        "native_counterbore_geometry",
+        "transverse_recess_geometry",
+        "thread_surrogate",
+    }
+)
+
+
+def _default_capability_registry_path() -> str:
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        CAPABILITY_REGISTRY_FILENAME,
+    )
+
+
+def capability_registry_errors(
+    data: dict[str, Any],
+    *,
+    available_tools: set[str] | None = None,
+    planner_adapter_handlers: set[str] | frozenset[str] | None = None,
+    gate_b_validator_handlers: set[str] | frozenset[str] | None = None,
+) -> list[str]:
+    """Validate the static feature-to-implementation capability seam."""
+    errors: list[str] = []
+    if data.get("schema_version") != 1:
+        errors.append("capability registry schema_version must be 1")
+    if data.get("registry_kind") != "static_modeling_capabilities":
+        errors.append(
+            "capability registry kind must be static_modeling_capabilities"
+        )
+    implementations = data.get("implementations")
+    if not isinstance(implementations, list):
+        return [*errors, "capability registry implementations must be a list"]
+
+    tools = set(CERTIFIED_TOOLS if available_tools is None else available_tools)
+    adapter_handlers = set(
+        REGISTERED_PLANNER_ADAPTER_HANDLERS
+        if planner_adapter_handlers is None
+        else planner_adapter_handlers
+    )
+    validator_handlers = set(
+        REGISTERED_GATE_B_VALIDATOR_HANDLERS
+        if gate_b_validator_handlers is None
+        else gate_b_validator_handlers
+    )
+    seen: set[str] = set()
+    for index, item in enumerate(implementations):
+        label = f"capability implementations[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be an object")
+            continue
+
+        implementation_id = item.get("implementation_id")
+        if not isinstance(implementation_id, str) or not implementation_id:
+            errors.append(f"{label} requires implementation_id")
+        elif implementation_id in seen:
+            errors.append(f"duplicate capability implementation_id {implementation_id!r}")
+        else:
+            seen.add(implementation_id)
+
+        if not isinstance(item.get("feature_kind"), str) or not item["feature_kind"]:
+            errors.append(f"{label} requires feature_kind")
+        if item.get("exactness") not in {"exact", "surrogate"}:
+            errors.append(f"{label} exactness must be exact|surrogate")
+
+        axes = item.get("supported_axes")
+        if (
+            not isinstance(axes, list)
+            or not axes
+            or any(axis not in {"X", "Y", "Z"} for axis in axes)
+            or len(set(axes)) != len(axes)
+        ):
+            errors.append(f"{label} supported_axes must be unique X/Y/Z values")
+
+        required_tools = item.get("required_tools")
+        if (
+            not isinstance(required_tools, list)
+            or not required_tools
+            or any(not isinstance(tool, str) or not tool for tool in required_tools)
+        ):
+            errors.append(f"{label} required_tools must be a non-empty string list")
+        else:
+            missing = sorted(set(required_tools) - tools)
+            if missing:
+                errors.append(
+                    f"{label} requires unavailable certified tools: "
+                    + ", ".join(missing)
+                )
+
+        planner_adapter = item.get("planner_adapter")
+        if not isinstance(planner_adapter, str) or not planner_adapter:
+            errors.append(f"{label} requires planner_adapter")
+        elif planner_adapter not in adapter_handlers:
+            errors.append(
+                f"{label} references unbound planner_adapter {planner_adapter!r}"
+            )
+
+        gate_b_validator = item.get("gate_b_validator")
+        if not isinstance(gate_b_validator, str) or not gate_b_validator:
+            errors.append(f"{label} requires gate_b_validator")
+        elif gate_b_validator not in validator_handlers:
+            errors.append(
+                f"{label} references unbound gate_b_validator {gate_b_validator!r}"
+            )
+
+        priority = item.get("priority")
+        if not isinstance(priority, int) or isinstance(priority, bool) or priority < 0:
+            errors.append(f"{label} priority must be a non-negative integer")
+
+    return errors
+
+
+def load_modeling_capability_registry(path: str | None = None) -> dict[str, Any]:
+    """Load the installer-copied static capability registry beside runner.py."""
+    registry_path = path or _default_capability_registry_path()
+    try:
+        with open(registry_path, encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PlanError(
+            f"cannot load modeling capability registry {registry_path!r}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise PlanError("modeling capability registry root must be an object")
+    return data
+
+
+def resolve_modeling_capabilities(
+    feature_kind: str,
+    axis: str,
+    *,
+    allow_surrogate: bool = True,
+    registry: dict[str, Any] | None = None,
+    available_tools: set[str] | None = None,
+    planner_adapter_handlers: set[str] | frozenset[str] | None = None,
+    gate_b_validator_handlers: set[str] | frozenset[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return deterministic implementation candidates for one Feature Contract."""
+    axis = str(axis or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return [], [f"unsupported feature axis {axis!r}"]
+
+    data = registry if registry is not None else load_modeling_capability_registry()
+    errors = capability_registry_errors(
+        data,
+        available_tools=available_tools,
+        planner_adapter_handlers=planner_adapter_handlers,
+        gate_b_validator_handlers=gate_b_validator_handlers,
+    )
+    if errors:
+        return [], errors
+
+    candidates = [
+        dict(item)
+        for item in data.get("implementations", [])
+        if isinstance(item, dict)
+        and item.get("feature_kind") == feature_kind
+        and axis in item.get("supported_axes", [])
+        and (allow_surrogate or item.get("exactness") == "exact")
+    ]
+    candidates.sort(
+        key=lambda item: (
+            0 if item.get("exactness") == "exact" else 1,
+            int(item.get("priority", 0)),
+            str(item.get("implementation_id") or ""),
+        )
+    )
+    if not candidates:
+        return [], [
+            f"no modeling capability for feature_kind={feature_kind!r}, "
+            f"axis={axis!r}, allow_surrogate={allow_surrogate}"
+        ]
+    return candidates, []
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> int:
+    try:
+        registry = load_modeling_capability_registry(
+            getattr(args, "registry", None)
+        )
+    except PlanError as exc:
+        result = {
+            "registry": getattr(args, "registry", None)
+            or _default_capability_registry_path(),
+            "capabilities": [],
+            "errors": [str(exc)],
+            "ok": False,
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    feature_kind = getattr(args, "feature_kind", None)
+    axis = getattr(args, "axis", None)
+    exact_only = bool(getattr(args, "exact_only", False))
+    if feature_kind is None and axis is None:
+        errors = capability_registry_errors(registry)
+        candidates = (
+            []
+            if errors
+            else sorted(
+                (
+                    dict(item)
+                    for item in registry.get("implementations", [])
+                    if isinstance(item, dict)
+                ),
+                key=lambda item: (
+                    str(item.get("feature_kind") or ""),
+                    0 if item.get("exactness") == "exact" else 1,
+                    int(item.get("priority", 0)),
+                    str(item.get("implementation_id") or ""),
+                ),
+            )
+        )
+    elif feature_kind is None or axis is None:
+        candidates = []
+        errors = ["--feature-kind and --axis must be supplied together"]
+    else:
+        candidates, errors = resolve_modeling_capabilities(
+            feature_kind,
+            axis,
+            allow_surrogate=not exact_only,
+            registry=registry,
+        )
+
+    result = {
+        "schema_version": registry.get("schema_version"),
+        "registry_kind": registry.get("registry_kind"),
+        "feature_kind": feature_kind,
+        "axis": axis,
+        "exact_only": exact_only,
+        "capabilities": candidates,
+        "errors": errors,
+        "ok": not errors,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
 
 
 def load_runtime_config(path: str | None = None) -> dict:
@@ -527,6 +784,29 @@ def run_selection(items: list, criteria: dict, kind: str, tol: float = DEFAULT_T
             "extents": compute_extents(flat, kind), "items": flat}
 
 
+def _require_raw_loader_success(tool: str, resp: Any) -> dict:
+    """Reject raw Loader responses that did not explicitly succeed."""
+
+    if not isinstance(resp, dict):
+        raise PlanError(
+            f"{tool}: raw loader response must be an object"
+        )
+    if resp.get("ok") is not True:
+        raw_error = resp.get("error")
+        if isinstance(raw_error, dict):
+            detail = str(
+                raw_error.get("message")
+                or raw_error.get("code")
+                or json.dumps(raw_error, ensure_ascii=False, sort_keys=True)
+            )
+        else:
+            detail = str(raw_error or "loader returned ok=false")
+        raise PlanError(
+            f"{tool}: raw loader command failed: {detail}"
+        )
+    return resp
+
+
 def _parse_done(resp: dict) -> int | None:
     for key in ("result", "message"):
         m = re.search(r"done=(\d+)", str(resp.get(key, "")))
@@ -769,14 +1049,20 @@ def runtime_dirty(active_path: str, history: RunHistory | None) -> bool:
 
 def preflight_decision(active_path: str, planned_path: str, mode: str,
                        overwrite_allowed: bool, dirty: bool,
-                       runner_parts, repair_authorized: bool = False) -> tuple[str, dict]:
+                       runner_parts, repair_authorized: bool = False,
+                       part_entry_tool: str | None = None) -> tuple[str, dict]:
     """Pure preflight policy (unit-testable without NX).
 
     Runner may auto-close ONLY:
       A. the part whose path exactly matches the plan's target part, and
-      B. parts the Runner itself created (recorded in its own history).
-    Anything else -> blocked. A dirty planned part is closed only for an
-    explicitly authorized controlled-repair attempt in benchmark mode.
+      B. parts the Runner itself created (recorded in its own history),
+         except when the current task is a fresh nx_create_part.
+    For a fresh nx_create_part task, any unrelated active part -- including a
+    part recorded in Runner history -- remains open and is never closed;
+    nx_create_part must switch the real NX Work Part to planned_path and the
+    executor verifies that immediately after creation. Other unrelated active
+    parts -> blocked. A dirty planned part is closed only for an explicitly
+    authorized controlled-repair attempt in benchmark mode.
     """
     if not active_path:
         return ("allow", {"active_part": None, "state": "no_active_part"})
@@ -792,11 +1078,26 @@ def preflight_decision(active_path: str, planned_path: str, mode: str,
             "reason": "planned_part_dirty",
             "active_part": active_path, "planned_part": planned_path,
             "mode": mode, "overwrite_allowed": overwrite_allowed})
+    if part_entry_tool == "nx_create_part" and planned_n:
+        return ("allow", {
+            "active_part": active_path,
+            "planned_part": planned_path,
+            "state": "unrelated_part_preserved_for_create",
+        })
     if active_n in {_norm_path(p) for p in (runner_parts or ())}:
         return ("allow", {"active_part": active_path, "state": "runner_test_part"})
     return ("blocked", {
         "reason": "unrelated_part_open",
         "active_part": active_path, "planned_part": planned_path})
+
+
+def derive_part_entry_tool(plan: dict) -> str | None:
+    """Return the first part-entry tool that establishes the task work part."""
+    for op in plan.get("operations") or []:
+        tool = op.get("tool")
+        if tool in ("nx_create_part", "nx_open_part"):
+            return str(tool)
+    return None
 
 
 def derive_planned_part(plan: dict, transport) -> str | None:
@@ -858,21 +1159,88 @@ async def run_preflight(transport, plan: dict, mode: str, overwrite_allowed: boo
     Returns (blocked_payload, info); exactly one is non-None.
     """
     planned = derive_planned_part(plan, transport)
+    part_entry_tool = derive_part_entry_tool(plan)
+    planned_exists = bool(
+        part_entry_tool == "nx_create_part"
+        and planned
+        and os.path.exists(planned)
+    )
+    controlled_overwrite = bool(
+        planned_exists
+        and repair_authorized
+        and mode == "benchmark"
+        and overwrite_allowed
+    )
+    if planned_exists and not controlled_overwrite:
+        return {
+            "status": "precheck_blocked",
+            "reason": "planned_part_exists",
+            "planned_part": planned,
+            "mode": mode,
+            "overwrite_allowed": overwrite_allowed,
+        }, None
+
     resp = await transport.call("nx_status", {})
     active = resp.get("active_part")
     active_path = str(_item_id(active)) if active else ""
     dirty = runtime_dirty(active_path, history) if active_path else False
     decision, payload = preflight_decision(
         active_path, planned or "", mode, overwrite_allowed, dirty, history.paths(),
-        repair_authorized=repair_authorized)
+        repair_authorized=repair_authorized, part_entry_tool=part_entry_tool)
     if decision == "blocked":
         payload["status"] = "precheck_blocked"
         return payload, None
-    if active_path:
+    preserve_active = payload.get("state") == "unrelated_part_preserved_for_create"
+    if active_path and not preserve_active:
         # allowed close: planned part (clean / benchmark overwrite) or own test part
         await transport.call("nx_close_part", {"save": False})
+
+    if controlled_overwrite:
+        try:
+            os.remove(planned)
+        except OSError as exc:
+            raise PlanError(
+                "authorized repair could not remove existing planned part: "
+                f"{planned!r}: {exc}"
+            ) from exc
+
     return None, {"planned_part": planned, "active_part": active_path,
-                  "state": payload.get("state")}
+                  "part_entry_tool": part_entry_tool,
+                  "state": payload.get("state"),
+                  "controlled_overwrite": controlled_overwrite}
+
+
+async def verify_created_work_part(
+    transport,
+    expected_path: str,
+    preserved_displayed_path: str | None = None,
+) -> str:
+    """Fail closed unless create switched Work Part and preserved the old display."""
+    resp = await transport.call("nx_status", {})
+    active = resp.get("active_part")
+    actual_path = str(_item_id(active)) if active else ""
+    if (
+        not expected_path
+        or not actual_path
+        or _norm_path(actual_path) != _norm_path(expected_path)
+    ):
+        raise PlanError(
+            "nx_create_part did not become active work part: "
+            f"expected={expected_path!r} actual={actual_path!r}"
+        )
+    if preserved_displayed_path:
+        displayed = [
+            _norm_path(str(item))
+            for item in (resp.get("displayed_parts") or [])
+            if item
+        ]
+        if _norm_path(preserved_displayed_path) not in displayed:
+            raise PlanError(
+                "nx_create_part did not preserve pre-existing displayed part: "
+                f"expected_preserved={preserved_displayed_path!r} "
+                f"displayed_parts={resp.get('displayed_parts')!r}"
+            )
+    return actual_path
 
 
 # --------------------------------------------------------------------------
@@ -914,6 +1282,7 @@ def _timing_bucket(tool: str, op_index: int, validation_start_idx: int) -> str:
 async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
                    wall_start: float | None = None, history: RunHistory | None = None,
                    mode: str = "normal", planned_part: str | None = None,
+                   preserved_displayed_part: str | None = None,
                    timing_state: dict[str, Any] | None = None) -> dict:
     ops = plan.get("operations") or []
     symbols = Symbols()
@@ -977,7 +1346,10 @@ async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
             while True:
                 try:
                     if tool in RAW_PIPE_TOOLS:
-                        resp = await transport.call_raw(tool, args)
+                        resp = _require_raw_loader_success(
+                            tool,
+                            await transport.call_raw(tool, args),
+                        )
                     else:
                         resp = await transport.call(tool, args)
                     break
@@ -987,6 +1359,14 @@ async def run_plan(plan: dict, transport: NXTransport, plan_path: str = "",
                         raise
                     retried += 1
                     total_retries += 1
+
+            if tool == "nx_create_part":
+                expected_created_path = str(args.get("path") or planned_part or "")
+                await verify_created_work_part(
+                    transport,
+                    expected_created_path,
+                    preserved_displayed_part,
+                )
 
             # selection (list steps with selection_criteria)
             selection = None
@@ -1176,8 +1556,120 @@ def _refs_in(args: dict, kind: str) -> list[str]:
     return out
 
 
+def _build_geometry_conservation_errors(
+    frozen: dict,
+    executable: dict,
+) -> list[str]:
+    """Prove build changed bindings only, never modeled geometry."""
+
+    errors: list[str] = []
+    frozen_ops = frozen.get("operations")
+    executable_ops = executable.get("operations")
+    if not isinstance(frozen_ops, list) or not isinstance(executable_ops, list):
+        return ["build conservation requires operation lists"]
+    if len(frozen_ops) != len(executable_ops):
+        return [
+            "build conservation violation: operation count changed "
+            f"{len(frozen_ops)} -> {len(executable_ops)}"
+        ]
+
+    generated_root_fields = {"result_bindings", "selection_binding", "retry"}
+    logical_scalar_keys = {"sketch_id", "body_id", "target_body_id"}
+
+    def expected_arg_value(key: str, value: Any) -> Any:
+        if key in logical_scalar_keys:
+            if isinstance(value, str) and (
+                value.startswith("sketch_") or value.startswith("body_")
+            ):
+                return "$" + value
+            return value
+        if key == "tool_body_ids" and isinstance(value, list):
+            return [
+                "$" + item
+                if isinstance(item, str) and item.startswith("body_")
+                else item
+                for item in value
+            ]
+        if isinstance(value, str):
+            match = re.match(r"<step(\d+)[^>]*>", value)
+            if match:
+                return "$selection.sel_" + match.group(1)
+        return value
+
+    for index, (before, after) in enumerate(
+        zip(frozen_ops, executable_ops, strict=False)
+    ):
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            errors.append(
+                f"build conservation violation: operation[{index}] must remain an object"
+            )
+            continue
+
+        step = before.get("step", index + 1)
+        for field in ("step", "tool"):
+            if after.get(field) != before.get(field):
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed {field}"
+                )
+
+        extra_root = set(after) - set(before) - generated_root_fields
+        if extra_root:
+            errors.append(
+                "build conservation violation: "
+                f"step {step} added undeclared operation fields "
+                f"{sorted(extra_root)}"
+            )
+
+        for field, value in before.items():
+            if field == "tool_args":
+                continue
+            if after.get(field) != value:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed operation field {field!r}"
+                )
+
+        if "retry" not in before and "retry" in after:
+            expected_retry = {
+                "max": 1,
+                "if_error_contains": ["撤消"],
+            }
+            if before.get("tool") != "nx_save_part" or after.get("retry") != expected_retry:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} added an undeclared retry contract"
+                )
+
+        before_args = before.get("tool_args") or {}
+        after_args = after.get("tool_args") or {}
+        if not isinstance(before_args, dict) or not isinstance(after_args, dict):
+            errors.append(
+                "build conservation violation: "
+                f"step {step} tool_args must remain objects"
+            )
+            continue
+        if set(before_args) != set(after_args):
+            errors.append(
+                "build conservation violation: "
+                f"step {step} tool_args key set changed"
+            )
+            continue
+
+        for key, value in before_args.items():
+            expected_value = expected_arg_value(key, value)
+            if after_args.get(key) != expected_value:
+                errors.append(
+                    "build conservation violation: "
+                    f"step {step} changed tool_args.{key}"
+                )
+
+    return errors
+
+
 def build_executable_plan(plan: dict) -> dict:
     """Convert a frozen planner plan into the executable form:
+    - explicit top-level plan_format marker,
     - explicit result_bindings (producer -> logical name of its first consumer),
     - explicit selection_binding + $selection references,
     - machine-readable retry metadata (declared safe retries only),
@@ -1185,6 +1677,7 @@ def build_executable_plan(plan: dict) -> dict:
     The modelling rules themselves are untouched.
     """
     out = copy.deepcopy(plan)
+    out["plan_format"] = "executable-v1"
     ops = out["operations"]
 
     sk_live: list[int] = []          # producer op indices with unbound sketch results
@@ -1209,8 +1702,8 @@ def build_executable_plan(plan: dict) -> dict:
         tool = ops[op_idx]["tool"]
         if tool in ("nx_circular_pattern", "nx_linear_pattern", "nx_list_bodies"):
             field = "objects"
-        elif tool in ("nx_mirror", "nx_unite"):
-            field = "object"   # bridge adapted-response field for mirror/unite
+        elif tool in ("nx_revolve", "nx_mirror", "nx_unite"):
+            field = "object"   # certified ObjectResult response field
         else:
             field = "body"
         emit(op_idx, field, name)
@@ -1249,7 +1742,8 @@ def build_executable_plan(plan: dict) -> dict:
             sk_live.append(i)
         elif tool == "nx_extrude" and args.get("operation", "create") == "create":
             bd_live.append(i)
-        elif tool == "nx_mirror":
+        elif tool in ("nx_revolve", "nx_mirror"):
+            # Both certified tools create a new independent solid body.
             bd_live.append(i)
         elif tool in ("nx_circular_pattern", "nx_linear_pattern"):
             try:
@@ -1347,7 +1841,17 @@ def _unknown_criteria_keys(criteria: dict, kind: str) -> list[str]:
     return unknown
 
 
-def check_plan(plan: dict, executable: bool = True) -> list[str]:
+def _plan_path_is_absolute(path: str) -> bool:
+    """Return True for POSIX, drive-letter, or UNC absolute plan paths."""
+    return os.path.isabs(path) or bool(PureWindowsPath(path).anchor)
+
+
+def check_plan(
+    plan: dict,
+    executable: bool = True,
+    *,
+    validate_embedded_thread_contract: bool = True,
+) -> list[str]:
     errors: list[str] = []
     ops = plan.get("operations") or []
     if not ops:
@@ -1367,6 +1871,14 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
             errors.append(f"step {step}: tool_args must be an object")
             continue
 
+        if tool in ("nx_create_part", "nx_open_part", "nx_export_step"):
+            path_value = args.get("path")
+            if isinstance(path_value, str) and _plan_path_is_absolute(path_value):
+                errors.append(
+                    f"step {step}: {tool} path must be NX_MCP_WORKSPACE-relative, "
+                    f"got {path_value!r}"
+                )
+
         # selection_criteria grammar
         crit = op.get("selection_criteria") or {}
         if isinstance(crit, dict) and crit and tool in ("nx_list_edges", "nx_list_faces"):
@@ -1377,6 +1889,8 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
         # Frozen plans are Planner output only. Executable-only extensions
         # must be produced by build, never hand-authored by the Planner.
         if not executable:
+            if plan.get("plan_format") is not None:
+                errors.append("frozen plan must not contain executable top-level field 'plan_format'")
             for key in ("result_bindings", "selection_binding", "retry"):
                 if key in op:
                     errors.append(
@@ -1462,12 +1976,20 @@ def check_plan(plan: dict, executable: bool = True) -> list[str]:
             groups = [k for k in crit2 if not _is_info_key(k)] if kind2 == "groups" else []
             bound_selections[op["selection_binding"]] = {"kind": kind2, "groups": groups}
 
-    if plan.get("thread_surrogates") is not None or plan.get("thread_drawing_geometries") is not None:
-        errors.extend(thread_surrogate_plan_errors(
-            plan,
-            plan.get("thread_surrogates") or [],
-            plan.get("thread_drawing_geometries") or [],
-        ))
+    if (
+        validate_embedded_thread_contract
+        and (
+            plan.get("thread_surrogates") is not None
+            or plan.get("thread_drawing_geometries") is not None
+        )
+    ):
+        errors.extend(
+            thread_surrogate_plan_errors(
+                plan,
+                plan.get("thread_surrogates") or [],
+                plan.get("thread_drawing_geometries") or [],
+            )
+        )
     return errors
 
 
@@ -2050,8 +2572,116 @@ def resolve_metric_thread_parameters(spec: str | None) -> tuple[dict | None, str
     }, None
 
 
-def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[str]]:
-    """Read placement/extent exactly as Gate A provided; never fill missing geometry."""
+def _thread_subsuming_through_feature(
+    drawing: dict,
+    thread_feature: dict,
+    surrogate_diameter: float,
+) -> dict | None:
+    """Return one unique coaxial through feature that fully covers the surrogate void.
+
+    This is geometry-only subsumption: the threaded drawing semantics remain intact,
+    but no redundant subtract operation is required when a larger/equal coaxial
+    through void already exists. Ambiguous or incomplete matches fail closed.
+    """
+
+    axis = str(_thread_feature_value(thread_feature, "axis") or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return None
+
+    thread_center_value = _thread_feature_value(
+        thread_feature, "center", "centerline"
+    )
+    position = thread_feature.get("position")
+    if thread_center_value is None and isinstance(position, dict):
+        thread_center_value = position.get("center")
+    thread_center = _axis_transverse_center(axis, thread_center_value)
+    if thread_center is None:
+        return None
+
+    thread_range_value = _thread_feature_value(
+        thread_feature, "axis_range", "axial_range", "through_range", "range"
+    )
+    if not (
+        isinstance(thread_range_value, (list, tuple))
+        and len(thread_range_value) == 2
+        and all(_num(value) is not None for value in thread_range_value)
+    ):
+        return None
+    thread_range = sorted(
+        [float(_num(thread_range_value[0])), float(_num(thread_range_value[1]))]
+    )
+
+    matches: list[dict] = []
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict) or feature is thread_feature:
+            continue
+        if feature.get("id") == thread_feature.get("id"):
+            continue
+        feature_type = str(feature.get("type") or feature.get("kind") or "").lower()
+        if any(token in feature_type for token in ("thread", "tapped", "螺纹")):
+            continue
+        if feature.get("through") is not True:
+            continue
+        if str(feature.get("axis") or "").upper() != axis:
+            continue
+        count = _num(feature.get("count"))
+        if count is not None and (not float(count).is_integer() or int(count) != 1):
+            continue
+
+        diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        if diameter is None or diameter + 1e-9 < surrogate_diameter:
+            continue
+
+        center_value = feature.get("centerline")
+        candidate_position = feature.get("position")
+        if center_value is None and isinstance(candidate_position, dict):
+            center_value = candidate_position.get("center")
+        center = _axis_transverse_center(axis, center_value)
+        if center is None:
+            continue
+        if len(center) != len(thread_center) or any(
+            not _drawing_equal(a, b) for a, b in zip(center, thread_center)
+        ):
+            continue
+
+        candidate_range_value = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if not (
+            isinstance(candidate_range_value, (list, tuple))
+            and len(candidate_range_value) == 2
+            and all(_num(value) is not None for value in candidate_range_value)
+        ):
+            continue
+        candidate_range = sorted(
+            [float(_num(candidate_range_value[0])), float(_num(candidate_range_value[1]))]
+        )
+        if (
+            candidate_range[0] > thread_range[0] + 1e-9
+            or candidate_range[1] < thread_range[1] - 1e-9
+        ):
+            continue
+
+        matches.append(feature)
+
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_thread_drawing_geometries(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Resolve thread surrogate geometry from explicit drawing facts only.
+
+    An absent axial range may be derived only when the drawing explicitly provides
+    start_side/side, a positive thread depth, and overall dimensions. This uses the
+    canonical engineering coordinate system; pixel geometry is never consulted.
+    """
     geometries: list[dict] = []
     errors: list[str] = []
     for index, record in enumerate(_thread_feature_records(drawing)):
@@ -2059,7 +2689,37 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
-        axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        feature_axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        if axes is not None and feature_axis not in axes:
+            continue
+        parameters, parameter_error = resolve_metric_thread_parameters(_thread_spec(feature))
+        if parameter_error is None and parameters is not None:
+            covering = _thread_subsuming_through_feature(
+                drawing,
+                feature,
+                float(parameters["surrogate_diameter"]),
+            )
+            if covering is not None:
+                center_value = _thread_feature_value(feature, "center", "centerline")
+                position = feature.get("position")
+                if center_value is None and isinstance(position, dict):
+                    center_value = position.get("center")
+                axis_value = str(_thread_feature_value(feature, "axis") or "").upper()
+                geometries.append(
+                    {
+                        "feature_id": fid,
+                        "owner_feature_id": record.get("owner_feature_id") or fid,
+                        "representation": "subsumed_by_coaxial_through_hole",
+                        "subsumed_by_feature_id": str(covering.get("id") or ""),
+                        "axis": axis_value,
+                        "transverse_centers": [
+                            _axis_transverse_center(axis_value, center_value)
+                        ],
+                        "count": 0,
+                    }
+                )
+                continue
+        axis = feature_axis
         if axis not in {"X", "Y", "Z"}:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid axis")
             continue
@@ -2073,23 +2733,141 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
         if not centers or any(center is None for center in centers):
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid center")
             continue
-        depth = _num(_thread_feature_value(feature, "depth", "hole_depth"))
+        depth = _num(
+            _thread_feature_value(feature, "depth", "hole_depth", "thread_depth")
+        )
         if depth is None or depth <= 0:
             errors.append(f"thread_geometry_violation: feature {fid!r} has no valid depth")
             continue
-        axial_range = _thread_feature_value(feature, "axis_range", "axial_range", "through_range", "range")
-        if not (isinstance(axial_range, (list, tuple)) and len(axial_range) == 2 and all(_num(value) is not None for value in axial_range)):
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no explicit axial range")
-            continue
-        axial_range = [float(_num(axial_range[0])), float(_num(axial_range[1]))]
+
+        axial_range = _thread_feature_value(
+            feature, "axis_range", "axial_range", "through_range", "range"
+        )
+        if (
+            isinstance(axial_range, (list, tuple))
+            and len(axial_range) == 2
+            and all(_num(value) is not None for value in axial_range)
+        ):
+            axial_range = [
+                float(_num(axial_range[0])),
+                float(_num(axial_range[1])),
+            ]
+        else:
+            legacy_side_value = _thread_feature_value(feature, "start_side", "side")
+            legacy_side = str(legacy_side_value or "").lower()
+            material_side_value = _thread_feature_value(feature, "material_side")
+            entry_endpoint_value = _thread_feature_value(feature, "entry_endpoint")
+            material_side = str(material_side_value or "").lower()
+            entry_endpoint = str(entry_endpoint_value or "").lower()
+
+            split_present = (
+                material_side_value is not None or entry_endpoint_value is not None
+            )
+            if split_present:
+                if legacy_side in {"min", "max"}:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} mixes legacy "
+                        "start_side with material_side/entry_endpoint"
+                    )
+                    continue
+                if (
+                    material_side not in {"min", "max"}
+                    or entry_endpoint not in {"min", "max"}
+                ):
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} requires both "
+                        "material_side and entry_endpoint as min|max"
+                    )
+                    continue
+            else:
+                if legacy_side not in {"min", "max"}:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} has no explicit "
+                        "axial range and no complete machining-entry semantics"
+                    )
+                    continue
+                material_side = legacy_side
+                entry_endpoint = legacy_side
+
+            derived_ranges: list[list[float]] = []
+            material_failed = False
+            for center in centers:
+                material, material_errors = resolve_axis_material_intervals(
+                    drawing,
+                    axis,
+                    center,
+                    exclude_feature_ids={fid},
+                )
+                if material_errors:
+                    errors.extend(
+                        f"thread_geometry_violation: feature {fid!r}: {item}"
+                        for item in material_errors
+                    )
+                    material_failed = True
+                    break
+                normalized_material = _merge_intervals(material)
+                if material_side != entry_endpoint and len(normalized_material) < 2:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} uses split "
+                        "material/entry semantics but canonical material is not interrupted"
+                    )
+                    material_failed = True
+                    break
+                selected = _select_material_interval(material, material_side)
+                if selected is None:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} has no "
+                        f"material interval on material_side={material_side}"
+                    )
+                    material_failed = True
+                    break
+                value = _depth_range_from_material_interval(
+                    selected,
+                    entry_endpoint,
+                    float(depth),
+                )
+                if value is None:
+                    errors.append(
+                        f"thread_geometry_violation: feature {fid!r} depth exceeds "
+                        "the selected material interval from entry_endpoint="
+                        f"{entry_endpoint}"
+                    )
+                    material_failed = True
+                    break
+                derived_ranges.append(value)
+            if material_failed:
+                continue
+            if not derived_ranges or any(
+                len(value) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(
+                        value,
+                        derived_ranges[0],
+                        strict=False,
+                    )
+                )
+                for value in derived_ranges[1:]
+            ):
+                errors.append(
+                    f"thread_geometry_violation: feature {fid!r} centers do not "
+                    "share one deterministic axial range"
+                )
+                continue
+            axial_range = derived_ranges[0]
+
         if not _drawing_equal(abs(axial_range[1] - axial_range[0]), depth):
             errors.append(f"thread_geometry_violation: feature {fid!r} depth and axial range disagree")
             continue
+
         count_value = _num(_thread_feature_value(feature, "count"))
-        if count_value is None or count_value <= 0 or not float(count_value).is_integer():
-            errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
-            continue
-        count = int(count_value)
+        if count_value is None:
+            count = len(centers)
+        else:
+            if count_value <= 0 or not float(count_value).is_integer():
+                errors.append(f"thread_geometry_violation: feature {fid!r} has no valid count")
+                continue
+            count = int(count_value)
         if len(centers) != count:
             errors.append(f"thread_geometry_violation: feature {fid!r} center count does not equal count")
             continue
@@ -2102,13 +2880,31 @@ def resolve_thread_drawing_geometries(drawing: dict) -> tuple[list[dict], list[s
             "axial_range": axial_range,
             "count": count,
         }
-        if "side" in feature:
-            geometry["side"] = copy.deepcopy(feature["side"])
+        side_value = _thread_feature_value(feature, "start_side", "side")
+        side = str(side_value or "").lower()
+        material_side_value = _thread_feature_value(feature, "material_side")
+        entry_endpoint_value = _thread_feature_value(feature, "entry_endpoint")
+        material_side = str(material_side_value or "").lower()
+        entry_endpoint = str(entry_endpoint_value or "").lower()
+        if side in {"min", "max"}:
+            geometry["side"] = side
+            geometry["material_side"] = side
+            geometry["entry_endpoint"] = side
+        elif (
+            material_side in {"min", "max"}
+            and entry_endpoint in {"min", "max"}
+        ):
+            geometry["material_side"] = material_side
+            geometry["entry_endpoint"] = entry_endpoint
         geometries.append(geometry)
     return geometries, errors
 
 
-def resolve_thread_surrogates(drawing: dict) -> tuple[list[dict], list[str]]:
+def resolve_thread_surrogates(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     resolved: list[dict] = []
     errors: list[str] = []
     for index, record in enumerate(_thread_feature_records(drawing)):
@@ -2116,6 +2912,9 @@ def resolve_thread_surrogates(drawing: dict) -> tuple[list[dict], list[str]]:
         if feature.get("required_for_modeling") is False:
             continue
         fid = str(feature.get("id") or f"thread[{index}]")
+        feature_axis = str(_thread_feature_value(feature, "axis") or "").upper()
+        if axes is not None and feature_axis not in axes:
+            continue
         parameters, error = resolve_metric_thread_parameters(_thread_spec(feature))
         if error or parameters is None:
             errors.append(f"capability_violation: threaded feature {fid!r}: {error}")
@@ -2160,7 +2959,15 @@ def _thread_operation_geometry(plan: dict, op: dict, expected_diameter: float) -
         return None, [f"step {step}: invalid thread subtract geometry"]
     direction = -1.0 if args["reverse"] else 1.0
     errors = [] if _drawing_equal(diameter, expected_diameter) else [f"step {step}: thread surrogate diameter differs from resolver"]
-    return {"axis": axis, "transverse_center": center, "depth": float(depth), "axial_range": [float(start), float(start + direction * depth)]}, errors
+    return {
+        "axis": axis,
+        "transverse_center": center,
+        "depth": float(depth),
+        "axial_range": [
+            float(direction * start),
+            float(direction * (start + depth)),
+        ],
+    }, errors
 
 
 def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: list[dict]) -> list[str]:
@@ -2179,6 +2986,14 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
             errors.append(f"thread feature {fid!r} has no validated drawing geometry")
             continue
         matches = [op for op in marked if op["thread_surrogate_use"].get("feature_id") == fid]
+        if expected.get("representation") == "subsumed_by_coaxial_through_hole":
+            if matches:
+                errors.append(
+                    f"thread surrogate for feature {fid!r} is redundant because "
+                    f"coaxial through feature {expected.get('subsumed_by_feature_id')!r} "
+                    "already covers its tap-drill geometry"
+                )
+            continue
         if len(matches) != expected.get("count"):
             errors.append(f"thread surrogate for feature {fid!r} operation count differs from drawing")
         actual_geometries = []
@@ -2186,7 +3001,35 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
             use = op["thread_surrogate_use"]
             if use.get("owner_feature_id") != expected.get("owner_feature_id"):
                 errors.append(f"thread surrogate for feature {fid!r} changes feature ownership")
-            if use.get("side") != expected.get("side"):
+            expected_material_side = expected.get("material_side")
+            expected_entry_endpoint = expected.get("entry_endpoint")
+            if (
+                expected_material_side is not None
+                or expected_entry_endpoint is not None
+            ):
+                if (
+                    use.get("material_side") is not None
+                    or use.get("entry_endpoint") is not None
+                ):
+                    if use.get("material_side") != expected_material_side:
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} changes material-side semantics"
+                        )
+                    if use.get("entry_endpoint") != expected_entry_endpoint:
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} changes entry-endpoint semantics"
+                        )
+                else:
+                    legacy_use_side = use.get("side")
+                    if not (
+                        expected_material_side == expected_entry_endpoint
+                        and legacy_use_side == expected_material_side
+                    ):
+                        errors.append(
+                            f"thread surrogate for feature {fid!r} cannot represent "
+                            "split material-side/entry-endpoint semantics"
+                        )
+            elif use.get("side") != expected.get("side"):
                 errors.append(f"thread surrogate for feature {fid!r} changes side semantics")
             actual, op_errors = _thread_operation_geometry(plan, op, float(recipe["surrogate_diameter"]))
             errors.extend(op_errors)
@@ -2206,17 +3049,3483 @@ def thread_surrogate_plan_errors(plan: dict, recipes: list[dict], geometries: li
     return errors
 
 
-def _drawing_thread_context(path: str) -> tuple[dict, list[dict], list[dict], list[str]]:
+def _axis_bounds(
+    drawing: dict,
+    axis: str,
+) -> tuple[float, float] | None:
+    bbox = _drawing_overall_bbox(drawing)
+    if bbox is None:
+        return None
+    lx, ly, hz = bbox
+    return {
+        "X": (-lx / 2.0, lx / 2.0),
+        "Y": (-ly / 2.0, ly / 2.0),
+        "Z": (0.0, hz),
+    }.get(axis.upper())
+
+
+def _fixed_global_coordinates(
+    axis: str,
+    transverse_point: Any,
+) -> dict[str, float] | None:
+    center = _axis_transverse_center(axis, transverse_point)
+    if center is None:
+        return None
+    keys = {
+        "X": ("Y", "Z"),
+        "Y": ("X", "Z"),
+        "Z": ("X", "Y"),
+    }.get(axis.upper())
+    if keys is None:
+        return None
+    return {keys[0]: center[0], keys[1]: center[1]}
+
+
+def _profile_line_polygon(
+    drawing: dict,
+) -> tuple[tuple[str, str] | None, list[tuple[float, float]], list[str]]:
+    """Read one ordered closed, line-segment canonical body profile."""
+    profile = drawing.get("profile")
+    if not isinstance(profile, dict):
+        return None, [], ["material_interval_violation: canonical profile is missing"]
+
+    plane = str(profile.get("plane") or "").upper()
+    if plane not in {"XY", "XZ", "YZ"}:
+        return None, [], [
+            f"material_interval_violation: unsupported profile plane {plane!r}"
+        ]
+    axes = (plane[0], plane[1])
+    segments = profile.get("segments")
+    if not isinstance(segments, list) or len(segments) < 3:
+        return None, [], [
+            "material_interval_violation: profile requires at least three line segments"
+        ]
+
+    polygon: list[tuple[float, float]] = []
+    errors: list[str] = []
+    first_start: tuple[float, float] | None = None
+    previous_end: tuple[float, float] | None = None
+    for index, segment in enumerate(segments):
+        label = f"profile.segments[{index}]"
+        if not isinstance(segment, dict) or str(segment.get("type") or "").lower() != "line":
+            errors.append(
+                f"material_interval_violation: {label} must be a line segment"
+            )
+            continue
+        a = axes[0].lower()
+        b = axes[1].lower()
+        values = [
+            _num(segment.get(f"{a}1")),
+            _num(segment.get(f"{b}1")),
+            _num(segment.get(f"{a}2")),
+            _num(segment.get(f"{b}2")),
+        ]
+        if any(value is None for value in values):
+            errors.append(
+                f"material_interval_violation: {label} has incomplete coordinates"
+            )
+            continue
+        start = (float(values[0]), float(values[1]))
+        end = (float(values[2]), float(values[3]))
+        if start == end:
+            errors.append(
+                f"material_interval_violation: {label} has zero length"
+            )
+            continue
+        if first_start is None:
+            first_start = start
+            polygon.append(start)
+        elif previous_end is None or any(
+            abs(left - right) > 1e-9
+            for left, right in zip(previous_end, start, strict=False)
+        ):
+            errors.append(
+                f"material_interval_violation: {label} is not continuous with "
+                "the previous profile segment"
+            )
+        polygon.append(end)
+        previous_end = end
+
+    if errors:
+        return None, [], errors
+    if first_start is None or previous_end is None or any(
+        abs(left - right) > 1e-9
+        for left, right in zip(previous_end, first_start, strict=False)
+    ):
+        return None, [], [
+            "material_interval_violation: profile is not closed"
+        ]
+    return axes, polygon[:-1], []
+
+
+
+def _rotational_profile_axis_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    """Intersect an axis-of-revolution query line with a canonical meridian.
+
+    The meridian may contain exact line and arc primitives.  The transverse
+    query is reduced to its engineering radial distance from the canonical
+    rotation axis; raster coordinates never participate.
+    """
+    geometry, geometry_errors = _rotational_profile_geometry(drawing)
+    if geometry_errors or geometry is None:
+        return [], [
+            f"material_interval_violation: {item}"
+            for item in geometry_errors
+        ]
+
+    axis = str(axis or "").upper()
+    if str(geometry.get("axis") or "").upper() != axis:
+        return [], [
+            "material_interval_violation: rotational profile query axis does "
+            "not match rotation_axis"
+        ]
+
+    transverse = _axis_transverse_center(axis, transverse_point)
+    if transverse is None:
+        return [], [
+            "material_interval_violation: rotational profile query center is invalid"
+        ]
+    radial = math.hypot(float(transverse[0]), float(transverse[1]))
+
+    plane = str(geometry.get("plane") or "").upper()
+    axes = (plane[0], plane[1])
+    axis_index = axes.index(axis)
+    radial_index = 1 - axis_index
+    local_keys = ("x", "y")
+    axial_key = local_keys[axis_index]
+    radial_key = local_keys[radial_index]
+    tolerance = 1e-7
+    crossings: list[float] = []
+
+    def angle_on_arc(angle: float, start: float, end: float) -> bool:
+        sweep = (end - start) % 360.0
+        if sweep <= tolerance:
+            return False
+        relative = (angle - start) % 360.0
+        return relative <= sweep + tolerance
+
+    for index, segment in enumerate(geometry.get("segments") or []):
+        segment_type = str(segment.get("type") or "").lower()
+
+        if segment_type == "line":
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                return [], [
+                    f"material_interval_violation: rotational profile line {index} "
+                    "is malformed"
+                ]
+            start_radial = _num(start.get(radial_key))
+            end_radial = _num(end.get(radial_key))
+            start_axial = _num(start.get(axial_key))
+            end_axial = _num(end.get(axial_key))
+            if any(
+                value is None
+                for value in (
+                    start_radial,
+                    end_radial,
+                    start_axial,
+                    end_axial,
+                )
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile line {index} "
+                    "has incomplete engineering coordinates"
+                ]
+
+            start_radial = float(start_radial)
+            end_radial = float(end_radial)
+            start_axial = float(start_axial)
+            end_axial = float(end_axial)
+            if (
+                abs(start_radial - radial) <= tolerance
+                and abs(end_radial - radial) <= tolerance
+            ):
+                return [], [
+                    "material_interval_violation: rotational profile scan "
+                    f"coincides with profile line {index}"
+                ]
+            if abs(end_radial - start_radial) <= tolerance:
+                continue
+            if (
+                radial < min(start_radial, end_radial) - tolerance
+                or radial > max(start_radial, end_radial) + tolerance
+            ):
+                continue
+
+            ratio = (radial - start_radial) / (end_radial - start_radial)
+            if -tolerance <= ratio <= 1.0 + tolerance:
+                crossings.append(
+                    float(start_axial + ratio * (end_axial - start_axial))
+                )
+            continue
+
+        if segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if (
+                not isinstance(center, dict)
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile arc {index} "
+                    "is malformed"
+                ]
+
+            center_radial = _num(center.get(radial_key))
+            center_axial = _num(center.get(axial_key))
+            center_x = _num(center.get("x"))
+            center_y = _num(center.get("y"))
+            if any(
+                value is None
+                for value in (
+                    center_radial,
+                    center_axial,
+                    center_x,
+                    center_y,
+                )
+            ):
+                return [], [
+                    f"material_interval_violation: rotational profile arc {index} "
+                    "has incomplete engineering center"
+                ]
+
+            radius_value = float(radius)
+            delta = radial - float(center_radial)
+            remaining = radius_value * radius_value - delta * delta
+            if remaining < -tolerance:
+                continue
+            if remaining <= tolerance:
+                # A tangential touch does not toggle inside/outside parity.
+                continue
+
+            offset = math.sqrt(max(0.0, remaining))
+            for axial_value in (
+                float(center_axial) - offset,
+                float(center_axial) + offset,
+            ):
+                point = {
+                    radial_key: radial,
+                    axial_key: axial_value,
+                }
+                angle = math.degrees(
+                    math.atan2(
+                        float(point["y"]) - float(center_y),
+                        float(point["x"]) - float(center_x),
+                    )
+                )
+                if angle_on_arc(
+                    angle,
+                    float(start_angle),
+                    float(end_angle),
+                ):
+                    crossings.append(float(axial_value))
+            continue
+
+        return [], [
+            f"material_interval_violation: rotational profile segment {index} "
+            f"uses unsupported primitive type {segment_type!r}"
+        ]
+
+    unique: list[float] = []
+    for value in sorted(crossings):
+        if not unique or abs(value - unique[-1]) > tolerance:
+            unique.append(value)
+
+    if len(unique) % 2:
+        return [], [
+            "material_interval_violation: rotational profile scan has an odd "
+            "number of boundary crossings"
+        ]
+
+    intervals = [
+        [unique[index], unique[index + 1]]
+        for index in range(0, len(unique), 2)
+        if unique[index + 1] > unique[index] + tolerance
+    ]
+    return _merge_intervals(intervals), []
+
+
+def _point_on_segment_2d(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> bool:
+    px, py = point
+    ax, ay = start
+    bx, by = end
+    cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    if abs(cross) > 1e-9:
+        return False
+    return (
+        min(ax, bx) - 1e-9 <= px <= max(ax, bx) + 1e-9
+        and min(ay, by) - 1e-9 <= py <= max(ay, by) + 1e-9
+    )
+
+
+def _point_in_polygon(
+    point: tuple[float, float],
+    polygon: list[tuple[float, float]],
+) -> tuple[bool, bool]:
+    """Return (strictly_inside, on_boundary) for a simple line polygon."""
+    if len(polygon) < 3:
+        return False, False
+    inside = False
+    px, py = point
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        if _point_on_segment_2d(point, start, end):
+            return False, True
+        ax, ay = start
+        bx, by = end
+        if (ay > py) == (by > py):
+            continue
+        x_cross = ax + (py - ay) * (bx - ax) / (by - ay)
+        if x_cross > px:
+            inside = not inside
+    return inside, False
+
+
+def _merge_intervals(
+    intervals: list[list[float]],
+) -> list[list[float]]:
+    normalized = sorted(
+        (
+            [min(float(value[0]), float(value[1])), max(float(value[0]), float(value[1]))]
+            for value in intervals
+            if len(value) == 2 and abs(float(value[1]) - float(value[0])) > 1e-9
+        ),
+        key=lambda value: (value[0], value[1]),
+    )
+    merged: list[list[float]] = []
+    for interval in normalized:
+        if not merged or interval[0] > merged[-1][1] + 1e-9:
+            merged.append(interval)
+        else:
+            merged[-1][1] = max(merged[-1][1], interval[1])
+    return merged
+
+
+def _subtract_intervals(
+    material: list[list[float]],
+    voids: list[list[float]],
+) -> list[list[float]]:
+    output = _merge_intervals(material)
+    for void_lo, void_hi in _merge_intervals(voids):
+        next_output: list[list[float]] = []
+        for mat_lo, mat_hi in output:
+            overlap_lo = max(mat_lo, void_lo)
+            overlap_hi = min(mat_hi, void_hi)
+            if overlap_hi <= overlap_lo + 1e-9:
+                next_output.append([mat_lo, mat_hi])
+                continue
+            if overlap_lo > mat_lo + 1e-9:
+                next_output.append([mat_lo, overlap_lo])
+            if overlap_hi < mat_hi - 1e-9:
+                next_output.append([overlap_hi, mat_hi])
+        output = next_output
+    return output
+
+
+def _profile_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    """Intersect one principal-axis query line with canonical body profile."""
+    axis = axis.upper()
+    profile = drawing.get("profile")
+    rotation_axis = (
+        str(profile.get("rotation_axis") or "").upper()
+        if isinstance(profile, dict)
+        else ""
+    )
+    if rotation_axis == axis:
+        return _rotational_profile_axis_material_intervals(
+            drawing,
+            axis,
+            transverse_point,
+        )
+
+    bounds = _axis_bounds(drawing, axis)
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    profile_axes, polygon, errors = _profile_line_polygon(drawing)
+    if errors:
+        return [], errors
+    if bounds is None or fixed is None or profile_axes is None:
+        return [], [
+            "material_interval_violation: incomplete query axis/overall geometry"
+        ]
+
+    extrusion_axis = next(
+        value for value in ("X", "Y", "Z") if value not in profile_axes
+    )
+    if axis == extrusion_axis:
+        point = (fixed[profile_axes[0]], fixed[profile_axes[1]])
+        inside, boundary = _point_in_polygon(point, polygon)
+        if boundary:
+            return [], [
+                "material_interval_violation: query line lies on profile boundary"
+            ]
+        return ([list(bounds)] if inside else []), []
+
+    if axis not in profile_axes:
+        return [], [
+            f"material_interval_violation: axis {axis!r} is incompatible with "
+            f"profile plane {''.join(profile_axes)!r}"
+        ]
+
+    extrusion_coordinate = fixed.get(extrusion_axis)
+    extrusion_bounds = _axis_bounds(drawing, extrusion_axis)
+    if extrusion_coordinate is None or extrusion_bounds is None:
+        return [], [
+            "material_interval_violation: profile extrusion coordinate is unavailable"
+        ]
+    if not (
+        extrusion_bounds[0] - 1e-9
+        <= extrusion_coordinate
+        <= extrusion_bounds[1] + 1e-9
+    ):
+        return [], []
+
+    axis_index = profile_axes.index(axis)
+    other_index = 1 - axis_index
+    other_axis = profile_axes[other_index]
+    fixed_value = fixed.get(other_axis)
+    if fixed_value is None:
+        return [], [
+            "material_interval_violation: profile scan coordinate is unavailable"
+        ]
+
+    crossings: list[float] = []
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        start_axis = start[axis_index]
+        end_axis = end[axis_index]
+        start_fixed = start[other_index]
+        end_fixed = end[other_index]
+
+        if (
+            abs(start_fixed - fixed_value) <= 1e-9
+            and abs(end_fixed - fixed_value) <= 1e-9
+        ):
+            return [], [
+                "material_interval_violation: profile scan coincides with a "
+                "profile boundary segment"
+            ]
+        if abs(end_fixed - start_fixed) <= 1e-12:
+            continue
+        low = min(start_fixed, end_fixed)
+        high = max(start_fixed, end_fixed)
+        if fixed_value < low - 1e-9 or fixed_value > high + 1e-9:
+            continue
+        ratio = (fixed_value - start_fixed) / (end_fixed - start_fixed)
+        if -1e-9 <= ratio <= 1.0 + 1e-9:
+            crossings.append(
+                float(start_axis + ratio * (end_axis - start_axis))
+            )
+
+    unique: list[float] = []
+    for value in sorted(crossings):
+        if not unique or abs(value - unique[-1]) > 1e-9:
+            unique.append(value)
+
+    intervals: list[list[float]] = []
+    for lo, hi in zip(unique, unique[1:], strict=False):
+        if hi <= lo + 1e-9:
+            continue
+        midpoint = (lo + hi) / 2.0
+        point = (
+            (midpoint, fixed_value)
+            if axis_index == 0
+            else (fixed_value, midpoint)
+        )
+        inside, boundary = _point_in_polygon(point, polygon)
+        if inside and not boundary:
+            intervals.append([float(lo), float(hi)])
+    return _merge_intervals(intervals), []
+
+
+def _slot_void_intervals(
+    drawing: dict,
+    feature: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    if str(feature.get("type") or "").lower() not in {"slot", "slit", "cut"}:
+        return [], []
+
+    width_axis = str(feature.get("width_axis") or "").upper()
+    through_axis = str(feature.get("through_axis") or "").upper()
+    if (
+        width_axis not in {"X", "Y"}
+        or through_axis not in {"X", "Y"}
+        or width_axis == through_axis
+    ):
+        return [], [
+            "material_interval_violation: prismatic slot requires distinct "
+            "horizontal width_axis/through_axis"
+        ]
+
+    width = _num(feature.get("width"))
+    center = _num(_drawing_feature_coord(feature, width_axis.lower()))
+    bottom_z = _num(feature.get("bottom_z"))
+    top_z = _num(feature.get("top_z"))
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    through_bounds = _axis_bounds(drawing, through_axis)
+    if (
+        width is None
+        or width <= 0
+        or center is None
+        or bottom_z is None
+        or top_z is None
+        or top_z <= bottom_z
+        or fixed is None
+        or through_bounds is None
+    ):
+        return [], [
+            f"material_interval_violation: slot {feature.get('id')!r} has "
+            "incomplete canonical geometry"
+        ]
+
+    width_interval = [
+        float(center - width / 2.0),
+        float(center + width / 2.0),
+    ]
+    z_interval = [float(bottom_z), float(top_z)]
+
+    if axis == width_axis:
+        through_value = fixed.get(through_axis)
+        z_value = fixed.get("Z")
+        if (
+            through_value is None
+            or z_value is None
+            or not (
+                through_bounds[0] - 1e-9
+                <= through_value
+                <= through_bounds[1] + 1e-9
+            )
+            or not (z_interval[0] - 1e-9 <= z_value <= z_interval[1] + 1e-9)
+        ):
+            return [], []
+        return [width_interval], []
+
+    if axis == through_axis:
+        width_value = fixed.get(width_axis)
+        z_value = fixed.get("Z")
+        if (
+            width_value is None
+            or z_value is None
+            or not (
+                width_interval[0] - 1e-9
+                <= width_value
+                <= width_interval[1] + 1e-9
+            )
+            or not (z_interval[0] - 1e-9 <= z_value <= z_interval[1] + 1e-9)
+        ):
+            return [], []
+        return [list(through_bounds)], []
+
+    if axis == "Z":
+        width_value = fixed.get(width_axis)
+        through_value = fixed.get(through_axis)
+        if (
+            width_value is None
+            or through_value is None
+            or not (
+                width_interval[0] - 1e-9
+                <= width_value
+                <= width_interval[1] + 1e-9
+            )
+            or not (
+                through_bounds[0] - 1e-9
+                <= through_value
+                <= through_bounds[1] + 1e-9
+            )
+        ):
+            return [], []
+        return [z_interval], []
+
+    return [], []
+
+
+def _feature_explicit_axial_range(feature: dict) -> list[float] | None:
+    value = _thread_feature_value(
+        feature,
+        "axis_range",
+        "axial_range",
+        "through_range",
+        "range",
+    )
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) != 2
+        or any(_num(item) is None for item in value)
+    ):
+        return None
+    first = float(_num(value[0]))
+    second = float(_num(value[1]))
+    if abs(first - second) <= 1e-9:
+        return None
+    return [min(first, second), max(first, second)]
+
+
+def _cylindrical_void_intervals(
+    drawing: dict,
+    feature: dict,
+    axis: str,
+    transverse_point: Any,
+) -> tuple[list[list[float]], list[str]]:
+    if str(feature.get("type") or "").lower() not in {
+        "hole",
+        "through_hole",
+        "threaded_hole",
+        "counterbore_hole",
+        "countersink_hole",
+    }:
+        return [], []
+
+    feature_axis = str(feature.get("axis") or "").upper()
+    axial_range = _feature_explicit_axial_range(feature)
+    diameter = _num(
+        feature.get("diameter")
+        if feature.get("diameter") is not None
+        else feature.get("hole_diameter")
+    )
+    if (
+        feature_axis not in {"X", "Y", "Z"}
+        or axial_range is None
+        or diameter is None
+        or diameter <= 0
+    ):
+        return [], []
+
+    fixed = _fixed_global_coordinates(axis, transverse_point)
+    if fixed is None:
+        return [], [
+            "material_interval_violation: cylindrical void query center is invalid"
+        ]
+
+    transverse_axes = [
+        value for value in ("X", "Y", "Z") if value != feature_axis
+    ]
+    feature_center = {
+        value: _num(_drawing_feature_coord(feature, value.lower()))
+        for value in transverse_axes
+    }
+    if any(feature_center[value] is None for value in transverse_axes):
+        return [], []
+
+    radius = float(diameter) / 2.0
+    if axis == feature_axis:
+        radial_sq = 0.0
+        for value in transverse_axes:
+            coordinate = fixed.get(value)
+            if coordinate is None:
+                return [], []
+            radial_sq += (coordinate - float(feature_center[value])) ** 2
+        return ([axial_range] if radial_sq < radius * radius - 1e-12 else []), []
+
+    if axis not in transverse_axes:
+        return [], []
+    third_axis = next(
+        value for value in transverse_axes if value != axis
+    )
+    feature_axis_coordinate = fixed.get(feature_axis)
+    third_coordinate = fixed.get(third_axis)
+    axis_center = feature_center.get(axis)
+    third_center = feature_center.get(third_axis)
+    if (
+        feature_axis_coordinate is None
+        or third_coordinate is None
+        or axis_center is None
+        or third_center is None
+        or not (
+            axial_range[0] - 1e-9
+            <= feature_axis_coordinate
+            <= axial_range[1] + 1e-9
+        )
+    ):
+        return [], []
+
+    radial_offset = third_coordinate - float(third_center)
+    remaining = radius * radius - radial_offset * radial_offset
+    if remaining <= 1e-12:
+        return [], []
+    half_span = math.sqrt(remaining)
+    return [[float(axis_center) - half_span, float(axis_center) + half_span]], []
+
+
+_MATERIAL_VOID_PROVIDERS = (
+    _slot_void_intervals,
+    _cylindrical_void_intervals,
+)
+
+
+def resolve_axis_material_intervals(
+    drawing: dict,
+    axis: str,
+    transverse_point: Any,
+    *,
+    exclude_feature_ids: set[str] | None = None,
+) -> tuple[list[list[float]], list[str]]:
+    """Resolve real solid intervals on one principal-axis engineering query line.
+
+    The body contribution comes from the canonical closed profile.  Canonical
+    subtractive features are projected through independent void providers and
+    subtracted as intervals.  The result contains engineering coordinates only;
+    no pixel measurement and no NX tool implementation participates.
+    """
+    axis = str(axis or "").upper()
+    if axis not in {"X", "Y", "Z"}:
+        return [], [f"material_interval_violation: invalid axis {axis!r}"]
+
+    material, errors = _profile_material_intervals(
+        drawing,
+        axis,
+        transverse_point,
+    )
+    if errors or not material:
+        return material, errors
+
+    excluded = set(exclude_feature_ids or set())
+    voids: list[list[float]] = []
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_id = str(feature.get("id") or "")
+        if feature_id and feature_id in excluded:
+            continue
+        for provider in _MATERIAL_VOID_PROVIDERS:
+            intervals, provider_errors = provider(
+                drawing,
+                feature,
+                axis,
+                transverse_point,
+            )
+            if provider_errors:
+                errors.extend(provider_errors)
+            voids.extend(intervals)
+
+    if errors:
+        return [], errors
+    return _subtract_intervals(material, voids), []
+
+
+def _select_material_interval(
+    intervals: list[list[float]],
+    side: str,
+) -> list[float] | None:
+    normalized = _merge_intervals(intervals)
+    if not normalized or side not in {"min", "max"}:
+        return None
+    return list(normalized[0] if side == "min" else normalized[-1])
+
+
+def _depth_range_from_material_interval(
+    interval: list[float],
+    side: str,
+    depth: float,
+) -> list[float] | None:
+    if len(interval) != 2 or depth <= 0 or side not in {"min", "max"}:
+        return None
+    lo, hi = min(interval), max(interval)
+    start = lo if side == "min" else hi
+    end = start + depth if side == "min" else start - depth
+    if end < lo - 1e-9 or end > hi + 1e-9:
+        return None
+    return [float(start), float(end)]
+
+
+def resolve_transverse_recess_drawing_geometries(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Derive X/Y counterbore execution ranges from canonical material intervals."""
+    geometries: list[dict] = []
+    errors: list[str] = []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if str(feature.get("type") or "").lower() != "counterbore_hole":
+            continue
+        axis = str(feature.get("axis") or "").upper()
+        if (
+            axis not in {"X", "Y"}
+            or (axes is not None and axis not in axes)
+            or feature.get("through") is not True
+        ):
+            continue
+
+        fid = str(feature.get("id") or "?")
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"min", "max"}:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has no "
+                "confirmed start_side/side"
+            )
+            continue
+
+        center = _axis_transverse_center(axis, feature.get("centerline"))
+        through_diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        recess_diameter = _num(feature.get("counterbore_diameter"))
+        recess_depth = _num(feature.get("counterbore_depth"))
+        if (
+            center is None
+            or through_diameter is None
+            or through_diameter <= 0
+            or recess_diameter is None
+            or recess_diameter <= through_diameter
+            or recess_depth is None
+            or recess_depth <= 0
+        ):
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has "
+                "incomplete counterbore geometry"
+            )
+            continue
+
+        material, material_errors = resolve_axis_material_intervals(
+            drawing,
+            axis,
+            center,
+            exclude_feature_ids={fid},
+        )
+        if material_errors:
+            errors.extend(
+                f"transverse_recess_geometry_violation: feature {fid!r}: {item}"
+                for item in material_errors
+            )
+            continue
+        selected = _select_material_interval(material, side)
+        if selected is None:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} has no "
+                f"material interval on start_side={side}"
+            )
+            continue
+
+        through_range = (
+            [selected[0], selected[1]]
+            if side == "min"
+            else [selected[1], selected[0]]
+        )
+        counterbore_range = _depth_range_from_material_interval(
+            selected,
+            side,
+            float(recess_depth),
+        )
+        if counterbore_range is None:
+            errors.append(
+                f"transverse_recess_geometry_violation: feature {fid!r} "
+                "counterbore depth exceeds the selected material interval"
+            )
+            continue
+
+        geometries.append(
+            {
+                "feature_id": fid,
+                "axis": axis,
+                "transverse_center": center,
+                "side": side,
+                "material_intervals": material,
+                "material_interval": selected,
+                "through_diameter": float(through_diameter),
+                "counterbore_diameter": float(recess_diameter),
+                "counterbore_depth": float(recess_depth),
+                "through_axial_range": through_range,
+                "counterbore_axial_range": counterbore_range,
+            }
+        )
+
+    return geometries, errors
+
+
+def _subtract_circle_operation_geometry(
+    plan: dict,
+    op: dict,
+) -> dict | None:
+    """Read one principal-plane circular subtract in global engineering coordinates."""
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_extrude" or args.get("operation") != "subtract":
+        return None
+    if any(
+        key not in args
+        for key in ("sketch_id", "distance", "start_offset", "reverse")
+    ):
+        return None
+    if not isinstance(args.get("reverse"), bool):
+        return None
+
+    operations = plan.get("operations") or []
+    try:
+        op_index = operations.index(op)
+    except ValueError:
+        return None
+    sketch_id = args.get("sketch_id")
+    circles = [
+        candidate
+        for candidate in operations[:op_index]
+        if candidate.get("tool") == "nx_sketch_circle"
+        and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+    ]
+    if len(circles) != 1:
+        return None
+
+    circle = circles[0]
+    circle_index = operations.index(circle)
+    creates = [
+        candidate
+        for candidate in operations[:circle_index]
+        if candidate.get("tool") == "nx_create_sketch"
+    ]
+    if not creates:
+        return None
+    plane = str((creates[-1].get("tool_args") or {}).get("plane") or "").upper()
+    axis = {"XY": "Z", "XZ": "Y", "YZ": "X"}.get(plane)
+    if axis is None:
+        return None
+
+    center = _axis_transverse_center(
+        "Z",
+        (circle.get("tool_args") or {}).get("center"),
+    )
+    diameter = _num((circle.get("tool_args") or {}).get("diameter"))
+    distance = _num(args.get("distance"))
+    start = _num(args.get("start_offset"))
+    if (
+        center is None
+        or diameter is None
+        or diameter <= 0
+        or distance is None
+        or distance <= 0
+        or start is None
+    ):
+        return None
+
+    direction = -1.0 if args["reverse"] else 1.0
+    return {
+        "step": op.get("step"),
+        "axis": axis,
+        "transverse_center": center,
+        "diameter": float(diameter),
+        "axial_range": [
+            float(direction * start),
+            float(direction * (start + distance)),
+        ],
+    }
+
+
+def transverse_recess_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+) -> list[str]:
+    """Gate B check for material-resolved X/Y through + counterbore operations."""
+    if not geometries:
+        return []
+
+    actual = [
+        geometry
+        for op in plan.get("operations") or []
+        if isinstance(op, dict)
+        if (geometry := _subtract_circle_operation_geometry(plan, op)) is not None
+    ]
+    errors: list[str] = []
+
+    for expected in geometries:
+        fid = str(expected.get("feature_id") or "?")
+        axis = expected.get("axis")
+        center = expected.get("transverse_center")
+
+        for label, diameter_key, range_key in (
+            ("through", "through_diameter", "through_axial_range"),
+            ("counterbore", "counterbore_diameter", "counterbore_axial_range"),
+        ):
+            diameter = expected.get(diameter_key)
+            expected_range = expected.get(range_key)
+            matches = [
+                item
+                for item in actual
+                if item.get("axis") == axis
+                and item.get("transverse_center") == center
+                and _drawing_equal(item.get("diameter"), diameter)
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"transverse recess feature {fid!r} {label} operation count "
+                    f"must be 1, got {len(matches)}"
+                )
+                continue
+            actual_range = matches[0].get("axial_range")
+            if (
+                not isinstance(expected_range, list)
+                or len(expected_range) != 2
+                or not isinstance(actual_range, list)
+                or len(actual_range) != 2
+                or any(
+                    not _drawing_equal(a, b)
+                    for a, b in zip(actual_range, expected_range, strict=False)
+                )
+            ):
+                errors.append(
+                    f"transverse recess feature {fid!r} {label} changes axial range"
+                )
+
+    return errors
+
+
+
+def _capability_feature_centers(
+    feature: dict,
+    axis: str,
+) -> tuple[list[list[float]], list[str]]:
+    """Normalize one feature's explicit/transverse centers without pixel geometry."""
+    fid = str(feature.get("id") or "?")
+    centers_value = feature.get("explicit_centers")
+    if not isinstance(centers_value, list) or not centers_value:
+        center_value = feature.get("centerline")
+        position = feature.get("position")
+        if center_value is None and isinstance(position, dict):
+            center_value = position.get("center")
+        if center_value is None:
+            center_value = feature.get("center")
+        centers_value = [center_value] if center_value is not None else []
+
+    centers = [_axis_transverse_center(axis, value) for value in centers_value]
+    if not centers or any(value is None for value in centers):
+        return [], [f"capability_geometry_violation: feature {fid!r} has no valid center"]
+
+    normalized = [list(value) for value in centers if value is not None]
+    count_value = _num(feature.get("count"))
+    if count_value is not None:
+        if count_value <= 0 or not float(count_value).is_integer():
+            return [], [
+                f"capability_geometry_violation: feature {fid!r} has invalid count"
+            ]
+        if len(normalized) != int(count_value):
+            return [], [
+                f"capability_geometry_violation: feature {fid!r} center count "
+                f"{len(normalized)} != count {int(count_value)}"
+            ]
+    return normalized, []
+
+
+def _feature_explicit_axial_range(feature: dict) -> list[float] | None:
+    value = _thread_feature_value(
+        feature,
+        "axis_range",
+        "axial_range",
+        "through_range",
+        "range",
+    )
+    if not (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(_num(item) is not None for item in value)
+    ):
+        return None
+    return [float(_num(value[0])), float(_num(value[1]))]
+
+
+def resolve_hole_drawing_geometries(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Resolve plain-hole Feature Contracts into deterministic engineering ranges."""
+    geometries: list[dict] = []
+    errors: list[str] = []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        feature_type = str(feature.get("type") or feature.get("kind") or "").lower()
+        if feature_type not in {"hole", "through_hole"}:
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+
+        fid = str(feature.get("id") or "?")
+        axis = str(feature.get("axis") or "").upper()
+        if axes is not None and axis not in axes:
+            continue
+        if axis not in {"X", "Y", "Z"}:
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} has invalid axis {axis!r}"
+            )
+            continue
+
+        diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        if diameter is None or diameter <= 0:
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} has invalid diameter"
+            )
+            continue
+
+        centers, center_errors = _capability_feature_centers(feature, axis)
+        if center_errors:
+            errors.extend(center_errors)
+            continue
+
+        explicit_range = _feature_explicit_axial_range(feature)
+        ranges: list[list[float]] = []
+        failed = False
+
+        for center in centers:
+            if explicit_range is not None:
+                ranges.append(list(explicit_range))
+                continue
+
+            material, material_errors = resolve_axis_material_intervals(
+                drawing,
+                axis,
+                center,
+                exclude_feature_ids={fid},
+            )
+            if material_errors:
+                errors.extend(
+                    f"capability_geometry_violation: hole {fid!r}: {item}"
+                    for item in material_errors
+                )
+                failed = True
+                break
+            normalized_material = _merge_intervals(material)
+            if not normalized_material:
+                errors.append(
+                    f"capability_geometry_violation: hole {fid!r} has no material "
+                    "interval at its center"
+                )
+                failed = True
+                break
+
+            through = feature.get("through") is True or feature_type == "through_hole"
+            side_value = (
+                feature.get("start_side")
+                if feature.get("start_side") is not None
+                else feature.get("side")
+            )
+            side = str(side_value or "").lower()
+            if axis == "Z" and side not in {"min", "max"}:
+                side = "min"
+
+            if through:
+                if len(normalized_material) != 1:
+                    errors.append(
+                        f"capability_geometry_violation: through hole {fid!r} "
+                        "crosses multiple material intervals without explicit axial range"
+                    )
+                    failed = True
+                    break
+                selected = normalized_material[0]
+                ranges.append(
+                    [selected[0], selected[1]]
+                    if side != "max"
+                    else [selected[1], selected[0]]
+                )
+                continue
+
+            depth = _num(
+                feature.get("depth")
+                if feature.get("depth") is not None
+                else feature.get("hole_depth")
+            )
+            if depth is None or depth <= 0 or side not in {"min", "max"}:
+                errors.append(
+                    f"capability_geometry_violation: blind hole {fid!r} requires "
+                    "positive depth and deterministic start_side"
+                )
+                failed = True
+                break
+            selected = _select_material_interval(normalized_material, side)
+            axial_range = (
+                _depth_range_from_material_interval(selected, side, float(depth))
+                if selected is not None
+                else None
+            )
+            if axial_range is None:
+                errors.append(
+                    f"capability_geometry_violation: blind hole {fid!r} depth "
+                    "exceeds selected material interval"
+                )
+                failed = True
+                break
+            ranges.append(axial_range)
+
+        if failed:
+            continue
+        if not ranges or any(
+            len(value) != 2
+            or any(
+                not _drawing_equal(left, right)
+                for left, right in zip(value, ranges[0], strict=False)
+            )
+            for value in ranges[1:]
+        ):
+            errors.append(
+                f"capability_geometry_violation: hole {fid!r} centers do not share "
+                "one deterministic axial range"
+            )
+            continue
+
+        geometries.append(
+            {
+                "feature_id": fid,
+                "axis": axis,
+                "transverse_centers": centers,
+                "diameter": float(diameter),
+                "axial_range": ranges[0],
+                "count": len(centers),
+            }
+        )
+
+    return geometries, errors
+
+
+def resolve_counterbore_drawing_geometries(
+    drawing: dict,
+    *,
+    axes: set[str] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Resolve both principal-axis and native-Z counterbore Feature Contracts."""
+    transverse_axes = {"X", "Y"} if axes is None else (set(axes) & {"X", "Y"})
+    if transverse_axes:
+        geometries, errors = resolve_transverse_recess_drawing_geometries(
+            drawing,
+            axes=transverse_axes,
+        )
+    else:
+        geometries, errors = [], []
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if str(feature.get("type") or "").lower() != "counterbore_hole":
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+        if str(feature.get("axis") or "").upper() != "Z":
+            continue
+        if axes is not None and "Z" not in axes:
+            continue
+
+        fid = str(feature.get("id") or "?")
+        centers, center_errors = _capability_feature_centers(feature, "Z")
+        if center_errors:
+            errors.extend(center_errors)
+            continue
+
+        through_diameter = _num(
+            feature.get("diameter")
+            if feature.get("diameter") is not None
+            else feature.get("hole_diameter")
+        )
+        counterbore_diameter = _num(feature.get("counterbore_diameter"))
+        counterbore_depth = _num(feature.get("counterbore_depth"))
+        if (
+            through_diameter is None
+            or through_diameter <= 0
+            or counterbore_diameter is None
+            or counterbore_diameter <= through_diameter
+            or counterbore_depth is None
+            or counterbore_depth <= 0
+        ):
+            errors.append(
+                f"capability_geometry_violation: counterbore {fid!r} has incomplete geometry"
+            )
+            continue
+
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"", "min"}:
+            errors.append(
+                f"capability_geometry_violation: native Z counterbore {fid!r} "
+                "cannot enter from max side"
+            )
+            continue
+
+        explicit_range = _feature_explicit_axial_range(feature)
+        for center in centers:
+            material, material_errors = resolve_axis_material_intervals(
+                drawing,
+                "Z",
+                center,
+                exclude_feature_ids={fid},
+            )
+            if material_errors:
+                errors.extend(
+                    f"capability_geometry_violation: counterbore {fid!r}: {item}"
+                    for item in material_errors
+                )
+                continue
+            normalized = _merge_intervals(material)
+            if not normalized:
+                errors.append(
+                    f"capability_geometry_violation: counterbore {fid!r} has no material"
+                )
+                continue
+
+            selected = normalized[0]
+            if explicit_range is not None:
+                through_range = list(explicit_range)
+            elif feature.get("through") is True:
+                if len(normalized) != 1:
+                    errors.append(
+                        f"capability_geometry_violation: counterbore {fid!r} crosses "
+                        "multiple material intervals without explicit axial range"
+                    )
+                    continue
+                through_range = [selected[0], selected[1]]
+            else:
+                hole_depth = _num(feature.get("hole_depth"))
+                through_range = (
+                    _depth_range_from_material_interval(
+                        selected,
+                        "min",
+                        float(hole_depth),
+                    )
+                    if hole_depth is not None and hole_depth > 0
+                    else None
+                )
+                if through_range is None:
+                    errors.append(
+                        f"capability_geometry_violation: counterbore {fid!r} requires "
+                        "through=true, explicit axial range, or valid hole_depth"
+                    )
+                    continue
+
+            counterbore_range = _depth_range_from_material_interval(
+                selected,
+                "min",
+                float(counterbore_depth),
+            )
+            if counterbore_range is None:
+                errors.append(
+                    f"capability_geometry_violation: counterbore {fid!r} depth exceeds material"
+                )
+                continue
+
+            geometries.append(
+                {
+                    "feature_id": fid,
+                    "axis": "Z",
+                    "transverse_center": center,
+                    "side": "min",
+                    "material_intervals": normalized,
+                    "material_interval": selected,
+                    "through_diameter": float(through_diameter),
+                    "counterbore_diameter": float(counterbore_diameter),
+                    "counterbore_depth": float(counterbore_depth),
+                    "through_axial_range": through_range,
+                    "counterbore_axial_range": counterbore_range,
+                }
+            )
+
+    return geometries, errors
+
+
+def _native_hole_operation_geometry(op: dict) -> dict | None:
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_hole":
+        return None
+    center = _axis_transverse_center("Z", args.get("center"))
+    diameter = _num(args.get("diameter"))
+    depth = _num(args.get("depth"))
+    start = _num(args.get("start_offset", 0.0))
+    if (
+        center is None
+        or diameter is None
+        or diameter <= 0
+        or depth is None
+        or depth <= 0
+        or start is None
+    ):
+        return None
+    return {
+        "step": op.get("step"),
+        "axis": "Z",
+        "transverse_center": center,
+        "diameter": float(diameter),
+        "axial_range": [float(start), float(start + depth)],
+    }
+
+
+def hole_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+    *,
+    adapter_name: str,
+) -> list[str]:
+    """Gate B for plain-hole adapters using engineering-coordinate geometry."""
+    if not geometries:
+        return []
+
+    if adapter_name == "native_z_hole":
+        actual = [
+            geometry
+            for op in plan.get("operations") or []
+            if isinstance(op, dict)
+            if (geometry := _native_hole_operation_geometry(op)) is not None
+        ]
+        allowed_axes = {"Z"}
+    elif adapter_name == "principal_axis_circular_subtract":
+        actual = [
+            geometry
+            for op in plan.get("operations") or []
+            if isinstance(op, dict)
+            if (geometry := _subtract_circle_operation_geometry(plan, op)) is not None
+        ]
+        allowed_axes = {"X", "Y"}
+    else:
+        return [f"capability_dispatch_violation: unknown hole adapter {adapter_name!r}"]
+
+    errors: list[str] = []
+    for expected in geometries:
+        if expected.get("axis") not in allowed_axes:
+            continue
+        fid = str(expected.get("feature_id") or "?")
+        for center in expected.get("transverse_centers") or []:
+            matches = [
+                item
+                for item in actual
+                if item.get("axis") == expected.get("axis")
+                and item.get("transverse_center") == center
+                and _drawing_equal(item.get("diameter"), expected.get("diameter"))
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"hole feature {fid!r} operation count must be 1, got {len(matches)}"
+                )
+                continue
+            actual_range = matches[0].get("axial_range")
+            expected_range = expected.get("axial_range")
+            if (
+                not isinstance(actual_range, list)
+                or not isinstance(expected_range, list)
+                or len(actual_range) != 2
+                or len(expected_range) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(actual_range, expected_range, strict=False)
+                )
+            ):
+                errors.append(
+                    f"hole feature {fid!r} changes axial range"
+                )
+    return errors
+
+
+def _native_counterbore_operation_geometry(op: dict) -> dict | None:
+    args = op.get("tool_args") or {}
+    if op.get("tool") != "nx_counterbore_hole":
+        return None
+    center = _axis_transverse_center("Z", args.get("center"))
+    hole_diameter = _num(args.get("hole_diameter"))
+    hole_depth = _num(args.get("hole_depth"))
+    counterbore_diameter = _num(args.get("counterbore_diameter"))
+    counterbore_depth = _num(args.get("counterbore_depth"))
+    start = _num(args.get("start_offset", 0.0))
+    if (
+        center is None
+        or hole_diameter is None
+        or hole_diameter <= 0
+        or hole_depth is None
+        or hole_depth <= 0
+        or counterbore_diameter is None
+        or counterbore_diameter <= hole_diameter
+        or counterbore_depth is None
+        or counterbore_depth <= 0
+        or start is None
+    ):
+        return None
+    return {
+        "step": op.get("step"),
+        "axis": "Z",
+        "transverse_center": center,
+        "through_diameter": float(hole_diameter),
+        "counterbore_diameter": float(counterbore_diameter),
+        "through_axial_range": [float(start), float(start + hole_depth)],
+        "counterbore_axial_range": [
+            float(start),
+            float(start + counterbore_depth),
+        ],
+    }
+
+
+def native_counterbore_plan_errors(
+    plan: dict,
+    geometries: list[dict],
+) -> list[str]:
+    actual = [
+        geometry
+        for op in plan.get("operations") or []
+        if isinstance(op, dict)
+        if (geometry := _native_counterbore_operation_geometry(op)) is not None
+    ]
+    errors: list[str] = []
+    for expected in geometries:
+        if expected.get("axis") != "Z":
+            continue
+        fid = str(expected.get("feature_id") or "?")
+        matches = [
+            item
+            for item in actual
+            if item.get("transverse_center") == expected.get("transverse_center")
+            and _drawing_equal(
+                item.get("through_diameter"),
+                expected.get("through_diameter"),
+            )
+            and _drawing_equal(
+                item.get("counterbore_diameter"),
+                expected.get("counterbore_diameter"),
+            )
+        ]
+        if len(matches) != 1:
+            errors.append(
+                f"counterbore feature {fid!r} operation count must be 1, got {len(matches)}"
+            )
+            continue
+        actual_geometry = matches[0]
+        for label, key in (
+            ("through", "through_axial_range"),
+            ("counterbore", "counterbore_axial_range"),
+        ):
+            actual_range = actual_geometry.get(key)
+            expected_range = expected.get(key)
+            if (
+                not isinstance(actual_range, list)
+                or not isinstance(expected_range, list)
+                or len(actual_range) != 2
+                or len(expected_range) != 2
+                or any(
+                    not _drawing_equal(left, right)
+                    for left, right in zip(actual_range, expected_range, strict=False)
+                )
+            ):
+                errors.append(
+                    f"counterbore feature {fid!r} {label} changes axial range"
+                )
+    return errors
+
+
+def _adapter_payload(
+    capability: dict,
+    geometries: list[dict],
+    errors: list[str],
+    *,
+    recipes: list[dict] | None = None,
+) -> tuple[dict | None, list[str]]:
+    if errors:
+        return None, errors
+    supported_axes = set(capability.get("supported_axes") or [])
+    selected = [
+        geometry
+        for geometry in geometries
+        if geometry.get("axis") in supported_axes
+    ]
+    feature_ids = {str(item.get("feature_id") or "") for item in selected}
+    payload: dict[str, Any] = {
+        "implementation_id": capability.get("implementation_id"),
+        "planner_adapter": capability.get("planner_adapter"),
+        "gate_b_validator": capability.get("gate_b_validator"),
+        "feature_kind": capability.get("feature_kind"),
+        "supported_axes": list(capability.get("supported_axes") or []),
+        "geometries": selected,
+    }
+    if recipes is not None:
+        payload["recipes"] = [
+            item for item in recipes if str(item.get("feature_id") or "") in feature_ids
+        ]
+    return payload, []
+
+
+def _operation_contract_axial_range(
+    value: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[list[float] | None, list[str]]:
+    if not (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(_num(item) is not None for item in value)
+    ):
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has no explicit two-value axial range"
+        ]
+    start = float(_num(value[0]))
+    end = float(_num(value[1]))
+    if abs(end - start) <= 1e-9:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has zero axial distance"
+        ]
+    return [start, end], []
+
+
+def _native_z_range_args(
+    axial_range: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[dict | None, list[str]]:
+    normalized, errors = _operation_contract_axial_range(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or normalized is None:
+        return None, errors
+    start, end = normalized
+    if end <= start:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} requires a descending Z range that the native tool cannot represent"
+        ]
+    return {
+        "start_offset": start,
+        "depth": end - start,
+    }, []
+
+
+def _principal_axis_range_args(
+    axial_range: Any,
+    *,
+    feature_id: str,
+    role: str,
+) -> tuple[dict | None, list[str]]:
+    normalized, errors = _operation_contract_axial_range(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or normalized is None:
+        return None, errors
+    start, end = normalized
+    reverse = end < start
+    return {
+        "distance": abs(end - start),
+        "start_offset": -start if reverse else start,
+        "reverse": reverse,
+    }, []
+
+
+def _principal_axis_circle_operation_contract(
+    *,
+    feature_id: str,
+    role: str,
+    axis: str,
+    center: Any,
+    diameter: Any,
+    axial_range: Any,
+    operation_fields: dict | None = None,
+) -> tuple[dict | None, list[str]]:
+    plane = {"X": "YZ", "Y": "XZ"}.get(axis)
+    transverse = _axis_transverse_center(axis, center)
+    diameter_value = _num(diameter)
+    if plane is None or transverse is None or diameter_value is None or diameter_value <= 0:
+        return None, [
+            f"capability_materialization_violation: feature {feature_id!r} "
+            f"{role} has invalid principal-axis circle geometry"
+        ]
+    range_args, errors = _principal_axis_range_args(
+        axial_range,
+        feature_id=feature_id,
+        role=role,
+    )
+    if errors or range_args is None:
+        return None, errors
+
+    final_operation: dict[str, Any] = {
+        "tool": "nx_extrude",
+        "fixed_args": {
+            **range_args,
+            "operation": "subtract",
+        },
+        "requires": ["sketch_id", "target_body_id"],
+    }
+    if operation_fields:
+        final_operation["operation_fields"] = dict(operation_fields)
+
+    return {
+        "feature_id": feature_id,
+        "role": role,
+        "axis": axis,
+        "operations": [
+            {
+                "tool": "nx_create_sketch",
+                "fixed_args": {"plane": plane},
+                "requires": [],
+            },
+            {
+                "tool": "nx_sketch_circle",
+                "fixed_args": {
+                    "center": {
+                        "x": transverse[0],
+                        "y": transverse[1],
+                    },
+                    "diameter": float(diameter_value),
+                },
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            final_operation,
+        ],
+    }, []
+
+
+def _thread_surrogate_operation_fields(geometry: dict) -> dict:
+    use: dict[str, Any] = {
+        "feature_id": geometry.get("feature_id"),
+        "owner_feature_id": geometry.get("owner_feature_id"),
+    }
+    if (
+        geometry.get("material_side") is not None
+        or geometry.get("entry_endpoint") is not None
+    ):
+        use["material_side"] = geometry.get("material_side")
+        use["entry_endpoint"] = geometry.get("entry_endpoint")
+    elif geometry.get("side") is not None:
+        use["side"] = geometry.get("side")
+    return {"thread_surrogate_use": use}
+
+
+def _rotational_profile_geometry(
+    drawing: dict,
+) -> tuple[dict | None, list[str]]:
+    """Normalize one canonical rotational body profile for exact revolve.
+
+    Line and arc primitives are accepted only from canonical engineering
+    geometry.  Arc center/radius/angles are never inferred from raster pixels
+    here; they must already exist in the canonical drawing.
+    """
+
+    profile = drawing.get("profile")
+    if not isinstance(profile, dict):
+        return None, [
+            "capability_adapter_violation: rotational body requires canonical profile"
+        ]
+    plane = str(profile.get("plane") or "").upper()
+    axis = str(profile.get("rotation_axis") or "").upper()
+    if plane not in {"XY", "XZ", "YZ"} or axis not in {"X", "Y", "Z"}:
+        return None, [
+            "capability_adapter_violation: rotational body requires valid profile "
+            "plane and rotation_axis"
+        ]
+    if axis not in plane:
+        return None, [
+            f"capability_adapter_violation: rotation axis {axis!r} is not in "
+            f"profile plane {plane!r}"
+        ]
+
+    raw_segments = profile.get("segments")
+    if not isinstance(raw_segments, list) or len(raw_segments) < 3:
+        return None, [
+            "capability_adapter_violation: rotational profile requires at least "
+            "three canonical primitives"
+        ]
+
+    axes = (plane[0], plane[1])
+    axis_index = 0 if axes[0] == axis else 1
+    radial_index = 1 - axis_index
+    first_axis = axes[0].lower()
+    second_axis = axes[1].lower()
+    tolerance = 1e-7
+
+    local_segments: list[dict[str, Any]] = []
+    axial_values: list[float] = []
+    radial_lower_bounds: list[float] = []
+    radial_upper_bounds: list[float] = []
+    first_start: tuple[float, float] | None = None
+    previous_end: tuple[float, float] | None = None
+
+    for index, segment in enumerate(raw_segments):
+        if not isinstance(segment, dict):
+            return None, [
+                f"capability_adapter_violation: profile segment {index} is not an object"
+            ]
+
+        segment_type = str(segment.get("type") or "").lower()
+        if segment_type == "line":
+            values = [
+                _num(segment.get(f"{first_axis}1")),
+                _num(segment.get(f"{second_axis}1")),
+                _num(segment.get(f"{first_axis}2")),
+                _num(segment.get(f"{second_axis}2")),
+            ]
+            if any(value is None for value in values):
+                return None, [
+                    f"capability_adapter_violation: profile segment {index} has "
+                    "incomplete numeric coordinates"
+                ]
+            first, second, third, fourth = (
+                float(value) for value in values
+            )
+            start = (first, second)
+            end = (third, fourth)
+            if math.hypot(
+                end[0] - start[0],
+                end[1] - start[1],
+            ) <= tolerance:
+                return None, [
+                    f"capability_adapter_violation: profile segment {index} "
+                    "has zero length"
+                ]
+            local_segments.append(
+                {
+                    "type": "line",
+                    "start": {"x": start[0], "y": start[1]},
+                    "end": {"x": end[0], "y": end[1]},
+                }
+            )
+            radial_values = [start[radial_index], end[radial_index]]
+            axial_values.extend(
+                [start[axis_index], end[axis_index]]
+            )
+
+        elif segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if not isinstance(center, dict):
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} requires "
+                    "an engineering center in profile-plane coordinates"
+                ]
+            center_first = _num(center.get(first_axis))
+            center_second = _num(center.get(second_axis))
+            if (
+                center_first is None
+                or center_second is None
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+                or not all(
+                    math.isfinite(float(value))
+                    for value in (
+                        center_first,
+                        center_second,
+                        radius,
+                        start_angle,
+                        end_angle,
+                    )
+                )
+            ):
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} has "
+                    "incomplete engineering center/radius/angle parameters"
+                ]
+
+            center_point = (
+                float(center_first),
+                float(center_second),
+            )
+            radius_value = float(radius)
+            start_angle_value = float(start_angle)
+            end_angle_value = float(end_angle)
+            start_radians = math.radians(start_angle_value)
+            end_radians = math.radians(end_angle_value)
+            start = (
+                center_point[0] + radius_value * math.cos(start_radians),
+                center_point[1] + radius_value * math.sin(start_radians),
+            )
+            end = (
+                center_point[0] + radius_value * math.cos(end_radians),
+                center_point[1] + radius_value * math.sin(end_radians),
+            )
+            if math.hypot(
+                end[0] - start[0],
+                end[1] - start[1],
+            ) <= tolerance:
+                return None, [
+                    f"capability_adapter_violation: profile arc {index} has "
+                    "zero/full-circle sweep and is not a bounded arc primitive"
+                ]
+
+            local_segments.append(
+                {
+                    "type": "arc",
+                    "center": {
+                        "x": center_point[0],
+                        "y": center_point[1],
+                    },
+                    "radius": radius_value,
+                    "start_angle": start_angle_value,
+                    "end_angle": end_angle_value,
+                }
+            )
+            radial_center = center_point[radial_index]
+            radial_values = [
+                radial_center - radius_value,
+                radial_center + radius_value,
+            ]
+            axial_center = center_point[axis_index]
+            axial_values.extend(
+                [
+                    axial_center - radius_value,
+                    axial_center + radius_value,
+                ]
+            )
+
+        else:
+            return None, [
+                f"capability_adapter_violation: profile segment {index} uses "
+                f"unsupported primitive type {segment_type!r}"
+            ]
+
+        if first_start is None:
+            first_start = start
+        elif previous_end is None or any(
+            abs(left - right) > tolerance
+            for left, right in zip(previous_end, start, strict=False)
+        ):
+            return None, [
+                f"capability_adapter_violation: profile segment {index} is not "
+                "continuous with the previous primitive"
+            ]
+        previous_end = end
+        radial_lower_bounds.append(min(radial_values))
+        radial_upper_bounds.append(max(radial_values))
+
+    if (
+        first_start is None
+        or previous_end is None
+        or any(
+            abs(left - right) > tolerance
+            for left, right in zip(previous_end, first_start, strict=False)
+        )
+    ):
+        return None, [
+            "capability_adapter_violation: rotational profile is not closed"
+        ]
+
+    if min(radial_lower_bounds) < -tolerance:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian crosses "
+            "the rotation axis"
+        ]
+    if max(radial_upper_bounds) <= tolerance:
+        return None, [
+            "capability_adapter_violation: canonical rotational meridian has no "
+            "positive radial extent"
+        ]
+
+    axis_min = min(axial_values)
+    axis_max = max(axial_values)
+    if axis_max - axis_min <= tolerance:
+        return None, [
+            "capability_adapter_violation: rotational profile has zero axial span"
+        ]
+
+    if axis_index == 0:
+        axis_start = {"x": axis_min, "y": 0.0}
+        axis_end = {"x": axis_max, "y": 0.0}
+    else:
+        axis_start = {"x": 0.0, "y": axis_min}
+        axis_end = {"x": 0.0, "y": axis_max}
+
+    return {
+        "feature_id": "BODY_PROFILE",
+        "axis": axis,
+        "plane": plane,
+        "representation": "canonical_rotational_profile",
+        "segments": local_segments,
+        "axis_start": axis_start,
+        "axis_end": axis_end,
+        "angle": 360.0,
+    }, []
+
+
+def _rotational_profile_operation_contract(
+    geometry: dict,
+) -> tuple[dict | None, list[str]]:
+    feature_id = str(geometry.get("feature_id") or "BODY_PROFILE")
+    plane = str(geometry.get("plane") or "").upper()
+    axis = str(geometry.get("axis") or "").upper()
+    segments = geometry.get("segments")
+    axis_start = geometry.get("axis_start")
+    axis_end = geometry.get("axis_end")
+    angle = _num(geometry.get("angle"))
+    if (
+        plane not in {"XY", "XZ", "YZ"}
+        or axis not in {"X", "Y", "Z"}
+        or axis not in plane
+        or not isinstance(segments, list)
+        or len(segments) < 3
+        or not isinstance(axis_start, dict)
+        or not isinstance(axis_end, dict)
+        or angle is None
+        or angle <= 0
+        or angle > 360
+    ):
+        return None, [
+            f"capability_materialization_violation: rotational body "
+            f"{feature_id!r} geometry is incomplete"
+        ]
+
+    operations: list[dict[str, Any]] = [
+        {
+            "tool": "nx_create_sketch",
+            "fixed_args": {"plane": plane},
+                "requires": [],
+        }
+    ]
+    for segment_index, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            return None, [
+                f"capability_materialization_violation: rotational body "
+                f"{feature_id!r} has malformed profile segment"
+            ]
+
+        segment_type = str(segment.get("type") or "").lower()
+        if segment_type == "line":
+            start = segment.get("start")
+            end = segment.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                return None, [
+                    f"capability_materialization_violation: rotational body "
+                    f"{feature_id!r} has malformed line coordinates"
+                ]
+            operations.append(
+                {
+                    "tool": "nx_sketch_line",
+                    "fixed_args": {
+                        "start": copy.deepcopy(start),
+                        "end": copy.deepcopy(end),
+                    },
+                    "requires": ["sketch_id"],
+                }
+            )
+            continue
+
+        if segment_type == "arc":
+            center = segment.get("center")
+            radius = _num(segment.get("radius"))
+            start_angle = _num(segment.get("start_angle"))
+            end_angle = _num(segment.get("end_angle"))
+            if (
+                not isinstance(center, dict)
+                or radius is None
+                or radius <= 0
+                or start_angle is None
+                or end_angle is None
+                or not all(
+                    _num(center.get(key)) is not None
+                    for key in ("x", "y")
+                )
+            ):
+                return None, [
+                    f"capability_materialization_violation: rotational body "
+                    f"{feature_id!r} arc {segment_index} is incomplete"
+                ]
+            operations.append(
+                {
+                    "tool": "nx_sketch_arc",
+                    "fixed_args": {
+                        "center": copy.deepcopy(center),
+                        "radius": float(radius),
+                        "start_angle": float(start_angle),
+                        "end_angle": float(end_angle),
+                    },
+                    "requires": ["sketch_id"],
+                }
+            )
+            continue
+
+        return None, [
+            f"capability_materialization_violation: rotational body "
+            f"{feature_id!r} uses unsupported profile primitive "
+            f"{segment_type!r}"
+        ]
+
+    operations.extend(
+        [
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_revolve",
+                "fixed_args": {
+                    "axis_start": copy.deepcopy(axis_start),
+                    "axis_end": copy.deepcopy(axis_end),
+                    "angle": float(angle),
+                    "reverse": False,
+                },
+                "requires": ["sketch_id"],
+            },
+        ]
+    )
+    return {
+        "feature_id": feature_id,
+        "role": "rotational_body",
+        "axis": axis,
+        "representation": "canonical_rotational_profile",
+        "operations": operations,
+    }, []
+
+
+def materialize_capability_operation_contracts(
+    capability: dict,
+    payload: dict,
+) -> tuple[list[dict], list[str]]:
+    """Materialize geometry-critical operation recipes; Planner owns only wiring/order."""
+    adapter_name = str(capability.get("planner_adapter") or "")
+    geometries = [
+        item for item in payload.get("geometries") or [] if isinstance(item, dict)
+    ]
+    recipes = {
+        str(item.get("feature_id") or ""): item
+        for item in payload.get("recipes") or []
+        if isinstance(item, dict)
+    }
+    contracts: list[dict] = []
+    errors: list[str] = []
+
+    for geometry in geometries:
+        feature_id = str(geometry.get("feature_id") or "?")
+        axis = str(geometry.get("axis") or "").upper()
+
+        if adapter_name == "rotational_profile_revolve":
+            contract, contract_errors = _rotational_profile_operation_contract(
+                geometry
+            )
+            errors.extend(contract_errors)
+            if contract is not None:
+                contracts.append(contract)
+            continue
+
+        if adapter_name == "native_z_hole":
+            for center in geometry.get("transverse_centers") or []:
+                transverse = _axis_transverse_center("Z", center)
+                diameter = _num(geometry.get("diameter"))
+                range_args, range_errors = _native_z_range_args(
+                    geometry.get("axial_range"),
+                    feature_id=feature_id,
+                    role="hole",
+                )
+                if (
+                    transverse is None
+                    or diameter is None
+                    or diameter <= 0
+                    or range_errors
+                    or range_args is None
+                ):
+                    errors.extend(range_errors)
+                    if not range_errors:
+                        errors.append(
+                            f"capability_materialization_violation: hole "
+                            f"{feature_id!r} has invalid native-Z geometry"
+                        )
+                    continue
+                contracts.append(
+                    {
+                        "feature_id": feature_id,
+                        "role": "hole",
+                        "axis": "Z",
+                        "operations": [
+                            {
+                                "tool": "nx_hole",
+                                "fixed_args": {
+                                    "center": {
+                                        "x": transverse[0],
+                                        "y": transverse[1],
+                                    },
+                                    "diameter": float(diameter),
+                                    "depth": range_args["depth"],
+                                    "start_offset": range_args["start_offset"],
+                                },
+                                "requires": ["body_id"],
+                            }
+                        ],
+                    }
+                )
+            continue
+
+        if adapter_name == "principal_axis_circular_subtract":
+            if geometry.get("representation") == "continuous_hole_slot_profile":
+                contract, contract_errors = (
+                    _continuous_hole_slot_operation_contract(
+                        geometry,
+                    )
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+                continue
+
+            for center in geometry.get("transverse_centers") or []:
+                contract, contract_errors = _principal_axis_circle_operation_contract(
+                    feature_id=feature_id,
+                    role="hole",
+                    axis=axis,
+                    center=center,
+                    diameter=geometry.get("diameter"),
+                    axial_range=geometry.get("axial_range"),
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+            continue
+
+        if adapter_name == "native_z_counterbore":
+            center = geometry.get("transverse_center")
+            transverse = _axis_transverse_center("Z", center)
+            through_diameter = _num(geometry.get("through_diameter"))
+            counterbore_diameter = _num(geometry.get("counterbore_diameter"))
+            through_args, through_errors = _native_z_range_args(
+                geometry.get("through_axial_range"),
+                feature_id=feature_id,
+                role="counterbore through",
+            )
+            recess_args, recess_errors = _native_z_range_args(
+                geometry.get("counterbore_axial_range"),
+                feature_id=feature_id,
+                role="counterbore recess",
+            )
+            errors.extend(through_errors)
+            errors.extend(recess_errors)
+            if (
+                transverse is None
+                or through_diameter is None
+                or through_diameter <= 0
+                or counterbore_diameter is None
+                or counterbore_diameter <= through_diameter
+                or through_args is None
+                or recess_args is None
+            ):
+                if not through_errors and not recess_errors:
+                    errors.append(
+                        f"capability_materialization_violation: counterbore "
+                        f"{feature_id!r} has invalid native-Z geometry"
+                    )
+                continue
+            if not _drawing_equal(
+                through_args["start_offset"],
+                recess_args["start_offset"],
+            ):
+                errors.append(
+                    f"capability_materialization_violation: counterbore "
+                    f"{feature_id!r} native-Z ranges have different entry offsets"
+                )
+                continue
+            contracts.append(
+                {
+                    "feature_id": feature_id,
+                    "role": "counterbore",
+                    "axis": "Z",
+                    "operations": [
+                        {
+                            "tool": "nx_counterbore_hole",
+                            "fixed_args": {
+                                "center": {
+                                    "x": transverse[0],
+                                    "y": transverse[1],
+                                },
+                                "hole_diameter": float(through_diameter),
+                                "hole_depth": through_args["depth"],
+                                "counterbore_diameter": float(counterbore_diameter),
+                                "counterbore_depth": recess_args["depth"],
+                                "start_offset": through_args["start_offset"],
+                            },
+                            "requires": ["body_id"],
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if adapter_name == "principal_axis_counterbore":
+            for role, diameter_key, range_key in (
+                ("through", "through_diameter", "through_axial_range"),
+                (
+                    "counterbore",
+                    "counterbore_diameter",
+                    "counterbore_axial_range",
+                ),
+            ):
+                contract, contract_errors = _principal_axis_circle_operation_contract(
+                    feature_id=feature_id,
+                    role=role,
+                    axis=axis,
+                    center=geometry.get("transverse_center"),
+                    diameter=geometry.get(diameter_key),
+                    axial_range=geometry.get(range_key),
+                )
+                errors.extend(contract_errors)
+                if contract is not None:
+                    contracts.append(contract)
+            continue
+
+        if adapter_name == "metric_thread_surrogate":
+            if geometry.get("representation") == "subsumed_by_coaxial_through_hole":
+                contracts.append(
+                    {
+                        "feature_id": feature_id,
+                        "role": "thread_surrogate",
+                        "axis": axis,
+                        "representation": "subsumed_by_coaxial_through_hole",
+                        "subsumed_by_feature_id": geometry.get(
+                            "subsumed_by_feature_id"
+                        ),
+                        "operations": [],
+                    }
+                )
+                continue
+
+            recipe = recipes.get(feature_id)
+            surrogate_diameter = (
+                _num(recipe.get("surrogate_diameter")) if recipe is not None else None
+            )
+            if surrogate_diameter is None or surrogate_diameter <= 0:
+                errors.append(
+                    f"capability_materialization_violation: thread "
+                    f"{feature_id!r} has no surrogate diameter"
+                )
+                continue
+            operation_fields = _thread_surrogate_operation_fields(geometry)
+            for center in geometry.get("transverse_centers") or []:
+                if axis == "Z":
+                    transverse = _axis_transverse_center("Z", center)
+                    range_args, range_errors = _native_z_range_args(
+                        geometry.get("axial_range"),
+                        feature_id=feature_id,
+                        role="thread surrogate",
+                    )
+                    errors.extend(range_errors)
+                    if (
+                        transverse is None
+                        or range_args is None
+                    ):
+                        if not range_errors:
+                            errors.append(
+                                f"capability_materialization_violation: thread "
+                                f"{feature_id!r} has invalid native-Z center"
+                            )
+                        continue
+                    contracts.append(
+                        {
+                            "feature_id": feature_id,
+                            "role": "thread_surrogate",
+                            "axis": "Z",
+                            "operations": [
+                                {
+                                    "tool": "nx_hole",
+                                    "fixed_args": {
+                                        "center": {
+                                            "x": transverse[0],
+                                            "y": transverse[1],
+                                        },
+                                        "diameter": float(surrogate_diameter),
+                                        "depth": range_args["depth"],
+                                        "start_offset": range_args["start_offset"],
+                                    },
+                                    "requires": ["body_id"],
+                                    "operation_fields": operation_fields,
+                                }
+                            ],
+                        }
+                    )
+                else:
+                    contract, contract_errors = (
+                        _principal_axis_circle_operation_contract(
+                            feature_id=feature_id,
+                            role="thread_surrogate",
+                            axis=axis,
+                            center=center,
+                            diameter=surrogate_diameter,
+                            axial_range=geometry.get("axial_range"),
+                            operation_fields=operation_fields,
+                        )
+                    )
+                    errors.extend(contract_errors)
+                    if contract is not None:
+                        contracts.append(contract)
+            continue
+
+        errors.append(
+            f"capability_materialization_violation: planner_adapter "
+            f"{adapter_name!r} has no operation materializer"
+        )
+
+    return contracts, errors
+
+
+def _principal_hole_continuous_slot_compositions(
+    drawing: dict,
+    geometries: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Mark point-tangent principal-axis hole/slot pairs for one-profile subtract."""
+    output = copy.deepcopy(geometries)
+    errors: list[str] = []
+
+    for geometry in output:
+        axis = str(geometry.get("axis") or "").upper()
+        if axis not in {"X", "Y"}:
+            continue
+        centers = geometry.get("transverse_centers") or []
+        if len(centers) != 1:
+            continue
+
+        feature_id = str(geometry.get("feature_id") or "?")
+        center = centers[0]
+        if not (
+            isinstance(center, (list, tuple))
+            and len(center) == 2
+            and all(_num(value) is not None for value in center)
+        ):
+            continue
+        diameter = _num(geometry.get("diameter"))
+        if diameter is None or diameter <= 0:
+            continue
+
+        width_axis = "Y" if axis == "X" else "X"
+        width_coordinate = float(_num(center[0]))
+        center_z = float(_num(center[1]))
+        radius = float(diameter) / 2.0
+        matches: list[dict] = []
+
+        for feature in drawing.get("features") or []:
+            if not isinstance(feature, dict):
+                continue
+            if feature.get("required_for_modeling") is False:
+                continue
+            if str(feature.get("type") or "").lower() not in {"slot", "slit", "cut"}:
+                continue
+            if str(feature.get("through_axis") or "").upper() != axis:
+                continue
+            if str(feature.get("width_axis") or "").upper() != width_axis:
+                continue
+
+            width = _num(feature.get("width"))
+            slot_center = _num(
+                _drawing_feature_coord(feature, width_axis.lower())
+            )
+            bottom_z = _num(feature.get("bottom_z"))
+            top_z = _num(feature.get("top_z"))
+            if (
+                width is None
+                or width <= 0
+                or width >= float(diameter)
+                or slot_center is None
+                or bottom_z is None
+                or top_z is None
+                or top_z <= bottom_z
+                or not _drawing_equal(slot_center, width_coordinate)
+                or not _drawing_equal(bottom_z, center_z + radius)
+            ):
+                continue
+
+            half_width = float(width) / 2.0
+            join_delta = math.sqrt(max(0.0, radius * radius - half_width * half_width))
+            join_z = center_z + join_delta
+            if top_z <= join_z + 1e-9:
+                continue
+
+            matches.append(
+                {
+                    "feature_id": str(feature.get("id") or "?"),
+                    "through_axis": axis,
+                    "width_axis": width_axis,
+                    "width": float(width),
+                    "center": float(slot_center),
+                    "bottom_z": float(bottom_z),
+                    "top_z": float(top_z),
+                    "join_z": float(join_z),
+                }
+            )
+
+        if len(matches) > 1:
+            errors.append(
+                f"capability_composition_violation: hole {feature_id!r} has "
+                "multiple point-tangent continuous slot candidates"
+            )
+            continue
+        if not matches:
+            continue
+
+        slot = matches[0]
+        geometry["representation"] = "continuous_hole_slot_profile"
+        geometry["composed_feature_ids"] = [
+            feature_id,
+            slot["feature_id"],
+        ]
+        geometry["continuous_slot"] = slot
+
+    return output, errors
+
+
+def _continuous_hole_slot_operation_contract(
+    geometry: dict,
+) -> tuple[dict | None, list[str]]:
+    feature_id = str(geometry.get("feature_id") or "?")
+    axis = str(geometry.get("axis") or "").upper()
+    plane = {"X": "YZ", "Y": "XZ"}.get(axis)
+    centers = geometry.get("transverse_centers") or []
+    slot = geometry.get("continuous_slot")
+    diameter = _num(geometry.get("diameter"))
+    if (
+        plane is None
+        or len(centers) != 1
+        or not isinstance(slot, dict)
+        or diameter is None
+        or diameter <= 0
+    ):
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} is incomplete"
+        ]
+
+    center = centers[0]
+    transverse = _axis_transverse_center(axis, center)
+    width = _num(slot.get("width"))
+    slot_center = _num(slot.get("center"))
+    top_z = _num(slot.get("top_z"))
+    join_z = _num(slot.get("join_z"))
+    if (
+        transverse is None
+        or width is None
+        or width <= 0
+        or slot_center is None
+        or top_z is None
+        or join_z is None
+    ):
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} has invalid slot geometry"
+        ]
+
+    range_args, range_errors = _principal_axis_range_args(
+        geometry.get("axial_range"),
+        feature_id=feature_id,
+        role="continuous hole-slot cut",
+    )
+    if range_errors or range_args is None:
+        return None, range_errors
+
+    radius = float(diameter) / 2.0
+    half_width = float(width) / 2.0
+    if half_width >= radius:
+        return None, [
+            f"capability_materialization_violation: continuous hole-slot "
+            f"feature {feature_id!r} slot width does not intersect the circle sides"
+        ]
+
+    angle_right = math.degrees(
+        math.atan2(float(join_z) - float(transverse[1]), half_width)
+    )
+    angle_left = 180.0 - angle_right
+    left_x = float(slot_center) - half_width
+    right_x = float(slot_center) + half_width
+    center_local = {
+        "x": float(transverse[0]),
+        "y": float(transverse[1]),
+    }
+
+    operations = [
+        {
+            "tool": "nx_create_sketch",
+            "fixed_args": {"plane": plane},
+                "requires": [],
+        },
+        {
+            "tool": "nx_sketch_line",
+            "fixed_args": {
+                "start": {"x": left_x, "y": float(top_z)},
+                "end": {"x": right_x, "y": float(top_z)},
+            },
+            "requires": ["sketch_id"],
+        },
+        {
+            "tool": "nx_sketch_line",
+            "fixed_args": {
+                "start": {"x": right_x, "y": float(top_z)},
+                "end": {"x": right_x, "y": float(join_z)},
+            },
+            "requires": ["sketch_id"],
+        },
+    ]
+    for start_angle, end_angle in (
+        (angle_left, 180.0),
+        (180.0, 270.0),
+        (270.0, 360.0),
+        (0.0, angle_right),
+    ):
+        operations.append(
+            {
+                "tool": "nx_sketch_arc",
+                "fixed_args": {
+                    "center": dict(center_local),
+                    "radius": radius,
+                    "start_angle": start_angle,
+                    "end_angle": end_angle,
+                },
+                "requires": ["sketch_id"],
+            }
+        )
+    operations.extend(
+        [
+            {
+                "tool": "nx_sketch_line",
+                "fixed_args": {
+                    "start": {"x": left_x, "y": float(join_z)},
+                    "end": {"x": left_x, "y": float(top_z)},
+                },
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_finish_sketch",
+                "fixed_args": {},
+                "requires": ["sketch_id"],
+            },
+            {
+                "tool": "nx_extrude",
+                "fixed_args": {
+                    **range_args,
+                    "operation": "subtract",
+                },
+                "requires": ["sketch_id", "target_body_id"],
+            },
+        ]
+    )
+    return {
+        "feature_id": feature_id,
+        "role": "continuous_hole_slot_cut",
+        "axis": axis,
+        "representation": "continuous_hole_slot_profile",
+        "composed_feature_ids": list(
+            geometry.get("composed_feature_ids") or []
+        ),
+        "operations": operations,
+    }, []
+
+
+def _contract_value_equal(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict) or set(actual) != set(expected):
+            return False
+        return all(
+            _contract_value_equal(actual[key], value)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return _drawing_equal(actual, expected)
+    return actual == expected
+
+
+def _operation_matches_fixed_args(
+    op: dict,
+    expected: dict,
+) -> bool:
+    if op.get("tool") != expected.get("tool"):
+        return False
+    actual_args = op.get("tool_args") or {}
+    fixed_args = expected.get("fixed_args") or {}
+    requires = expected.get("requires") or []
+    if (
+        not isinstance(actual_args, dict)
+        or not isinstance(fixed_args, dict)
+        or not isinstance(requires, list)
+        or not all(isinstance(item, str) and item for item in requires)
+    ):
+        return False
+    allowed_keys = set(fixed_args) | set(requires)
+    if set(actual_args) != allowed_keys:
+        return False
+    actual_fixed = {
+        key: actual_args[key]
+        for key in fixed_args
+    }
+    return _contract_value_equal(actual_fixed, fixed_args)
+
+
+def _continuous_hole_slot_plan_errors(
+    plan: dict,
+    contract: dict,
+) -> list[str]:
+    feature_id = str(contract.get("feature_id") or "?")
+    expected_operations = contract.get("operations") or []
+    expected_profile = [
+        item
+        for item in expected_operations
+        if item.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
+    ]
+    expected_create = next(
+        (
+            item
+            for item in expected_operations
+            if item.get("tool") == "nx_create_sketch"
+        ),
+        None,
+    )
+    expected_extrude = next(
+        (
+            item
+            for item in reversed(expected_operations)
+            if item.get("tool") == "nx_extrude"
+        ),
+        None,
+    )
+    if expected_create is None or expected_extrude is None:
+        return [
+            f"capability_dispatch_violation: continuous hole-slot contract "
+            f"{feature_id!r} is incomplete"
+        ]
+
+    operations = plan.get("operations") or []
+    matches = 0
+    for index, op in enumerate(operations):
+        if not isinstance(op, dict):
+            continue
+        if not _operation_matches_fixed_args(op, expected_extrude):
+            continue
+
+        sketch_id = (op.get("tool_args") or {}).get("sketch_id")
+        if not isinstance(sketch_id, str) or not sketch_id:
+            continue
+
+        profile_ops = [
+            candidate
+            for candidate in operations[:index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(profile_ops) != len(expected_profile):
+            continue
+        if any(
+            not _operation_matches_fixed_args(actual, expected)
+            for actual, expected in zip(
+                profile_ops,
+                expected_profile,
+                strict=False,
+            )
+        ):
+            continue
+
+        first_profile_index = operations.index(profile_ops[0])
+        creates = [
+            candidate
+            for candidate in operations[:first_profile_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_create_sketch"
+        ]
+        if not creates:
+            continue
+        if not _operation_matches_fixed_args(creates[-1], expected_create):
+            continue
+        matches += 1
+
+    if matches != 1:
+        return [
+            f"hole feature {feature_id!r} continuous profile operation count "
+            f"must be 1, got {matches}"
+        ]
+    return []
+
+
+def _planner_adapter_rotational_profile_revolve(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometry, errors = _rotational_profile_geometry(drawing)
+    if errors or geometry is None:
+        return None, errors
+    supported_axes = {
+        str(item).upper()
+        for item in capability.get("supported_axes") or []
+    }
+    if geometry["axis"] not in supported_axes:
+        return None, [
+            f"capability_adapter_violation: rotational body axis "
+            f"{geometry['axis']!r} is unsupported"
+        ]
+    return _adapter_payload(capability, [geometry], [])
+
+
+def _rotational_profile_plan_errors(
+    plan: dict,
+    contract: dict,
+) -> list[str]:
+    feature_id = str(contract.get("feature_id") or "BODY_PROFILE")
+    expected_operations = contract.get("operations")
+    if not isinstance(expected_operations, list) or len(expected_operations) < 5:
+        return [
+            f"capability_dispatch_violation: rotational body contract "
+            f"{feature_id!r} is incomplete"
+        ]
+
+    expected_create = expected_operations[0]
+    expected_profile_ops = expected_operations[1:-2]
+    expected_finish = expected_operations[-2]
+    expected_revolve = expected_operations[-1]
+    operations = plan.get("operations") or []
+    matches = 0
+
+    for revolve_index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            continue
+        if not _operation_matches_fixed_args(operation, expected_revolve):
+            continue
+        revolve_args = operation.get("tool_args") or {}
+        sketch_id = revolve_args.get("sketch_id")
+        if not isinstance(sketch_id, str) or not sketch_id:
+            continue
+
+        prior = operations[:revolve_index]
+        finishes = [
+            (index, candidate)
+            for index, candidate in enumerate(prior)
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_finish_sketch"
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(finishes) != 1:
+            continue
+        finish_index, finish_op = finishes[0]
+        if not _operation_matches_fixed_args(finish_op, expected_finish):
+            continue
+
+        profile_ops = [
+            candidate
+            for candidate in prior[:finish_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") in {"nx_sketch_line", "nx_sketch_arc"}
+            and (candidate.get("tool_args") or {}).get("sketch_id") == sketch_id
+        ]
+        if len(profile_ops) != len(expected_profile_ops):
+            continue
+        if any(
+            not _operation_matches_fixed_args(actual, expected)
+            for actual, expected in zip(
+                profile_ops,
+                expected_profile_ops,
+                strict=False,
+            )
+        ):
+            continue
+
+        first_profile_index = prior.index(profile_ops[0])
+        creates = [
+            candidate
+            for candidate in prior[:first_profile_index]
+            if isinstance(candidate, dict)
+            and candidate.get("tool") == "nx_create_sketch"
+        ]
+        if not creates or not _operation_matches_fixed_args(
+            creates[-1], expected_create
+        ):
+            continue
+        matches += 1
+
+    if matches != 1:
+        return [
+            f"rotational body {feature_id!r} exact revolve operation count "
+            f"must be 1, got {matches}"
+        ]
+    return []
+
+
+def _gate_b_rotational_profile_revolve_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    contracts = [
+        item
+        for item in payload.get("operation_contracts") or []
+        if isinstance(item, dict)
+        and item.get("role") == "rotational_body"
+    ]
+    if len(contracts) != 1:
+        return [
+            "capability_dispatch_violation: rotational body requires exactly "
+            "one operation contract"
+        ]
+    return _rotational_profile_plan_errors(plan, contracts[0])
+
+
+def _planner_adapter_native_z_hole(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_hole_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_principal_axis_circular_subtract(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_hole_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
+    if errors:
+        return None, errors
+    geometries, composition_errors = (
+        _principal_hole_continuous_slot_compositions(
+            drawing,
+            geometries,
+        )
+    )
+    return _adapter_payload(
+        capability,
+        geometries,
+        composition_errors,
+    )
+
+
+def _planner_adapter_native_z_counterbore(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_counterbore_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_principal_axis_counterbore(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    geometries, errors = resolve_counterbore_drawing_geometries(
+        drawing,
+        axes=set(capability.get("supported_axes") or []),
+    )
+    return _adapter_payload(capability, geometries, errors)
+
+
+def _planner_adapter_metric_thread_surrogate(
+    drawing: dict,
+    capability: dict,
+) -> tuple[dict | None, list[str]]:
+    axes = set(capability.get("supported_axes") or [])
+    geometries, geometry_errors = resolve_thread_drawing_geometries(
+        drawing,
+        axes=axes,
+    )
+    recipes, recipe_errors = resolve_thread_surrogates(
+        drawing,
+        axes=axes,
+    )
+    return _adapter_payload(
+        capability,
+        geometries,
+        [*geometry_errors, *recipe_errors],
+        recipes=recipes,
+    )
+
+
+def _gate_b_native_hole_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return hole_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+        adapter_name="native_z_hole",
+    )
+
+
+def _gate_b_circular_subtract_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    geometries = [
+        item
+        for item in payload.get("geometries") or []
+        if isinstance(item, dict)
+    ]
+    simple_geometries = [
+        item
+        for item in geometries
+        if item.get("representation") != "continuous_hole_slot_profile"
+    ]
+    errors = hole_plan_errors(
+        plan,
+        simple_geometries,
+        adapter_name="principal_axis_circular_subtract",
+    )
+
+    contracts = [
+        item
+        for item in payload.get("operation_contracts") or []
+        if isinstance(item, dict)
+        and item.get("representation") == "continuous_hole_slot_profile"
+    ]
+    for contract in contracts:
+        errors.extend(
+            _continuous_hole_slot_plan_errors(
+                plan,
+                contract,
+            )
+        )
+    composite_ids = {
+        str(item.get("feature_id") or "")
+        for item in geometries
+        if item.get("representation") == "continuous_hole_slot_profile"
+    }
+    contract_ids = {
+        str(item.get("feature_id") or "")
+        for item in contracts
+    }
+    if composite_ids != contract_ids:
+        errors.append(
+            "capability_dispatch_violation: continuous hole-slot geometry/"
+            "operation-contract feature sets differ"
+        )
+    return errors
+
+
+def _gate_b_native_counterbore_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return native_counterbore_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+    )
+
+
+def _gate_b_transverse_recess_geometry(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return transverse_recess_plan_errors(
+        plan,
+        payload.get("geometries") or [],
+    )
+
+
+def _gate_b_thread_surrogate(
+    plan: dict,
+    payload: dict,
+) -> list[str]:
+    return thread_surrogate_plan_errors(
+        plan,
+        payload.get("recipes") or [],
+        payload.get("geometries") or [],
+    )
+
+
+PLANNER_ADAPTER_HANDLER_MAP: dict[
+    str,
+    Callable[[dict, dict], tuple[dict | None, list[str]]],
+] = {
+    "rotational_profile_revolve": _planner_adapter_rotational_profile_revolve,
+    "native_z_hole": _planner_adapter_native_z_hole,
+    "principal_axis_circular_subtract": (
+        _planner_adapter_principal_axis_circular_subtract
+    ),
+    "native_z_counterbore": _planner_adapter_native_z_counterbore,
+    "principal_axis_counterbore": _planner_adapter_principal_axis_counterbore,
+    "metric_thread_surrogate": _planner_adapter_metric_thread_surrogate,
+}
+
+GATE_B_VALIDATOR_HANDLER_MAP: dict[
+    str,
+    Callable[[dict, dict], list[str]],
+] = {
+    "rotational_profile_revolve_geometry": (
+        _gate_b_rotational_profile_revolve_geometry
+    ),
+    "native_hole_geometry": _gate_b_native_hole_geometry,
+    "circular_subtract_geometry": _gate_b_circular_subtract_geometry,
+    "native_counterbore_geometry": _gate_b_native_counterbore_geometry,
+    "transverse_recess_geometry": _gate_b_transverse_recess_geometry,
+    "thread_surrogate": _gate_b_thread_surrogate,
+}
+
+
+def resolve_capability_handlers(
+    capability: dict,
+) -> tuple[
+    Callable[[dict, dict], tuple[dict | None, list[str]]] | None,
+    Callable[[dict, dict], list[str]] | None,
+    list[str],
+]:
+    """Resolve a capability declaration to concrete executable handlers."""
+    adapter_name = str(capability.get("planner_adapter") or "")
+    validator_name = str(capability.get("gate_b_validator") or "")
+    adapter = PLANNER_ADAPTER_HANDLER_MAP.get(adapter_name)
+    validator = GATE_B_VALIDATOR_HANDLER_MAP.get(validator_name)
+    errors: list[str] = []
+    if adapter is None:
+        errors.append(
+            f"capability_dispatch_violation: planner_adapter {adapter_name!r} is not executable"
+        )
+    if validator is None:
+        errors.append(
+            f"capability_dispatch_violation: gate_b_validator {validator_name!r} is not executable"
+        )
+    return adapter, validator, errors
+
+
+def dispatch_planner_adapter(
+    capability: dict,
+    drawing: dict,
+) -> tuple[dict | None, list[str]]:
+    adapter, _, errors = resolve_capability_handlers(capability)
+    if errors or adapter is None:
+        return None, errors
+
+    payload, adapter_errors = adapter(drawing, capability)
+    if adapter_errors or payload is None:
+        return payload, adapter_errors
+
+    operation_contracts, materialization_errors = (
+        materialize_capability_operation_contracts(
+            capability,
+            payload,
+        )
+    )
+    if materialization_errors:
+        return None, materialization_errors
+    # Adapter/Plan Contracts must be directly consumable by materialize-frozen.
+    # Every operation declares its exact symbolic dependencies, including []
+    # for independent tools such as nx_create_sketch. Fail at the producer
+    # instead of making Agent or Frozen Plan guess a missing contract field.
+    for group_index, group in enumerate(operation_contracts):
+        operations = group.get("operations")
+        if not isinstance(operations, list):
+            return None, [
+                f"capability_materialization_violation: operation contract "
+                f"group {group_index} has no operation list"
+            ]
+        for op_index, operation in enumerate(operations):
+            if not isinstance(operation, dict):
+                return None, [
+                    f"capability_materialization_violation: operation "
+                    f"{group_index}:{op_index} is not an object"
+                ]
+            requirements = operation.get("requires")
+            fixed_args = operation.get("fixed_args")
+            if (
+                not isinstance(requirements, list)
+                or any(not isinstance(req, str) or not req for req in requirements)
+                or len(set(requirements)) != len(requirements)
+                or not isinstance(fixed_args, dict)
+                or any(req in fixed_args for req in requirements)
+            ):
+                return None, [
+                    f"capability_materialization_violation: operation "
+                    f"{group_index}:{op_index} must declare requires list "
+                    "and disjoint fixed_args"
+                ]
+    payload["operation_contracts"] = operation_contracts
+    return payload, []
+
+
+def dispatch_gate_b_validator(
+    capability: dict,
+    plan: dict,
+    adapter_payload: dict,
+) -> list[str]:
+    _, validator, errors = resolve_capability_handlers(capability)
+    if errors or validator is None:
+        return errors
+    if adapter_payload.get("implementation_id") != capability.get("implementation_id"):
+        return [
+            "capability_dispatch_violation: adapter payload implementation_id "
+            "does not match selected capability"
+        ]
+    return validator(plan, adapter_payload)
+
+
+
+def _capability_feature_kind(feature: dict) -> str:
+    kind = str(feature.get("type") or feature.get("kind") or "").lower()
+    if kind == "through_hole":
+        return "hole"
+    return kind
+
+
+def resolve_drawing_capability_dispatches(
+    drawing: dict,
+    *,
+    registry: dict[str, Any] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Select one implementation per supported Feature Contract and bind handlers."""
+    data = registry if registry is not None else load_modeling_capability_registry()
+    registry_errors = capability_registry_errors(data)
+    if registry_errors:
+        return [], registry_errors
+
+    supported_feature_kinds = {
+        str(item.get("feature_kind") or "")
+        for item in data.get("implementations", [])
+        if isinstance(item, dict)
+    }
+    selected: dict[str, dict] = {}
+    required_supported_features: dict[str, str] = {}
+    errors: list[str] = []
+
+    profile = drawing.get("profile")
+    if isinstance(profile, dict) and profile.get("rotation_axis") is not None:
+        feature_kind = "rotational_body"
+        axis = str(profile.get("rotation_axis") or "").upper()
+        if feature_kind in supported_feature_kinds:
+            candidates, resolution_errors = resolve_modeling_capabilities(
+                feature_kind,
+                axis,
+                registry=data,
+            )
+            if resolution_errors:
+                errors.extend(
+                    "capability_selection_violation: profile rotational body: "
+                    + item
+                    for item in resolution_errors
+                )
+            else:
+                capability = candidates[0]
+                implementation_id = str(
+                    capability.get("implementation_id") or ""
+                )
+                selected[implementation_id] = capability
+
+    for feature in drawing.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        if feature.get("required_for_modeling") is False:
+            continue
+
+        feature_kind = _capability_feature_kind(feature)
+        fid = str(feature.get("id") or "?")
+        known_subtractive = (
+            feature_kind in _SUBTRACTIVE_MODELING_FEATURE_TYPES
+            or "hole" in feature_kind
+        )
+        if feature_kind not in supported_feature_kinds:
+            if known_subtractive:
+                errors.append(
+                    "capability_selection_violation: "
+                    f"feature {fid!r}: no modeling capability for "
+                    f"required feature_kind={feature_kind!r}"
+                )
+            continue
+
+        required_supported_features[fid] = feature_kind
+
+        axis = str(feature.get("axis") or "").upper()
+        candidates, resolution_errors = resolve_modeling_capabilities(
+            feature_kind,
+            axis,
+            registry=data,
+        )
+        if resolution_errors:
+            errors.extend(
+                f"capability_selection_violation: feature {fid!r}: {item}"
+                for item in resolution_errors
+            )
+            continue
+
+        capability = candidates[0]
+        implementation_id = str(capability.get("implementation_id") or "")
+        previous = selected.get(implementation_id)
+        if previous is not None and previous != capability:
+            errors.append(
+                f"capability_selection_violation: implementation_id "
+                f"{implementation_id!r} resolved inconsistently"
+            )
+            continue
+        selected[implementation_id] = capability
+
+    if errors:
+        return [], errors
+
+    dispatches: list[dict] = []
+    for implementation_id in sorted(selected):
+        capability = selected[implementation_id]
+        payload, adapter_errors = dispatch_planner_adapter(capability, drawing)
+        if adapter_errors:
+            errors.extend(
+                f"capability_adapter_violation: {implementation_id}: {item}"
+                for item in adapter_errors
+            )
+            continue
+        if payload is None:
+            errors.append(
+                f"capability_adapter_violation: {implementation_id}: "
+                "adapter returned no payload"
+            )
+            continue
+        dispatches.append(
+            {
+                "capability": capability,
+                "payload": payload,
+            }
+        )
+
+    geometry_feature_ids: set[str] = set()
+    operation_feature_ids: set[str] = set()
+    for dispatch in dispatches:
+        payload = dispatch.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        geometry_feature_ids.update(
+            str(item.get("feature_id") or "")
+            for item in payload.get("geometries") or []
+            if isinstance(item, dict) and item.get("feature_id")
+        )
+        operation_feature_ids.update(
+            str(item.get("feature_id") or "")
+            for item in payload.get("operation_contracts") or []
+            if isinstance(item, dict) and item.get("feature_id")
+        )
+
+    for fid, feature_kind in sorted(required_supported_features.items()):
+        if fid not in geometry_feature_ids:
+            errors.append(
+                "capability_materialization_violation: "
+                f"required feature {fid!r} ({feature_kind}) is missing from "
+                "adapter geometry payload"
+            )
+            continue
+        if fid not in operation_feature_ids:
+            errors.append(
+                "capability_materialization_violation: "
+                f"required feature {fid!r} ({feature_kind}) is missing from "
+                "operation contracts"
+            )
+
+    if errors:
+        return [], errors
+    return dispatches, []
+
+
+def capability_plan_errors(
+    plan: dict,
+    dispatches: list[dict],
+) -> list[str]:
+    """Run each selected capability's bound Gate B validator."""
+    errors: list[str] = []
+    for item in dispatches:
+        capability = item.get("capability")
+        payload = item.get("payload")
+        if not isinstance(capability, dict) or not isinstance(payload, dict):
+            errors.append(
+                "capability_dispatch_violation: malformed selected dispatch"
+            )
+            continue
+        errors.extend(
+            dispatch_gate_b_validator(
+                capability,
+                plan,
+                payload,
+            )
+        )
+    return errors
+
+
+def _canonical_drawing_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _mode_b_source_drawing_errors(plan: dict, drawing_path: str) -> list[str]:
+    source = plan.get("source_drawing")
+    if not isinstance(source, str) or not source.strip():
+        return [
+            "Mode B plan missing source_drawing copied from plan-contracts output"
+        ]
+    expected = _canonical_drawing_path(drawing_path)
+    actual = _canonical_drawing_path(source)
+    if actual != expected:
+        return [
+            "Mode B source_drawing mismatch: "
+            f"plan={source!r} cli_drawing={drawing_path!r}"
+        ]
+    return []
+
+
+def _drawing_modeling_context(
+    path: str,
+) -> tuple[dict, list[dict], list[str]]:
     original = _load_drawing(path)
     drawing, normalization_errors, _ = normalize_drawing_schema(original)
     errors = list(normalization_errors)
     if not errors:
         errors.extend(check_drawing_json(drawing))
-    geometries, geometry_errors = resolve_thread_drawing_geometries(drawing)
-    recipes, recipe_errors = resolve_thread_surrogates(drawing)
-    errors.extend(geometry_errors)
-    errors.extend(recipe_errors)
-    return drawing, recipes, geometries, errors
+    errors.extend(_drawing_modeling_body_errors(drawing))
+    if errors:
+        return drawing, [], errors
+
+    dispatches, capability_errors = resolve_drawing_capability_dispatches(drawing)
+    errors.extend(capability_errors)
+    return drawing, dispatches, errors
+
+
+def _thread_metadata_from_dispatches(
+    dispatches: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    recipes: list[dict] = []
+    geometries: list[dict] = []
+    for item in dispatches:
+        capability = item.get("capability")
+        payload = item.get("payload")
+        if not isinstance(capability, dict) or not isinstance(payload, dict):
+            continue
+        if capability.get("feature_kind") != "threaded_hole":
+            continue
+        recipes.extend(
+            entry
+            for entry in payload.get("recipes") or []
+            if isinstance(entry, dict)
+        )
+        geometries.extend(
+            entry
+            for entry in payload.get("geometries") or []
+            if isinstance(entry, dict)
+        )
+
+    def dedupe(items: list[dict]) -> list[dict]:
+        by_id: dict[str, dict] = {}
+        for item in items:
+            feature_id = str(item.get("feature_id") or "")
+            if feature_id:
+                by_id[feature_id] = item
+        return [by_id[key] for key in sorted(by_id)]
+
+    return dedupe(recipes), dedupe(geometries)
 
 
 # --------------------------------------------------------------------------
@@ -2256,6 +6565,8 @@ _DRAWING_HARD_KEYS = {
     "end_z",
     "side",
     "start_side",
+    "material_side",
+    "entry_endpoint",
     "through",
     "through_z",
     "count",
@@ -2306,12 +6617,15 @@ _DRAWING_META_KEYS = {
 _DRAWING_RELATION_SEMANTICS = {
     "center_distance",
     "center_spacing",
+    "coordinate_distance",
     "edge_offset",
     "symmetry",
     "upper_tangent",
     "lower_tangent",
     "coincident",
     "alignment",
+    "midpoint",
+    "centered_span",
 }
 
 
@@ -2386,7 +6700,10 @@ def _drawing_unresolved_geometry_pattern(item: dict) -> str | None:
         return pattern
     if ".explicit_centers." in lower and leaf in {"0", "1", "2", "*"}:
         return pattern
-    if leaf in {"top_z", "bottom_z", "start_z", "end_z", "side", "start_side"}:
+    if leaf in {
+        "top_z", "bottom_z", "start_z", "end_z", "side", "start_side",
+        "material_side", "entry_endpoint",
+    }:
         return pattern
     if re.fullmatch(
         r"profile\.segments\.(\d+|\*)\.(x1|y1|z1|x2|y2|z2|start|end)",
@@ -2463,7 +6780,9 @@ def _drawing_target_feature_id(target: str) -> str | None:
 def _drawing_is_center_target(target: str) -> bool:
     leaf = target.split(".")[-1].lower()
     return (
-        ".centerline." in target
+        target.startswith("constraints.span_centers.")
+        or target.startswith("constraints.symmetric_centers.")
+        or ".centerline." in target
         or ".position.center" in target
         or ".explicit_centers." in target
         or leaf in {
@@ -2512,6 +6831,42 @@ def _drawing_target_covered(target: str, covered: set[str]) -> bool:
     if target in covered:
         return True
     return any(target.startswith(f"{ancestor}.") for ancestor in covered)
+
+
+_SUBTRACTIVE_MODELING_FEATURE_TYPES = {
+    "hole",
+    "through_hole",
+    "threaded_hole",
+    "counterbore_hole",
+    "countersink_hole",
+    "slot",
+    "cut",
+    "slit",
+}
+
+
+def _drawing_modeling_body_errors(data: dict) -> list[str]:
+    """Reject Planner/Runner input that has no evidence-backed body geometry."""
+    profile = data.get("profile")
+    if isinstance(profile, dict) and _drawing_hard_paths(profile):
+        return []
+
+    required_features = [
+        item
+        for item in data.get("features", [])
+        if isinstance(item, dict) and item.get("required_for_modeling", True) is not False
+    ]
+    if any(
+        str(item.get("type") or "").lower()
+        not in _SUBTRACTIVE_MODELING_FEATURE_TYPES
+        for item in required_features
+    ):
+        return []
+
+    return [
+        "drawing lacks body-defining geometry: provide an evidence-backed profile "
+        "or an additive/base modeling feature before Planner/Runner"
+    ]
 
 
 def _drawing_equal(a: Any, b: Any, tol: float = 1e-9) -> bool:
@@ -2575,6 +6930,12 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
         return leaf in {"type", "kind"}
     if semantic == "side":
         return leaf in {"side", "start_side"}
+    if semantic == "start_side":
+        return leaf == "start_side"
+    if semantic == "material_side":
+        return leaf == "material_side"
+    if semantic == "entry_endpoint":
+        return leaf == "entry_endpoint"
     if semantic == "through":
         return leaf in {"through", "through_z"}
     if semantic == "pattern_dimension":
@@ -2619,6 +6980,8 @@ def _drawing_direct_semantic_ok(data: dict, source: dict) -> bool:
             "top_z",
             "side",
             "start_side",
+            "material_side",
+            "entry_endpoint",
             "spec",
             "pattern_type",
         }
@@ -2638,7 +7001,12 @@ def _drawing_eval_expr(
     sources: dict[str, dict],
     expr: Any,
 ) -> tuple[float | None, set[str], set[str], list[str]]:
-    """Evaluate a tiny arithmetic expression and return provenance."""
+    """Validate a tiny arithmetic expression and return provenance.
+
+    Gate A intentionally does not re-evaluate composite derived arithmetic.
+    Numeric solving belongs to the deterministic Resolver; this helper only
+    validates expression shape, references, and numeric operand sanity.
+    """
     errors: list[str] = []
     if not isinstance(expr, dict):
         return None, set(), set(), ["derived expr must be an object"]
@@ -2685,36 +7053,17 @@ def _drawing_eval_expr(
     if len(args) != expected:
         return None, set(), set(), [f"derived op {op!r} requires {expected} args"]
 
-    values: list[float] = []
     source_refs: set[str] = set()
     target_refs: set[str] = set()
     for arg in args:
-        value, child_sources, child_targets, child_errors = _drawing_eval_expr(
+        _, child_sources, child_targets, child_errors = _drawing_eval_expr(
             data, sources, arg
         )
         errors.extend(child_errors)
         source_refs.update(child_sources)
         target_refs.update(child_targets)
-        if value is not None:
-            values.append(value)
-    if errors or len(values) != expected:
-        return None, source_refs, target_refs, errors
 
-    if op == "add":
-        result = values[0] + values[1]
-    elif op == "sub":
-        result = values[0] - values[1]
-    elif op == "mul":
-        result = values[0] * values[1]
-    elif op == "div":
-        if abs(values[1]) <= 1e-12:
-            return None, source_refs, target_refs, ["derived division by zero"]
-        result = values[0] / values[1]
-    elif op == "neg":
-        result = -values[0]
-    else:
-        result = abs(values[0])
-    return result, source_refs, target_refs, errors
+    return None, source_refs, target_refs, errors
 
 
 def _drawing_relation_source_ok(
@@ -2725,7 +7074,7 @@ def _drawing_relation_source_ok(
 ) -> tuple[bool, str | None]:
     semantic = str(source.get("semantic") or "")
 
-    if semantic in {"center_distance", "center_spacing"}:
+    if semantic in {"center_distance", "center_spacing", "coordinate_distance"}:
         between = source.get("between")
         if (
             not isinstance(between, list)
@@ -2746,8 +7095,6 @@ def _drawing_relation_source_ok(
         expected = _drawing_source_value(source)
         if a is None or b is None or expected is None:
             return False, f"{semantic} source/endpoints must be numeric"
-        if abs(abs(a - b) - expected) > 1e-9:
-            return False, f"{semantic} source value does not match endpoint distance"
         return True, None
 
     return True, None
@@ -2766,12 +7113,34 @@ def _drawing_relation_ref_ok(
         "lower_tangent",
         "coincident",
         "alignment",
+        "midpoint",
     }:
         return False, f"source semantic {semantic!r} is not a relation_ref"
     if not isinstance(links, list) or not all(isinstance(item, str) for item in links):
         return False, f"relation source {semantic!r} requires links"
     if derived_target not in links:
         return False, f"relation source {semantic!r} does not cover {derived_target!r}"
+
+    if semantic == "midpoint":
+        if len(links) != 3 or len(set(links)) != 3:
+            return False, "midpoint source requires [endpoint_a, midpoint, endpoint_b]"
+        required_dependencies = set(links) - {derived_target}
+        if target_refs != required_dependencies:
+            return False, (
+                "midpoint derivation must reference the other two constraint targets"
+            )
+        try:
+            first = _num(_drawing_path_get(data, links[0]))
+            center = _num(_drawing_path_get(data, links[1]))
+            second = _num(_drawing_path_get(data, links[2]))
+        except KeyError:
+            return False, "midpoint source references a missing target"
+        if first is None or center is None or second is None:
+            return False, "midpoint source links must be numeric scalars"
+        if abs(center - (first + second) / 2.0) > 1e-9:
+            return False, "midpoint source does not match target geometry"
+        return True, None
+
     if target_refs and not any(ref in links for ref in target_refs):
         return False, f"relation source {semantic!r} does not link a derived dependency"
 
@@ -2787,7 +7156,9 @@ def _drawing_relation_ref_ok(
             if value is None:
                 return False, f"relation source {semantic!r} links must be numeric scalars"
             values.append(value)
-        if any(abs(value - values[0]) > 1e-9 for value in values[1:]):
+        if semantic == "coincident" and any(
+            abs(value - values[0]) > 1e-9 for value in values[1:]
+        ):
             return False, f"relation source {semantic!r} does not match target geometry"
 
     if semantic in {"upper_tangent", "lower_tangent"}:
@@ -2804,10 +7175,6 @@ def _drawing_relation_ref_ok(
             return False, f"{semantic} source references a missing target"
         if center_value is None or diameter_value is None or tangent_value is None:
             return False, f"{semantic} targets must be numeric"
-        sign = 1.0 if semantic == "upper_tangent" else -1.0
-        expected = center_value + sign * diameter_value / 2.0
-        if abs(expected - tangent_value) > 1e-9:
-            return False, f"{semantic} relation does not match target geometry"
     return True, None
 
 
@@ -3049,6 +7416,61 @@ def _drawing_check_feature_structure(errors: list[str], feature: dict) -> None:
                 f"feature {fid!r} axis {axis} requires center coordinate {coord}"
             )
 
+    if feature_type == "threaded_hole" and axis in {"X", "Y"}:
+        explicit_range = next(
+            (
+                feature.get(key)
+                for key in ("axis_range", "axial_range", "through_range", "range")
+                if isinstance(feature.get(key), (list, tuple))
+                and len(feature.get(key)) == 2
+            ),
+            None,
+        )
+        legacy_side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        legacy_side = str(legacy_side_value or "").lower()
+        material_side_value = feature.get("material_side")
+        entry_endpoint_value = feature.get("entry_endpoint")
+        material_side = str(material_side_value or "").lower()
+        entry_endpoint = str(entry_endpoint_value or "").lower()
+        split_present = (
+            material_side_value is not None or entry_endpoint_value is not None
+        )
+        if split_present and legacy_side in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} threaded_hole must not mix legacy start_side/side "
+                "with material_side/entry_endpoint"
+            )
+        elif split_present and (
+            material_side not in {"min", "max"}
+            or entry_endpoint not in {"min", "max"}
+        ):
+            errors.append(
+                f"feature {fid!r} threaded_hole requires both material_side and "
+                "entry_endpoint as min|max"
+            )
+        elif explicit_range is None and not split_present and legacy_side not in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} axis {axis} threaded_hole requires explicit axial "
+                "range, material_side+entry_endpoint, or legacy start_side/side"
+            )
+
+    if feature_type in {"counterbore_hole", "countersink_hole"} and axis in {"X", "Y"}:
+        side_value = (
+            feature.get("start_side")
+            if feature.get("start_side") is not None
+            else feature.get("side")
+        )
+        side = str(side_value or "").lower()
+        if side not in {"min", "max"}:
+            errors.append(
+                f"feature {fid!r} axis {axis} {feature_type} requires "
+                "start_side/side min|max"
+            )
+
 
 def _drawing_check_count(errors: list[str], item: dict, label: str) -> None:
     count = item.get("count")
@@ -3206,37 +7628,22 @@ def check_drawing_json(data: dict) -> list[str]:
                         f"source {sid!r} edge_offset requires targets/axis/from/value"
                     )
                 else:
-                    bbox = _drawing_overall_bbox(data)
-                    if bbox is None:
-                        errors.append(
-                            f"source {sid!r} edge_offset requires valid overall dimensions"
-                        )
-                    else:
-                        lx, ly, hz = bbox
-                        bounds = {
-                            "x": (-lx / 2.0, lx / 2.0),
-                            "y": (-ly / 2.0, ly / 2.0),
-                            "z": (0.0, hz),
-                        }
-                        lo, hi = bounds[axis]
-                        expected = lo + value if side == "min" else hi - value
-                        for target in targets:
-                            try:
-                                actual = _num(_drawing_path_get(data, target))
-                            except KeyError:
-                                actual = None
-                            if actual is None:
-                                errors.append(
-                                    f"source {sid!r} edge_offset target {target!r} is missing"
-                                )
-                                continue
-                            if abs(actual - expected) > 1e-9:
-                                errors.append(
-                                    f"source {sid!r} edge_offset does not match {target!r}"
-                                )
-                            relation_targets.add(target)
+                    # Numerical relation solving belongs to the deterministic
+                    # Resolver. Gate A only validates relation shape, concrete
+                    # target presence/type, and provenance coverage.
+                    for target in targets:
+                        try:
+                            actual = _num(_drawing_path_get(data, target))
+                        except KeyError:
+                            actual = None
+                        if actual is None:
+                            errors.append(
+                                f"source {sid!r} edge_offset target {target!r} is missing"
+                            )
+                            continue
+                        relation_targets.add(target)
                 continue
-            if semantic in {"center_distance", "center_spacing"}:
+            if semantic in {"center_distance", "center_spacing", "coordinate_distance"}:
                 between = source.get("between")
                 if (
                     not isinstance(between, list)
@@ -3245,7 +7652,13 @@ def check_drawing_json(data: dict) -> list[str]:
                 ):
                     errors.append(f"source {sid!r} requires between=[targetA,targetB]")
                 else:
-                    if not all(_drawing_is_center_target(target) for target in between):
+                    if (
+                        semantic != "coordinate_distance"
+                        and not all(
+                            _drawing_is_center_target(target)
+                            for target in between
+                        )
+                    ):
                         errors.append(
                             f"source {sid!r} center distance endpoints must be center coordinates"
                         )
@@ -3259,19 +7672,14 @@ def check_drawing_json(data: dict) -> list[str]:
                     value = _drawing_source_value(source)
                     if value is None:
                         errors.append(f"source {sid!r} must have numeric value")
-                    else:
+                    for target in between:
                         try:
-                            a = _num(_drawing_path_get(data, between[0]))
-                            b = _num(_drawing_path_get(data, between[1]))
+                            endpoint = _num(_drawing_path_get(data, target))
                         except KeyError:
-                            a, b = None, None
-                        if (
-                            a is not None
-                            and b is not None
-                            and abs(abs(a - b) - value) > 1e-9
-                        ):
+                            endpoint = None
+                        if endpoint is None:
                             errors.append(
-                                f"source {sid!r} center distance does not match endpoints"
+                                f"source {sid!r} center distance endpoint {target!r} must be numeric"
                             )
             elif semantic in {"upper_tangent", "lower_tangent"}:
                 center = source.get("center")
@@ -3305,23 +7713,76 @@ def check_drawing_json(data: dict) -> list[str]:
                         or tangent_value is None
                     ):
                         errors.append(f"source {sid!r} tangent targets must be numeric")
-                    else:
-                        sign = 1.0 if semantic == "upper_tangent" else -1.0
-                        expected = center_value + sign * diameter_value / 2.0
-                        if abs(expected - tangent_value) > 1e-9:
-                            errors.append(
-                                f"source {sid!r} tangent relation does not match geometry"
-                            )
                     relation_targets.add(tangent)
             elif semantic == "symmetry":
                 _drawing_check_symmetry(errors, source, features)
-            elif semantic in {"coincident", "alignment"}:
+            elif semantic == "centered_span":
                 links = source.get("links")
-                if not isinstance(links, list) or not links:
-                    errors.append(f"source {sid!r} {semantic} requires links")
+                span_value = _num(source.get("value"))
+                direction = source.get("direction")
+                if (
+                    not isinstance(links, list)
+                    or len(links) != 3
+                    or len(set(links)) != 3
+                    or not all(isinstance(item, str) and item for item in links)
+                    or span_value is None
+                    or span_value <= 0
+                    or direction not in {None, -1, 1}
+                ):
+                    errors.append(
+                        f"source {sid!r} centered_span requires "
+                        "[endpoint_a, midpoint, endpoint_b], positive value, "
+                        "and optional direction ±1"
+                    )
                 else:
+                    try:
+                        first = _num(_drawing_path_get(data, links[0]))
+                        center = _num(_drawing_path_get(data, links[1]))
+                        second = _num(_drawing_path_get(data, links[2]))
+                    except KeyError:
+                        first, center, second = None, None, None
+                    if first is None or center is None or second is None:
+                        errors.append(
+                            f"source {sid!r} centered_span targets must be numeric"
+                        )
+                    else:
+                        if abs(center - (first + second) / 2.0) > 1e-9:
+                            errors.append(
+                                f"source {sid!r} centered_span midpoint mismatch"
+                            )
+                        if abs(abs(second - first) - span_value) > 1e-9:
+                            errors.append(
+                                f"source {sid!r} centered_span width mismatch"
+                            )
+                        if (
+                            direction in {-1, 1}
+                            and abs((second - first) - direction * span_value) > 1e-9
+                        ):
+                            errors.append(
+                                f"source {sid!r} centered_span direction mismatch"
+                            )
+                        relation_targets.update(links)
+            elif semantic in {"coincident", "alignment", "midpoint"}:
+                links = source.get("links")
+                required_link_count = 3 if semantic == "midpoint" else 1
+                if (
+                    not isinstance(links, list)
+                    or len(links) < required_link_count
+                    or not all(isinstance(item, str) and item for item in links)
+                ):
+                    errors.append(f"source {sid!r} {semantic} requires valid links")
+                else:
+                    probe_target = links[1] if semantic == "midpoint" else links[0]
+                    probe_dependencies = (
+                        {links[0], links[2]}
+                        if semantic == "midpoint"
+                        else set(links[1:])
+                    )
                     ok, reason = _drawing_relation_ref_ok(
-                        data, source, links[0], set(links[1:])
+                        data,
+                        source,
+                        probe_target,
+                        probe_dependencies,
                     )
                     if not ok and reason:
                         errors.append(f"source {sid!r}: {reason}")
@@ -3372,18 +7833,25 @@ def check_drawing_json(data: dict) -> list[str]:
             errors.append(f"derived {did!r} targets missing field {target!r}")
             actual = None
 
-        value, source_refs, target_refs, expr_errors = _drawing_eval_expr(
+        _, source_refs, target_refs, expr_errors = _drawing_eval_expr(
             data, sources, item.get("expr")
         )
         errors.extend(f"derived {did!r}: {error}" for error in expr_errors)
 
-        if value is not None:
-            if "value" not in item:
-                errors.append(f"derived {did!r} missing value")
-            elif not _drawing_equal(value, item.get("value")):
-                errors.append(f"derived {did!r} expr does not match declared value")
-            if actual is not None and not _drawing_equal(value, actual):
-                errors.append(f"derived {did!r} expr does not match target {target!r}")
+        if "value" not in item:
+            errors.append(f"derived {did!r} missing value")
+        else:
+            declared_value = _num(item.get("value"))
+            if declared_value is None:
+                errors.append(f"derived {did!r} value must be numeric")
+            elif actual is not None:
+                actual_value = _num(actual)
+                if actual_value is None:
+                    errors.append(f"derived {did!r} target {target!r} must be numeric")
+                elif not _drawing_equal(declared_value, actual_value):
+                    errors.append(
+                        f"derived {did!r} declared value does not match target {target!r}"
+                    )
 
         relation_refs = item.get("relation_refs") or []
         if not isinstance(relation_refs, list) or not all(
@@ -3398,7 +7866,11 @@ def check_drawing_json(data: dict) -> list[str]:
             if source is None:
                 continue
             semantic = str(source.get("semantic") or "")
-            if semantic in {"center_distance", "center_spacing"}:
+            if semantic in {
+                "center_distance",
+                "center_spacing",
+                "coordinate_distance",
+            }:
                 ok, reason = _drawing_relation_source_ok(
                     data, source, target, target_refs
                 )
@@ -3666,7 +8138,9 @@ def _cmd_canonicalize_drawing(args: argparse.Namespace) -> int:
 # CLI
 # --------------------------------------------------------------------------
 def _load_plan(path: str) -> dict:
-    with open(path, encoding="utf-8") as f:
+    # Windows PowerShell 5.1 writes a UTF-8 BOM for -Encoding UTF8.
+    # Accept both BOM and non-BOM plan JSON consistently with drawing/runtime JSON.
+    with open(path, encoding="utf-8-sig") as f:
         plan = json.load(f)
     if not isinstance(plan, dict) or "operations" not in plan:
         raise PlanError(f"{path}: not a modeling plan (missing operations)")
@@ -3674,7 +8148,13 @@ def _load_plan(path: str) -> dict:
 
 
 def _is_executable(plan: dict) -> bool:
-    return any(op.get("result_bindings") or op.get("selection_binding") for op in plan.get("operations") or [])
+    if plan.get("plan_format") == "executable-v1":
+        return True
+    # Backward compatibility for executable plans built before plan_format existed.
+    return any(
+        op.get("result_bindings") or op.get("selection_binding")
+        for op in plan.get("operations") or []
+    )
 
 
 async def _cmd_run(args: argparse.Namespace) -> int:
@@ -3689,31 +8169,81 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             "c3_export_complete_utc": timing_state.get("c3_export_complete_utc"),
         })
 
+    def finish(result: dict[str, Any], exit_code: int) -> int:
+        timed(result)
+        if args.report:
+            try:
+                with open(args.report, "w", encoding="utf-8") as handle:
+                    json.dump(result, handle, ensure_ascii=False, indent=2)
+            except OSError as exc:
+                result["status"] = "failed"
+                result.setdefault("errors", []).append(
+                    f"cannot write runner report: {type(exc).__name__}: {exc}"
+                )
+                exit_code = 1
+        print("===REPORT===")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return exit_code
+
     t_start = time.monotonic()
-    plan = _load_plan(args.plan)
+    try:
+        plan = _load_plan(args.plan)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [f"cannot load plan: {type(exc).__name__}: {exc}"],
+            },
+            1,
+        )
     if not _is_executable(plan):
         result = {"status": "failed", "failed_step": None,
                           "errors": ["plan is not in executable format "
                                      "(no result_bindings / selection_binding); run `build` first"]}
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
+        return finish(result, 1)
     errs = check_plan(plan, executable=True)
+    drawing_path = getattr(args, "drawing", None)
+    if drawing_path:
+        errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
     if errs:
         result = {"status": "failed", "failed_step": None,
                   "errors": errs[:20], "error_count": len(errs)}
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
-    transport = NXTransport(workspace_root=args.workspace)
-    if not transport.ping():
-        detail = transport.ping_error()
-        error = "loader health check failed"
-        if detail:
-            error += ": " + detail
-        result = {"status": "failed", "failed_step": None, "errors": [error]}
-        print(json.dumps(timed(result), ensure_ascii=False))
-        return 1
+        return finish(result, 1)
+    try:
+        transport = NXTransport(workspace_root=args.workspace)
+        if not transport.ping():
+            detail = transport.ping_error()
+            error = "loader health check failed"
+            if detail:
+                error += ": " + detail
+            result = {"status": "failed", "failed_step": None, "errors": [error]}
+            return finish(result, 1)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [
+                    f"loader health check failed: {type(exc).__name__}: {exc}"
+                ],
+            },
+            1,
+        )
 
-    planned_for_repair = derive_planned_part(plan, transport)
+    try:
+        planned_for_repair = derive_planned_part(plan, transport)
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [
+                    f"planned part resolution failed: {type(exc).__name__}: {exc}"
+                ],
+            },
+            1,
+        )
     previous_report = None
     if args.repair_report:
         try:
@@ -3725,8 +8255,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 "failed_step": None,
                 "errors": [f"cannot read repair report: {exc}"],
             }
-            print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-            return 1
+            return finish(result, 1)
 
     repair_errors = repair_request_errors(
         args.repair_attempt,
@@ -3741,8 +8270,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             "failed_step": None,
             "errors": repair_errors,
         }
-        print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-        return 1
+        return finish(result, 1)
 
     history_path = args.history or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "run_history.json")
@@ -3756,23 +8284,34 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 "failed_step": None,
                 "errors": ["controlled self-healing already consumed for this planned part"],
             }
-            print(json.dumps(timed(result), ensure_ascii=False, indent=2))
-            return 1
+            return finish(result, 1)
 
     t_preflight = time.monotonic()
-    blocked, info = await run_preflight(
-        transport,
-        plan,
-        args.mode,
-        args.allow_overwrite,
-        history,
-        repair_authorized=(args.repair_attempt == 1),
-    )
+    try:
+        blocked, info = await run_preflight(
+            transport,
+            plan,
+            args.mode,
+            args.allow_overwrite,
+            history,
+            repair_authorized=(args.repair_attempt == 1),
+        )
+    except Exception as exc:
+        return finish(
+            {
+                "status": "failed",
+                "failed_step": None,
+                "errors": [f"preflight failed: {type(exc).__name__}: {exc}"],
+            },
+            1,
+        )
     preflight_elapsed = time.monotonic() - t_preflight
     if blocked is not None:
-        print(json.dumps(timed(blocked), ensure_ascii=False, indent=2))
-        return 1
+        return finish(blocked, 1)
     planned_part = info["planned_part"] if info else None
+    preserved_displayed_part = None
+    if info and info.get("state") == "unrelated_part_preserved_for_create":
+        preserved_displayed_part = info.get("active_part") or None
     if planned_part:
         history.record_start(
             planned_part, args.mode, args.plan, repair_attempt=args.repair_attempt
@@ -3780,29 +8319,664 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     report = await run_plan(plan, transport, plan_path=args.plan,
                             wall_start=t_start, history=history,
                             mode=args.mode, planned_part=planned_part,
+                            preserved_displayed_part=preserved_displayed_part,
                             timing_state=timing_state)
     report["preflight_elapsed"] = round(preflight_elapsed, 3)
     report["repair_attempt"] = int(args.repair_attempt)
     report["repair_source_report"] = args.repair_report
-    timed(report)
-    print("===REPORT===")
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-    if args.report:
-        with open(args.report, "w", encoding="utf-8") as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-    return 0 if report["status"] == "success" else 1
+    return finish(report, 0 if report["status"] == "success" else 1)
+
+
+_MODE_B_NON_GEOMETRY_TOOLS = {
+    "nx_create_part", "nx_save_part", "nx_export_step", "nx_list_bodies",
+    "nx_list_edges", "nx_list_faces", "nx_list_features", "nx_list_sketches",
+}
+
+
+def mode_b_contract_reference_catalog(
+    dispatches: list[dict],
+) -> tuple[list[dict], dict, list[str]]:
+    """Enumerate actual Adapter operations, never infer three-level indices."""
+    catalog: list[dict] = []
+    operations: list[dict] = []
+    for dispatch_index, dispatch in enumerate(dispatches):
+        payload = dispatch.get("payload") if isinstance(dispatch, dict) else None
+        groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+        if not isinstance(groups, list):
+            return [], {}, ["contract_reference_catalog_invalid_dispatch"]
+        for group_index, group in enumerate(groups):
+            group_ops = group.get("operations") if isinstance(group, dict) else None
+            if not isinstance(group_ops, list):
+                return [], {}, ["contract_reference_catalog_invalid_group"]
+            for operation_index, operation in enumerate(group_ops):
+                if not isinstance(operation, dict):
+                    return [], {}, ["contract_reference_catalog_invalid_operation"]
+                required = operation.get("requires")
+                if (
+                    not isinstance(required, list)
+                    or any(not isinstance(name, str) or not name for name in required)
+                    or len(set(required)) != len(required)
+                    or not isinstance(operation.get("fixed_args"), dict)
+                    or not isinstance(operation.get("tool"), str)
+                ):
+                    return [], {}, ["contract_reference_catalog_invalid_operation"]
+                contract_ref = [dispatch_index, group_index, operation_index]
+                catalog.append({
+                    "contract_ref": contract_ref,
+                    "feature_id": group.get("feature_id"),
+                    "role": group.get("role"),
+                    "tool": operation["tool"],
+                    "requires": list(required),
+                })
+                # This is an intentionally INCOMPLETE template. The Planner
+                # supplies semantic symbol bindings and a real topology flag,
+                # but never has to calculate or rewrite any contract_ref.
+                operations.append({
+                    "contract_ref": list(contract_ref),
+                    "requires": dict.fromkeys(required),
+                    "topology_changes": None,
+                })
+    return catalog, {"schema": "mode-b-contract-wiring-v1",
+                     "operations": operations}, []
+
+
+def mode_b_compact_wiring_candidates(
+    dispatches: list[dict],
+) -> tuple[dict | None, list[str]]:
+    """Offer deterministic group/dispatch refs; never infer bind values or topology.
+
+    Candidate order reflects Adapter enumeration, NOT producer/consumer order.
+    Planner must select disjoint blocks and order producers before consumers.
+    """
+    catalog, _template, errors = mode_b_contract_reference_catalog(dispatches)
+    if errors:
+        return None, errors
+    per_dispatch: dict[int, set[str]] = {}
+    per_group: dict[tuple[int, int], set[str]] = {}
+    for item in catalog:
+        d, g, _o = item["contract_ref"]
+        names = item["requires"]
+        per_dispatch.setdefault(d, set()).update(names)
+        per_group.setdefault((d, g), set()).update(names)
+
+    group_blocks = [
+        {
+            "contract_group_ref": [d, g],
+            "requires": dict.fromkeys(sorted(names)),
+            "topology_changes": None,
+        }
+        for (d, g), names in sorted(per_group.items())
+    ]
+    dispatch_blocks = [
+        {
+            "contract_dispatch_ref": d,
+            "requires": dict.fromkeys(sorted(names)),
+            "topology_changes": None,
+        }
+        for d, names in sorted(per_dispatch.items())
+    ]
+    return {
+        "schema": "mode-b-compact-wiring-candidates-v1",
+        "dispatch_blocks": dispatch_blocks,
+        "group_blocks": group_blocks,
+        "policy": "choose disjoint full coverage; reorder producer-first; fill shared bindings and per-operation topology flags; fall back to explicit contract_ref on conflicting bindings",
+    }, []
+
+
+def mode_b_bounded_dependency_hint(catalog: list[dict]) -> dict | None:
+    """Conservative symbolic ORDER hint, not a frozen/executable plan.
+
+    Only the tool-contract pattern with exactly one sketch producer, one
+    revolve body producer and hole consumers is sufficiently unambiguous.
+    All other graphs defer unchanged to the Agent. Never infer geometry,
+    part names, body counts, or human confirmation from this catalog.
+    """
+    if not isinstance(catalog, list) or not catalog:
+        return None
+    groups: dict[tuple[int, int], list[dict]] = {}
+    seen: set[tuple[int, int, int]] = set()
+    for item in catalog:
+        if not isinstance(item, dict):
+            return None
+        ref = item.get("contract_ref")
+        if (
+            not isinstance(ref, list) or len(ref) != 3
+            or any(type(n) is not int or n < 0 for n in ref)
+            or tuple(ref) in seen
+            or not isinstance(item.get("requires"), list)
+            or not isinstance(item.get("tool"), str)
+        ):
+            return None
+        seen.add(tuple(ref))
+        groups.setdefault((ref[0], ref[1]), []).append(item)
+
+    sketches = [x for x in catalog if x["tool"] == "nx_create_sketch"]
+    revolved = [x for x in catalog if x["tool"] == "nx_revolve"]
+    if len(sketches) != 1 or len(revolved) != 1:
+        return None
+    profile_key = tuple(sketches[0]["contract_ref"][:2])
+    if tuple(revolved[0]["contract_ref"][:2]) != profile_key:
+        return None
+    profile = sorted(groups[profile_key], key=lambda x: x["contract_ref"][2])
+    tools = [x["tool"] for x in profile]
+    if (
+        len(profile) < 4
+        or [x["contract_ref"][2] for x in profile] != list(range(len(profile)))
+        or tools[0] != "nx_create_sketch"
+        or tools[-2:] != ["nx_finish_sketch", "nx_revolve"]
+        or any(x not in ("nx_sketch_line", "nx_sketch_arc") for x in tools[1:-2])
+        or any(
+            x["requires"] != ([] if i == 0 else ["sketch_id"])
+            for i, x in enumerate(profile)
+        )
+        or any(x.get("role") != "rotational_body" for x in profile)
+    ):
+        return None
+
+    consumers = [x for key, entries in groups.items()
+                 if key != profile_key for x in entries]
+    if not consumers or any(
+        x["tool"] != "nx_hole"
+        or x["requires"] != ["body_id"]
+        or x.get("role") != "hole"
+        or x["contract_ref"][0] == profile_key[0]
+        for x in consumers
+    ):
+        return None
+    hole_dispatches = sorted({x["contract_ref"][0] for x in consumers})
+    # A dispatch block must contain exactly the intended consumers, with
+    # no other operation from the profile or an unrelated adapter.
+    if any(
+        len([x for x in catalog if x["contract_ref"][0] == d])
+        != len([x for x in consumers if x["contract_ref"][0] == d])
+        for d in hole_dispatches
+    ):
+        return None
+
+    return {
+        "schema": "mode-b-bounded-dependency-hint-v1",
+        "status": "candidate_requires_planner_review",
+        "scope": "single_sketch_single_revolve_body_with_hole_consumers",
+        "adapter_blocks_only": [
+            {
+                "contract_group_ref": list(profile_key),
+                "requires": {"sketch_id": "sketch_main"},
+                "topology_changes": False,
+                "topology_change_indices": [len(profile) - 1],
+            },
+            *[
+                {
+                    "contract_dispatch_ref": d,
+                    "requires": {"body_id": "body_main"},
+                    "topology_changes": True,
+                }
+                for d in hole_dispatches
+            ],
+        ],
+        "safety": "no manual steps, file paths or engineering values inferred; all final wiring must pass materialize/build/check",
+    }
+
+
+def _reserve_mode_b_materialize_attempt(
+    drawing_path: str, wiring_path: str, output_path: str,
+) -> str:
+    """One production materialization attempt per fresh canonical drawing.
+
+    Exclusive sidecar creation is persistent even when materialization fails
+    before a Frozen Plan is written. A changed wiring or output filename must
+    never turn the same terminal task into a second production attempt.
+    Diagnostic callers can test the pure materialization function offline.
+    """
+    state_path = os.path.abspath(drawing_path) + ".stage-b-materialize-attempt.json"
+    with open(state_path, "x", encoding="utf-8") as handle:
+        json.dump({
+            "schema": "mode-b-stage-b-materialize-attempt-v1",
+            "drawing": os.path.abspath(drawing_path),
+            "initial_wiring": os.path.abspath(wiring_path),
+            "initial_output": os.path.abspath(output_path),
+            "attempt_consumed": True,
+            "may_retry": False,
+        }, handle, ensure_ascii=False, indent=2)
+    return state_path
+
+
+def _expand_mode_b_compact_wiring(
+    dispatches: list[dict], spec: list,
+) -> tuple[list[dict] | None, list[str]]:
+    """Expand grouped symbolic wiring without guessing geometry or NX IDs.
+
+    Group sequence is supplied by the Planner. Nested operation indices, order
+    and required names come exclusively from the selected Adapter contracts.
+    """
+    expanded: list[dict] = []
+    for position, item in enumerate(spec, start=1):
+        if not isinstance(item, dict):
+            expanded.append(item)
+            continue
+        is_group = "contract_group_ref" in item
+        is_dispatch = "contract_dispatch_ref" in item
+        if not is_group and not is_dispatch:
+            expanded.append(item)
+            continue
+        if (
+            is_group == is_dispatch
+            or set(item) - {
+                "contract_group_ref", "contract_dispatch_ref", "requires",
+                "topology_changes", "topology_change_indices", "goal",
+            }
+            or (
+                "goal" in item
+                and (
+                    not isinstance(item["goal"], str)
+                    or not item["goal"].strip()
+                )
+            )
+            or not isinstance(item.get("requires"), dict)
+            or not isinstance(item.get("topology_changes"), bool)
+        ):
+            return None, [f"contract_wiring_block_{position}: invalid grouped entry"]
+        if is_group:
+            ref = item["contract_group_ref"]
+            if (
+                not isinstance(ref, list) or len(ref) != 2
+                or any(type(v) is not int or v < 0 for v in ref)
+            ):
+                return None, [f"contract_wiring_block_{position}: invalid group ref"]
+            selected_dispatches = [(ref[0], ref[1])]
+        else:
+            d = item["contract_dispatch_ref"]
+            if type(d) is not int or d < 0 or d >= len(dispatches):
+                return None, [f"contract_wiring_block_{position}: invalid dispatch ref"]
+            payload = dispatches[d].get("payload") if isinstance(dispatches[d], dict) else None
+            groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+            if not isinstance(groups, list):
+                return None, [f"contract_wiring_block_{position}: invalid dispatch groups"]
+            selected_dispatches = [(d, g) for g in range(len(groups))]
+
+        selected: list[tuple[list[int], list[str]]] = []
+        required_names: set[str] = set()
+        for d, g in selected_dispatches:
+            if d >= len(dispatches) or not isinstance(dispatches[d], dict):
+                return None, [f"contract_wiring_block_{position}: missing dispatch"]
+            payload = dispatches[d].get("payload")
+            groups = payload.get("operation_contracts") if isinstance(payload, dict) else None
+            if not isinstance(groups, list) or g >= len(groups):
+                return None, [f"contract_wiring_block_{position}: missing group"]
+            group = groups[g]
+            operations = group.get("operations") if isinstance(group, dict) else None
+            if not isinstance(operations, list):
+                return None, [f"contract_wiring_block_{position}: malformed group"]
+            for op_id, operation in enumerate(operations):
+                required = operation.get("requires") if isinstance(operation, dict) else None
+                if (
+                    not isinstance(required, list)
+                    or any(not isinstance(v, str) or not v for v in required)
+                    or len(set(required)) != len(required)
+                ):
+                    return None, [f"contract_wiring_block_{position}: malformed requires"]
+                selected.append(([d, g, op_id], required))
+                required_names.update(required)
+        if not selected:
+            return None, [f"contract_wiring_block_{position}: empty group"]
+        bindings = item["requires"]
+        if set(bindings) != required_names:
+            return None, [f"contract_wiring_block_{position}: missing/extra bindings"]
+        overrides = item.get("topology_change_indices", [])
+        if (
+            not isinstance(overrides, list)
+            or any(type(i) is not int or i < 0 or i >= len(selected) for i in overrides)
+            or len(set(overrides)) != len(overrides)
+        ):
+            return None, [f"contract_wiring_block_{position}: invalid topology overrides"]
+        flagged = set(overrides)
+        for i, (contract_ref, required) in enumerate(selected):
+            operation_entry = {
+                "contract_ref": contract_ref,
+                "requires": {name: bindings[name] for name in required},
+                "topology_changes": item["topology_changes"] or i in flagged,
+            }
+            # A group-level goal is commentary, not geometry or an NX
+            # operation parameter. Attach it only to the first operation.
+            if i == 0 and "goal" in item:
+                operation_entry["goal"] = item["goal"]
+            expanded.append(operation_entry)
+    return expanded, []
+
+
+def materialize_frozen_from_contract_wiring(
+    drawing_path: str,
+    dispatches: list[dict],
+    wiring: dict,
+) -> tuple[dict | None, list[str]]:
+    """Expand compact symbolic wiring; never ask Agent to copy fixed geometry.
+
+    Every selected adapter operation must be referenced once. Only declared
+    requires may be supplied, all fixed_args and operation_fields are copied
+    exactly, and non-contract operations are limited to non-geometry tools.
+    Gate B remains authoritative over the resulting complete plan.
+    """
+    errors: list[str] = []
+    if not isinstance(wiring, dict) or wiring.get("schema") != "mode-b-contract-wiring-v1":
+        return None, ["contract_wiring_invalid_schema"]
+    spec = wiring.get("operations")
+    if not isinstance(spec, list) or not spec:
+        return None, ["contract_wiring_operations_missing"]
+
+    spec, expansion_errors = _expand_mode_b_compact_wiring(dispatches, spec)
+    if expansion_errors:
+        return None, expansion_errors
+    assert spec is not None
+
+    contract_ops: dict[tuple[int, int, int], dict] = {}
+    for dispatch_id, dispatch in enumerate(dispatches):
+        payload = dispatch.get("payload")
+        if not isinstance(payload, dict):
+            return None, ["contract_wiring_invalid_dispatch"]
+        groups = payload.get("operation_contracts")
+        if not isinstance(groups, list):
+            return None, ["contract_wiring_missing_adapter_operations"]
+        for group_id, group in enumerate(groups):
+            if not isinstance(group, dict):
+                return None, ["contract_wiring_invalid_operation_group"]
+            operations = group.get("operations")
+            if not isinstance(operations, list):
+                return None, ["contract_wiring_invalid_operation_group"]
+            for op_id, operation in enumerate(operations):
+                if not isinstance(operation, dict):
+                    return None, ["contract_wiring_invalid_adapter_operation"]
+                contract_ops[(dispatch_id, group_id, op_id)] = operation
+
+    used: set[tuple[int, int, int]] = set()
+    expanded: list[dict] = []
+    metadata = ("goal", "target", "expectation", "selection_criteria",
+                "refresh_edges_after", "refresh_faces_after")
+    for position, entry in enumerate(spec, start=1):
+        if not isinstance(entry, dict) or not isinstance(entry.get("topology_changes"), bool):
+            errors.append(f"contract_wiring_step_{position}: topology_changes must be bool")
+            continue
+        has_contract = "contract_ref" in entry
+        has_manual = "manual" in entry
+        if has_contract == has_manual:
+            errors.append(f"contract_wiring_step_{position}: exactly one source required")
+            continue
+        allowed = {"contract_ref", "manual", "requires", "topology_changes", *metadata}
+        if set(entry) - allowed:
+            errors.append(f"contract_wiring_step_{position}: unknown metadata")
+            continue
+
+        if has_contract:
+            ref = entry["contract_ref"]
+            if (
+                not isinstance(ref, list) or len(ref) != 3
+                or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in ref)
+            ):
+                errors.append(f"contract_wiring_step_{position}: invalid adapter reference")
+                continue
+            key = (ref[0], ref[1], ref[2])
+            if key not in contract_ops or key in used:
+                errors.append(f"contract_wiring_step_{position}: missing/duplicate adapter op {key}")
+                continue
+            used.add(key)
+            operation = contract_ops[key]
+            fixed = operation.get("fixed_args")
+            required = operation.get("requires")
+            fields = operation.get("operation_fields", {})
+            supplied = entry.get("requires", {})
+            if (
+                not isinstance(fixed, dict)
+                or not isinstance(required, list)
+                or not isinstance(fields, dict)
+                or not isinstance(supplied, dict)
+                or any(not isinstance(k, str) or not k for k in required)
+                or len(required) != len(set(required))
+                or set(supplied) != set(required)
+                or set(fixed).intersection(required)
+                or any(not isinstance(v, str) or not v for v in supplied.values())
+            ):
+                errors.append(f"contract_wiring_step_{position}: requires/fixed_args mismatch")
+                continue
+            # The executable Builder only binds logical names with these
+            # prefixes. Reject opaque/uppercase aliases now instead of passing
+            # them as literal NX IDs in an otherwise valid Frozen Plan.
+            if any(
+                key not in ("sketch_id", "body_id", "target_body_id")
+                or re.fullmatch(
+                    r"sketch_[A-Za-z0-9_]+" if key == "sketch_id"
+                    else r"body_[A-Za-z0-9_]+",
+                    value,
+                ) is None
+                for key, value in supplied.items()
+            ):
+                errors.append(
+                    f"contract_wiring_step_{position}: unsupported symbolic binding "
+                    "(use sketch_* or body_* logical names)"
+                )
+                continue
+            name = operation.get("tool")
+            if not isinstance(name, str) or name not in CERTIFIED_TOOLS:
+                errors.append(f"contract_wiring_step_{position}: uncertified contract tool")
+                continue
+            op = {
+                "step": position,
+                "tool": name,
+                "tool_args": {**copy.deepcopy(fixed), **copy.deepcopy(supplied)},
+                "topology_changes": entry["topology_changes"],
+            }
+            for field, value in fields.items():
+                if field in op or field == "tool_args":
+                    errors.append(f"contract_wiring_step_{position}: conflicting operation_field")
+                    continue
+                op[field] = copy.deepcopy(value)
+        else:
+            if "requires" in entry or not isinstance(entry["manual"], dict):
+                errors.append(f"contract_wiring_step_{position}: invalid non-geometry step")
+                continue
+            manual = entry["manual"]
+            if (
+                manual.get("tool") not in _MODE_B_NON_GEOMETRY_TOOLS
+                or not isinstance(manual.get("tool_args"), dict)
+                or set(manual) - {"tool", "tool_args"}
+            ):
+                errors.append(f"contract_wiring_step_{position}: geometry may only come from Adapter")
+                continue
+            op = {
+                "step": position,
+                "tool": manual["tool"],
+                "tool_args": copy.deepcopy(manual["tool_args"]),
+                "topology_changes": entry["topology_changes"],
+            }
+        for field in metadata:
+            if field in entry:
+                if field in op:
+                    errors.append(f"contract_wiring_step_{position}: protected operation field {field}")
+                else:
+                    op[field] = copy.deepcopy(entry[field])
+        expanded.append(op)
+
+    missing = set(contract_ops) - used
+    if missing:
+        errors.append(f"contract_wiring_missing_adapter_ops: {sorted(missing)}")
+    if errors:
+        return None, errors
+    plan: dict[str, Any] = {
+        "mode": "FAST",
+        "source_drawing": os.path.abspath(drawing_path),
+        "operations": expanded,
+    }
+    if "notes" in wiring:
+        # Notes are descriptive metadata, never geometry or an executable
+        # instruction. Accept common JSON note representations without
+        # forcing Agent to rewrite a one-shot wiring file. Structured notes
+        # are preserved as JSON *text* in the plan's list[str] format.
+        raw_notes = wiring["notes"]
+        if raw_notes is None:
+            note_items: list = []
+        elif isinstance(raw_notes, (str, dict)):
+            note_items = [raw_notes]
+        elif isinstance(raw_notes, list):
+            note_items = raw_notes
+        else:
+            return None, ["contract_wiring_invalid_notes"]
+        normalized_notes: list[str] = []
+        for note in note_items:
+            if isinstance(note, str):
+                normalized_notes.append(note)
+            elif isinstance(note, dict) and all(
+                isinstance(key, str) for key in note
+            ):
+                try:
+                    normalized_notes.append(
+                        json.dumps(note, ensure_ascii=False, sort_keys=True)
+                    )
+                except (TypeError, ValueError):
+                    return None, ["contract_wiring_invalid_notes"]
+            else:
+                return None, ["contract_wiring_invalid_notes"]
+        plan["notes"] = normalized_notes
+    if set(wiring) - {"schema", "operations", "notes"}:
+        return None, ["contract_wiring_unknown_top_level"]
+    return plan, []
+
+
+def _cmd_materialize_frozen(args: argparse.Namespace) -> int:
+    """Write a fresh frozen plan from the current drawing and minimal wiring."""
+    result: dict[str, Any] = {
+        "built": None, "ok": False, "errors": [],
+    }
+    try:
+        # Reserve the one-shot production attempt BEFORE parsing wiring, drawing
+        # or checking output existence. A failed attempt still consumes this run.
+        _reserve_mode_b_materialize_attempt(args.drawing, args.wiring, args.out)
+        if os.path.exists(args.out):
+            raise PlanError("frozen plan output already exists: never overwrite")
+        with open(args.wiring, encoding="utf-8-sig") as handle:
+            wiring = json.load(handle)
+        _drawing, dispatches, errors = _drawing_modeling_context(args.drawing)
+        if errors:
+            result["errors"] = errors
+        else:
+            plan, errors = materialize_frozen_from_contract_wiring(
+                args.drawing, dispatches, wiring
+            )
+            if not errors and plan is not None:
+                errors = check_plan(
+                    plan, executable=False, validate_embedded_thread_contract=False,
+                )
+                errors.extend(_mode_b_source_drawing_errors(plan, args.drawing))
+                errors.extend(capability_plan_errors(plan, dispatches))
+                if not errors:
+                    with open(args.out, "x", encoding="utf-8") as handle:
+                        json.dump(plan, handle, ensure_ascii=False, indent=2)
+                    result["built"] = args.out
+                    result["operations"] = len(plan["operations"])
+                    result["ok"] = True
+            result["errors"] = errors
+    except (OSError, ValueError, TypeError, PlanError) as exc:
+        result["errors"] = [f"{type(exc).__name__}: {exc}"]
+    result["terminal"] = not result["ok"]
+    result["must_stop"] = not result["ok"]
+    result["may_retry"] = False
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["ok"] else 1
+
+
+def _cmd_plan_contracts(args: argparse.Namespace) -> int:
+    """Expose deterministic capability/geometry/operation contracts to Planner."""
+    timing_state = _begin_command_timing("B2_PLAN_CONTRACTS", args.drawing)
+    drawing_path = os.path.abspath(args.drawing)
+    _drawing, dispatches, errors = _drawing_modeling_context(drawing_path)
+
+    contracts: list[dict] = []
+    agent_compact = bool(getattr(args, "agent_compact", False))
+    if not errors:
+        for item in dispatches:
+            capability = item.get("capability")
+            payload = item.get("payload")
+            if not isinstance(capability, dict) or not isinstance(payload, dict):
+                errors.append(
+                    "capability_dispatch_violation: malformed selected dispatch"
+                )
+                continue
+
+            contract_summary = {
+                "implementation_id": capability.get("implementation_id"),
+                "feature_kind": capability.get("feature_kind"),
+                "exactness": capability.get("exactness"),
+                "supported_axes": list(capability.get("supported_axes") or []),
+                "planner_adapter": capability.get("planner_adapter"),
+                "gate_b_validator": capability.get("gate_b_validator"),
+            }
+            if not agent_compact:
+                contract_summary.update({
+                    "geometries": list(payload.get("geometries") or []),
+                    "recipes": list(payload.get("recipes") or []),
+                    "operation_contracts": list(
+                        payload.get("operation_contracts") or []
+                    ),
+                })
+            contracts.append(contract_summary)
+
+    contract_ref_index, wiring_template, reference_errors = (
+        mode_b_contract_reference_catalog(dispatches)
+        if not errors else ([], {}, [])
+    )
+    errors.extend(reference_errors)
+    compact_candidates, compact_errors = (
+        mode_b_compact_wiring_candidates(dispatches)
+        if not errors else (None, [])
+    )
+    errors.extend(compact_errors)
+    result = {
+        "drawing": drawing_path,
+        "contract_ref_index": contract_ref_index if not errors else [],
+        "compact_wiring_candidates": compact_candidates if not errors else None,
+        "wiring_template": wiring_template if not errors else None,
+        "planner_contract": {
+            "fixed_args_policy": "copy_exact_key_set_and_values",
+            "preserve_explicit_false_zero_and_empty_objects": True,
+            "operation_fields_policy": "copy_exact_to_frozen_operation_root",
+            "operation_fields_are_not_tool_args": True,
+            "requires_policy": "fill_only_declared_symbolic_wiring",
+            "source_drawing_policy": "copy_exact_plan_contracts_drawing_to_frozen_top_level",
+            "stage_b_failure_policy": "stop_no_retry_no_source_inspection",
+            "must_stop_after_first_stage_b_failure": True,
+            "may_edit_frozen_after_stage_b_failure": False,
+            "may_retry_stage_b": False,
+            "may_inspect_source_after_stage_b_failure": False,
+        },
+        "contracts": contracts if not errors else [],
+        "errors": errors,
+        "ok": not errors,
+    }
+    if agent_compact:
+        # Agent sees the immutable contract *index*, not repeated geometry.
+        # All geometry is re-derived and Gate-B checked by materialize-frozen.
+        result["agent_output_mode"] = "compact_planner_contracts"
+        result["bounded_dependency_hint"] = (
+            mode_b_bounded_dependency_hint(contract_ref_index) if not errors else None
+        )
+    _attach_command_timing(result, timing_state)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("B3_CHECK", args.plan)
     plan = _load_plan(args.plan)
-    errs = check_plan(plan, executable=not args.frozen)
     drawing_path = getattr(args, "drawing", None)
+    errs = check_plan(
+        plan,
+        executable=not args.frozen,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
+        _drawing, dispatches, drawing_errors = _drawing_modeling_context(
+            drawing_path
+        )
         errs.extend(drawing_errors)
         if not drawing_errors:
-            errs.extend(thread_surrogate_plan_errors(plan, recipes, geometries))
+            errs.extend(capability_plan_errors(plan, dispatches))
     result = {"plan": args.plan, "frozen": bool(args.frozen),
                       "drawing": drawing_path,
                       "operations": len(plan.get("operations") or []),
@@ -3815,13 +8989,24 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_build(args: argparse.Namespace) -> int:
     timing_state = _begin_command_timing("B3_BUILD", args.plan)
     plan = _load_plan(args.plan)
-    frozen_errs = check_plan(plan, executable=False)
+    drawing_path = getattr(args, "drawing", None)
+    frozen_errs = check_plan(
+        plan,
+        executable=False,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
     recipes: list[dict] = []
     geometries: list[dict] = []
-    drawing_path = getattr(args, "drawing", None)
+    dispatches: list[dict] = []
     if drawing_path:
-        _, recipes, geometries, drawing_errors = _drawing_thread_context(drawing_path)
+        frozen_errs.extend(_mode_b_source_drawing_errors(plan, drawing_path))
+        _drawing, dispatches, drawing_errors = _drawing_modeling_context(
+            drawing_path
+        )
         frozen_errs.extend(drawing_errors)
+        if not drawing_errors:
+            frozen_errs.extend(capability_plan_errors(plan, dispatches))
+            recipes, geometries = _thread_metadata_from_dispatches(dispatches)
     if frozen_errs:
         result = {
             "built": None,
@@ -3834,10 +9019,28 @@ def _cmd_build(args: argparse.Namespace) -> int:
         return 1
 
     exe = build_executable_plan(plan)
+    build_conservation_errors = _build_geometry_conservation_errors(plan, exe)
+    if build_conservation_errors:
+        result = {
+            "built": None,
+            "operations": len(exe.get("operations") or []),
+            "check_errors": build_conservation_errors,
+            "ok": False,
+        }
+        _attach_command_timing(result, timing_state)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
     if drawing_path:
         exe["thread_surrogates"] = recipes
         exe["thread_drawing_geometries"] = geometries
-    errs = check_plan(exe, executable=True)
+    errs = check_plan(
+        exe,
+        executable=True,
+        validate_embedded_thread_contract=not bool(drawing_path),
+    )
+    if drawing_path and not frozen_errs:
+        errs.extend(capability_plan_errors(exe, dispatches))
     if not errs:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(exe, f, ensure_ascii=False, indent=2)
@@ -3858,6 +9061,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("plan")
     pr.add_argument("--workspace", default=None)
     pr.add_argument("--report", default=None)
+    pr.add_argument("--drawing", default=None,
+                    help="optional Mode B drawing path binding; must match plan source_drawing")
     pr.add_argument("--mode", choices=("normal", "benchmark"), default="normal",
                     help="normal: never discard an unsaved part; "
                          "benchmark: allow overwriting the plan's own test part only")
@@ -3876,7 +9081,7 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("plan")
     pc.add_argument("--frozen", action="store_true")
     pc.add_argument("--drawing", default=None,
-                    help="optional Mode B drawing for thread geometry Gate B checks")
+                    help="optional Mode B drawing for capability-selected Gate B checks")
     pc.set_defaults(func=_cmd_check)
 
     pb = sub.add_parser("build", help="convert a frozen plan to the executable format (no NX)")
@@ -3885,6 +9090,40 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--drawing", default=None,
                     help="optional Mode B drawing for thread surrogate validation")
     pb.set_defaults(func=_cmd_build)
+
+    pcontracts = sub.add_parser(
+        "plan-contracts",
+        help=(
+            "resolve canonical drawing Feature Contracts into deterministic "
+            "Planner operation contracts (no NX)"
+        ),
+    )
+    pcontracts.add_argument("drawing")
+    pcontracts.add_argument(
+        "--agent-compact", action="store_true",
+        help="send Planner only contract identity and symbolic index; full "
+             "geometry remains owned by materialize-frozen",
+    )
+    pcontracts.set_defaults(func=_cmd_plan_contracts)
+
+    materialize = sub.add_parser(
+        "materialize-frozen",
+        help="expand current deterministic operation contracts plus symbolic wiring",
+    )
+    materialize.add_argument("drawing")
+    materialize.add_argument("wiring")
+    materialize.add_argument("out")
+    materialize.set_defaults(func=_cmd_materialize_frozen)
+
+    pcap = sub.add_parser(
+        "capabilities",
+        help="query static Feature Contract implementation capabilities (no NX)",
+    )
+    pcap.add_argument("--feature-kind", default=None)
+    pcap.add_argument("--axis", choices=("X", "Y", "Z"), default=None)
+    pcap.add_argument("--exact-only", action="store_true")
+    pcap.add_argument("--registry", default=None)
+    pcap.set_defaults(func=_cmd_capabilities)
 
     pd = sub.add_parser("validate-drawing", help="Gate A evidence/source validator (no NX)")
     pd.add_argument("drawing")

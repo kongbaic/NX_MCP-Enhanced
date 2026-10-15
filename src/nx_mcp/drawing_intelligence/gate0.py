@@ -215,6 +215,16 @@ def _direct_target_is_downstream_safe(target: str) -> bool:
     if target.startswith("profile."):
         return bool(target[len("profile.") :])
 
+    if target.startswith("constraints.profile_arc_radii."):
+        parts = target.split(".")
+        return (
+            len(parts) == 4
+            and parts[0] == "constraints"
+            and parts[1] == "profile_arc_radii"
+            and bool(parts[2])
+            and parts[3] == "radius"
+        )
+
     return False
 
 def _validate_record(
@@ -416,14 +426,14 @@ def _normalize_required_targets(
 
 def _validate_header(capture: dict[str, Any]) -> tuple[str, str, OverallDimensions]:
     schema_version = capture.get("schema_version", "1.0")
-    if schema_version != "1.0":
+    if schema_version not in {"1.0", "2.0"}:
         raise Gate0Error(f"unsupported schema_version {schema_version!r}")
 
     coordinate_system = capture.get(
         "coordinate_system",
-        "part_center_xy_bottom_z0",
+        "overall_min_xyz",
     )
-    if coordinate_system != "part_center_xy_bottom_z0":
+    if coordinate_system != "overall_min_xyz":
         raise Gate0Error(f"unsupported coordinate_system {coordinate_system!r}")
 
     try:

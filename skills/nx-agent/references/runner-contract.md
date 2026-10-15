@@ -8,10 +8,10 @@
 
 - 当前 `plan_schema.json` 的 `schema_version` = **1.1**（冻结于 2026-09-18）。
 - 两种格式：
-  - **frozen**（Planner 输出）：顶层含 `skill / mode / part / coordinate_system / notes / operations / final_validation / fallbacks`；`mode` 必填且只允许 `FAST | DIAGNOSTIC`；`operations` 必填。
-  - **executable**（Runner 执行格式）= frozen + 扩展字段（`result_bindings`、`selection_binding`、`retry`、`$references`）。
-- Runner 可读/校验两种格式；只有 executable 可被 `run` 执行。
-- **frozen 严禁手写 executable 扩展**：`result_bindings` / `selection_binding` /
+  - **frozen**（Planner 输出）：顶层含 `skill / mode / part / source_drawing / coordinate_system / notes / operations / final_validation / fallbacks`；`mode` 必填且只允许 `FAST | DIAGNOSTIC`；`operations` 必填。`source_drawing` 在文字模式可省略，但 Mode B 使用 `--drawing` 时必须存在。
+  - **executable**（Runner 执行格式）= frozen + build 写入的顶层 `plan_format: "executable-v1"` + 扩展字段（`result_bindings`、`selection_binding`、`retry`、`$references`）。
+- Runner 可读/校验两种格式；只有 executable 可被 `run` 执行。即使计划无需任何 result/selection binding（例如仅 `nx_create_part → nx_save_part`），build 也必须写入 `plan_format: "executable-v1"`，run 不得再以“是否存在 binding”作为唯一 executable 判据。
+- **frozen 严禁手写 executable 扩展**：顶层 `plan_format`、`result_bindings` / `selection_binding` /
   `retry` / `$references` 均只能由 build 生成。Runner 的 frozen check 与 build
   会 fail-closed；发现这些字段时直接拒绝，不生成 executable。
 
@@ -48,6 +48,8 @@
 - 单元素 selection 用于标量参数（如 `remove_face_index`）时自动解包为标量；`edge_indices` / `tool_body_ids` 始终保持列表（LIST_PARAMS）。
 
 ## 4. tool_args 规则
+
+Mode B 在 `plan-contracts <current-drawing.json>` 成功后，Planner 必须先把结果顶层绝对路径 `drawing` 原样复制到 frozen 顶层 `source_drawing`；不得自行重写路径。随后对返回的 operation_contracts 做机械映射：`tool` 原样；`fixed_args` 精确复制到 tool_args（完整 key set 且值完全相等，`false` / `0` / 空对象不得省略）；`operation_fields` 若存在，其每个 key/value 原样复制到 frozen operation **顶层**，例如 `{"operation_fields":{"thread_surrogate_use":{...}}}` 必须生成 operation 顶层 `"thread_surrogate_use": {...}`，它不是 NX tool_args；最后只补 `requires` 声明的 symbol wiring。禁止根据 optional 参数/default 语义删除 Adapter 已显式给出的任何字段。
 
 1. `tool_args` 只能包含该 certified tool 真正支持的参数（required + optional，见 certified-tool-contract.json）。
 2. `selection_criteria` / `expectation` 及其任何内部字段（`match` / `expected_count` / `purpose` / `checks` / `expect_extent` 等）**禁止**放入 `tool_args`。
@@ -101,7 +103,8 @@ SpecifyPoint** 创建非 XY 草图；仅设置 `PlaneReference` 会发生 XZ/YZ 
 - `plane="XY"`：局部 `{x,y}`→全局 `{X,Y}`，`reverse=false` 挤出 +Z；
 - `plane="XZ"`：局部 `{x,y}`→全局 `{X,Z}`，`reverse=false` 挤出 +Y；
 - `plane="YZ"`：局部 `{x,y}`→全局 `{Y,Z}`，`reverse=false` 挤出 +X；
-- `reverse=true` 反向；`start_offset` 沿同一挤出轴解释。
+- `reverse=true` 会先把 Loader 的挤出方向翻成负全局主轴；`start_offset` 与 `start_offset+distance` 随该方向一起取符号。也就是 reverse=false 时全局轴区间为 `[start_offset, start_offset+distance]`，reverse=true 时为 `[-start_offset, -(start_offset+distance)]`。例如 YZ 草图要从全局 `X=20` 向 `X=1` 减料，必须写 `reverse=true, start_offset=-20, distance=19`；禁止写 `start_offset=20`。
+- **中断材料上的 transverse thread**：`material_side` 与 `entry_endpoint` 是两个独立工程语义。`material_side` 只选择沿孔轴的 canonical material interval；`entry_endpoint` 只选择该 interval 的 min/max 端作为加工起点。两者不同时 Runner 必须确认该中心线材料确实被 slot/cut 分成多个 interval。旧 `start_side/side` 只作为两者同值的兼容简写。例如材料 `[-20,-1]`、`material_side=min`、`entry_endpoint=max`、depth=12 → 全局范围 `[-1,-13]`，对应 YZ subtract `reverse=true,start_offset=1,distance=12`。
 - `nx_revolve.axis_start/axis_end` 同样使用所属 sketch 的局部二维坐标。
 - Z 轴专用 hole 系列不随 sketch 平面旋转；非 Z 轴孔使用 principal-plane
   circle sketch + `nx_extrude(operation="subtract")`。
@@ -116,6 +119,10 @@ SpecifyPoint** 创建非 XY 草图；仅设置 `PlaneReference` 会发生 XZ/YZ 
 - 连续多个边操作必须：list → 定位 → 执行 → 再 list → 定位 → 执行，禁止一次 list 保存多组 index 连续使用。
 
 ## 9. build / check 输入输出约定
+
+- Mode B 的 `plan-contracts <current-drawing.json>` 返回 canonical absolute `drawing`；Planner 必须原样复制为 frozen 顶层 `source_drawing`。
+- Mode B 的 `build ... --drawing <current-drawing.json>` 与 `check ... --drawing <current-drawing.json>` 都会 fail-closed：`source_drawing` 缺失或 canonical absolute path 不一致时立即失败。
+- 纯文字模式不带 `--drawing`，因此不要求 `source_drawing`，不得影响既有文字建模链。
 
 - `runner.py check <frozen> --frozen` 必须先通过；frozen 中若出现任何 executable-only
   字段或 `$reference`，视为 Planner/格式错误。
@@ -194,6 +201,19 @@ expectation 语法：`count` / `count_range` / `body_count`（nx_list_bodies）/
 
 Runner 安装目录包含 `runtime-config.json`，正常执行优先使用其中的 `python_exe` 与 `workspace_root`。
 
+正常 attempt 1 的固定调用是：
+
+~~~text
+python_exe runner.py run <current-executable.json>
+  --drawing <current-drawing.json>
+  --workspace <workspace_root>
+  --report <attempt1-report.json>
+  --mode normal
+  --repair-attempt 0
+~~~
+
+正常 attempt 1 禁止 `--allow-overwrite` 和 `--repair-report`；这两个参数只属于受控 repair/benchmark 语义，不能用于首次正常执行。Mode B 必须同时传 `--drawing <current-drawing.json>`，并在 Loader 健康检查前把它与 executable 顶层 `source_drawing` 做 canonical absolute-path 匹配；文字模式可不传 `--drawing`。
+
 Loader 的 `nx_status` 必须以 NX 当前 `Session.Parts.Work` 为权威来源，不能直接
 读取可能已经失效的缓存 `_part`；用户在 NX 中关闭/切换零件后，resident Loader
 仍应保持 ready。若健康检查返回 `ok=false`，Runner 必须保留并报告 Loader 的
@@ -204,6 +224,7 @@ Loader 日志固定写入 `NX_MCP_WORKSPACE\nx_mcp_loader.log`；安装器会持
 
 `run` 额外支持：
 
+- `--drawing <current-drawing.json>`（Mode B 当前 drawing 路径绑定）
 - `--repair-attempt 0|1`
 - `--repair-report <attempt1-report.json>`
 
@@ -218,9 +239,41 @@ Loader 日志固定写入 `NX_MCP_WORKSPACE\nx_mcp_loader.log`；安装器会持
 
 Runner 只做 repair 门禁与安全 preflight，不自行修改 plan。
 
+新建零件的 PRT/STEP 输出名应在 frozen plan 创建**之前**由本轮 fresh Hybrid run-id 生成并固定；仅添加本轮 run-id 后缀、保持 workspace-relative 路径，不得改变任何工程尺寸、Adapter fixed_args 或绘图绑定；Stage C 因 `planned_part_exists` 阻塞后绝不允许改名并重新 build/check。这项规则不削弱 Runner 的保护，也不允许查询旧任务或覆盖已有零件。
+
+若本轮 part-entry tool 为 `nx_create_part`，Runner 首先检查 planned PRT 是否已存在于磁盘：正常 attempt 1 已存在则 `precheck_blocked / planned_part_exists`；Loader 自身禁止 `File.Delete` 或覆盖已有目标。只有合法 Controlled Self-Healing attempt 2（`repair_attempt=1 + benchmark + --allow-overwrite + previous failed report 同一 planned_part`）可由 Runner 删除该精确失败目标。安全 preflight 同时允许其它已打开零件继续保持打开，**包括 Runner history 中的上一轮零件**，状态记为 `unrelated_part_preserved_for_create`；Runner 不得关闭它。Loader 执行 `nx_create_part` 时必须使用 `Parts.FileNew()` + `DisplayPartOption.AllowAdditional`，不得使用 `NewDisplay` 替换现有 display；创建后 Runner 必须调用 `nx_status`，同时验证真实 active/Work Part 路径与 planned_part 完全一致，并验证 preflight 中要求保留的旧零件仍存在于 `displayed_parts`，两项都通过后才可继续。若 part-entry tool 为 `nx_open_part` 或其它非新建情形，preflight 返回 `precheck_blocked` / reason=`unrelated_part_open` 时调用方必须 STOP；该状态不是 repair，也不得生成关闭用户零件的计划或自动重跑。
+
 ## 11. 当前路径与版本
 
 - Runner 路径：`<runtime-config.workspace_root>\nx-mcp-plan-runner\runner.py`
 - plan_schema：`<runtime-config.workspace_root>\nx-mcp-plan-runner\plan_schema.json`（schema_version 1.1）
 - certified 参数来源：runner.py TOOL_PARAMS（冻结镜像于 certified-tool-contract.json v1.0）
 - 本契约版本：`runner_contract_version = 1.0`；`certified_tool_contract_version = 1.0`
+
+
+## Mode B: deterministic frozen materialization
+
+Normal Mode B now prefers `runner.py materialize-frozen <current-drawing.json> <current-wiring.json> <fresh-frozen-plan.json>` after one successful `plan-contracts` call. The wiring JSON has schema `mode-b-contract-wiring-v1`, a nonempty `operations` array and optional `notes`. Each operation is either a `contract_ref:[dispatch_index,operation_contract_index,operation_index]` plus precisely declared `requires` string symbols, or a `manual:{tool,tool_args}` for strictly non-geometric create/save/export/list tools. An explicit boolean `topology_changes` is mandatory. Optional `goal`, `target`, `selection_criteria`, `expectation`, and refresh metadata carry no engineering values. All selected Adapter operations must be referenced exactly once; missing, duplicate, additional or overridden fixed geometry fails closed.
+
+The materializer recomputes the current drawing's selected Capability/Adapter contract, copies every `fixed_args` key/value (including `reverse:false`, zero, and empty dict) and all `operation_fields` unchanged, adds only required symbol links, enforces Frozen Plan + Gate B, then creates a previously nonexistent frozen file. It never reads older plans and never changes Loader or NX core. The generated file then follows the existing single-pass `build` / `check` / Stage C path. Any failure is a Stage B STOP; there is no fallback to rewriting numeric parameters by Agent.
+
+
+### Mode B deterministic contract references and one-shot materialization
+
+`plan-contracts` additionally returns `contract_ref_index` and an intentionally
+incomplete `wiring_template`. The Runner enumerates actual dispatch, group,
+and operation arrays to provide each `contract_ref`; the Agent copies those
+references without counting or generating indices. Template `requires` values
+and `topology_changes` are `null` placeholders that must be resolved before
+the single production materialization call. Existing valid three-integer
+`contract_ref` wiring remains compatible.
+
+`materialize-frozen` reserves a persistent
+`<canonical-drawing>.stage-b-materialize-attempt.json` sidecar via exclusive
+creation before parsing the wiring or drawing. A failure returns
+`terminal=true`, `must_stop=true`, `may_retry=false`. A second production
+materialization using the same canonical drawing is forbidden even if the
+Planner edits wiring or changes the output filename. Truly independent fresh
+production runs use their own canonical drawing artifact. For offline
+diagnosis and unit tests, use `materialize_frozen_from_contract_wiring()`
+directly rather than creating or bypassing a production retry.

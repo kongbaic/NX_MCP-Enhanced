@@ -367,7 +367,8 @@ unambiguously terminates at one specific view-local center reference. Every
 
 - `centerline`;
 - `center_mark`;
-- `explicit_midline`.
+- `explicit_midline`;
+- `circle_center` — deterministic circle-group center evidence from the same view.
 
 If one endpoint is not uniquely owned, keep the callout in `dimensions[]`
 and use an unresolved endpoint:

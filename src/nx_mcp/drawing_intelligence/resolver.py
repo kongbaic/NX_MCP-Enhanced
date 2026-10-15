@@ -78,11 +78,13 @@ def _number(value: Any) -> float | None:
 
 
 def _bounds(graph: EvidenceGraph, axis: str) -> tuple[float, float]:
+    """Reader-local engineering bounds use overall_min=0 on every axis."""
+
     dims = graph.overall_dimensions
     if axis == "X":
-        return (-dims.length_x / 2.0, dims.length_x / 2.0)
+        return (0.0, dims.length_x)
     if axis == "Y":
-        return (-dims.width_y / 2.0, dims.width_y / 2.0)
+        return (0.0, dims.width_y)
     return (0.0, dims.height_z)
 
 
@@ -150,15 +152,35 @@ def _apply_spacing(relation: RelationEvidence, state: _State) -> bool:
     second_known = second in state.values
 
     if first_known and second_known:
-        actual = abs(state.values[second] - state.values[first])
-        if not isclose(actual, abs(relation.value), abs_tol=_EPS, rel_tol=0.0):
+        actual_signed = state.values[second] - state.values[first]
+        actual = abs(actual_signed)
+        expected = abs(relation.value)
+        expected_signed = (
+            relation.direction * expected if relation.direction is not None else None
+        )
+        # A signed relation has one admissible orientation even when both
+        # coordinates were independently observed. Checking only abs(distance)
+        # would silently accept the opposite engineering direction.
+        distance_mismatch = not isclose(
+            actual, expected, abs_tol=_EPS, rel_tol=0.0
+        )
+        direction_mismatch = (
+            expected_signed is not None
+            and not isclose(
+                actual_signed, expected_signed, abs_tol=_EPS, rel_tol=0.0
+            )
+        )
+        if distance_mismatch or direction_mismatch:
             conflict = {
                 "relation": relation.id,
                 "kind": relation.kind,
-                "expected_distance": abs(relation.value),
+                "expected_distance": expected,
                 "actual_distance": actual,
                 "targets": relation.targets,
             }
+            if expected_signed is not None:
+                conflict["expected_signed_distance"] = expected_signed
+                conflict["actual_signed_distance"] = actual_signed
             if conflict not in state.conflicts:
                 state.conflicts.append(conflict)
         return False
@@ -200,6 +222,188 @@ def _apply_spacing(relation: RelationEvidence, state: _State) -> bool:
     return False
 
 
+def _apply_midpoint(relation: RelationEvidence, state: _State) -> bool:
+    """Solve [endpoint_a, midpoint, endpoint_b] from any two known coordinates."""
+
+    first, midpoint, second = relation.targets
+    known = {
+        target: state.values[target]
+        for target in relation.targets
+        if target in state.values
+    }
+    if len(known) < 2:
+        return False
+
+    if len(known) == 3:
+        expected = (state.values[first] + state.values[second]) / 2.0
+        actual = state.values[midpoint]
+        if not isclose(actual, expected, abs_tol=_EPS, rel_tol=0.0):
+            conflict = {
+                "relation": relation.id,
+                "kind": "midpoint",
+                "targets": list(relation.targets),
+                "expected_midpoint": expected,
+                "actual_midpoint": actual,
+            }
+            if conflict not in state.conflicts:
+                state.conflicts.append(conflict)
+        return False
+
+    if first in known and second in known:
+        return state.assign(
+            midpoint,
+            (known[first] + known[second]) / 2.0,
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [first, second],
+                "op": "mean",
+            },
+        )
+
+    if midpoint in known and first in known:
+        return state.assign(
+            second,
+            2.0 * known[midpoint] - known[first],
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, first],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint in known and second in known:
+        return state.assign(
+            first,
+            2.0 * known[midpoint] - known[second],
+            _relation_trace(relation),
+            {
+                "kind": "midpoint",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, second],
+                "op": "reflect",
+            },
+        )
+
+    return False
+
+
+def _apply_centered_span(
+    relation: RelationEvidence,
+    state: _State,
+) -> bool:
+    """Solve a centered span from its midpoint and engineering width."""
+
+    first, midpoint, second = relation.targets
+    assert relation.value is not None
+    distance = abs(relation.value)
+
+    first_known = first in state.values
+    midpoint_known = midpoint in state.values
+    second_known = second in state.values
+
+    if first_known and second_known:
+        actual_signed = state.values[second] - state.values[first]
+        actual_distance = abs(actual_signed)
+        expected_signed = (
+            relation.direction * distance if relation.direction is not None else None
+        )
+        span_mismatch = not isclose(
+            actual_distance, distance, abs_tol=_EPS, rel_tol=0.0
+        )
+        direction_mismatch = (
+            expected_signed is not None
+            and not isclose(
+                actual_signed, expected_signed, abs_tol=_EPS, rel_tol=0.0
+            )
+        )
+        if span_mismatch or direction_mismatch:
+            conflict = {
+                "relation": relation.id,
+                "kind": "centered_span",
+                "expected_distance": distance,
+                "actual_distance": actual_distance,
+                "targets": list(relation.targets),
+            }
+            if expected_signed is not None:
+                conflict["expected_signed_distance"] = expected_signed
+                conflict["actual_signed_distance"] = actual_signed
+            if conflict not in state.conflicts:
+                state.conflicts.append(conflict)
+        expected_midpoint = (
+            state.values[first] + state.values[second]
+        ) / 2.0
+        return state.assign(
+            midpoint,
+            expected_midpoint,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [first, second],
+                "op": "mean",
+            },
+        )
+
+    if midpoint_known and first_known:
+        return state.assign(
+            second,
+            2.0 * state.values[midpoint] - state.values[first],
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, first],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint_known and second_known:
+        return state.assign(
+            first,
+            2.0 * state.values[midpoint] - state.values[second],
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint, second],
+                "op": "reflect",
+            },
+        )
+
+    if midpoint_known and relation.direction in {-1, 1}:
+        half_span = distance / 2.0
+        signed_half = relation.direction * half_span
+        changed = state.assign(
+            first,
+            state.values[midpoint] - signed_half,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint],
+                "op": "center_minus_half",
+            },
+        )
+        changed = state.assign(
+            second,
+            state.values[midpoint] + signed_half,
+            _relation_trace(relation),
+            {
+                "kind": "centered_span",
+                "relation_id": relation.id,
+                "dependencies": [midpoint],
+                "op": "center_plus_half",
+            },
+        ) or changed
+        return changed
+
+    return False
+
+
 def _apply_tangent(relation: RelationEvidence, state: _State) -> bool:
     center_target, tangent_target = relation.targets
     diameter_target = relation.diameter_target
@@ -227,8 +431,12 @@ def _apply_relation(
         return _apply_edge_offset(graph, relation, state)
     if relation.kind == "alignment":
         return _apply_alignment(relation, state)
-    if relation.kind in {"center_spacing", "center_distance"}:
+    if relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
         return _apply_spacing(relation, state)
+    if relation.kind == "midpoint":
+        return _apply_midpoint(relation, state)
+    if relation.kind == "centered_span":
+        return _apply_centered_span(relation, state)
     if relation.kind in {"upper_tangent", "lower_tangent"}:
         return _apply_tangent(relation, state)
     return False
@@ -275,7 +483,7 @@ def resolve_evidence_graph(graph: EvidenceGraph) -> ResolutionResult:
         missing = [target for target in required if target not in state.values]
         if not missing:
             continue
-        if relation.kind in {"center_spacing", "center_distance"}:
+        if relation.kind in {"center_spacing", "center_distance", "coordinate_distance"}:
             reason = (
                 "center distance has no unique signed solution"
                 if relation.direction is None

@@ -134,6 +134,40 @@ public static class NX_MCP_Loader
         return sb.ToString();
     }
 
+    private static string JsonStringArray(List<string> values)
+    {
+        var sb = new StringBuilder();
+        sb.Append("[");
+        for (int i = 0; i < values.Count; i++)
+        {
+            if (i > 0) sb.Append(",");
+            sb.Append("\"").Append(Esc(values[i])).Append("\"");
+        }
+        sb.Append("]");
+        return sb.ToString();
+    }
+
+    private static string PartPathOrPlaceholder(NXOpen.BasePart part)
+    {
+        if (part == null) return "";
+        string fullPath = "";
+        try { fullPath = part.FullPath; } catch { }
+        return string.IsNullOrEmpty(fullPath) ? "<unsaved-active-part>" : fullPath;
+    }
+
+    private static List<string> DisplayedPartPaths()
+    {
+        var values = new List<string>();
+        if (_session == null) return values;
+        try
+        {
+            foreach (NXOpen.BasePart part in _session.Parts.GetDisplayedParts())
+                values.Add(PartPathOrPlaceholder(part));
+        }
+        catch { }
+        return values;
+    }
+
     private static string ErrJson(string msg)
     {
         return "{\"ok\":false,\"error\":\"" + Esc(msg) + "\"}";
@@ -359,13 +393,15 @@ public static class NX_MCP_Loader
             // The NX work part is authoritative. _part may become an inactive
             // wrapper when the user closes/switches parts outside the Loader.
             NXOpen.Part work = _session.Parts.Work;
+            List<string> displayedParts = DisplayedPartPaths();
             if (work == null)
             {
                 if (_part != null || _partPath != null) ResetTaskState();
                 _part = null;
                 _partPath = null;
                 return "{\"ok\":true,\"ready\":true,\"loader\":\"nx_mcp_loader\",\"nx\":\"2506\"," +
-                       "\"part\":\"\",\"sketches\":0,\"bodies\":0}";
+                       "\"part\":\"\",\"displayed_parts\":" + JsonStringArray(displayedParts) +
+                       ",\"sketches\":0,\"bodies\":0}";
             }
 
             string fullPath = "";
@@ -373,14 +409,11 @@ public static class NX_MCP_Loader
             _part = work;
             _partPath = fullPath;
 
-            // Keep an unsaved active part visible to Runner preflight so it is
-            // never mistaken for "no active part".
-            string partName = string.IsNullOrEmpty(fullPath)
-                ? "<unsaved-active-part>"
-                : fullPath;
+            string partName = PartPathOrPlaceholder(work);
 
             return "{\"ok\":true,\"ready\":true,\"loader\":\"nx_mcp_loader\",\"nx\":\"2506\"," +
-                   "\"part\":\"" + Esc(partName) + "\",\"sketches\":" + _sketches.Count +
+                   "\"part\":\"" + Esc(partName) + "\",\"displayed_parts\":" +
+                   JsonStringArray(displayedParts) + ",\"sketches\":" + _sketches.Count +
                    ",\"bodies\":" + _bodies.Count + "}";
         }
         catch (Exception e)
@@ -398,11 +431,86 @@ public static class NX_MCP_Loader
         var lw = _session.ListingWindow;
         try { lw.Open(); } catch { }
 
-        if (File.Exists(path)) { try { File.Delete(path); } catch { } }
+        if (File.Exists(path))
+            return ErrJson("part file already exists; overwrite must be authorized by Runner preflight: " + path);
 
-        // Use NewDisplay: FileNewBuilder crashes with access violation in this
-        // resident-loader context (unmanaged exception cannot be caught).
-        NXOpen.Part part = _session.Parts.NewDisplay(path, Part.Units.Millimeters);
+        // Preserve every part the user already has displayed. NewDisplay
+        // replaces the active display in this resident-loader environment even
+        // after SetAllowMultipleDisplayedParts(true), so create through FileNew
+        // with the explicit AllowAdditional display contract instead.
+        NXOpen.BasePart[] priorDisplayed = new NXOpen.BasePart[0];
+        var priorDisplayedTags = new HashSet<Tag>();
+        try
+        {
+            priorDisplayed = _session.Parts.GetDisplayedParts();
+            foreach (NXOpen.BasePart prior in priorDisplayed)
+                priorDisplayedTags.Add(prior.Tag);
+        }
+        catch (Exception e)
+        {
+            return ErrJson("cannot snapshot displayed parts before create: " + e.Message);
+        }
+
+        NXOpen.FileNew fileNew = null;
+        NXOpen.Part part = null;
+        try
+        {
+            fileNew = _session.Parts.FileNew();
+            fileNew.NewFileName = path;
+            fileNew.UseBlankTemplate = true;
+            fileNew.TemplateFileName = "Blank";
+            fileNew.ApplicationName = "GatewayTemplate";
+            fileNew.Units = Part.Units.Millimeters;
+            fileNew.RelationType = "";
+            fileNew.UsesMasterModel = "No";
+            fileNew.TemplateType = NXOpen.FileNewTemplateType.Item;
+            fileNew.TemplatePresentationName = "";
+            fileNew.ItemType = "";
+            fileNew.Specialization = "";
+            fileNew.MasterFileName = "";
+            fileNew.MakeDisplayedPart = true;
+            fileNew.DisplayPartOption = NXOpen.DisplayPartOption.AllowAdditional;
+
+            NXOpen.NXObject created = fileNew.Commit();
+            part = created as NXOpen.Part;
+            if (part == null) part = _session.Parts.Work;
+            if (part == null)
+                return ErrJson("FileNew did not create a usable NX part");
+        }
+        catch (Exception e)
+        {
+            return ErrJson("FileNew AllowAdditional create failed: " + e.Message);
+        }
+        finally
+        {
+            if (fileNew != null)
+            {
+                try { fileNew.Destroy(); } catch { }
+            }
+        }
+
+        try { _session.Parts.SetWork(part); }
+        catch (Exception e) { return ErrJson("cannot set new part as work part: " + e.Message); }
+
+        if (priorDisplayedTags.Count > 0)
+        {
+            var afterTags = new HashSet<Tag>();
+            try
+            {
+                foreach (NXOpen.BasePart shown in _session.Parts.GetDisplayedParts())
+                    afterTags.Add(shown.Tag);
+            }
+            catch (Exception e)
+            {
+                return ErrJson("cannot verify displayed parts after create: " + e.Message);
+            }
+            foreach (Tag priorTag in priorDisplayedTags)
+            {
+                if (!afterTags.Contains(priorTag))
+                    return ErrJson("new part replaced a pre-existing displayed part");
+            }
+        }
+
         try { _session.ApplicationSwitchImmediate("UG_APP_MODELING"); } catch { }
         _part = part;
         _partPath = path;

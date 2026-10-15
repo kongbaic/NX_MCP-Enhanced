@@ -1,0 +1,32 @@
+{
+  "dimensions": [
+    {
+      "dimension_id": "front_8",
+      "label": "8",
+      "region_id": "R1",
+      "orientation": "vertical",
+      "band": "left"
+    },
+    {
+      "dimension_id": "front_24",
+      "label": "24",
+      "region_id": "R1",
+      "orientation": "horizontal",
+      "band": "bottom"
+    },
+    {
+      "dimension_id": "front_40tol",
+      "label": "40±0.02",
+      "region_id": "R1",
+      "orientation": "vertical",
+      "band": "right"
+    },
+    {
+      "dimension_id": "side_24",
+      "label": "24",
+      "region_id": "R2",
+      "orientation": "horizontal",
+      "band": "bottom"
+    }
+  ]
+}

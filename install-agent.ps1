@@ -36,6 +36,17 @@ if (-not $PythonExe) {
 if (-not (Test-Path (Join-Path $skillSource "SKILL.md"))) { throw "仓库缺少统一 Skill: $skillSource\SKILL.md" }
 if (-not (Test-Path (Join-Path $runnerSource "runner.py"))) { throw "仓库缺少 Runner: $runnerSource\runner.py" }
 
+# Mode B 工程图前端：仅在缺失时安装 geometry + Hybrid OCR drawing extra。
+& $PythonExe -c "import cv2, numpy, rapidocr, onnxruntime" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[Reader] 安装工程图依赖: numpy + opencv-python-headless + rapidocr + onnxruntime"
+    & $PythonExe -m pip install -e "$RepoRoot[drawing]"
+    if ($LASTEXITCODE -ne 0) { throw "安装 drawing extra 失败" }
+}
+
+& $PythonExe -c "import cv2, numpy, rapidocr, onnxruntime" 2>$null
+if ($LASTEXITCODE -ne 0) { throw "工程图依赖验证失败" }
+
 $verifyScript = Join-Path $RepoRoot "agent\verify_agent_pack.py"
 if (-not (Test-Path $verifyScript)) { throw "缺少 Agent Pack 校验脚本: $verifyScript" }
 & $PythonExe $verifyScript
